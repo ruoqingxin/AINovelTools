@@ -12,6 +12,7 @@ import threading
 from xml.etree import ElementTree as ET
 import shutil
 import time
+import logging
 
 REQUEST_TIMEOUT = (5, 30)
 def build_other_settings_tab(self):
@@ -57,10 +58,10 @@ def build_other_settings_tab(self):
             try:
                 result = worker()
             except Exception as e:
-                print(e)
-                self.master.after(0, lambda err=e: finish(False, err))
+                logging.exception("WebDAV task failed")
+                self.call_in_ui(lambda err=e: finish(False, err))
                 return
-            self.master.after(0, lambda res=result: finish(True, res))
+            self.call_in_ui(lambda res=result: finish(True, res))
 
         threading.Thread(target=task, daemon=True).start()
 
@@ -213,7 +214,7 @@ class WebDAVClient:
                     return True
             return False
         except requests.exceptions.RequestException as e:
-            print(f"检查目录存在性时出错: {e}")
+            logging.warning("检查 WebDAV 目录失败: %s", e)
             return False
 
     def create_directory(self, path):
@@ -228,10 +229,10 @@ class WebDAVClient:
             response = requests.request('MKCOL', url, auth=self.auth, headers=self.headers, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             
-            print(f"目录创建成功: {path}")
+            logging.info("WebDAV 目录创建成功: %s", path)
             return True
         except requests.exceptions.RequestException as e:
-            print(f"目录创建失败: {e}")
+            logging.warning("WebDAV 目录创建失败: %s", e)
             return False
 
     def ensure_directory_exists(self, path):
@@ -245,7 +246,7 @@ class WebDAVClient:
         
         # 如果目录已经存在，直接返回True
         if self.directory_exists(path):
-            print(f"目录已存在: {path}")
+            logging.info("WebDAV 目录已存在: %s", path)
             return True
             
         # 递归创建父目录
@@ -253,7 +254,7 @@ class WebDAVClient:
         if parent_dir and not self.directory_exists(parent_dir):
             # 如果父目录不存在，则先创建父目录
             if not self.ensure_directory_exists(parent_dir):
-                print(f"创建父目录失败: {parent_dir}")
+                logging.warning("WebDAV 父目录创建失败: %s", parent_dir)
                 return False
                 
         # 创建当前目录
@@ -266,7 +267,7 @@ class WebDAVClient:
         :return: 是否上传成功
         """
         if not os.path.isfile(local_path):
-            print(f"本地文件不存在: {local_path}")
+            logging.warning("WebDAV 上传文件不存在: %s", local_path)
             return False
 
         url = self._get_url(remote_path)
@@ -276,10 +277,10 @@ class WebDAVClient:
                 response = requests.put(url, data=f, auth=self.auth, headers=self.headers, timeout=REQUEST_TIMEOUT)
                 response.raise_for_status()
             
-            print(f"文件上传成功: {local_path} -> {remote_path}")
+            logging.info("WebDAV 文件上传成功: %s -> %s", local_path, remote_path)
             return True
         except requests.exceptions.RequestException as e:
-            print(f"文件上传失败: {e}")
+            logging.warning("WebDAV 文件上传失败: %s", e)
             return False
     def download_file(self, remote_path, local_path):
         """
@@ -315,10 +316,10 @@ class WebDAVClient:
             os.replace(temp_path, local_path)
             temp_path = None
             
-            print(f"文件下载成功: {remote_path} -> {local_path}")
+            logging.info("WebDAV 文件下载成功: %s -> %s", remote_path, local_path)
             return True
         except (requests.exceptions.RequestException, OSError, json.JSONDecodeError, ValueError) as e:
-            print(f"文件下载失败: {e}")
+            logging.warning("WebDAV 文件下载失败: %s", e)
             return False
         finally:
             if temp_path and os.path.exists(temp_path):

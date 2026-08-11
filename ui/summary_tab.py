@@ -3,7 +3,7 @@
 import os
 import customtkinter as ctk
 from tkinter import messagebox
-from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
+from utils import read_file, save_string_to_txt, get_word_count
 from ui.context_menu import TextWidgetContextMenu
 
 def build_summary_tab(self):
@@ -52,6 +52,7 @@ def save_global_summary(self):
         return
     content = self.summary_text.get("0.0", "end").strip()
     filename = os.path.join(filepath, "global_summary.txt")
-    clear_file_content(filename)
-    save_string_to_txt(content, filename)
-    self.log("已保存对 global_summary.txt 的修改。")
+    if save_string_to_txt(content, filename):
+        self.log("已保存对 global_summary.txt 的修改。")
+    else:
+        messagebox.showerror("保存失败", "无法保存全局摘要，请检查目录权限或 app.log。")

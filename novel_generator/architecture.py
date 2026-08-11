@@ -17,13 +17,7 @@ from novel_generator.vectorstore_utils import (
 from llm_adapters import create_llm_adapter
 from embedding_adapters import create_embedding_adapter
 import prompt_definitions
-logging.basicConfig(
-    filename='app.log',      # 日志文件名
-    filemode='a',            # 追加模式（'w' 会覆盖）
-    level=logging.INFO,      # 记录 INFO 及以上级别的日志
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+
 def load_partial_architecture_data(filepath: str) -> dict:
     """
     从 filepath 下的 partial_architecture.json 读取已有的阶段性数据。
@@ -44,10 +38,12 @@ def save_partial_architecture_data(filepath: str, data: dict):
     """
     将阶段性数据写入 partial_architecture.json。
     """
-    partial_file = os.path.join(filepath, "partial_architecture.json")
     try:
-        with open(partial_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        serialized = json.dumps(data, ensure_ascii=False, indent=2)
+        NovelProjectRepository(filepath).write(
+            "partial_architecture.json",
+            serialized,
+        )
     except Exception as e:
         logging.warning(f"Failed to save partial_architecture.json: {e}")
 

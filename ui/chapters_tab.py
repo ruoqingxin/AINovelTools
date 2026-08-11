@@ -4,7 +4,7 @@ import os
 import customtkinter as ctk
 from tkinter import messagebox
 from ui.context_menu import TextWidgetContextMenu
-from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
+from utils import read_file, save_string_to_txt, get_word_count
 
 def build_chapters_tab(self):
     self.chapters_view_tab = self.tabview.add("章节管理")
@@ -107,9 +107,10 @@ def save_current_chapter(self):
         return
     chapter_file = os.path.join(filepath, "chapters", f"chapter_{chapter_number_str}.txt")
     content = self.chapter_view_text.get("0.0", "end").strip()
-    clear_file_content(chapter_file)
-    save_string_to_txt(content, chapter_file)
-    self.safe_log(f"已保存对第 {chapter_number_str} 章的修改。")
+    if save_string_to_txt(content, chapter_file):
+        self.safe_log(f"已保存对第 {chapter_number_str} 章的修改。")
+    else:
+        messagebox.showerror("保存失败", f"无法保存第 {chapter_number_str} 章，请检查目录权限。")
 
 def prev_chapter(self):
     if not self.chapters_list:

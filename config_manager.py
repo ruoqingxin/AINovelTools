@@ -302,9 +302,12 @@ def save_config(config_data: dict, config_file: str) -> bool:
             try:
                 with os.fdopen(fd, 'w', encoding='utf-8') as f:
                     json.dump(config_data, f, ensure_ascii=False, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno())
                 os.replace(temp_path, config_file)
             except Exception:
-                os.unlink(temp_path)
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
                 raise
         return True
     except (IOError, OSError) as e:

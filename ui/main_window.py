@@ -8,11 +8,12 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from .role_library import RoleLibrary
+from app_runtime import APP_LOG_HANDLER_MARKER, get_application_dir, get_config_path, get_log_path
 from llm_adapters import create_llm_adapter
 from novel_generator.storage import NovelProjectRepository
 
 from config_manager import load_config, save_config, test_llm_config, test_embedding_config
-from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
+from utils import read_file, get_word_count
 from tooltips import tooltips
 
 from ui.context_menu import TextWidgetContextMenu
@@ -51,12 +52,16 @@ class NovelGeneratorGUI:
     """
     def __init__(self, master):
         self.master = master
+        self._closing = False
+        self._operation_lock = threading.Lock()
+        self._active_operations = set()
         self.master.title("AI 小说生成器")
         try:
-            if os.path.exists("icon.ico"):
-                self.master.iconbitmap("icon.ico")
-        except Exception:
-            pass
+            icon_path = get_application_dir() / "icon.ico"
+            if icon_path.exists():
+                self.master.iconbitmap(str(icon_path))
+        except (OSError, tk.TclError):
+            logging.debug("Unable to load the application icon", exc_info=True)
         screen_width = self.master.winfo_screenwidth()
         screen_height = self.master.winfo_screenheight()
         window_width = min(1450, max(800, screen_width - 100))
@@ -67,7 +72,7 @@ class NovelGeneratorGUI:
         self.master.minsize(min(1080, window_width), min(680, window_height))
 
         # --------------- 配置文件路径 ---------------
-        self.config_file = "config.json"
+        self.config_file = str(get_config_path())
         self.loaded_config = load_config(self.config_file)
 
         llm_configs = self.loaded_config.get("llm_configs", {})
@@ -205,6 +210,7 @@ class NovelGeneratorGUI:
         )
         self.english_mode_btn.place(relx=0.98, rely=0.015, anchor="ne")
 
+        self.master.protocol("WM_DELETE_WINDOW", self.close)
         self.master.after_idle(self.finish_startup)
 
 
@@ -217,7 +223,7 @@ class NovelGeneratorGUI:
         try:
             val_str = str(var.get()).strip()
             return int(val_str)
-        except:
+        except (TypeError, ValueError, tk.TclError):
             var.set(str(default))
             return default
 
@@ -232,7 +238,71 @@ class NovelGeneratorGUI:
             log_widget.configure(state="disabled")
 
     def safe_log(self, message: str):
-        self.master.after(0, lambda: self.log(message))
+        self.call_in_ui(lambda: self.log(message))
+
+    def call_in_ui(self, callback) -> bool:
+        """Schedule a callback only while the Tk application is alive."""
+        if getattr(self, "_closing", False):
+            return False
+
+        def guarded_callback():
+            if not getattr(self, "_closing", False):
+                callback()
+
+        try:
+            self.master.after(0, guarded_callback)
+            return True
+        except (RuntimeError, tk.TclError):
+            return False
+
+    def start_background_operation(self, name: str, target, button=None) -> bool:
+        """Start one named daemon task and reject accidental duplicate launches."""
+        with self._operation_lock:
+            if self._closing:
+                return False
+            if self._active_operations:
+                self.safe_log("已有后台任务正在运行，请等待当前任务完成。")
+                return False
+            self._active_operations.add(name)
+
+        if button is not None:
+            button.configure(state="disabled")
+
+        def run():
+            try:
+                target()
+            finally:
+                with self._operation_lock:
+                    self._active_operations.discard(name)
+                if button is not None:
+                    self.enable_button_safe(button)
+
+        try:
+            threading.Thread(
+                target=run,
+                daemon=True,
+                name=f"ai-novel-{name}",
+            ).start()
+            return True
+        except Exception:
+            with self._operation_lock:
+                self._active_operations.discard(name)
+            if button is not None:
+                button.configure(state="normal")
+            raise
+
+    def close(self):
+        """Close cleanly, warning when background work is still in progress."""
+        with self._operation_lock:
+            active_operations = tuple(self._active_operations)
+        if active_operations and not messagebox.askyesno(
+            "任务仍在运行",
+            "仍有生成或导入任务在后台运行。现在退出将中止这些任务，确定退出吗？",
+        ):
+            return
+        self._closing = True
+        logging.info("Application closing; active operations: %s", active_operations)
+        self.master.destroy()
 
     @staticmethod
     def _service_config_ready(config: dict) -> bool:
@@ -312,13 +382,19 @@ class NovelGeneratorGUI:
         if not messagebox.askyesno("确认清空日志", "确定要清空全部运行日志吗？此操作无法恢复。"):
             return
 
-        log_path = os.path.abspath("app.log")
         file_handlers = [
             handler
             for handler in logging.getLogger().handlers
             if isinstance(handler, logging.FileHandler)
-            and os.path.abspath(handler.baseFilename) == log_path
+            and (
+                getattr(handler, APP_LOG_HANDLER_MARKER, False)
+                or os.path.basename(handler.baseFilename).lower() == "app.log"
+            )
         ]
+        log_paths = {
+            os.path.abspath(handler.baseFilename)
+            for handler in file_handlers
+        } or {str(get_log_path().resolve())}
 
         acquired_handlers = []
         try:
@@ -326,8 +402,9 @@ class NovelGeneratorGUI:
                 handler.acquire()
                 acquired_handlers.append(handler)
                 handler.flush()
-            with open(log_path, "w", encoding="utf-8"):
-                pass
+            for log_path in log_paths:
+                with open(log_path, "w", encoding="utf-8"):
+                    pass
             for widget_name in ("planning_log_text", "log_text"):
                 log_widget = getattr(self, widget_name, None)
                 if log_widget is None:
@@ -343,10 +420,10 @@ class NovelGeneratorGUI:
                 handler.release()
 
     def disable_button_safe(self, btn):
-        self.master.after(0, lambda: btn.configure(state="disabled"))
+        self.call_in_ui(lambda: btn.configure(state="disabled"))
 
     def enable_button_safe(self, btn):
-        self.master.after(0, lambda: btn.configure(state="normal"))
+        self.call_in_ui(lambda: btn.configure(state="normal"))
 
     def handle_exception(self, context: str):
         full_message = f"{context}\n{traceback.format_exc()}"

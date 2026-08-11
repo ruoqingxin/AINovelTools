@@ -17,13 +17,7 @@ from novel_generator.vectorstore_utils import (
     get_relevant_context_from_vector_store,
     load_vector_store  # 添加导入
 )
-logging.basicConfig(
-    filename='app.log',      # 日志文件名
-    filemode='a',            # 追加模式（'w' 会覆盖）
-    level=logging.INFO,      # 记录 INFO 及以上级别的日志
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+
 
 def get_last_n_chapters_text(chapters_dir: str, current_chapter_num: int, n: int = 3) -> list:
     """

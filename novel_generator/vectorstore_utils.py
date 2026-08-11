@@ -10,13 +10,6 @@ import traceback
 import ssl
 import warnings
 from typing import Optional
-logging.basicConfig(
-    filename='app.log',      # 日志文件名
-    filemode='a',            # 追加模式（'w' 会覆盖）
-    level=logging.INFO,      # 记录 INFO 及以上级别的日志
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
 # 禁用特定的Torch警告
 warnings.filterwarnings('ignore', message='.*Torch was not compiled with flash attention.*')
 os.environ["TOKENIZERS_PARALLELISM"] = "false"  # 禁用tokenizer并行警告

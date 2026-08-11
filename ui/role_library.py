@@ -1,5 +1,6 @@
 # ui/role_library.py
 import os
+import logging
 import tkinter as tk
 from tkinter import filedialog
 import shutil
@@ -423,7 +424,7 @@ class RoleLibrary:
                         if os.path.isfile(file_path):
                             os.unlink(file_path)
                     except Exception as e:
-                        print(f"删除文件{file_path}时出错: {e}")
+                        logging.warning("删除临时角色文件 %s 失败: %s", file_path, e)
             os.makedirs(target_dir, exist_ok=True)
 
             # 调用LLM进行分析

@@ -99,6 +99,7 @@ to install them.
 ```
 novel-generator/
 ├── main.py                      # Entry file, runs the GUI
+├── app_runtime.py               # App paths, UTF-8 rotating logs, exception hooks
 ├── consistency_checker.py       # Consistency checks to prevent plot conflicts
 |—— chapter_directory_parser.py  # Directory parsing
 |—— embedding_adapters.py        # Embedding interface wrappers
@@ -113,6 +114,8 @@ novel-generator/
 ├── ui/                          # Graphical user interface
 └── vectorstore/                 # (Optional) Local vector DB storage
 ```
+
+Reliability notes: editor and generation writes use atomic replacement, so a failed save does not truncate the previous file. Generation, finalization, and knowledge-import jobs are mutually exclusive to prevent concurrent project writes. `app.log` is UTF-8 and rotates at 2 MB with three backups; legacy GBK logs are migrated automatically at startup.
 
 ---
 

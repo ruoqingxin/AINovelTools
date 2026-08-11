@@ -2,6 +2,25 @@
 # -*- coding: utf-8 -*-
 import os
 import json
+import logging
+from pathlib import Path
+import tempfile
+
+
+def _write_bytes_atomic(file_path: str, content: bytes) -> None:
+    """Replace a file only after its complete content reaches disk."""
+    target = Path(file_path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(suffix=".tmp", dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "wb") as file:
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp_path, target)
+    except Exception:
+        Path(temp_path).unlink(missing_ok=True)
+        raise
 
 def read_file(filename: str) -> str:
     """读取文件的全部内容，若文件不存在或异常则返回空字符串。"""
@@ -11,8 +30,8 @@ def read_file(filename: str) -> str:
         return content
     except FileNotFoundError:
         return ""
-    except Exception as e:
-        print(f"[read_file] 读取文件时发生错误: {e}")
+    except (OSError, UnicodeError) as e:
+        logging.warning("无法读取文件 %s: %s", filename, e)
         return ""
 
 def append_text_to_file(text_to_append: str, file_path: str):
@@ -24,32 +43,35 @@ def append_text_to_file(text_to_append: str, file_path: str):
         with open(file_path, 'a', encoding='utf-8') as file:
             file.write(text_to_append)
     except IOError as e:
-        print(f"[append_text_to_file] 发生错误：{e}")
+        logging.warning("无法追加文件 %s: %s", file_path, e)
 
-def clear_file_content(filename: str):
+def clear_file_content(filename: str) -> bool:
     """清空指定文件内容。"""
     try:
-        with open(filename, 'w', encoding='utf-8') as file:
-            pass
-    except IOError as e:
-        print(f"[clear_file_content] 无法清空文件 '{filename}' 的内容：{e}")
+        _write_bytes_atomic(filename, b"")
+        return True
+    except OSError as e:
+        logging.error("无法清空文件 %s: %s", filename, e)
+        return False
 
-def save_string_to_txt(content: str, filename: str):
-    """将字符串保存为 txt 文件（覆盖写）。"""
+def save_string_to_txt(content: str, filename: str) -> bool:
+    """以原子替换方式保存 UTF-8 文本，返回是否成功。"""
     try:
-        with open(filename, 'w', encoding='utf-8') as file:
-            file.write(content)
-    except Exception as e:
-        print(f"[save_string_to_txt] 保存文件时发生错误: {e}")
+        _write_bytes_atomic(filename, content.encode("utf-8"))
+        return True
+    except (OSError, UnicodeError) as e:
+        logging.error("无法保存文本文件 %s: %s", filename, e)
+        return False
 
 def save_data_to_json(data: dict, file_path: str) -> bool:
-    """将数据保存到 JSON 文件。"""
+    """以原子替换方式保存 JSON 文件。"""
     try:
-        with open(file_path, 'w', encoding='utf-8') as json_file:
-            json.dump(data, json_file, ensure_ascii=False, indent=4)
+        content = json.dumps(data, ensure_ascii=False, indent=4)
+        _write_bytes_atomic(file_path, content.encode("utf-8"))
         return True
-    except Exception as e:
-        print(f"[save_data_to_json] 保存数据到JSON文件时出错: {e}")
+    except (OSError, TypeError, ValueError, UnicodeError) as e:
+        logging.error("无法保存 JSON 文件 %s: %s", file_path, e)
+        return False
 
 def get_word_count(text: str) -> int:
     """

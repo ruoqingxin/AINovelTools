@@ -228,8 +228,8 @@ class MLStudioAdapter(BaseLLMAdapter):
                 return ""
             return response.content
         except Exception as e:
-            logging.error(f"ML Studio API 调用超时或失败: {e}")
-            return ""
+            logging.exception("ML Studio API 调用超时或失败: %s", e)
+            raise
 
 class AzureAIAdapter(BaseLLMAdapter):
     """
@@ -278,8 +278,8 @@ class AzureAIAdapter(BaseLLMAdapter):
                 logging.warning("No response from AzureAIAdapter.")
                 return ""
         except Exception as e:
-            logging.error(f"Azure AI Inference API 调用失败: {e}")
-            return ""
+            logging.exception("Azure AI Inference API 调用失败: %s", e)
+            raise
 
 # 火山引擎实现
 class VolcanoEngineAIAdapter(BaseLLMAdapter):
@@ -313,8 +313,8 @@ class VolcanoEngineAIAdapter(BaseLLMAdapter):
                 return ""
             return response.choices[0].message.content
         except Exception as e:
-            logging.error(f"火山引擎API调用超时或失败: {e}")
-            return ""
+            logging.exception("火山引擎 API 调用超时或失败: %s", e)
+            raise
 
 class SiliconFlowAdapter(BaseLLMAdapter):
     def __init__(self, api_key: str, base_url: str, model_name: str, max_tokens: int, temperature: float = 0.7, timeout: Optional[int] = 600):
@@ -347,8 +347,8 @@ class SiliconFlowAdapter(BaseLLMAdapter):
                 return ""
             return response.choices[0].message.content
         except Exception as e:
-            logging.error(f"硅基流动API调用超时或失败: {e}")
-            return ""
+            logging.exception("硅基流动 API 调用超时或失败: %s", e)
+            raise
 # grok實現
 class GrokAdapter(BaseLLMAdapter):
     """
@@ -386,8 +386,8 @@ class GrokAdapter(BaseLLMAdapter):
                 logging.warning("No response from GrokAdapter.")
                 return ""
         except Exception as e:
-            logging.error(f"Grok API 调用失败: {e}")
-            return ""
+            logging.exception("Grok API 调用失败: %s", e)
+            raise
 
 def create_llm_adapter(
     interface_format: str,

@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import os
 import threading
-import tkinter as tk
 from tkinter import messagebox, filedialog
 import customtkinter as ctk
 import glob
@@ -27,6 +26,26 @@ from consistency_checker import check_consistency
 from config_manager import get_llm_config
 from embedding_adapters import create_embedding_adapter
 from novel_generator.storage import NovelProjectRepository
+
+
+_BACKGROUND_OPERATION_BUTTONS = {
+    "generate_architecture": "btn_generate_architecture",
+    "generate_blueprint": "btn_generate_directory",
+    "revise_architecture": "btn_revise_architecture",
+    "revise_blueprint": "btn_revise_blueprint",
+    "generate_chapter": "btn_generate_chapter",
+    "revise_chapter": "btn_revise_chapter",
+    "finalize_chapter": "btn_finalize_chapter",
+    "consistency_check": "btn_check_consistency",
+    "batch_generate": "btn_batch_generate",
+    "import_knowledge": "btn_import_knowledge",
+}
+
+
+def _start_background(self, operation_name, task):
+    button = getattr(self, _BACKGROUND_OPERATION_BUTTONS[operation_name])
+    return self.start_background_operation(operation_name, task, button)
+
 
 def generate_novel_architecture_ui(self):
     filepath = self.filepath_var.get().strip()
@@ -102,7 +121,7 @@ def generate_novel_architecture_ui(self):
             self.handle_exception("生成小说架构时出错")
         finally:
             self.enable_button_safe(self.btn_generate_architecture)
-    threading.Thread(target=task, daemon=True).start()
+    _start_background(self, "generate_architecture", task)
 
 def generate_chapter_blueprint_ui(self):
     filepath = self.filepath_var.get().strip()
@@ -152,7 +171,7 @@ def generate_chapter_blueprint_ui(self):
             self.handle_exception("生成章节蓝图时出错")
         finally:
             self.enable_button_safe(self.btn_generate_directory)
-    threading.Thread(target=task, daemon=True).start()
+    _start_background(self, "generate_blueprint", task)
 
 
 def revise_novel_architecture_ui(self):
@@ -203,14 +222,14 @@ def revise_novel_architecture_ui(self):
                 )
                 self.architecture_revision_guide_text.delete("0.0", "end")
 
-            self.master.after(0, show_revision)
+            self.call_in_ui(show_revision)
             self.safe_log("✅ 小说架构已按个人意见重新编写并自动保存。")
         except Exception:
             self.handle_exception("AI 重新编写小说架构时出错")
         finally:
             self.enable_button_safe(self.btn_revise_architecture)
 
-    threading.Thread(target=task, daemon=True).start()
+    _start_background(self, "revise_architecture", task)
 
 
 def revise_chapter_blueprint_ui(self):
@@ -258,14 +277,14 @@ def revise_chapter_blueprint_ui(self):
                 )
                 self.blueprint_revision_guide_text.delete("0.0", "end")
 
-            self.master.after(0, show_revision)
+            self.call_in_ui(show_revision)
             self.safe_log("✅ 章节蓝图已按个人意见重新编写并自动保存。")
         except Exception:
             self.handle_exception("AI 重新编写章节蓝图时出错")
         finally:
             self.enable_button_safe(self.btn_revise_blueprint)
 
-    threading.Thread(target=task, daemon=True).start()
+    _start_background(self, "revise_blueprint", task)
 
 def generate_chapter_draft_ui(self):
     filepath = self.filepath_var.get().strip()
@@ -424,7 +443,9 @@ def generate_chapter_draft_ui(self):
                 # 若用户直接关闭弹窗，则调用 on_cancel 处理
                 dialog.protocol("WM_DELETE_WINDOW", on_cancel)
                 dialog.grab_set()
-            self.master.after(0, create_dialog)
+            if not self.call_in_ui(create_dialog):
+                self.safe_log("应用已关闭，草稿生成已取消。")
+                return
             event.wait()  # 等待用户操作完成
             edited_prompt = result["prompt"]
             if edited_prompt is None:
@@ -462,14 +483,14 @@ def generate_chapter_draft_ui(self):
                     self.clear_chapter_before_textbox()
                     self.show_chapter_in_textbox(draft_text)
 
-                self.master.after(0, show_new_draft)
+                self.call_in_ui(show_new_draft)
             else:
                 self.safe_log("⚠️ 本章草稿生成失败或无内容。")
         except Exception:
             self.handle_exception("生成章节草稿时出错")
         finally:
             self.enable_button_safe(self.btn_generate_chapter)
-    threading.Thread(target=task, daemon=True).start()
+    _start_background(self, "generate_chapter", task)
 
 
 def revise_chapter_draft_ui(self):
@@ -520,7 +541,7 @@ def revise_chapter_draft_ui(self):
                 self.show_chapter_in_textbox(revised_text)
                 self.revision_guide_text.delete("0.0", "end")
 
-            self.master.after(0, show_revision)
+            self.call_in_ui(show_revision)
             self.safe_log(
                 f"✅ 第 {chapter_number} 章已按意见修改。可继续提出意见，满意后再定稿。"
             )
@@ -529,7 +550,7 @@ def revise_chapter_draft_ui(self):
         finally:
             self.enable_button_safe(self.btn_revise_chapter)
 
-    threading.Thread(target=task, daemon=True).start()
+    _start_background(self, "revise_chapter", task)
 
 def finalize_chapter_ui(self):
     filepath = self.filepath_var.get().strip()
@@ -552,8 +573,6 @@ def finalize_chapter_ui(self):
             "字数不足",
             f"当前章节字数 ({edited_word_count}) 低于目标字数({word_number})的70%，是否要尝试扩写？"
         )
-
-    self.disable_button_safe(self.btn_finalize_chapter)
 
     def task():
         nonlocal edited_text
@@ -608,7 +627,7 @@ def finalize_chapter_ui(self):
                     self.show_chapter_before_textbox(before_enrichment)
                     self.show_chapter_in_textbox(edited_text)
 
-                self.master.after(0, show_enrichment)
+                self.call_in_ui(show_enrichment)
             else:
                 NovelProjectRepository(filepath).write_chapter(chap_num, edited_text)
 
@@ -634,12 +653,12 @@ def finalize_chapter_ui(self):
             self.safe_log(f"✅ {operation.message}（已更新前文摘要、角色状态和剧情要点）。")
 
             final_text = read_file(chapter_file)
-            self.master.after(0, lambda: self.show_chapter_in_textbox(final_text))
+            self.call_in_ui(lambda: self.show_chapter_in_textbox(final_text))
         except Exception:
             self.handle_exception("定稿章节时出错")
         finally:
             self.enable_button_safe(self.btn_finalize_chapter)
-    threading.Thread(target=task, daemon=True).start()
+    _start_background(self, "finalize_chapter", task)
 
 def do_consistency_check(self):
     filepath = self.filepath_var.get().strip()
@@ -689,7 +708,7 @@ def do_consistency_check(self):
             self.handle_exception("审校时出错")
         finally:
             self.enable_button_safe(self.btn_check_consistency)
-    threading.Thread(target=task, daemon=True).start()
+    _start_background(self, "consistency_check", task)
 def generate_batch_ui(self):
 
     # PenBo 优化界面，使用customtkinter进行批量生成章节界面
@@ -949,7 +968,7 @@ def generate_batch_ui(self):
         except Exception:
             self.handle_exception("批量生成时出错")
 
-    threading.Thread(target=batch_task, daemon=True).start()
+    _start_background(self, "batch_generate", batch_task)
 
 
 def import_knowledge_handler(self):
@@ -1022,9 +1041,8 @@ def import_knowledge_handler(self):
                     logging.exception("Embedding 配置或连接测试失败")
                     error_message = f"Embedding 配置或连接测试失败：{exc}"
                     self.safe_log(f"❌ {error_message}")
-                    self.master.after(
-                        0,
-                        lambda message=error_message: messagebox.showerror("无法导入知识库", message),
+                    self.call_in_ui(
+                        lambda message=error_message: messagebox.showerror("无法导入知识库", message)
                     )
                     return
 
@@ -1064,7 +1082,7 @@ def import_knowledge_handler(self):
                 self.safe_log(summary)
                 if failures:
                     self.safe_log("失败文件：" + "、".join(failures))
-                self.master.after(0, lambda: messagebox.showinfo("导入结果", summary))
+                self.call_in_ui(lambda: messagebox.showinfo("导入结果", summary))
 
             except Exception:
                 self.handle_exception("导入知识库时出错")
@@ -1072,10 +1090,8 @@ def import_knowledge_handler(self):
                 self.enable_button_safe(self.btn_import_knowledge)
 
         try:
-            thread = threading.Thread(target=task, daemon=True)
-            thread.start()
+            _start_background(self, "import_knowledge", task)
         except Exception as e:
-            self.enable_button_safe(self.btn_import_knowledge)
             messagebox.showerror("错误", f"线程启动失败: {str(e)}")
 
 def clear_vectorstore_handler(self):

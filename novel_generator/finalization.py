@@ -11,13 +11,7 @@ from novel_generator.common import invoke_with_cleaning
 from novel_generator.results import OperationResult
 from novel_generator.storage import NovelProjectRepository
 from novel_generator.vectorstore_utils import update_vector_store
-logging.basicConfig(
-    filename='app.log',      # 日志文件名
-    filemode='a',            # 追加模式（'w' 会覆盖）
-    level=logging.INFO,      # 记录 INFO 及以上级别的日志
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+
 
 def finalize_chapter(
     novel_number: int,

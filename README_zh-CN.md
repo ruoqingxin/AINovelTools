@@ -98,6 +98,7 @@
 ```
 novel-generator/
 ├── main.py                      # 入口文件, 运行 GUI
+├── app_runtime.py               # 应用路径、UTF-8 轮转日志与异常捕获
 ├── consistency_checker.py       # 一致性检查, 防止剧情冲突
 |—— chapter_directory_parser.py  # 目录解析
 |—— embedding_adapters.py        # Embedding 接口封装
@@ -112,6 +113,8 @@ novel-generator/
 ├── ui/                          # 图形界面
 └── vectorstore/                 # (可选) 本地向量数据库存储
 ```
+
+运行稳定性说明：编辑器和生成流程使用原子写入，写入失败不会先清空原文件；生成、定稿和知识库导入任务互斥，避免同时改写同一工程。`app.log` 使用 UTF-8 编码并自动轮转（单文件 2 MB，保留 3 份历史日志），旧版 GBK 日志会在启动时自动迁移。
 
 ---
 

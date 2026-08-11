@@ -3,7 +3,7 @@
 import os
 import customtkinter as ctk
 from tkinter import messagebox
-from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
+from utils import read_file, save_string_to_txt, get_word_count
 from ui.context_menu import TextWidgetContextMenu
 
 def build_directory_tab(self):
@@ -67,9 +67,10 @@ def save_chapter_blueprint(self):
         return
     content = self.directory_text.get("0.0", "end").strip()
     filename = os.path.join(filepath, "Novel_directory.txt")
-    clear_file_content(filename)
-    save_string_to_txt(content, filename)
-    self.log("已保存对 Novel_directory.txt 的修改。")
+    if save_string_to_txt(content, filename):
+        self.log("已保存对 Novel_directory.txt 的修改。")
+    else:
+        messagebox.showerror("保存失败", "无法保存章节蓝图，请检查目录权限或 app.log。")
 
 def clear_chapter_blueprint(self):
     if not self.directory_text.get("0.0", "end").strip():
