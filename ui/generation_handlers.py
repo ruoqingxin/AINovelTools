@@ -112,6 +112,7 @@ def generate_novel_architecture_ui(self):
                 embedding_interface_format=embedding_interface_format,
                 embedding_model_name=embedding_model_name,
                 embedding_retrieval_k=embedding_retrieval_k,
+                progress_callback=self.safe_log,
             )
             if not operation:
                 self.safe_log(f"❌ {operation.message}")

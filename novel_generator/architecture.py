@@ -6,6 +6,8 @@
 import os
 import json
 import logging
+import time
+from typing import Callable, Optional
 from novel_generator.common import invoke_with_cleaning
 from novel_generator.results import OperationResult
 from novel_generator.storage import NovelProjectRepository
@@ -66,6 +68,7 @@ def Novel_architecture_generate(
     embedding_interface_format: str = "",
     embedding_model_name: str = "",
     embedding_retrieval_k: int = 4,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> OperationResult:
     """
     依次调用:
@@ -81,9 +84,31 @@ def Novel_architecture_generate(
     - 在完成角色动力学设定后，依据该角色体系，使用 create_character_state_prompt 生成初始角色状态表，
       并存储到 character_state.txt，后续维护更新。
     """
+    def report(message: str) -> None:
+        logging.info(message)
+        if progress_callback is not None:
+            try:
+                progress_callback(message)
+            except Exception:
+                logging.warning("Architecture progress callback failed", exc_info=True)
+
+    def invoke_stage(step: int, label: str, prompt: str) -> str:
+        report(f"架构生成 [{step}/5] {label}：正在请求大模型，请耐心等待...")
+        started_at = time.monotonic()
+        result = invoke_with_cleaning(llm_adapter, prompt)
+        elapsed = max(0, round(time.monotonic() - started_at))
+        report(
+            f"架构生成 [{step}/5] {label}：生成完成，"
+            f"耗时 {elapsed} 秒，返回 {len(result)} 字。"
+        )
+        return result
+
+    report("架构生成：正在初始化工程与大模型连接...")
     repository = NovelProjectRepository(filepath)
     repository.ensure_exists()
     partial_data = load_partial_architecture_data(filepath)
+    if partial_data:
+        report(f"架构生成：检测到断点进度，将复用已完成的 {len(partial_data)} 项结果。")
     llm_adapter = create_llm_adapter(
         interface_format=interface_format,
         base_url=base_url,
@@ -96,6 +121,7 @@ def Novel_architecture_generate(
 
     knowledge_store = None
     if os.path.isdir(get_vectorstore_dir(filepath)):
+        report("架构生成：正在加载知识库索引...")
         if not all((embedding_url, embedding_interface_format, embedding_model_name)):
             return OperationResult.fail("检测到知识库，但 Embedding 配置不完整，无法用于架构生成")
         try:
@@ -108,14 +134,18 @@ def Novel_architecture_generate(
             knowledge_store = load_vector_store(embedding_adapter, filepath)
             if knowledge_store is None:
                 return OperationResult.fail("知识库加载失败，请检查 Embedding 配置和服务连接")
+            report("架构生成：知识库索引加载完成。")
         except Exception as exc:
             logging.exception("加载架构生成所需知识库失败")
             return OperationResult.fail(f"知识库加载失败：{exc}")
+    else:
+        report("架构生成：未检测到知识库，将直接依据主题和创作指导生成。")
 
     def retrieve_knowledge(stage: str, queries: list[str]) -> str:
         if knowledge_store is None:
             logging.info("Architecture stage %s: no knowledge base is available.", stage)
             return "（当前项目没有可用的知识库内容）"
+        report(f"架构生成：正在为“{stage}”检索相关设定...")
         try:
             context = get_knowledge_context_from_store(
                 knowledge_store,
@@ -132,6 +162,7 @@ def Novel_architecture_generate(
             stage,
             len(context),
         )
+        report(f"架构生成：已为“{stage}”检索到 {len(context)} 字参考设定。")
         return context
 
     # Step1: 核心种子
@@ -149,15 +180,17 @@ def Novel_architecture_generate(
             user_guidance=user_guidance,
             knowledge_context=knowledge_context,
         )
-        core_seed_result = invoke_with_cleaning(llm_adapter, prompt_core)
+        core_seed_result = invoke_stage(1, "核心故事种子", prompt_core)
         if not core_seed_result.strip():
             logging.warning("core_seed_prompt generation failed and returned empty.")
             save_partial_architecture_data(filepath, partial_data)
             return OperationResult.fail("核心故事种子生成失败")
         partial_data["core_seed_result"] = core_seed_result
         save_partial_architecture_data(filepath, partial_data)
+        report("架构生成 [1/5] 核心故事种子：进度已保存。")
     else:
         logging.info("Step1 already done. Skipping...")
+        report("架构生成 [1/5] 核心故事种子：已从断点恢复，跳过重新生成。")
     # Step2: 角色动力学
     if "character_dynamics_result" not in partial_data:
         logging.info("Step2: Generating character_dynamics_prompt ...")
@@ -170,22 +203,24 @@ def Novel_architecture_generate(
             user_guidance=user_guidance,
             knowledge_context=knowledge_context,
         )
-        character_dynamics_result = invoke_with_cleaning(llm_adapter, prompt_character)
+        character_dynamics_result = invoke_stage(2, "角色体系", prompt_character)
         if not character_dynamics_result.strip():
             logging.warning("character_dynamics_prompt generation failed.")
             save_partial_architecture_data(filepath, partial_data)
             return OperationResult.fail("角色动力学生成失败")
         partial_data["character_dynamics_result"] = character_dynamics_result
         save_partial_architecture_data(filepath, partial_data)
+        report("架构生成 [2/5] 角色体系：进度已保存。")
     else:
         logging.info("Step2 already done. Skipping...")
+        report("架构生成 [2/5] 角色体系：已从断点恢复，跳过重新生成。")
     # 生成初始角色状态
     if "character_dynamics_result" in partial_data and "character_state_result" not in partial_data:
         logging.info("Generating initial character state from character dynamics ...")
         prompt_char_state_init = prompt_definitions.create_character_state_prompt.format(
             character_dynamics=partial_data["character_dynamics_result"].strip()
         )
-        character_state_init = invoke_with_cleaning(llm_adapter, prompt_char_state_init)
+        character_state_init = invoke_stage(3, "初始角色状态", prompt_char_state_init)
         if not character_state_init.strip():
             logging.warning("create_character_state_prompt generation failed.")
             save_partial_architecture_data(filepath, partial_data)
@@ -194,6 +229,9 @@ def Novel_architecture_generate(
         repository.write(repository.CHARACTER_STATE, character_state_init)
         save_partial_architecture_data(filepath, partial_data)
         logging.info("Initial character state created and saved.")
+        report("架构生成 [3/5] 初始角色状态：已写入 character_state.txt。")
+    elif "character_state_result" in partial_data:
+        report("架构生成 [3/5] 初始角色状态：已从断点恢复，跳过重新生成。")
     # Step3: 世界观
     if "world_building_result" not in partial_data:
         logging.info("Step3: Generating world_building_prompt ...")
@@ -207,15 +245,17 @@ def Novel_architecture_generate(
             user_guidance=user_guidance,
             knowledge_context=knowledge_context,
         )
-        world_building_result = invoke_with_cleaning(llm_adapter, prompt_world)
+        world_building_result = invoke_stage(4, "世界观体系", prompt_world)
         if not world_building_result.strip():
             logging.warning("world_building_prompt generation failed.")
             save_partial_architecture_data(filepath, partial_data)
             return OperationResult.fail("世界观生成失败")
         partial_data["world_building_result"] = world_building_result
         save_partial_architecture_data(filepath, partial_data)
+        report("架构生成 [4/5] 世界观体系：进度已保存。")
     else:
         logging.info("Step3 already done. Skipping...")
+        report("架构生成 [4/5] 世界观体系：已从断点恢复，跳过重新生成。")
     # Step4: 三幕式情节
     if "plot_arch_result" not in partial_data:
         logging.info("Step4: Generating plot_architecture_prompt ...")
@@ -231,15 +271,17 @@ def Novel_architecture_generate(
             user_guidance=user_guidance,
             knowledge_context=knowledge_context,
         )
-        plot_arch_result = invoke_with_cleaning(llm_adapter, prompt_plot)
+        plot_arch_result = invoke_stage(5, "主线剧情架构", prompt_plot)
         if not plot_arch_result.strip():
             logging.warning("plot_architecture_prompt generation failed.")
             save_partial_architecture_data(filepath, partial_data)
             return OperationResult.fail("情节架构生成失败")
         partial_data["plot_arch_result"] = plot_arch_result
         save_partial_architecture_data(filepath, partial_data)
+        report("架构生成 [5/5] 主线剧情架构：进度已保存。")
     else:
         logging.info("Step4 already done. Skipping...")
+        report("架构生成 [5/5] 主线剧情架构：已从断点恢复，跳过重新生成。")
 
     core_seed_result = partial_data["core_seed_result"]
     character_dynamics_result = partial_data["character_dynamics_result"]
@@ -259,6 +301,7 @@ def Novel_architecture_generate(
         f"{plot_arch_result}\n"
     )
 
+    report("架构生成：正在汇总全部阶段并写入 Novel_architecture.txt...")
     arch_file = repository.write(repository.ARCHITECTURE, final_content)
     logging.info("Novel_architecture.txt has been generated successfully.")
 
@@ -266,6 +309,7 @@ def Novel_architecture_generate(
     if os.path.exists(partial_arch_file):
         os.remove(partial_arch_file)
         logging.info("partial_architecture.json removed (all steps completed).")
+    report("架构生成：全部阶段完成，文件已安全保存。")
     return OperationResult.ok(
         "小说架构生成完成",
         data=final_content,
