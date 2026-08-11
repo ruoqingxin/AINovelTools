@@ -17,6 +17,7 @@ _EXPORTS = {
     "finalize_chapter": (".finalization", "finalize_chapter"),
     "enrich_chapter_text": (".finalization", "enrich_chapter_text"),
     "import_knowledge_file": (".knowledge", "import_knowledge_file"),
+    "collect_knowledge_files": (".knowledge", "collect_knowledge_files"),
     "clear_vector_store": (".vectorstore_utils", "clear_vector_store"),
 }
 

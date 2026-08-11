@@ -16,7 +16,7 @@ from tooltips import tooltips
 
 from ui.context_menu import TextWidgetContextMenu
 from ui.main_tab import build_main_tab, build_left_layout, build_right_layout
-from ui.config_tab import build_config_tabview, load_config_btn, save_config_btn
+from ui.config_tab import build_config_tabview, load_config_btn, save_config_btn, save_embedding_config
 from ui.novel_params_tab import build_novel_params_area, build_optional_buttons_area
 from ui.generation_handlers import (
     generate_novel_architecture_ui,
@@ -208,6 +208,37 @@ class NovelGeneratorGUI:
 
     def safe_log(self, message: str):
         self.master.after(0, lambda: self.log(message))
+
+    def clear_app_log(self):
+        """清空界面日志和 app.log，并与正在写入的日志处理器同步。"""
+        if not messagebox.askyesno("确认清空日志", "确定要清空全部运行日志吗？此操作无法恢复。"):
+            return
+
+        log_path = os.path.abspath("app.log")
+        file_handlers = [
+            handler
+            for handler in logging.getLogger().handlers
+            if isinstance(handler, logging.FileHandler)
+            and os.path.abspath(handler.baseFilename) == log_path
+        ]
+
+        acquired_handlers = []
+        try:
+            for handler in file_handlers:
+                handler.acquire()
+                acquired_handlers.append(handler)
+                handler.flush()
+            with open(log_path, "w", encoding="utf-8"):
+                pass
+            self.log_text.configure(state="normal")
+            self.log_text.delete("0.0", "end")
+            self.log_text.configure(state="disabled")
+            messagebox.showinfo("清空日志", "运行日志已清空。")
+        except OSError as exc:
+            messagebox.showerror("清空失败", f"无法清空 app.log：{exc}")
+        finally:
+            for handler in reversed(acquired_handlers):
+                handler.release()
 
     def disable_button_safe(self, btn):
         self.master.after(0, lambda: btn.configure(state="disabled"))
@@ -423,6 +454,7 @@ class NovelGeneratorGUI:
     show_plot_arcs_ui = show_plot_arcs_ui
     load_config_btn = load_config_btn
     save_config_btn = save_config_btn
+    save_embedding_config = save_embedding_config
     load_novel_architecture = load_novel_architecture
     save_novel_architecture = save_novel_architecture
     load_chapter_blueprint = load_chapter_blueprint

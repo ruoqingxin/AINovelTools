@@ -546,9 +546,57 @@ def build_embeddings_config_tab(self):
     emb_retrieval_k_entry = ctk.CTkEntry(self.embeddings_config_tab, textvariable=self.embedding_retrieval_k_var, font=("Microsoft YaHei", 12))
     emb_retrieval_k_entry.grid(row=4, column=1, padx=5, pady=5, sticky="nsew")
 
-    # 添加测试按钮
-    test_btn = ctk.CTkButton(self.embeddings_config_tab, text="测试配置", command=self.test_embedding_config, font=("Microsoft YaHei", 12))
-    test_btn.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+    # 嵌入配置操作
+    action_frame = ctk.CTkFrame(self.embeddings_config_tab, fg_color="transparent")
+    action_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+    action_frame.columnconfigure((0, 1), weight=1)
+
+    test_btn = ctk.CTkButton(
+        action_frame,
+        text="测试配置",
+        command=self.test_embedding_config,
+        font=("Microsoft YaHei", 12),
+    )
+    test_btn.grid(row=0, column=0, padx=(0, 3), sticky="ew")
+
+    save_btn = ctk.CTkButton(
+        action_frame,
+        text="保存配置",
+        command=self.save_embedding_config,
+        font=("Microsoft YaHei", 12),
+    )
+    save_btn.grid(row=0, column=1, padx=(3, 0), sticky="ew")
+
+
+def save_embedding_config(self):
+    """只保存当前嵌入模型配置，不改动大模型或小说参数。"""
+    interface_format = self.embedding_interface_format_var.get().strip()
+    base_url = self.embedding_url_var.get().strip()
+    model_name = self.embedding_model_name_var.get().strip()
+    if not interface_format or not base_url or not model_name:
+        messagebox.showwarning("配置不完整", "请填写嵌入接口格式、Base URL 和模型名称。")
+        return False
+
+    embedding_config = {
+        "api_key": self.embedding_api_key_var.get().strip(),
+        "base_url": base_url,
+        "model_name": model_name,
+        "retrieval_k": max(1, self.safe_get_int(self.embedding_retrieval_k_var, 4)),
+        "interface_format": interface_format,
+    }
+    config_data = load_config(self.config_file) or {}
+    config_data.setdefault("embedding_configs", {})[interface_format] = embedding_config
+    config_data["last_embedding_interface_format"] = interface_format
+
+    if not save_config(config_data, self.config_file):
+        messagebox.showerror("保存失败", "无法保存嵌入模型配置。")
+        return False
+
+    self.loaded_config = config_data
+    self.embedding_retrieval_k_var.set(str(embedding_config["retrieval_k"]))
+    self.log(f"嵌入模型配置已保存：{interface_format} / {model_name}")
+    messagebox.showinfo("保存成功", "嵌入模型配置已保存。")
+    return True
 
 def build_config_choose_tab(self):
 

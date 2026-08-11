@@ -7,6 +7,10 @@ import logging
 import re
 
 
+_nltk_available = None
+_nltk_warning_logged = False
+
+
 def fallback_sentence_split(text: str) -> list[str]:
     """在 NLTK 数据包不可用时，用中英文常见句末标点做保守切分。"""
     stripped_text = (text or "").strip()
@@ -24,13 +28,19 @@ def split_sentences(text: str) -> list[str]:
     if not stripped_text:
         return []
 
-    try:
-        import nltk
+    global _nltk_available, _nltk_warning_logged
+    if _nltk_available is not False:
+        try:
+            import nltk
 
-        sentences = nltk.sent_tokenize(stripped_text)
-        if sentences:
-            return sentences
-    except (LookupError, ImportError, OSError) as exc:
-        logging.warning("NLTK sentence tokenizer unavailable, using fallback splitter: %s", exc)
+            sentences = nltk.sent_tokenize(stripped_text)
+            _nltk_available = True
+            if sentences:
+                return sentences
+        except (LookupError, ImportError, OSError):
+            _nltk_available = False
+            if not _nltk_warning_logged:
+                logging.warning("NLTK 分句资源不可用，后续使用内置分句器。")
+                _nltk_warning_logged = True
 
     return fallback_sentence_split(stripped_text)

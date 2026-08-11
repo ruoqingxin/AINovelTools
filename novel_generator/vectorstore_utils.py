@@ -297,6 +297,41 @@ def get_relevant_context_from_vector_store(embedding_adapter, query: str, filepa
         traceback.print_exc()
         return ""
 
+
+def get_knowledge_context_from_store(
+    store,
+    queries: list[str],
+    k: int = 4,
+    max_chars: int = 8000,
+) -> str:
+    """按多个主题检索知识库内容，并保留来源信息供生成提示词使用。"""
+    if not store or not queries:
+        return ""
+
+    unique_documents = []
+    seen = set()
+    for query in queries:
+        docs = store.similarity_search(
+            query,
+            k=max(1, k),
+            filter={"source_type": "knowledge"},
+        )
+        for doc in docs:
+            text = doc.page_content.strip()
+            if not text:
+                continue
+            source = doc.metadata.get("source_name", "未知来源")
+            key = (source, text)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_documents.append(f"[来源：{source}]\n{text}")
+
+    context = "\n\n".join(unique_documents)
+    if len(context) > max_chars:
+        context = context[:max_chars].rstrip() + "\n（其余检索内容因长度限制省略）"
+    return context
+
 def _get_sentence_transformer(model_name: str = 'paraphrase-MiniLM-L6-v2'):
     """获取sentence transformer模型，处理SSL问题"""
     try:

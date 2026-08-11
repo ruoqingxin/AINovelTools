@@ -63,6 +63,13 @@
             "model_name": "gemini-embedding-2",
             "retrieval_k": 4,
             "interface_format": "Gemini"
+        },
+        "SiliconFlow": {
+            "api_key": "",
+            "base_url": "https://api.siliconflow.cn/v1/embeddings",
+            "model_name": "BAAI/bge-m3",
+            "retrieval_k": 4,
+            "interface_format": "SiliconFlow"
         }
     },
     "other_params": {

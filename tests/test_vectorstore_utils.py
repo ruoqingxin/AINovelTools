@@ -19,6 +19,7 @@ except ImportError:
     sys.modules["langchain_core.documents"] = documents_module
 
 from novel_generator.vectorstore_utils import (
+    get_knowledge_context_from_store,
     replace_source_documents,
     update_vector_store,
 )
@@ -28,6 +29,7 @@ class FakeStore:
     def __init__(self):
         self.deleted = []
         self.added = []
+        self.searches = []
 
     def get(self, **kwargs):
         return {
@@ -42,8 +44,23 @@ class FakeStore:
     def add_documents(self, documents, ids):
         self.added.append((documents, ids))
 
+    def similarity_search(self, query, k, filter):
+        self.searches.append((query, k, filter))
+        return [
+            Document(page_content="既有世界设定", metadata={"source_name": "世界观.md"}),
+        ]
+
 
 class VectorStoreTest(unittest.TestCase):
+    def test_knowledge_context_uses_only_knowledge_and_keeps_source(self):
+        store = FakeStore()
+
+        context = get_knowledge_context_from_store(store, ["世界", "历史"], k=3)
+
+        self.assertEqual(context, "[来源：世界观.md]\n既有世界设定")
+        self.assertEqual(store.searches[0], ("世界", 3, {"source_type": "knowledge"}))
+        self.assertEqual(len(store.searches), 2)
+
     def test_chapter_update_replaces_existing_source_with_metadata(self):
         store = FakeStore()
         with patch("novel_generator.vectorstore_utils.load_vector_store", return_value=store):

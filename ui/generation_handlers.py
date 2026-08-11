@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 import customtkinter as ctk
 import glob
+import logging
 from utils import read_file, get_word_count
 from novel_generator import (
     Novel_architecture_generate,
@@ -13,12 +14,14 @@ from novel_generator import (
     generate_chapter_draft,
     finalize_chapter,
     import_knowledge_file,
+    collect_knowledge_files,
     clear_vector_store,
     enrich_chapter_text,
     build_chapter_prompt
 )
 from consistency_checker import check_consistency
 from config_manager import get_llm_config
+from embedding_adapters import create_embedding_adapter
 from novel_generator.storage import NovelProjectRepository
 
 def generate_novel_architecture_ui(self):
@@ -27,7 +30,12 @@ def generate_novel_architecture_ui(self):
         messagebox.showwarning("警告", "请先选择保存文件路径")
         return
 
-    if not messagebox.askyesno("确认", "确定要生成小说架构吗？"):
+    confirmation_lines = ["确定要生成小说架构吗？"]
+    if os.path.exists(os.path.join(filepath, "Novel_architecture.txt")):
+        confirmation_lines.append("现有小说架构将被覆盖。")
+    if os.path.isdir(os.path.join(filepath, "vectorstore")):
+        confirmation_lines.append("已检测到知识库，生成时会按阶段检索并使用其中的设定。")
+    if not messagebox.askyesno("确认", "\n\n".join(confirmation_lines)):
         return
 
     def task():
@@ -53,6 +61,14 @@ def generate_novel_architecture_ui(self):
             # 获取内容指导
             user_guidance = self.user_guide_text.get("0.0", "end").strip()
 
+            embedding_api_key = self.embedding_api_key_var.get().strip()
+            embedding_url = self.embedding_url_var.get().strip()
+            embedding_interface_format = self.embedding_interface_format_var.get().strip()
+            embedding_model_name = self.embedding_model_name_var.get().strip()
+            embedding_retrieval_k = self.safe_get_int(self.embedding_retrieval_k_var, 4)
+
+            if os.path.isdir(os.path.join(filepath, "vectorstore")):
+                self.safe_log("正在检索知识库，并按核心、角色、世界观和剧情阶段注入设定...")
             self.safe_log("开始生成小说架构...")
             operation = Novel_architecture_generate(
                 interface_format=interface_format,
@@ -67,7 +83,12 @@ def generate_novel_architecture_ui(self):
                 temperature=temperature,
                 max_tokens=max_tokens,
                 timeout=timeout_val,
-                user_guidance=user_guidance  # 添加内容指导参数
+                user_guidance=user_guidance,
+                embedding_api_key=embedding_api_key,
+                embedding_url=embedding_url,
+                embedding_interface_format=embedding_interface_format,
+                embedding_model_name=embedding_model_name,
+                embedding_retrieval_k=embedding_retrieval_k,
             )
             if not operation:
                 self.safe_log(f"❌ {operation.message}")
@@ -732,62 +753,118 @@ def generate_batch_ui(self):
 
 
 def import_knowledge_handler(self):
-    selected_file = filedialog.askopenfilename(
-        title="选择要导入的知识库文件",
-        filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+    filepath = self.filepath_var.get().strip()
+    if not filepath:
+        messagebox.showwarning("警告", "请先配置小说保存路径。")
+        return
+
+    emb_api_key = self.embedding_api_key_var.get().strip()
+    emb_url = self.embedding_url_var.get().strip()
+    emb_format = self.embedding_interface_format_var.get().strip()
+    emb_model = self.embedding_model_name_var.get().strip()
+    if not emb_model:
+        messagebox.showwarning("Embedding 配置不完整", "请先填写嵌入模型名称。")
+        return
+    if not emb_url:
+        messagebox.showwarning("Embedding 配置不完整", "请先填写嵌入服务 Base URL。")
+        return
+    if emb_format.lower() in {"openai", "azure openai", "gemini", "siliconflow"} and not emb_api_key:
+        messagebox.showwarning(
+            "Embedding 配置不完整",
+            f"{emb_format} 嵌入服务需要 API Key，请先在“嵌入模型设置”中填写并测试。",
+        )
+        return
+
+    import_folder = messagebox.askyesnocancel(
+        "导入知识库",
+        "选择“是”导入整个文件夹，选择“否”导入一个或多个文件。",
     )
-    if selected_file:
+    if import_folder is None:
+        return
+
+    selected_folder = ""
+    if import_folder:
+        selected_folder = filedialog.askdirectory(title="选择知识库文件夹")
+        if not selected_folder:
+            return
+        selected_files = collect_knowledge_files(selected_folder)
+        if not selected_files:
+            messagebox.showinfo("导入知识库", "所选文件夹及其子文件夹中没有 .txt 或 .md 文件。")
+            return
+    else:
+        selected_files = filedialog.askopenfilenames(
+            title="选择一个或多个知识库文件",
+            filetypes=[
+                ("知识库文件", "*.txt *.md"),
+                ("文本文件", "*.txt"),
+                ("Markdown 文件", "*.md"),
+                ("所有文件", "*.*"),
+            ]
+        )
+        if not selected_files:
+            return
+
+    if selected_files:
         def task():
             self.disable_button_safe(self.btn_import_knowledge)
             try:
-                emb_api_key = self.embedding_api_key_var.get().strip()
-                emb_url = self.embedding_url_var.get().strip()
-                emb_format = self.embedding_interface_format_var.get().strip()
-                emb_model = self.embedding_model_name_var.get().strip()
-
-                # 尝试不同编码读取文件
-                content = None
-                encodings = ['utf-8', 'gbk', 'gb2312', 'ansi']
-                for encoding in encodings:
-                    try:
-                        with open(selected_file, 'r', encoding=encoding) as f:
-                            content = f.read()
-                            break
-                    except UnicodeDecodeError:
-                        continue
-                    except Exception as e:
-                        self.safe_log(f"读取文件时发生错误: {str(e)}")
-                        raise
-
-                if content is None:
-                    raise Exception("无法以任何已知编码格式读取文件")
-
-                # 创建临时UTF-8文件
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False, suffix='.txt') as temp:
-                    temp.write(content)
-                    temp_path = temp.name
-
                 try:
-                    self.safe_log(f"开始导入知识库文件: {selected_file}")
-                    imported = import_knowledge_file(
-                        embedding_api_key=emb_api_key,
-                        embedding_url=emb_url,
-                        embedding_interface_format=emb_format,
-                        embedding_model_name=emb_model,
-                        file_path=temp_path,
-                        filepath=self.filepath_var.get().strip(),
-                        source_name=selected_file,
+                    embedding_adapter = create_embedding_adapter(
+                        emb_format,
+                        emb_api_key,
+                        emb_url,
+                        emb_model,
                     )
-                    if not imported:
-                        raise RuntimeError("知识库文件导入失败，请查看 app.log")
-                    self.safe_log("✅ 知识库文件导入完成。")
-                finally:
-                    # 清理临时文件
+                    test_vector = embedding_adapter.embed_query("知识库导入连接测试")
+                    if test_vector is None or len(test_vector) == 0:
+                        raise RuntimeError("Embedding 服务返回了空向量")
+                except Exception as exc:
+                    logging.exception("Embedding 配置或连接测试失败")
+                    error_message = f"Embedding 配置或连接测试失败：{exc}"
+                    self.safe_log(f"❌ {error_message}")
+                    self.master.after(
+                        0,
+                        lambda message=error_message: messagebox.showerror("无法导入知识库", message),
+                    )
+                    return
+
+                successes = []
+                failures = []
+                total = len(selected_files)
+                for index, selected_file in enumerate(selected_files, 1):
+                    display_name = (
+                        os.path.relpath(selected_file, selected_folder)
+                        if selected_folder
+                        else os.path.basename(selected_file)
+                    )
+                    self.safe_log(f"[{index}/{total}] 正在导入：{display_name}")
                     try:
-                        os.unlink(temp_path)
-                    except:
-                        pass
+                        imported = import_knowledge_file(
+                            embedding_api_key=emb_api_key,
+                            embedding_url=emb_url,
+                            embedding_interface_format=emb_format,
+                            embedding_model_name=emb_model,
+                            file_path=selected_file,
+                            filepath=filepath,
+                            source_name=selected_file,
+                            embedding_adapter=embedding_adapter,
+                        )
+                        if imported:
+                            successes.append(display_name)
+                            self.safe_log(f"✅ 已导入：{display_name}")
+                        else:
+                            failures.append(display_name)
+                            self.safe_log(f"❌ 导入失败：{display_name}，请查看 app.log")
+                    except Exception as exc:
+                        failures.append(display_name)
+                        logging.exception("导入知识库文件失败: %s", selected_file)
+                        self.safe_log(f"❌ 导入失败：{display_name}（{exc}）")
+
+                summary = f"知识库导入完成：成功 {len(successes)} 个，失败 {len(failures)} 个。"
+                self.safe_log(summary)
+                if failures:
+                    self.safe_log("失败文件：" + "、".join(failures))
+                self.master.after(0, lambda: messagebox.showinfo("导入结果", summary))
 
             except Exception:
                 self.handle_exception("导入知识库时出错")

@@ -258,14 +258,15 @@ After packaging an executable (e.g., `main.exe` on Windows) will appear in the `
 7. **Repeat steps 4–6** until all chapters are generated and finalized.
 
 > Vector retrieval tips:
-> 1. Explicitly set the embedding interface and model name.
-> 2. For local Ollama embeddings start the Ollama service first:
+> 1. Import multiple `.txt` or `.md` files, or select a folder to recursively import every supported file.
+> 2. Explicitly set the embedding interface and model name.
+> 3. For local Ollama embeddings start the Ollama service first:
 >    ```bash
 >    ollama serve  # Start the service
 >    ollama pull nomic-embed-text  # Download/enable the model
 >    ```
-> 3. Clear the `vectorstore` directory after switching embedding models.
-> 4. For cloud embeddings ensure the API permissions are enabled.
+> 4. Clear the `vectorstore` directory after switching embedding models.
+> 5. For cloud embeddings ensure the API permissions are enabled.
 
 ---
 

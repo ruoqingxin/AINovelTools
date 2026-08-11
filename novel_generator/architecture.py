@@ -9,7 +9,13 @@ import logging
 from novel_generator.common import invoke_with_cleaning
 from novel_generator.results import OperationResult
 from novel_generator.storage import NovelProjectRepository
+from novel_generator.vectorstore_utils import (
+    get_knowledge_context_from_store,
+    get_vectorstore_dir,
+    load_vector_store,
+)
 from llm_adapters import create_llm_adapter
+from embedding_adapters import create_embedding_adapter
 import prompt_definitions
 logging.basicConfig(
     filename='app.log',      # 日志文件名
@@ -58,7 +64,12 @@ def Novel_architecture_generate(
     user_guidance: str = "",  # 新增参数
     temperature: float = 0.7,
     max_tokens: int = 2048,
-    timeout: int = 600
+    timeout: int = 600,
+    embedding_api_key: str = "",
+    embedding_url: str = "",
+    embedding_interface_format: str = "",
+    embedding_model_name: str = "",
+    embedding_retrieval_k: int = 4,
 ) -> OperationResult:
     """
     依次调用:
@@ -86,15 +97,61 @@ def Novel_architecture_generate(
         max_tokens=max_tokens,
         timeout=timeout
     )
+
+    knowledge_store = None
+    if os.path.isdir(get_vectorstore_dir(filepath)):
+        if not all((embedding_url, embedding_interface_format, embedding_model_name)):
+            return OperationResult.fail("检测到知识库，但 Embedding 配置不完整，无法用于架构生成")
+        try:
+            embedding_adapter = create_embedding_adapter(
+                embedding_interface_format,
+                embedding_api_key,
+                embedding_url,
+                embedding_model_name,
+            )
+            knowledge_store = load_vector_store(embedding_adapter, filepath)
+            if knowledge_store is None:
+                return OperationResult.fail("知识库加载失败，请检查 Embedding 配置和服务连接")
+        except Exception as exc:
+            logging.exception("加载架构生成所需知识库失败")
+            return OperationResult.fail(f"知识库加载失败：{exc}")
+
+    def retrieve_knowledge(stage: str, queries: list[str]) -> str:
+        if knowledge_store is None:
+            logging.info("Architecture stage %s: no knowledge base is available.", stage)
+            return "（当前项目没有可用的知识库内容）"
+        try:
+            context = get_knowledge_context_from_store(
+                knowledge_store,
+                queries,
+                k=max(1, embedding_retrieval_k),
+            )
+        except Exception as exc:
+            logging.exception("Architecture knowledge retrieval failed at stage %s", stage)
+            raise RuntimeError(f"生成{stage}时检索知识库失败：{exc}") from exc
+        if not context:
+            raise RuntimeError(f"生成{stage}时没有检索到知识库内容，请检查知识库索引")
+        logging.info(
+            "Architecture stage %s: injected %d characters of knowledge context.",
+            stage,
+            len(context),
+        )
+        return context
+
     # Step1: 核心种子
     if "core_seed_result" not in partial_data:
         logging.info("Step1: Generating core_seed_prompt (核心种子) ...")
+        knowledge_context = retrieve_knowledge("核心种子", [
+            f"{topic} {genre} 故事核心 主线 开局",
+            "世界背景 核心矛盾 主角 重要设定",
+        ])
         prompt_core = prompt_definitions.core_seed_prompt.format(
             topic=topic,
             genre=genre,
             number_of_chapters=number_of_chapters,
             word_number=word_number,
-            user_guidance=user_guidance  # 修复：添加内容指导
+            user_guidance=user_guidance,
+            knowledge_context=knowledge_context,
         )
         core_seed_result = invoke_with_cleaning(llm_adapter, prompt_core)
         if not core_seed_result.strip():
@@ -108,9 +165,14 @@ def Novel_architecture_generate(
     # Step2: 角色动力学
     if "character_dynamics_result" not in partial_data:
         logging.info("Step2: Generating character_dynamics_prompt ...")
+        knowledge_context = retrieve_knowledge("角色动力学", [
+            f"{topic} 主角 核心人物 人物关系 身份",
+            "人物 阵营 势力 目标 秘密 冲突",
+        ])
         prompt_character = prompt_definitions.character_dynamics_prompt.format(
             core_seed=partial_data["core_seed_result"].strip(),
-            user_guidance=user_guidance
+            user_guidance=user_guidance,
+            knowledge_context=knowledge_context,
         )
         character_dynamics_result = invoke_with_cleaning(llm_adapter, prompt_character)
         if not character_dynamics_result.strip():
@@ -139,9 +201,15 @@ def Novel_architecture_generate(
     # Step3: 世界观
     if "world_building_result" not in partial_data:
         logging.info("Step3: Generating world_building_prompt ...")
+        knowledge_context = retrieve_knowledge("世界观", [
+            "世界背景 历史 地域 地图",
+            "力量体系 境界 法则 资源",
+            "势力格局 社会制度 文化 禁忌",
+        ])
         prompt_world = prompt_definitions.world_building_prompt.format(
             core_seed=partial_data["core_seed_result"].strip(),
-            user_guidance=user_guidance  # 修复：添加用户指导
+            user_guidance=user_guidance,
+            knowledge_context=knowledge_context,
         )
         world_building_result = invoke_with_cleaning(llm_adapter, prompt_world)
         if not world_building_result.strip():
@@ -155,11 +223,17 @@ def Novel_architecture_generate(
     # Step4: 三幕式情节
     if "plot_arch_result" not in partial_data:
         logging.info("Step4: Generating plot_architecture_prompt ...")
+        knowledge_context = retrieve_knowledge("情节架构", [
+            f"{topic} 开局 主线剧情 核心冲突",
+            "伏笔 主题 真相 披露 转折",
+            "重要地点 道具 遗迹 势力冲突",
+        ])
         prompt_plot = prompt_definitions.plot_architecture_prompt.format(
             core_seed=partial_data["core_seed_result"].strip(),
             character_dynamics=partial_data["character_dynamics_result"].strip(),
             world_building=partial_data["world_building_result"].strip(),
-            user_guidance=user_guidance  # 修复：添加用户指导
+            user_guidance=user_guidance,
+            knowledge_context=knowledge_context,
         )
         plot_arch_result = invoke_with_cleaning(llm_adapter, prompt_plot)
         if not plot_arch_result.strip():

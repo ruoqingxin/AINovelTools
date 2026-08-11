@@ -100,9 +100,23 @@ def build_left_layout(self):
     self.btn_batch_generate.grid(row=0, column=4, padx=5, pady=2, sticky="ew")
 
 
-    # 日志文本框
-    log_label = ctk.CTkLabel(self.left_frame, text="输出日志（只读）", font=("Microsoft YaHei", 12))
-    log_label.grid(row=3, column=0, padx=5, pady=(5, 0), sticky="w")
+    # 日志标题与操作
+    log_header = ctk.CTkFrame(self.left_frame, fg_color="transparent")
+    log_header.grid(row=3, column=0, padx=5, pady=(5, 0), sticky="ew")
+    log_header.columnconfigure(0, weight=1)
+
+    log_label = ctk.CTkLabel(log_header, text="输出日志（只读）", font=("Microsoft YaHei", 12))
+    log_label.grid(row=0, column=0, sticky="w")
+
+    self.btn_clear_log = ctk.CTkButton(
+        log_header,
+        text="清空日志",
+        command=self.clear_app_log,
+        width=80,
+        height=26,
+        font=("Microsoft YaHei", 12),
+    )
+    self.btn_clear_log.grid(row=0, column=1, sticky="e")
 
     self.log_text = ctk.CTkTextbox(self.left_frame, wrap="word", font=("Microsoft YaHei", 12))
     TextWidgetContextMenu(self.log_text)

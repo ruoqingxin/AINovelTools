@@ -27,6 +27,7 @@ class ConfigManagerTest(unittest.TestCase):
         self.assertEqual(llm_configs["OpenAI GPT 5.5"]["model_name"], "gpt-5.5")
         self.assertEqual(config["embedding_configs"]["OpenAI"]["model_name"], "text-embedding-3-small")
         self.assertEqual(config["embedding_configs"]["Gemini"]["model_name"], "gemini-embedding-2")
+        self.assertEqual(config["embedding_configs"]["SiliconFlow"]["model_name"], "BAAI/bge-m3")
 
         stale_names = {"DeepSeek V3", "Gemini 2.0 Flash", "Gemini 2.5 Flash", "Gemini 2.5 Pro", "GPT 5"}
         self.assertTrue(stale_names.isdisjoint(llm_configs.keys()))

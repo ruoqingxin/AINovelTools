@@ -32,6 +32,17 @@ class TextUtilsTest(unittest.TestCase):
 
         self.assertEqual(sentences, ["One sentence.", "Another sentence."])
 
+    def test_nltk_failure_is_cached(self):
+        text_utils = load_text_utils_module()
+        unavailable_nltk = mock.Mock()
+        unavailable_nltk.sent_tokenize.side_effect = LookupError("missing data")
+
+        with mock.patch.dict(sys.modules, {"nltk": unavailable_nltk}):
+            text_utils.split_sentences("First. Second.")
+            text_utils.split_sentences("Third. Fourth.")
+
+        self.assertEqual(unavailable_nltk.sent_tokenize.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -260,14 +260,15 @@ pyinstaller main.spec
 7. **重复第 4-6 步** 直到所有章节生成并定稿！
 
 > **向量检索配置提示**  
-> 1. embedding模型需要显示指定接口和模型名称；
-> 2. 使用**本地Ollama**的**Embedding**时需提前启动Ollama服务：  
+> 1. 知识库可导入多个 `.txt`、`.md` 文件，也可选择文件夹并递归导入其中所有支持的文件；
+> 2. embedding模型需要显示指定接口和模型名称；
+> 3. 使用**本地Ollama**的**Embedding**时需提前启动Ollama服务：
 >    ```bash
 >    ollama serve  # 启动服务
 >    ollama pull nomic-embed-text  # 下载/启用模型
 >    ```
-> 3. 切换不同Embedding模型后建议清空vectorstore目录
-> 4. 云端Embedding需确保对应API权限已开通
+> 4. 切换不同Embedding模型后建议清空vectorstore目录
+> 5. 云端Embedding需确保对应API权限已开通
 
 ---
 
