@@ -11,7 +11,7 @@ def build_novel_params_area(self, start_row=1):
     self.params_frame.columnconfigure(1, weight=1)
 
     # 1) 主题(Topic)
-    create_label_with_help_for_novel_params(self, parent=self.params_frame, label_text="主题(Topic):", tooltip_key="topic", row=0, column=0, font=("Microsoft YaHei", 12), sticky="ne")
+    create_label_with_help_for_novel_params(self, parent=self.params_frame, label_text="主题:", tooltip_key="topic", row=0, column=0, font=("Microsoft YaHei", 12), sticky="ne")
     self.topic_text = ctk.CTkTextbox(self.params_frame, height=80, wrap="word", font=("Microsoft YaHei", 12))
     TextWidgetContextMenu(self.topic_text)
     self.topic_text.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
@@ -19,13 +19,13 @@ def build_novel_params_area(self, start_row=1):
         self.topic_text.insert("0.0", self.topic_default)
 
     # 2) 类型(Genre)
-    create_label_with_help_for_novel_params(self, parent=self.params_frame, label_text="类型(Genre):", tooltip_key="genre", row=1, column=0, font=("Microsoft YaHei", 12))
+    create_label_with_help_for_novel_params(self, parent=self.params_frame, label_text="类型:", tooltip_key="genre", row=1, column=0, font=("Microsoft YaHei", 12))
     genre_entry = ctk.CTkEntry(self.params_frame, textvariable=self.genre_var, font=("Microsoft YaHei", 12))
     genre_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
     # 3) 章节数 & 每章字数
     row_for_chapter_and_word = 2
-    create_label_with_help_for_novel_params(self, parent=self.params_frame, label_text="章节数 & 每章字数:", tooltip_key="num_chapters", row=row_for_chapter_and_word, column=0, font=("Microsoft YaHei", 12))
+    create_label_with_help_for_novel_params(self, parent=self.params_frame, label_text="章节数和每章字数:", tooltip_key="num_chapters", row=row_for_chapter_and_word, column=0, font=("Microsoft YaHei", 12))
     chapter_word_frame = ctk.CTkFrame(self.params_frame)
     chapter_word_frame.grid(row=row_for_chapter_and_word, column=1, padx=5, pady=5, sticky="ew")
     chapter_word_frame.columnconfigure((0, 1, 2, 3), weight=0)

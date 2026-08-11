@@ -15,7 +15,7 @@ import time
 
 REQUEST_TIMEOUT = (5, 30)
 def build_other_settings_tab(self):
-    self.other_settings_tab = self.tabview.add("Other Settings")
+    self.other_settings_tab = self.tabview.add("其他设置")
     self.other_settings_tab.rowconfigure(0, weight=1)
     self.other_settings_tab.columnconfigure(0, weight=1)
     if "webdav_config" not in self.loaded_config:
@@ -119,7 +119,7 @@ def build_other_settings_tab(self):
     dav_frame = ctk.CTkFrame(self.other_settings_tab)
     dav_frame.pack(padx=20, pady=20, fill="x")
 
-    dav_title = ctk.CTkLabel(dav_frame, text="webdav设置", font=("Microsoft YaHei", 16, "bold"))
+    dav_title = ctk.CTkLabel(dav_frame, text="WebDAV 设置", font=("Microsoft YaHei", 16, "bold"))
     dav_title.pack(anchor="w", padx=5, pady=(0, 5))
     dav_warp_frame = ctk.CTkFrame(dav_frame, corner_radius=10, border_width=2, border_color="gray")
     dav_warp_frame.pack(fill="x", padx=5)
@@ -127,15 +127,15 @@ def build_other_settings_tab(self):
 
     
 
-    create_label_with_help(self, parent=dav_warp_frame, label_text="Webdav URL", tooltip_key="webdav_url",row=0, column=0, font=("Microsoft YaHei", 12), sticky="w")
+    create_label_with_help(self, parent=dav_warp_frame, label_text="WebDAV 地址", tooltip_key="webdav_url",row=0, column=0, font=("Microsoft YaHei", 12), sticky="w")
     dav_url_entry = ctk.CTkEntry(dav_warp_frame, textvariable=self.webdav_url_var, font=("Microsoft YaHei", 12))
     dav_url_entry.grid(row=0, column=1, padx=5, pady=5, sticky="w")
 
-    create_label_with_help(self, parent=dav_warp_frame, label_text="Webdav用户名", tooltip_key="webdav_username",row=1, column=0, font=("Microsoft YaHei", 12), sticky="w")
+    create_label_with_help(self, parent=dav_warp_frame, label_text="WebDAV 用户名", tooltip_key="webdav_username",row=1, column=0, font=("Microsoft YaHei", 12), sticky="w")
     dav_username_entry = ctk.CTkEntry(dav_warp_frame, textvariable=self.webdav_username_var, font=("Microsoft YaHei", 12))
     dav_username_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w")
 
-    create_label_with_help(self, parent=dav_warp_frame, label_text="Webdav密码", tooltip_key="webdav_password",row=2, column=0, font=("Microsoft YaHei", 12), sticky="w")
+    create_label_with_help(self, parent=dav_warp_frame, label_text="WebDAV 密码", tooltip_key="webdav_password",row=2, column=0, font=("Microsoft YaHei", 12), sticky="w")
     dav_password_entry = ctk.CTkEntry(dav_warp_frame, textvariable=self.webdav_password_var, font=("Microsoft YaHei", 12), show="*")
     dav_password_entry.grid(row=2, column=1, padx=5, pady=5, sticky="w")
 

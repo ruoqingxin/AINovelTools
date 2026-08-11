@@ -43,7 +43,7 @@ class NovelGeneratorGUI:
     """
     def __init__(self, master):
         self.master = master
-        self.master.title("Novel Generator GUI")
+        self.master.title("AI 小说生成器")
         try:
             if os.path.exists("icon.ico"):
                 self.master.iconbitmap("icon.ico")
@@ -178,7 +178,7 @@ class NovelGeneratorGUI:
         # English Mode Button
         self.english_mode_btn = ctk.CTkButton(
             self.master, 
-            text="to English mode", 
+            text="切换为英文模式",
             width=100, 
             height=20,
             
@@ -395,7 +395,7 @@ class NovelGeneratorGUI:
         
         try:
             if config_manager.IS_ENGLISH:
-                self.english_mode_btn.configure(text="to Chinese mode")
+                self.english_mode_btn.configure(text="切换为中文模式")
                 # Load English prompts and inject them into prompt_definitions module
                 source_module = importlib.import_module('prompt_definitions_en')
                 importlib.reload(source_module)
@@ -403,7 +403,7 @@ class NovelGeneratorGUI:
                     if not attr.startswith('__'):
                         setattr(prompt_definitions, attr, getattr(source_module, attr))
             else:
-                self.english_mode_btn.configure(text="to English mode")
+                self.english_mode_btn.configure(text="切换为英文模式")
                 # Reload prompt_definitions to restore original Chinese strings from file
                 importlib.reload(prompt_definitions)
             
