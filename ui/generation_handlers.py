@@ -7,6 +7,7 @@ from tkinter import messagebox, filedialog
 import customtkinter as ctk
 import glob
 import logging
+import re
 from utils import read_file, get_word_count
 from novel_generator import (
     Novel_architecture_generate,
@@ -59,7 +60,7 @@ def generate_novel_architecture_ui(self):
             num_chapters = self.safe_get_int(self.num_chapters_var, 10)
             word_number = self.safe_get_int(self.word_number_var, 3000)
             # 获取内容指导
-            user_guidance = self.user_guide_text.get("0.0", "end").strip()
+            user_guidance = self.planning_guide_text.get("0.0", "end").strip()
 
             embedding_api_key = self.embedding_api_key_var.get().strip()
             embedding_url = self.embedding_url_var.get().strip()
@@ -125,7 +126,7 @@ def generate_chapter_blueprint_ui(self):
             timeout_val = llm_config["timeout"]
 
 
-            user_guidance = self.user_guide_text.get("0.0", "end").strip()  # 新增获取用户指导
+            user_guidance = self.planning_guide_text.get("0.0", "end").strip()
 
             self.safe_log("开始生成章节蓝图...")
             operation = Chapter_blueprint_generate(
@@ -174,7 +175,7 @@ def generate_chapter_draft_ui(self):
             word_number = self.safe_get_int(self.word_number_var, 3000)
             user_guidance = self.user_guide_text.get("0.0", "end").strip()
 
-            char_inv = self.characters_involved_var.get().strip()
+            char_inv = self.char_inv_text.get("0.0", "end").strip()
             key_items = self.key_items_var.get().strip()
             scene_loc = self.scene_location_var.get().strip()
             time_constr = self.time_constraint_var.get().strip()
@@ -230,7 +231,11 @@ def generate_chapter_draft_ui(self):
                 
                 # 插入角色内容
                 final_prompt = prompt_text
-                role_names = [name.strip() for name in self.char_inv_text.get("0.0", "end").strip().split(',') if name.strip()]
+                role_names = [
+                    name.strip()
+                    for name in re.split(r"[,，\n]+", self.char_inv_text.get("0.0", "end").strip())
+                    if name.strip()
+                ]
                 role_lib_path = os.path.join(filepath, "角色库")
                 role_contents = []
                 
@@ -594,7 +599,7 @@ def generate_batch_ui(self):
         draft_timeout = draft_config["timeout"]
         user_guidance = self.user_guide_text.get("0.0", "end").strip()  
 
-        char_inv = self.characters_involved_var.get().strip()
+        char_inv = self.char_inv_text.get("0.0", "end").strip()
         key_items = self.key_items_var.get().strip()
         scene_loc = self.scene_location_var.get().strip()
         time_constr = self.time_constraint_var.get().strip()
@@ -628,7 +633,11 @@ def generate_batch_ui(self):
             timeout=draft_timeout,
         )
         final_prompt = prompt_text
-        role_names = [name.strip() for name in self.char_inv_text.get("0.0", "end").split("\n")]
+        role_names = [
+            name.strip()
+            for name in re.split(r"[,，\n]+", self.char_inv_text.get("0.0", "end").strip())
+            if name.strip()
+        ]
         role_lib_path = os.path.join(self.filepath_var.get().strip(), "角色库")
         role_contents = []
         if os.path.exists(role_lib_path):
@@ -771,7 +780,7 @@ def import_knowledge_handler(self):
     if emb_format.lower() in {"openai", "azure openai", "gemini", "siliconflow"} and not emb_api_key:
         messagebox.showwarning(
             "Embedding 配置不完整",
-            f"{emb_format} 嵌入服务需要 API Key，请先在“嵌入模型设置”中填写并测试。",
+            f"{emb_format} 嵌入服务需要 API Key，请先在“设置 > 嵌入模型设置”中填写并测试。",
         )
         return
 

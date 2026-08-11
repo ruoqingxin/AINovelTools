@@ -56,6 +56,20 @@ class ConfigManagerTest(unittest.TestCase):
         self.assertEqual(config["choose_configs"]["consistency_review_llm"], "DeepSeek V4 Flash")
         self.assertEqual(validate_choose_configs(config), [])
 
+    def test_normalize_config_splits_legacy_guidance_without_losing_it(self):
+        config = normalize_config({
+            "other_params": {"user_guidance": "保持第一人称限知视角"},
+        })
+
+        self.assertEqual(
+            config["other_params"]["planning_guidance"],
+            "保持第一人称限知视角",
+        )
+        self.assertEqual(
+            config["other_params"]["chapter_guidance"],
+            "保持第一人称限知视角",
+        )
+
     def test_config_example_has_valid_task_references(self):
         example_path = REPO_ROOT / "config.example.json"
         config = json.loads(example_path.read_text(encoding="utf-8"))

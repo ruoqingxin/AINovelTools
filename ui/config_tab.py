@@ -54,20 +54,36 @@ def create_label_with_help(self, parent, label_text, tooltip_key, row, column,
 
     return frame
 
-def build_config_tabview(self):
-    """
-    创建大模型、嵌入模型、任务模型和代理设置选项卡。
-    """
-    self.config_tabview = ctk.CTkTabview(self.config_frame)
-    self.config_tabview.grid(row=0, column=0, sticky="we", padx=5, pady=5)
 
-    self.ai_config_tab = self.config_tabview.add("大模型设置")
-    self.embeddings_config_tab = self.config_tabview.add("嵌入模型设置")
-    self.config_choose = self.config_tabview.add("任务模型选择")
+def _create_settings_panel(settings_page):
+    """Create the bordered form surface shared by all settings pages."""
+    panel = ctk.CTkFrame(
+        settings_page,
+        corner_radius=10,
+        border_width=2,
+        border_color="gray",
+    )
+    panel.pack(fill="x", padx=5, pady=5)
+    return panel
+
+def build_config_tabview(self, parent):
+    """
+    在设置页中创建大模型、嵌入模型、任务模型和代理设置选项卡。
+    """
+    self.config_tabview = ctk.CTkTabview(parent, width=920)
+    self.config_tabview.pack(fill="y", expand=True, padx=10, pady=8)
+
+    ai_config_page = self.config_tabview.add("大模型设置")
+    embeddings_config_page = self.config_tabview.add("嵌入模型设置")
+    config_choose_page = self.config_tabview.add("任务模型选择")
 
     # PenBo 增加代理功能支持
-    self.proxy_setting_tab = self.config_tabview.add("代理设置")
+    proxy_setting_page = self.config_tabview.add("代理设置")
 
+    self.ai_config_tab = _create_settings_panel(ai_config_page)
+    self.embeddings_config_tab = _create_settings_panel(embeddings_config_page)
+    self.config_choose = _create_settings_panel(config_choose_page)
+    self.proxy_setting_tab = _create_settings_panel(proxy_setting_page)
 
     build_ai_config_tab(self)
     build_embeddings_config_tab(self)
@@ -216,8 +232,9 @@ def build_ai_config_tab(self):
             "word_number": self.safe_get_int(self.word_number_var, 3000),
             "filepath": self.filepath_var.get(),
             "chapter_num": self.chapter_num_var.get(),
-            "user_guidance": self.user_guide_text.get("0.0", "end").strip(),
-            "characters_involved": self.characters_involved_var.get(),
+            "planning_guidance": self.planning_guide_text.get("0.0", "end").strip(),
+            "chapter_guidance": self.user_guide_text.get("0.0", "end").strip(),
+            "characters_involved": self.char_inv_text.get("0.0", "end").strip(),
             "key_items": self.key_items_var.get(),
             "scene_location": self.scene_location_var.get(),
             "time_constraint": self.time_constraint_var.get()
@@ -815,9 +832,17 @@ def load_config_btn(self):
         self.word_number_var.set(str(other_params.get("word_number", 3000)))
         self.filepath_var.set(other_params.get("filepath", ""))
         self.chapter_num_var.set(str(other_params.get("chapter_num", "1")))
+        legacy_guidance = other_params.get("user_guidance", "")
+        self.planning_guide_text.delete("0.0", "end")
+        self.planning_guide_text.insert(
+            "0.0", other_params.get("planning_guidance") or legacy_guidance
+        )
         self.user_guide_text.delete("0.0", "end")
-        self.user_guide_text.insert("0.0", other_params.get("user_guidance", ""))
-        self.characters_involved_var.set(other_params.get("characters_involved", ""))
+        self.user_guide_text.insert("0.0", other_params.get("chapter_guidance", ""))
+        characters = other_params.get("characters_involved", "")
+        self.characters_involved_var.set(characters)
+        self.char_inv_text.delete("0.0", "end")
+        self.char_inv_text.insert("0.0", characters)
         self.key_items_var.set(other_params.get("key_items", ""))
         self.scene_location_var.set(other_params.get("scene_location", ""))
         self.time_constraint_var.set(other_params.get("time_constraint", ""))
@@ -852,8 +877,9 @@ def save_config_btn(self):
         "word_number": self.safe_get_int(self.word_number_var, 3000),
         "filepath": self.filepath_var.get(),
         "chapter_num": self.chapter_num_var.get(),
-        "user_guidance": self.user_guide_text.get("0.0", "end").strip(),
-        "characters_involved": self.characters_involved_var.get(),
+        "planning_guidance": self.planning_guide_text.get("0.0", "end").strip(),
+        "chapter_guidance": self.user_guide_text.get("0.0", "end").strip(),
+        "characters_involved": self.char_inv_text.get("0.0", "end").strip(),
         "key_items": self.key_items_var.get(),
         "scene_location": self.scene_location_var.get(),
         "time_constraint": self.time_constraint_var.get()

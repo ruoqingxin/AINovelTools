@@ -1,6 +1,6 @@
 # ui/other_settings.py
 import customtkinter as ctk
-from ui.config_tab import create_label_with_help
+from ui.config_tab import build_config_tabview, create_label_with_help
 from tkinter import messagebox
 from config_manager import load_config, save_config
 import requests
@@ -15,9 +15,9 @@ import time
 
 REQUEST_TIMEOUT = (5, 30)
 def build_other_settings_tab(self):
-    self.other_settings_tab = self.tabview.add("其他设置")
-    self.other_settings_tab.rowconfigure(0, weight=1)
-    self.other_settings_tab.columnconfigure(0, weight=1)
+    self.other_settings_tab = self.tabview.add("设置")
+    build_config_tabview(self, self.other_settings_tab)
+    self.webdav_settings_tab = self.config_tabview.add("WebDAV 设置")
     if "webdav_config" not in self.loaded_config:
         self.loaded_config["webdav_config"] = {
             "webdav_url": "",
@@ -116,7 +116,7 @@ def build_other_settings_tab(self):
 
 
 
-    dav_frame = ctk.CTkFrame(self.other_settings_tab)
+    dav_frame = ctk.CTkFrame(self.webdav_settings_tab)
     dav_frame.pack(padx=20, pady=20, fill="x")
 
     dav_title = ctk.CTkLabel(dav_frame, text="WebDAV 设置", font=("Microsoft YaHei", 16, "bold"))

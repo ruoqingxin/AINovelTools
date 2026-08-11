@@ -110,7 +110,8 @@ DEFAULT_CONFIG = {
         "word_number": 0,
         "filepath": "",
         "chapter_num": "120",
-        "user_guidance": "",
+        "planning_guidance": "",
+        "chapter_guidance": "",
         "characters_involved": "",
         "key_items": "",
         "scene_location": "",
@@ -161,6 +162,13 @@ def normalize_config(config_data: dict) -> dict:
         config_data = {}
 
     defaults = get_default_config()
+
+    other_params = config_data.get("other_params")
+    if isinstance(other_params, dict):
+        legacy_guidance = str(other_params.get("user_guidance", "")).strip()
+        if legacy_guidance:
+            other_params.setdefault("planning_guidance", legacy_guidance)
+            other_params.setdefault("chapter_guidance", legacy_guidance)
 
     for section_name in ("llm_configs", "embedding_configs"):
         if not isinstance(config_data.get(section_name), dict):

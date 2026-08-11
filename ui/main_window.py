@@ -11,13 +11,17 @@ from .role_library import RoleLibrary
 from llm_adapters import create_llm_adapter
 
 from config_manager import load_config, save_config, test_llm_config, test_embedding_config
-from utils import read_file, save_string_to_txt, clear_file_content
+from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
 from tooltips import tooltips
 
 from ui.context_menu import TextWidgetContextMenu
-from ui.main_tab import build_main_tab, build_left_layout, build_right_layout
-from ui.config_tab import build_config_tabview, load_config_btn, save_config_btn, save_embedding_config
-from ui.novel_params_tab import build_novel_params_area, build_optional_buttons_area
+from ui.main_tab import build_main_tab, build_chapter_editor_tab
+from ui.config_tab import load_config_btn, save_config_btn, save_embedding_config
+from ui.novel_params_tab import (
+    build_chapter_params_area,
+    build_novel_params_area,
+    build_optional_buttons_area,
+)
 from ui.generation_handlers import (
     generate_novel_architecture_ui,
     generate_chapter_blueprint_ui,
@@ -49,7 +53,14 @@ class NovelGeneratorGUI:
                 self.master.iconbitmap("icon.ico")
         except Exception:
             pass
-        self.master.geometry("1350x840")
+        screen_width = self.master.winfo_screenwidth()
+        screen_height = self.master.winfo_screenheight()
+        window_width = min(1450, max(800, screen_width - 100))
+        window_height = min(900, max(600, screen_height - 120))
+        window_x = max(0, (screen_width - window_width) // 2)
+        window_y = max(0, (screen_height - window_height) // 2)
+        self.master.geometry(f"{window_width}x{window_height}+{window_x}+{window_y}")
+        self.master.minsize(min(1080, window_width), min(680, window_height))
 
         # --------------- 配置文件路径 ---------------
         self.config_file = "config.json"
@@ -141,7 +152,9 @@ class NovelGeneratorGUI:
             self.key_items_var = ctk.StringVar(value=op.get("key_items", ""))
             self.scene_location_var = ctk.StringVar(value=op.get("scene_location", ""))
             self.time_constraint_var = ctk.StringVar(value=op.get("time_constraint", ""))
-            self.user_guidance_default = op.get("user_guidance", "")
+            legacy_guidance = op.get("user_guidance", "")
+            self.planning_guidance_default = op.get("planning_guidance") or legacy_guidance
+            self.chapter_guidance_default = op.get("chapter_guidance", "")
             self.webdav_url_var = ctk.StringVar(value=op.get("webdav_url", ""))
             self.webdav_username_var = ctk.StringVar(value=op.get("webdav_username", ""))
             self.webdav_password_var = ctk.StringVar(value=op.get("webdav_password", ""))
@@ -157,7 +170,8 @@ class NovelGeneratorGUI:
             self.key_items_var = ctk.StringVar(value="")
             self.scene_location_var = ctk.StringVar(value="")
             self.time_constraint_var = ctk.StringVar(value="")
-            self.user_guidance_default = ""
+            self.planning_guidance_default = ""
+            self.chapter_guidance_default = ""
 
         # --------------- 整体Tab布局 ---------------
         self.tabview = ctk.CTkTabview(self.master)
@@ -165,11 +179,12 @@ class NovelGeneratorGUI:
 
         # 创建各个标签页
         build_main_tab(self)
-        build_config_tabview(self)
-        build_novel_params_area(self, start_row=1)
-        build_optional_buttons_area(self, start_row=2)
+        build_novel_params_area(self, start_row=0)
         build_setting_tab(self)
         build_directory_tab(self)
+        build_chapter_editor_tab(self)
+        build_chapter_params_area(self, start_row=0)
+        build_optional_buttons_area(self, start_row=1)
         build_character_tab(self)
         build_summary_tab(self)
         build_chapters_tab(self)
@@ -186,6 +201,8 @@ class NovelGeneratorGUI:
         )
         self.english_mode_btn.place(relx=0.98, rely=0.015, anchor="ne")
 
+        self.master.after_idle(self.finish_startup)
+
 
     # ----------------- 通用辅助函数 -----------------
     def show_tooltip(self, key: str):
@@ -201,13 +218,89 @@ class NovelGeneratorGUI:
             return default
 
     def log(self, message: str):
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", message + "\n")
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
+        for widget_name in ("planning_log_text", "log_text"):
+            log_widget = getattr(self, widget_name, None)
+            if log_widget is None:
+                continue
+            log_widget.configure(state="normal")
+            log_widget.insert("end", message + "\n")
+            log_widget.see("end")
+            log_widget.configure(state="disabled")
 
     def safe_log(self, message: str):
         self.master.after(0, lambda: self.log(message))
+
+    @staticmethod
+    def _service_config_ready(config: dict) -> bool:
+        interface_format = str(config.get("interface_format", "")).strip().lower()
+        if not config.get("base_url") or not config.get("model_name"):
+            return False
+        return interface_format in {"ollama", "ml studio"} or bool(config.get("api_key"))
+
+    def _restore_project_files(self) -> int:
+        project_path = self.filepath_var.get().strip()
+        if not project_path or not os.path.isdir(project_path):
+            return 0
+
+        restored = 0
+        text_files = (
+            ("Novel_architecture.txt", self.setting_text, self.setting_word_count_label),
+            ("Novel_directory.txt", self.directory_text, self.directory_word_count_label),
+            ("character_state.txt", self.character_text, self.character_wordcount_label),
+            ("global_summary.txt", self.summary_text, self.word_count_label),
+        )
+        for filename, widget, count_label in text_files:
+            content = read_file(os.path.join(project_path, filename))
+            if not content:
+                continue
+            widget.delete("0.0", "end")
+            widget.insert("0.0", content)
+            count_label.configure(text=f"字数：{get_word_count(content)}")
+            restored += 1
+
+        try:
+            chapter_number = max(1, int(self.chapter_num_var.get()))
+        except (TypeError, ValueError):
+            chapter_number = 1
+            self.chapter_num_var.set("1")
+        chapter_text = read_file(os.path.join(project_path, "chapters", f"chapter_{chapter_number}.txt"))
+        if chapter_text:
+            self.chapter_result.delete("0.0", "end")
+            self.chapter_result.insert("0.0", chapter_text)
+            self.chapter_label.configure(
+                text=f"当前章节正文（可编辑）  字数：{get_word_count(chapter_text)}"
+            )
+            restored += 1
+        return restored
+
+    def finish_startup(self):
+        """恢复项目内容，并将用户定位到当前最需要处理的配置或工作区。"""
+        restored = self._restore_project_files()
+        config = self.loaded_config
+        llm_configs = config.get("llm_configs", {})
+        task_configs = config.get("choose_configs", {})
+        missing_llm = any(
+            not self._service_config_ready(llm_configs.get(config_name, {}))
+            for config_name in task_configs.values()
+        )
+
+        project_path = self.filepath_var.get().strip()
+        vectorstore_exists = os.path.isdir(os.path.join(project_path, "vectorstore"))
+        embedding_name = config.get("last_embedding_interface_format", "OpenAI")
+        embedding_config = config.get("embedding_configs", {}).get(embedding_name, {})
+
+        if missing_llm:
+            self.tabview.set("设置")
+            self.config_tabview.set("大模型设置")
+            self.log("启动检查：任务所用大模型配置不完整，请填写并保存后再开始生成。")
+        elif vectorstore_exists and not self._service_config_ready(embedding_config):
+            self.tabview.set("设置")
+            self.config_tabview.set("嵌入模型设置")
+            self.log("启动检查：项目已有知识库，请先补全并保存嵌入模型配置。")
+        else:
+            self.tabview.set("全书规划")
+            if restored:
+                self.log(f"已恢复当前项目，共加载 {restored} 项内容。")
 
     def clear_app_log(self):
         """清空界面日志和 app.log，并与正在写入的日志处理器同步。"""
@@ -230,9 +323,13 @@ class NovelGeneratorGUI:
                 handler.flush()
             with open(log_path, "w", encoding="utf-8"):
                 pass
-            self.log_text.configure(state="normal")
-            self.log_text.delete("0.0", "end")
-            self.log_text.configure(state="disabled")
+            for widget_name in ("planning_log_text", "log_text"):
+                log_widget = getattr(self, widget_name, None)
+                if log_widget is None:
+                    continue
+                log_widget.configure(state="normal")
+                log_widget.delete("0.0", "end")
+                log_widget.configure(state="disabled")
             messagebox.showinfo("清空日志", "运行日志已清空。")
         except OSError as exc:
             messagebox.showerror("清空失败", f"无法清空 app.log：{exc}")
@@ -255,6 +352,9 @@ class NovelGeneratorGUI:
         self.chapter_result.delete("0.0", "end")
         self.chapter_result.insert("0.0", text)
         self.chapter_result.see("end")
+        self.chapter_label.configure(
+            text=f"当前章节正文（可编辑）  字数：{get_word_count(text)}"
+        )
     
     def test_llm_config(self):
         """
@@ -383,7 +483,9 @@ class NovelGeneratorGUI:
         def confirm_selection():
             selected = [name for chk, name in self.selected_roles if chk.get() == 1]
             self.char_inv_text.delete("0.0", "end")
-            self.char_inv_text.insert("0.0", ", ".join(selected))
+            selected_text = ", ".join(selected)
+            self.char_inv_text.insert("0.0", selected_text)
+            self.characters_involved_var.set(selected_text)
             import_window.destroy()
             
         btn_confirm = ctk.CTkButton(btn_frame, text="选择", command=confirm_selection)
