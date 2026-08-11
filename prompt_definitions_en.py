@@ -720,6 +720,52 @@ Rules:
 5. Return only the complete revised prose, with no explanation or Markdown code fence.
 """
 
+architecture_revision_prompt = """\
+You are a fiction planning editor. Rewrite a complete novel architecture according to the user's feedback.
+
+Project parameters:
+- Topic: {topic}
+- Genre: {genre}
+- Planned chapters: {number_of_chapters}
+- Target words per chapter: {word_number}
+
+User feedback (highest priority):
+{revision_guidance}
+
+Current novel architecture:
+{current_architecture}
+
+Rules:
+1. When the current architecture is not empty, preserve useful elements not rejected by the feedback;
+2. When it is empty, build the architecture from scratch using the project parameters and feedback;
+3. Return a complete replacement containing the premise, core seed, character dynamics, world building, and plot architecture;
+4. Keep character goals, world rules, and the main conflict consistent;
+5. Return only the complete rewritten architecture, with no explanation or Markdown code fence.
+"""
+
+blueprint_revision_prompt = """\
+You are a chapter planning editor. Rewrite a complete chapter blueprint according to the user's feedback.
+
+Planned chapters: {number_of_chapters}
+
+User feedback (highest priority):
+{revision_guidance}
+
+Novel architecture:
+{novel_architecture}
+
+Current chapter blueprint:
+{current_blueprint}
+
+Rules:
+1. When the current blueprint is not empty, preserve useful chapter plans not rejected by the feedback;
+2. When it is empty, rebuild the plan from Chapter 1 using the architecture and feedback;
+3. Return the complete blueprint from Chapter 1 through Chapter {number_of_chapters}, not only changed chapters;
+4. Each chapter must include its number, title, core event, character progression, conflict or suspense, and continuity with adjacent chapters;
+5. Keep chapter numbering continuous and the pacing consistent with the architecture;
+6. Return only the complete rewritten blueprint, with no explanation or Markdown code fence.
+"""
+
 enrich_prompt = """\
 The following chapter text is short. Please expand it while maintaining plot continuity to make it more substantial, aiming for approximately {word_number} words. Output only the final text, do not explain anything.
 Original content:

@@ -11,7 +11,9 @@ import re
 from utils import read_file, get_word_count
 from novel_generator import (
     Novel_architecture_generate,
+    revise_novel_architecture,
     Chapter_blueprint_generate,
+    revise_chapter_blueprint,
     generate_chapter_draft,
     revise_chapter_draft,
     finalize_chapter,
@@ -150,6 +152,119 @@ def generate_chapter_blueprint_ui(self):
             self.handle_exception("生成章节蓝图时出错")
         finally:
             self.enable_button_safe(self.btn_generate_directory)
+    threading.Thread(target=task, daemon=True).start()
+
+
+def revise_novel_architecture_ui(self):
+    filepath = self.filepath_var.get().strip()
+    if not filepath:
+        messagebox.showwarning("警告", "请先选择保存文件路径")
+        return
+
+    guidance = self.architecture_revision_guide_text.get("0.0", "end").strip()
+    if not guidance:
+        messagebox.showwarning("缺少个人意见", "请先填写希望 AI 如何重写小说架构。")
+        return
+
+    current_text = self.setting_text.get("0.0", "end").strip()
+
+    def task():
+        self.disable_button_safe(self.btn_revise_architecture)
+        try:
+            llm_config = get_llm_config(
+                self.loaded_config, self.architecture_llm_var.get()
+            )
+            self.safe_log("正在根据个人意见重新编写小说架构...")
+            revised_text = revise_novel_architecture(
+                interface_format=llm_config["interface_format"],
+                api_key=llm_config.get("api_key", ""),
+                base_url=llm_config["base_url"],
+                llm_model=llm_config["model_name"],
+                filepath=filepath,
+                topic=self.topic_text.get("0.0", "end").strip(),
+                genre=self.genre_var.get().strip(),
+                number_of_chapters=self.safe_get_int(self.num_chapters_var, 10),
+                word_number=self.safe_get_int(self.word_number_var, 3000),
+                current_architecture=current_text,
+                revision_guidance=guidance,
+                temperature=llm_config["temperature"],
+                max_tokens=llm_config["max_tokens"],
+                timeout=llm_config["timeout"],
+            )
+            if not revised_text:
+                self.safe_log("⚠️ AI 未返回小说架构，当前内容和文件均已保留。")
+                return
+
+            def show_revision():
+                self.setting_text.delete("0.0", "end")
+                self.setting_text.insert("0.0", revised_text)
+                self.setting_word_count_label.configure(
+                    text=f"字数：{get_word_count(revised_text)}"
+                )
+                self.architecture_revision_guide_text.delete("0.0", "end")
+
+            self.master.after(0, show_revision)
+            self.safe_log("✅ 小说架构已按个人意见重新编写并自动保存。")
+        except Exception:
+            self.handle_exception("AI 重新编写小说架构时出错")
+        finally:
+            self.enable_button_safe(self.btn_revise_architecture)
+
+    threading.Thread(target=task, daemon=True).start()
+
+
+def revise_chapter_blueprint_ui(self):
+    filepath = self.filepath_var.get().strip()
+    if not filepath:
+        messagebox.showwarning("警告", "请先选择保存文件路径")
+        return
+
+    guidance = self.blueprint_revision_guide_text.get("0.0", "end").strip()
+    if not guidance:
+        messagebox.showwarning("缺少个人意见", "请先填写希望 AI 如何重写章节蓝图。")
+        return
+
+    current_text = self.directory_text.get("0.0", "end").strip()
+
+    def task():
+        self.disable_button_safe(self.btn_revise_blueprint)
+        try:
+            llm_config = get_llm_config(
+                self.loaded_config, self.chapter_outline_llm_var.get()
+            )
+            self.safe_log("正在根据个人意见重新编写章节蓝图...")
+            revised_text = revise_chapter_blueprint(
+                interface_format=llm_config["interface_format"],
+                api_key=llm_config.get("api_key", ""),
+                base_url=llm_config["base_url"],
+                llm_model=llm_config["model_name"],
+                filepath=filepath,
+                number_of_chapters=self.safe_get_int(self.num_chapters_var, 10),
+                current_blueprint=current_text,
+                revision_guidance=guidance,
+                temperature=llm_config["temperature"],
+                max_tokens=llm_config["max_tokens"],
+                timeout=llm_config["timeout"],
+            )
+            if not revised_text:
+                self.safe_log("⚠️ AI 未返回章节蓝图，当前内容和文件均已保留。")
+                return
+
+            def show_revision():
+                self.directory_text.delete("0.0", "end")
+                self.directory_text.insert("0.0", revised_text)
+                self.directory_word_count_label.configure(
+                    text=f"字数：{get_word_count(revised_text)}"
+                )
+                self.blueprint_revision_guide_text.delete("0.0", "end")
+
+            self.master.after(0, show_revision)
+            self.safe_log("✅ 章节蓝图已按个人意见重新编写并自动保存。")
+        except Exception:
+            self.handle_exception("AI 重新编写章节蓝图时出错")
+        finally:
+            self.enable_button_safe(self.btn_revise_blueprint)
+
     threading.Thread(target=task, daemon=True).start()
 
 def generate_chapter_draft_ui(self):

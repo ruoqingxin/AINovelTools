@@ -174,3 +174,50 @@ def Chapter_blueprint_generate(
 
     logging.info("Novel_directory.txt (chapter blueprint) has been generated successfully (chunked).")
     return OperationResult.ok("章节目录生成完成", final_blueprint, (filename_dir,))
+
+
+def revise_chapter_blueprint(
+    interface_format: str,
+    api_key: str,
+    base_url: str,
+    llm_model: str,
+    filepath: str,
+    number_of_chapters: int,
+    current_blueprint: str,
+    revision_guidance: str,
+    temperature: float = 0.7,
+    max_tokens: int = 8192,
+    timeout: int = 600,
+) -> str:
+    """Rewrite the complete blueprint and persist only a successful result."""
+    revision_guidance = revision_guidance.strip()
+    if not revision_guidance:
+        raise ValueError("请先填写个人修改意见")
+
+    repository = NovelProjectRepository(filepath)
+    architecture_text = repository.read(repository.ARCHITECTURE).strip()
+    if not architecture_text:
+        raise ValueError("小说架构为空，请先生成或保存小说架构")
+
+    prompt = prompt_definitions.blueprint_revision_prompt.format(
+        number_of_chapters=max(1, number_of_chapters),
+        revision_guidance=revision_guidance,
+        novel_architecture=architecture_text,
+        current_blueprint=current_blueprint.strip() or "（当前内容为空，请从头重写）",
+    )
+    llm_adapter = create_llm_adapter(
+        interface_format=interface_format,
+        base_url=base_url,
+        model_name=llm_model,
+        api_key=api_key,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    revised_text = invoke_with_cleaning(llm_adapter, prompt).strip()
+    if not revised_text:
+        logging.warning("AI chapter blueprint rewrite returned empty content.")
+        return ""
+
+    repository.write(repository.DIRECTORY, revised_text)
+    return revised_text

@@ -26,6 +26,8 @@ from ui.novel_params_tab import (
 from ui.generation_handlers import (
     generate_novel_architecture_ui,
     generate_chapter_blueprint_ui,
+    revise_novel_architecture_ui,
+    revise_chapter_blueprint_ui,
     generate_chapter_draft_ui,
     revise_chapter_draft_ui,
     finalize_chapter_ui,
@@ -35,8 +37,8 @@ from ui.generation_handlers import (
     show_plot_arcs_ui,
     generate_batch_ui
 )
-from ui.setting_tab import build_setting_tab, load_novel_architecture, save_novel_architecture
-from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint
+from ui.setting_tab import build_setting_tab, load_novel_architecture, save_novel_architecture, clear_novel_architecture
+from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint, clear_chapter_blueprint
 from ui.character_tab import build_character_tab, load_character_state, save_character_state
 from ui.summary_tab import build_summary_tab, load_global_summary, save_global_summary
 from ui.chapters_tab import build_chapters_tab, refresh_chapters_list, on_chapter_selected, load_chapter_content, save_current_chapter, prev_chapter, next_chapter
@@ -563,6 +565,8 @@ class NovelGeneratorGUI:
     # ----------------- 将导入的各模块函数直接赋给类方法 -----------------
     generate_novel_architecture_ui = generate_novel_architecture_ui
     generate_chapter_blueprint_ui = generate_chapter_blueprint_ui
+    revise_novel_architecture_ui = revise_novel_architecture_ui
+    revise_chapter_blueprint_ui = revise_chapter_blueprint_ui
     generate_chapter_draft_ui = generate_chapter_draft_ui
     revise_chapter_draft_ui = revise_chapter_draft_ui
     finalize_chapter_ui = finalize_chapter_ui
@@ -576,8 +580,10 @@ class NovelGeneratorGUI:
     save_embedding_config = save_embedding_config
     load_novel_architecture = load_novel_architecture
     save_novel_architecture = save_novel_architecture
+    clear_novel_architecture = clear_novel_architecture
     load_chapter_blueprint = load_chapter_blueprint
     save_chapter_blueprint = save_chapter_blueprint
+    clear_chapter_blueprint = clear_chapter_blueprint
     load_character_state = load_character_state
     save_character_state = save_character_state
     load_global_summary = load_global_summary

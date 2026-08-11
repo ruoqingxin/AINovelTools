@@ -275,3 +275,53 @@ def Novel_architecture_generate(
         data=final_content,
         artifacts=(arch_file, repository.path(repository.CHARACTER_STATE)),
     )
+
+
+def revise_novel_architecture(
+    interface_format: str,
+    api_key: str,
+    base_url: str,
+    llm_model: str,
+    filepath: str,
+    topic: str,
+    genre: str,
+    number_of_chapters: int,
+    word_number: int,
+    current_architecture: str,
+    revision_guidance: str,
+    temperature: float = 0.7,
+    max_tokens: int = 8192,
+    timeout: int = 600,
+) -> str:
+    """Rewrite the complete architecture and persist only a successful result."""
+    revision_guidance = revision_guidance.strip()
+    if not revision_guidance:
+        raise ValueError("请先填写个人修改意见")
+
+    prompt = prompt_definitions.architecture_revision_prompt.format(
+        topic=topic.strip() or "未指定",
+        genre=genre.strip() or "未指定",
+        number_of_chapters=max(1, number_of_chapters),
+        word_number=max(1, word_number),
+        revision_guidance=revision_guidance,
+        current_architecture=current_architecture.strip() or "（当前内容为空，请从头重写）",
+    )
+    llm_adapter = create_llm_adapter(
+        interface_format=interface_format,
+        base_url=base_url,
+        model_name=llm_model,
+        api_key=api_key,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    revised_text = invoke_with_cleaning(llm_adapter, prompt).strip()
+    if not revised_text:
+        logging.warning("AI architecture rewrite returned empty content.")
+        return ""
+
+    NovelProjectRepository(filepath).write(
+        NovelProjectRepository.ARCHITECTURE,
+        revised_text,
+    )
+    return revised_text

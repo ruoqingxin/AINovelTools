@@ -9,21 +9,37 @@ from ui.context_menu import TextWidgetContextMenu
 def build_setting_tab(self):
     self.setting_tab = self.tabview.add("小说架构")
     self.setting_tab.rowconfigure(0, weight=0)
-    self.setting_tab.rowconfigure(1, weight=1)
+    self.setting_tab.rowconfigure(1, weight=3)
+    self.setting_tab.rowconfigure(3, weight=1)
     self.setting_tab.columnconfigure(0, weight=1)
 
-    load_btn = ctk.CTkButton(self.setting_tab, text="加载 Novel_architecture.txt", command=self.load_novel_architecture, font=("Microsoft YaHei", 12))
-    load_btn.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+    toolbar = ctk.CTkFrame(self.setting_tab, fg_color="transparent")
+    toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+    toolbar.columnconfigure(1, weight=1)
 
-    self.setting_word_count_label = ctk.CTkLabel(self.setting_tab, text="字数：0", font=("Microsoft YaHei", 12))
-    self.setting_word_count_label.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+    load_btn = ctk.CTkButton(toolbar, text="加载架构", command=self.load_novel_architecture, font=("Microsoft YaHei", 12))
+    load_btn.grid(row=0, column=0, padx=(0, 8), sticky="w")
 
-    save_btn = ctk.CTkButton(self.setting_tab, text="保存修改", command=self.save_novel_architecture, font=("Microsoft YaHei", 12))
-    save_btn.grid(row=0, column=2, padx=5, pady=5, sticky="e")
+    self.setting_word_count_label = ctk.CTkLabel(toolbar, text="字数：0", font=("Microsoft YaHei", 12))
+    self.setting_word_count_label.grid(row=0, column=1, sticky="w")
+
+    clear_btn = ctk.CTkButton(toolbar, text="清空内容", command=self.clear_novel_architecture, width=90, fg_color="#c0392b", hover_color="#a93226", font=("Microsoft YaHei", 12))
+    clear_btn.grid(row=0, column=2, padx=8, sticky="e")
+
+    save_btn = ctk.CTkButton(toolbar, text="保存修改", command=self.save_novel_architecture, width=90, font=("Microsoft YaHei", 12))
+    save_btn.grid(row=0, column=3, sticky="e")
 
     self.setting_text = ctk.CTkTextbox(self.setting_tab, wrap="word", font=("Microsoft YaHei", 12))
     TextWidgetContextMenu(self.setting_text)
-    self.setting_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5, columnspan=3)
+    self.setting_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
+
+    ctk.CTkLabel(self.setting_tab, text="个人修改意见", anchor="w", font=("Microsoft YaHei", 12, "bold")).grid(row=2, column=0, sticky="ew", padx=5, pady=(4, 2))
+    self.architecture_revision_guide_text = ctk.CTkTextbox(self.setting_tab, wrap="word", height=100, font=("Microsoft YaHei", 12))
+    TextWidgetContextMenu(self.architecture_revision_guide_text)
+    self.architecture_revision_guide_text.grid(row=3, column=0, sticky="nsew", padx=5, pady=(0, 5))
+
+    self.btn_revise_architecture = ctk.CTkButton(self.setting_tab, text="AI 重新写小说架构", command=self.revise_novel_architecture_ui, height=34, font=("Microsoft YaHei", 12))
+    self.btn_revise_architecture.grid(row=4, column=0, sticky="ew", padx=5, pady=(0, 5))
 
     def update_word_count(event=None):
         text = self.setting_text.get("0.0", "end-1c")
@@ -54,3 +70,12 @@ def save_novel_architecture(self):
     clear_file_content(filename)
     save_string_to_txt(content, filename)
     self.log("已保存对 Novel_architecture.txt 的修改。")
+
+def clear_novel_architecture(self):
+    if not self.setting_text.get("0.0", "end").strip():
+        return
+    if not messagebox.askyesno("清空小说架构", "确定清空当前编辑区吗？\n磁盘文件不会改变，除非随后点击“保存修改”。"):
+        return
+    self.setting_text.delete("0.0", "end")
+    self.setting_word_count_label.configure(text="字数：0")
+    self.log("已清空小说架构编辑区，尚未写入文件。")

@@ -8,7 +8,9 @@ from importlib import import_module
 
 _EXPORTS = {
     "Novel_architecture_generate": (".architecture", "Novel_architecture_generate"),
+    "revise_novel_architecture": (".architecture", "revise_novel_architecture"),
     "Chapter_blueprint_generate": (".blueprint", "Chapter_blueprint_generate"),
+    "revise_chapter_blueprint": (".blueprint", "revise_chapter_blueprint"),
     "get_last_n_chapters_text": (".chapter", "get_last_n_chapters_text"),
     "summarize_recent_chapters": (".chapter", "summarize_recent_chapters"),
     "get_filtered_knowledge_context": (".chapter", "get_filtered_knowledge_context"),
