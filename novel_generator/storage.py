@@ -34,6 +34,11 @@ class NovelProjectRepository:
             raise ValueError("章节号必须大于 0")
         return self.path(f"chapters/chapter_{chapter_number}.txt")
 
+    def chapter_revision_source_path(self, chapter_number: int) -> Path:
+        if chapter_number < 1:
+            raise ValueError("章节号必须大于 0")
+        return self.path(f"chapters/revisions/chapter_{chapter_number}_before.txt")
+
     def read(self, relative_path: str, default: str = "") -> str:
         path = self.path(relative_path)
         if not path.exists():
@@ -42,6 +47,12 @@ class NovelProjectRepository:
 
     def read_chapter(self, chapter_number: int) -> str:
         path = self.chapter_path(chapter_number)
+        if not path.exists():
+            return ""
+        return path.read_text(encoding="utf-8")
+
+    def read_chapter_revision_source(self, chapter_number: int) -> str:
+        path = self.chapter_revision_source_path(chapter_number)
         if not path.exists():
             return ""
         return path.read_text(encoding="utf-8")
@@ -55,6 +66,21 @@ class NovelProjectRepository:
         path = self.chapter_path(chapter_number)
         self._write_atomic(path, content)
         return path
+
+    def write_chapter_revision_pair(
+        self,
+        chapter_number: int,
+        before_content: str,
+        revised_content: str,
+    ) -> tuple[Path, ...]:
+        """Atomically persist the comparison snapshot and current chapter."""
+        return self.write_many({
+            f"chapters/revisions/chapter_{chapter_number}_before.txt": before_content,
+            f"chapters/chapter_{chapter_number}.txt": revised_content,
+        })
+
+    def clear_chapter_revision_source(self, chapter_number: int) -> None:
+        self.chapter_revision_source_path(chapter_number).unlink(missing_ok=True)
 
     def write_many(self, files: Mapping[str, str]) -> tuple[Path, ...]:
         """写入一组文件；任何一步失败时恢复写入前的内容。"""

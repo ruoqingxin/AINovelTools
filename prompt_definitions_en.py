@@ -687,6 +687,39 @@ Please strictly analyze the following content in the above format:
 <<End of novel text to be analyzed>>
 """
 
+chapter_revision_prompt = """\
+You are a fiction revision editor. Revise the current draft of Chapter {novel_number}
+according to the user's feedback.
+
+Revision feedback (highest priority):
+{revision_guidance}
+
+Chapter blueprint:
+{chapter_info}
+
+Novel architecture:
+{novel_architecture}
+
+Previous story summary:
+{global_summary}
+
+Character states:
+{character_state}
+
+Plot points and unresolved conflicts:
+{plot_arcs}
+
+Current draft:
+{chapter_text}
+
+Rules:
+1. Use the current draft as the base and preserve effective material not rejected by the feedback;
+2. Apply the feedback while keeping the setting, character states, timeline, and blueprint consistent;
+3. Return a complete replacement draft for Chapter {novel_number};
+4. Target approximately {word_number} words and do not satisfy the request by removing necessary plot;
+5. Return only the complete revised prose, with no explanation or Markdown code fence.
+"""
+
 enrich_prompt = """\
 The following chapter text is short. Please expand it while maintaining plot continuity to make it more substantial, aiming for approximately {word_number} words. Output only the final text, do not explain anything.
 Original content:

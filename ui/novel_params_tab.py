@@ -231,9 +231,35 @@ def build_chapter_params_area(self, start_row=0):
     row += 1
     ctk.CTkLabel(
         self.chapter_params_frame,
-        text="↓  在左侧编辑正文",
+        text="↓  检查并在左侧直接编辑正文",
         font=("Microsoft YaHei", 11),
     ).grid(row=row, column=0, pady=1)
+    row += 1
+
+    self.revision_guide_text, _ = _add_textbox(
+        self.chapter_params_frame,
+        row,
+        "AI 修改意见",
+        "revision_guidance",
+        height=86,
+    )
+    row += 1
+    self.btn_revise_chapter = ctk.CTkButton(
+        self.chapter_params_frame,
+        text="AI 修改当前草稿",
+        command=self.revise_chapter_draft_ui,
+        font=FONT,
+        height=34,
+    )
+    self.btn_revise_chapter.grid(
+        row=row, column=0, sticky="ew", padx=8, pady=(2, 1)
+    )
+    row += 1
+    ctk.CTkLabel(
+        self.chapter_params_frame,
+        text="↺  不满意可继续填写意见并修改",
+        font=("Microsoft YaHei", 11),
+    ).grid(row=row, column=0, pady=(1, 4))
     row += 1
 
     review_actions = ctk.CTkFrame(self.chapter_params_frame, fg_color="transparent")

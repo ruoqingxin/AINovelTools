@@ -14,6 +14,7 @@ _EXPORTS = {
     "get_filtered_knowledge_context": (".chapter", "get_filtered_knowledge_context"),
     "build_chapter_prompt": (".chapter", "build_chapter_prompt"),
     "generate_chapter_draft": (".chapter", "generate_chapter_draft"),
+    "revise_chapter_draft": (".chapter", "revise_chapter_draft"),
     "finalize_chapter": (".finalization", "finalize_chapter"),
     "enrich_chapter_text": (".finalization", "enrich_chapter_text"),
     "import_knowledge_file": (".knowledge", "import_knowledge_file"),

@@ -31,6 +31,7 @@ tooltips = {
     "user_guidance": "为本章提供的一些额外指令或写作引导。",
     "planning_guidance": "只用于生成小说架构和章节蓝图，例如叙事视角、全书节奏、禁写内容和关键转折。",
     "chapter_guidance": "只用于当前章节，例如本章目标、冲突、情绪变化、必须发生或禁止发生的内容。",
+    "revision_guidance": "针对左侧当前草稿提出具体修改意见。AI 会基于现稿生成完整替换版本，但不会提交长期记忆。",
     "characters_involved": "本章需要重点描写或影响剧情的角色名单。",
     "key_items": "在本章中出现的重要道具、线索或物品。",
     "scene_location": "本章主要发生的地点或场景描述。",

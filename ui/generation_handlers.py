@@ -13,6 +13,7 @@ from novel_generator import (
     Novel_architecture_generate,
     Chapter_blueprint_generate,
     generate_chapter_draft,
+    revise_chapter_draft,
     finalize_chapter,
     import_knowledge_file,
     collect_knowledge_files,
@@ -342,13 +343,77 @@ def generate_chapter_draft_ui(self):
             )
             if draft_text:
                 self.safe_log(f"✅ 第{chap_num}章草稿生成完成。请在左侧查看或编辑。")
-                self.master.after(0, lambda: self.show_chapter_in_textbox(draft_text))
+                def show_new_draft():
+                    self.clear_chapter_before_textbox()
+                    self.show_chapter_in_textbox(draft_text)
+
+                self.master.after(0, show_new_draft)
             else:
                 self.safe_log("⚠️ 本章草稿生成失败或无内容。")
         except Exception:
             self.handle_exception("生成章节草稿时出错")
         finally:
             self.enable_button_safe(self.btn_generate_chapter)
+    threading.Thread(target=task, daemon=True).start()
+
+
+def revise_chapter_draft_ui(self):
+    filepath = self.filepath_var.get().strip()
+    if not filepath:
+        messagebox.showwarning("警告", "请先配置保存文件路径。")
+        return
+
+    chapter_text = self.chapter_result.get("0.0", "end").strip()
+    revision_guidance = self.revision_guide_text.get("0.0", "end").strip()
+    if not chapter_text:
+        messagebox.showwarning("无法修改", "当前章节正文为空，请先生成或输入草稿。")
+        return
+    if not revision_guidance:
+        messagebox.showwarning("缺少修改意见", "请先填写希望 AI 如何修改当前草稿。")
+        return
+
+    chapter_number = self.safe_get_int(self.chapter_num_var, 1)
+    word_number = self.safe_get_int(self.word_number_var, 3000)
+
+    def task():
+        self.disable_button_safe(self.btn_revise_chapter)
+        try:
+            llm_config = get_llm_config(
+                self.loaded_config, self.prompt_draft_llm_var.get()
+            )
+            self.safe_log(f"正在根据修改意见重写第 {chapter_number} 章草稿...")
+            revised_text = revise_chapter_draft(
+                api_key=llm_config.get("api_key", ""),
+                base_url=llm_config["base_url"],
+                model_name=llm_config["model_name"],
+                filepath=filepath,
+                novel_number=chapter_number,
+                word_number=word_number,
+                chapter_text=chapter_text,
+                revision_guidance=revision_guidance,
+                temperature=llm_config["temperature"],
+                interface_format=llm_config["interface_format"],
+                max_tokens=llm_config["max_tokens"],
+                timeout=llm_config["timeout"],
+            )
+            if not revised_text:
+                self.safe_log("⚠️ AI 修改未返回正文，已保留当前草稿。")
+                return
+
+            def show_revision():
+                self.show_chapter_before_textbox(chapter_text)
+                self.show_chapter_in_textbox(revised_text)
+                self.revision_guide_text.delete("0.0", "end")
+
+            self.master.after(0, show_revision)
+            self.safe_log(
+                f"✅ 第 {chapter_number} 章已按意见修改。可继续提出意见，满意后再定稿。"
+            )
+        except Exception:
+            self.handle_exception("AI 修改章节草稿时出错")
+        finally:
+            self.enable_button_safe(self.btn_revise_chapter)
+
     threading.Thread(target=task, daemon=True).start()
 
 def finalize_chapter_ui(self):
@@ -405,6 +470,7 @@ def finalize_chapter_ui(self):
 
             if should_enrich:
                 self.safe_log("正在扩写章节内容...")
+                before_enrichment = edited_text
                 enriched = enrich_chapter_text(
                     chapter_text=edited_text,
                     word_number=word_number,
@@ -417,9 +483,19 @@ def finalize_chapter_ui(self):
                     timeout=timeout_val
                 )
                 edited_text = enriched
-                self.master.after(0, lambda: self.chapter_result.delete("0.0", "end"))
-                self.master.after(0, lambda t=edited_text: self.chapter_result.insert("0.0", t))
-            NovelProjectRepository(filepath).write_chapter(chap_num, edited_text)
+                NovelProjectRepository(filepath).write_chapter_revision_pair(
+                    chap_num,
+                    before_content=before_enrichment,
+                    revised_content=edited_text,
+                )
+
+                def show_enrichment():
+                    self.show_chapter_before_textbox(before_enrichment)
+                    self.show_chapter_in_textbox(edited_text)
+
+                self.master.after(0, show_enrichment)
+            else:
+                NovelProjectRepository(filepath).write_chapter(chap_num, edited_text)
 
             operation = finalize_chapter(
                 novel_number=chap_num,

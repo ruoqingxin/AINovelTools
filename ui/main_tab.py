@@ -79,34 +79,55 @@ def build_planning_log_layout(self):
 
 
 def build_left_layout(self):
-    """Chapter text editor and its synchronized operation log."""
+    """Side-by-side chapter versions and their synchronized operation log."""
     frame = self.chapter_left_frame
-    frame.grid_rowconfigure(0, weight=0)
-    frame.grid_rowconfigure(1, weight=2)
-    frame.grid_rowconfigure(2, weight=0)
-    frame.grid_rowconfigure(3, weight=1)
+    frame.grid_rowconfigure(0, weight=2)
+    frame.grid_rowconfigure(1, weight=0)
+    frame.grid_rowconfigure(2, weight=1)
     frame.columnconfigure(0, weight=1)
 
-    self.chapter_label = ctk.CTkLabel(
-        frame, text="当前章节正文（可编辑）  字数：0", font=FONT
-    )
-    self.chapter_label.grid(row=0, column=0, padx=5, pady=(5, 0), sticky="w")
+    comparison = ctk.CTkFrame(frame, fg_color="transparent")
+    comparison.grid(row=0, column=0, sticky="nsew", padx=3, pady=3)
+    comparison.rowconfigure(1, weight=1)
+    comparison.columnconfigure((0, 1), weight=1, uniform="chapter_versions")
 
-    self.chapter_result = ctk.CTkTextbox(frame, wrap="word", font=("Microsoft YaHei", 14))
+    self.chapter_before_label = ctk.CTkLabel(
+        comparison, text="修改前正文（只读）  字数：0", font=FONT
+    )
+    self.chapter_before_label.grid(row=0, column=0, padx=3, sticky="w")
+    self.chapter_label = ctk.CTkLabel(
+        comparison, text="修改后正文（可编辑）  字数：0", font=FONT
+    )
+    self.chapter_label.grid(row=0, column=1, padx=3, sticky="w")
+
+    self.chapter_before_result = ctk.CTkTextbox(
+        comparison, wrap="word", font=("Microsoft YaHei", 14)
+    )
+    TextWidgetContextMenu(self.chapter_before_result)
+    self.chapter_before_result.grid(
+        row=1, column=0, sticky="nsew", padx=(3, 2), pady=(0, 3)
+    )
+    self.chapter_before_result.configure(state="disabled")
+
+    self.chapter_result = ctk.CTkTextbox(
+        comparison, wrap="word", font=("Microsoft YaHei", 14)
+    )
     TextWidgetContextMenu(self.chapter_result)
-    self.chapter_result.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
+    self.chapter_result.grid(
+        row=1, column=1, sticky="nsew", padx=(2, 3), pady=(0, 3)
+    )
 
     def update_word_count(_event=None):
         count = get_word_count(self.chapter_result.get("0.0", "end-1c"))
-        self.chapter_label.configure(text=f"当前章节正文（可编辑）  字数：{count}")
+        self.chapter_label.configure(text=f"修改后正文（可编辑）  字数：{count}")
 
     self.chapter_result.bind("<KeyRelease>", update_word_count)
     self.chapter_result.bind("<ButtonRelease>", update_word_count)
 
-    _build_log_header(self, frame, 2, "btn_clear_log")
+    _build_log_header(self, frame, 1, "btn_clear_log")
     self.log_text = ctk.CTkTextbox(frame, wrap="word", font=FONT)
     TextWidgetContextMenu(self.log_text)
-    self.log_text.grid(row=3, column=0, sticky="nsew", padx=5, pady=(0, 5))
+    self.log_text.grid(row=2, column=0, sticky="nsew", padx=5, pady=(0, 5))
     self.log_text.configure(state="disabled")
 
 

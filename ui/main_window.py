@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from .role_library import RoleLibrary
 from llm_adapters import create_llm_adapter
+from novel_generator.storage import NovelProjectRepository
 
 from config_manager import load_config, save_config, test_llm_config, test_embedding_config
 from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
@@ -26,6 +27,7 @@ from ui.generation_handlers import (
     generate_novel_architecture_ui,
     generate_chapter_blueprint_ui,
     generate_chapter_draft_ui,
+    revise_chapter_draft_ui,
     finalize_chapter_ui,
     do_consistency_check,
     import_knowledge_handler,
@@ -263,13 +265,14 @@ class NovelGeneratorGUI:
         except (TypeError, ValueError):
             chapter_number = 1
             self.chapter_num_var.set("1")
-        chapter_text = read_file(os.path.join(project_path, "chapters", f"chapter_{chapter_number}.txt"))
+        repository = NovelProjectRepository(project_path)
+        before_text = repository.read_chapter_revision_source(chapter_number)
+        if before_text:
+            self.show_chapter_before_textbox(before_text)
+            restored += 1
+        chapter_text = repository.read_chapter(chapter_number)
         if chapter_text:
-            self.chapter_result.delete("0.0", "end")
-            self.chapter_result.insert("0.0", chapter_text)
-            self.chapter_label.configure(
-                text=f"当前章节正文（可编辑）  字数：{get_word_count(chapter_text)}"
-            )
+            self.show_chapter_in_textbox(chapter_text)
             restored += 1
         return restored
 
@@ -353,8 +356,21 @@ class NovelGeneratorGUI:
         self.chapter_result.insert("0.0", text)
         self.chapter_result.see("end")
         self.chapter_label.configure(
-            text=f"当前章节正文（可编辑）  字数：{get_word_count(text)}"
+            text=f"修改后正文（可编辑）  字数：{get_word_count(text)}"
         )
+
+    def show_chapter_before_textbox(self, text: str):
+        self.chapter_before_result.configure(state="normal")
+        self.chapter_before_result.delete("0.0", "end")
+        self.chapter_before_result.insert("0.0", text)
+        self.chapter_before_result.see("0.0")
+        self.chapter_before_result.configure(state="disabled")
+        self.chapter_before_label.configure(
+            text=f"修改前正文（只读）  字数：{get_word_count(text)}"
+        )
+
+    def clear_chapter_before_textbox(self):
+        self.show_chapter_before_textbox("")
     
     def test_llm_config(self):
         """
@@ -548,6 +564,7 @@ class NovelGeneratorGUI:
     generate_novel_architecture_ui = generate_novel_architecture_ui
     generate_chapter_blueprint_ui = generate_chapter_blueprint_ui
     generate_chapter_draft_ui = generate_chapter_draft_ui
+    revise_chapter_draft_ui = revise_chapter_draft_ui
     finalize_chapter_ui = finalize_chapter_ui
     do_consistency_check = do_consistency_check
     generate_batch_ui = generate_batch_ui

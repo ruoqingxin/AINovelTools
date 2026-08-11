@@ -708,6 +708,38 @@ Character_Import_Prompt = """\
 <<待分析小说文本结束>>
 """
 
+chapter_revision_prompt = """\
+你是小说正文修改编辑。请依据用户意见修改当前第 {novel_number} 章草稿。
+
+修改意见（最高优先级）：
+{revision_guidance}
+
+本章蓝图：
+{chapter_info}
+
+小说架构：
+{novel_architecture}
+
+前文摘要：
+{global_summary}
+
+角色状态：
+{character_state}
+
+剧情要点与未解决冲突：
+{plot_arcs}
+
+当前草稿：
+{chapter_text}
+
+修改规则：
+1. 以当前草稿为基础，保留未被修改意见否定的有效内容；
+2. 严格落实修改意见，同时保持设定、人物状态、时间线和章节蓝图一致；
+3. 输出一份完整、可直接替换当前草稿的第 {novel_number} 章正文；
+4. 目标约 {word_number} 字，不得用删减情节的方式敷衍压缩；
+5. 只返回修改后的完整正文，不解释修改过程，不使用 Markdown 代码块。
+"""
+
 enrich_prompt = """\
 以下章节文本较短，请在保持剧情连贯的前提下进行扩写，使其更充实，接近 {word_number} 字左右，仅给出最终文本，不要解释任何内容。：
 原内容：

@@ -27,6 +27,10 @@ class StartupTest(unittest.TestCase):
             (project / "Novel_architecture.txt").write_text("架构内容", encoding="utf-8")
             (project / "chapters").mkdir()
             (project / "chapters" / "chapter_2.txt").write_text("第二章正文", encoding="utf-8")
+            (project / "chapters" / "revisions").mkdir()
+            (project / "chapters" / "revisions" / "chapter_2_before.txt").write_text(
+                "第二章修改前正文", encoding="utf-8"
+            )
 
             gui = object.__new__(NovelGeneratorGUI)
             gui.filepath_var = Mock()
@@ -38,17 +42,22 @@ class StartupTest(unittest.TestCase):
             gui.character_text = Mock()
             gui.summary_text = Mock()
             gui.chapter_result = Mock()
+            gui.chapter_before_result = Mock()
             gui.setting_word_count_label = Mock()
             gui.directory_word_count_label = Mock()
             gui.character_wordcount_label = Mock()
             gui.word_count_label = Mock()
             gui.chapter_label = Mock()
+            gui.chapter_before_label = Mock()
 
             restored = NovelGeneratorGUI._restore_project_files(gui)
 
-            self.assertEqual(restored, 2)
+            self.assertEqual(restored, 3)
             gui.setting_text.insert.assert_called_once_with("0.0", "架构内容")
             gui.chapter_result.insert.assert_called_once_with("0.0", "第二章正文")
+            gui.chapter_before_result.insert.assert_called_once_with(
+                "0.0", "第二章修改前正文"
+            )
 
 
 if __name__ == "__main__":

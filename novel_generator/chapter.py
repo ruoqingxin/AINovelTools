@@ -598,6 +598,71 @@ def generate_chapter_draft(
     if not chapter_content.strip():
         logging.warning("Generated chapter draft is empty.")
         return ""
-    NovelProjectRepository(filepath).write_chapter(novel_number, chapter_content)
+    repository = NovelProjectRepository(filepath)
+    repository.write_chapter(novel_number, chapter_content)
+    repository.clear_chapter_revision_source(novel_number)
     logging.info(f"[Draft] Chapter {novel_number} generated as a draft.")
     return chapter_content
+
+
+def revise_chapter_draft(
+    api_key: str,
+    base_url: str,
+    model_name: str,
+    filepath: str,
+    novel_number: int,
+    word_number: int,
+    chapter_text: str,
+    revision_guidance: str,
+    temperature: float = 0.7,
+    interface_format: str = "OpenAI",
+    max_tokens: int = 8192,
+    timeout: int = 600,
+) -> str:
+    """Revise the current draft without committing long-term story state."""
+    chapter_text = chapter_text.strip()
+    revision_guidance = revision_guidance.strip()
+    if novel_number < 1:
+        raise ValueError("章节号必须大于 0")
+    if not chapter_text:
+        raise ValueError("当前章节正文为空，无法进行 AI 修改")
+    if not revision_guidance:
+        raise ValueError("请先填写 AI 修改意见")
+
+    repository = NovelProjectRepository(filepath)
+    architecture = repository.read(repository.ARCHITECTURE).strip()
+    directory = repository.read(repository.DIRECTORY).strip()
+    chapter_info = get_chapter_info_from_blueprint(directory, novel_number)
+
+    prompt = prompt_definitions.chapter_revision_prompt.format(
+        novel_number=novel_number,
+        word_number=word_number,
+        revision_guidance=revision_guidance,
+        chapter_info=json.dumps(chapter_info, ensure_ascii=False, indent=2),
+        novel_architecture=architecture,
+        global_summary=repository.read(repository.GLOBAL_SUMMARY),
+        character_state=repository.read(repository.CHARACTER_STATE),
+        plot_arcs=repository.read(repository.PLOT_ARCS),
+        chapter_text=chapter_text,
+    )
+    llm_adapter = create_llm_adapter(
+        interface_format=interface_format,
+        base_url=base_url,
+        model_name=model_name,
+        api_key=api_key,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    revised_text = invoke_with_cleaning(llm_adapter, prompt).strip()
+    if not revised_text:
+        logging.warning("AI revision for chapter %s returned empty content.", novel_number)
+        return ""
+
+    repository.write_chapter_revision_pair(
+        novel_number,
+        before_content=chapter_text,
+        revised_content=revised_text,
+    )
+    logging.info("[Revision] Chapter %s draft revised without finalization.", novel_number)
+    return revised_text
