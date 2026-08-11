@@ -7,9 +7,11 @@ import os
 import re
 import logging
 from novel_generator.common import invoke_with_cleaning
+from novel_generator.results import OperationResult
+from novel_generator.storage import NovelProjectRepository
 from llm_adapters import create_llm_adapter
 import prompt_definitions
-from utils import read_file, clear_file_content, save_string_to_txt
+from utils import read_file
 logging.basicConfig(
     filename='app.log',      # 日志文件名
     filemode='a',            # 追加模式（'w' 会覆盖）
@@ -58,7 +60,7 @@ def Chapter_blueprint_generate(
     temperature: float = 0.7,
     max_tokens: int = 4096,
     timeout: int = 600
-) -> None:
+) -> OperationResult:
     """
     若 Novel_directory.txt 已存在且内容非空，则表示可能是之前的部分生成结果；
       解析其中已有的章节数，从下一个章节继续分块生成；
@@ -68,15 +70,16 @@ def Chapter_blueprint_generate(
       - 若章节数 > chunk_size，进行分块生成
     生成完成后输出至 Novel_directory.txt。
     """
-    arch_file = os.path.join(filepath, "Novel_architecture.txt")
+    repository = NovelProjectRepository(filepath)
+    arch_file = repository.path(repository.ARCHITECTURE)
     if not os.path.exists(arch_file):
         logging.warning("Novel_architecture.txt not found. Please generate architecture first.")
-        return
+        return OperationResult.fail("请先生成小说架构")
 
     architecture_text = read_file(arch_file).strip()
     if not architecture_text:
         logging.warning("Novel_architecture.txt is empty.")
-        return
+        return OperationResult.fail("小说架构文件为空")
 
     llm_adapter = create_llm_adapter(
         interface_format=interface_format,
@@ -88,9 +91,7 @@ def Chapter_blueprint_generate(
         timeout=timeout
     )
 
-    filename_dir = os.path.join(filepath, "Novel_directory.txt")
-    if not os.path.exists(filename_dir):
-        open(filename_dir, "w", encoding="utf-8").close()
+    filename_dir = repository.path(repository.DIRECTORY)
 
     existing_blueprint = read_file(filename_dir).strip()
     chunk_size = compute_chunk_size(number_of_chapters, max_tokens)
@@ -120,16 +121,14 @@ def Chapter_blueprint_generate(
             chunk_result = invoke_with_cleaning(llm_adapter, chunk_prompt)
             if not chunk_result.strip():
                 logging.warning(f"Chunk generation for chapters [{current_start}..{current_end}] is empty.")
-                clear_file_content(filename_dir)
-                save_string_to_txt(final_blueprint.strip(), filename_dir)
-                return
+                repository.write(repository.DIRECTORY, final_blueprint.strip())
+                return OperationResult.fail(f"第 {current_start}-{current_end} 章目录生成失败")
             final_blueprint += "\n\n" + chunk_result.strip()
-            clear_file_content(filename_dir)
-            save_string_to_txt(final_blueprint.strip(), filename_dir)
+            repository.write(repository.DIRECTORY, final_blueprint.strip())
             current_start = current_end + 1
 
         logging.info("All chapters blueprint have been generated (resumed chunked).")
-        return
+        return OperationResult.ok("章节目录生成完成", final_blueprint, (filename_dir,))
 
     if chunk_size >= number_of_chapters:
         prompt = prompt_definitions.chapter_blueprint_prompt.format(
@@ -140,12 +139,11 @@ def Chapter_blueprint_generate(
         blueprint_text = invoke_with_cleaning(llm_adapter, prompt)
         if not blueprint_text.strip():
             logging.warning("Chapter blueprint generation result is empty.")
-            return
+            return OperationResult.fail("章节目录生成结果为空")
 
-        clear_file_content(filename_dir)
-        save_string_to_txt(blueprint_text, filename_dir)
+        repository.write(repository.DIRECTORY, blueprint_text)
         logging.info("Novel_directory.txt (chapter blueprint) has been generated successfully (single-shot).")
-        return
+        return OperationResult.ok("章节目录生成完成", blueprint_text, (filename_dir,))
 
     logging.info("Will generate chapter blueprint in chunked mode from scratch.")
     final_blueprint = ""
@@ -165,15 +163,14 @@ def Chapter_blueprint_generate(
         chunk_result = invoke_with_cleaning(llm_adapter, chunk_prompt)
         if not chunk_result.strip():
             logging.warning(f"Chunk generation for chapters [{current_start}..{current_end}] is empty.")
-            clear_file_content(filename_dir)
-            save_string_to_txt(final_blueprint.strip(), filename_dir)
-            return
+            repository.write(repository.DIRECTORY, final_blueprint.strip())
+            return OperationResult.fail(f"第 {current_start}-{current_end} 章目录生成失败")
         if final_blueprint.strip():
             final_blueprint += "\n\n" + chunk_result.strip()
         else:
             final_blueprint = chunk_result.strip()
-        clear_file_content(filename_dir)
-        save_string_to_txt(final_blueprint.strip(), filename_dir)
+        repository.write(repository.DIRECTORY, final_blueprint.strip())
         current_start = current_end + 1
 
     logging.info("Novel_directory.txt (chapter blueprint) has been generated successfully (chunked).")
+    return OperationResult.ok("章节目录生成完成", final_blueprint, (filename_dir,))

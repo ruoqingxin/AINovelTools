@@ -4,12 +4,12 @@
 向量库相关操作（初始化、更新、检索、清空、文本切分等）
 """
 import os
+import hashlib
 import logging
 import traceback
-import numpy as np
 import ssl
 import warnings
-from langchain_chroma import Chroma
+from typing import Optional
 logging.basicConfig(
     filename='app.log',      # 日志文件名
     filemode='a',            # 追加模式（'w' 会覆盖）
@@ -21,8 +21,6 @@ logging.basicConfig(
 warnings.filterwarnings('ignore', message='.*Torch was not compiled with flash attention.*')
 os.environ["TOKENIZERS_PARALLELISM"] = "false"  # 禁用tokenizer并行警告
 
-from chromadb.config import Settings
-from langchain_core.documents import Document
 from .common import call_with_retry
 from .text_utils import split_sentences
 
@@ -46,16 +44,23 @@ def clear_vector_store(filepath: str) -> bool:
         traceback.print_exc()
         return False
 
-def init_vector_store(embedding_adapter, texts, filepath: str):
+def init_vector_store(embedding_adapter, texts, filepath: str, metadatas=None, ids=None):
     """
     在 filepath 下创建/加载一个 Chroma 向量库并插入 texts。
     如果Embedding失败，则返回 None，不中断任务。
     """
     from langchain.embeddings.base import Embeddings as LCEmbeddings
+    from chromadb.config import Settings
+    from langchain_chroma import Chroma
+    from langchain_core.documents import Document
 
     store_dir = get_vectorstore_dir(filepath)
     os.makedirs(store_dir, exist_ok=True)
-    documents = [Document(page_content=str(t)) for t in texts]
+    metadatas = metadatas or [{} for _ in texts]
+    documents = [
+        Document(page_content=str(text), metadata=metadata)
+        for text, metadata in zip(texts, metadatas)
+    ]
 
     try:
         class LCEmbeddingWrapper(LCEmbeddings):
@@ -81,7 +86,8 @@ def init_vector_store(embedding_adapter, texts, filepath: str):
             embedding=chroma_embedding,
             persist_directory=store_dir,
             client_settings=Settings(anonymized_telemetry=False),
-            collection_name="novel_collection"
+            collection_name="novel_collection",
+            ids=ids,
         )
         return vectorstore
     except Exception as e:
@@ -95,6 +101,8 @@ def load_vector_store(embedding_adapter, filepath: str):
     如果加载失败（embedding 或IO问题），则返回 None。
     """
     from langchain.embeddings.base import Embeddings as LCEmbeddings
+    from chromadb.config import Settings
+    from langchain_chroma import Chroma
     store_dir = get_vectorstore_dir(filepath)
     if not os.path.exists(store_dir):
         logging.info("Vector store not found. Will return None.")
@@ -110,13 +118,12 @@ def load_vector_store(embedding_adapter, filepath: str):
                     texts=texts
                 )
             def embed_query(self, query: str):
-                res = call_with_retry(
+                return call_with_retry(
                     func=embedding_adapter.embed_query,
                     max_retries=3,
                     fallback_return=[],
                     query=query
                 )
-                return res
 
         chroma_embedding = LCEmbeddingWrapper()
         return Chroma(
@@ -129,6 +136,37 @@ def load_vector_store(embedding_adapter, filepath: str):
         logging.warning(f"Failed to load vector store: {e}")
         traceback.print_exc()
         return None
+
+
+def replace_source_documents(store, documents, ids, source_id: str) -> bool:
+    """替换同一来源的索引；写入失败时尽量恢复旧文档。"""
+    existing = store.get(
+        where={"source_id": source_id},
+        include=["documents", "metadatas"],
+    )
+    old_ids = existing.get("ids", []) if existing else []
+    old_texts = existing.get("documents", []) if existing else []
+    old_metadatas = existing.get("metadatas", []) if existing else []
+
+    try:
+        if old_ids:
+            store.delete(ids=old_ids)
+        store.add_documents(documents, ids=ids)
+        return True
+    except Exception:
+        try:
+            from langchain_core.documents import Document
+
+            store.delete(ids=ids)
+            if old_ids:
+                old_documents = [
+                    Document(page_content=text, metadata=metadata or {})
+                    for text, metadata in zip(old_texts, old_metadatas)
+                ]
+                store.add_documents(old_documents, ids=old_ids)
+        except Exception as rollback_error:
+            logging.error("Vector store rollback failed: %s", rollback_error)
+        raise
 
 def split_by_length(text: str, max_length: int = 500):
     """按照 max_length 切分文本"""
@@ -174,34 +212,65 @@ def split_text_for_vectorstore(chapter_text: str, max_length: int = 500, similar
     
     return final_segments
 
-def update_vector_store(embedding_adapter, new_chapter: str, filepath: str):
+def update_vector_store(
+    embedding_adapter,
+    new_chapter: str,
+    filepath: str,
+    chapter_number: Optional[int] = None,
+) -> bool:
     """
     将最新章节文本插入到向量库中。
     若库不存在则初始化；若初始化/更新失败，则跳过。
     """
-    from utils import read_file, clear_file_content, save_string_to_txt
+    from langchain_core.documents import Document
     splitted_texts = split_text_for_vectorstore(new_chapter)
     if not splitted_texts:
         logging.warning("No valid text to insert into vector store. Skipping.")
-        return
+        return False
+
+    source_id = f"chapter:{chapter_number}" if chapter_number is not None else "chapter:unknown"
+    metadatas = [
+        {
+            "source_type": "chapter",
+            "source_id": source_id,
+            "chapter_number": chapter_number if chapter_number is not None else 0,
+            "chunk_index": index,
+        }
+        for index in range(len(splitted_texts))
+    ]
+    ids = [
+        f"{source_id}:{index}:{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}"
+        for index, text in enumerate(splitted_texts)
+    ]
 
     store = load_vector_store(embedding_adapter, filepath)
     if not store:
         logging.info("Vector store does not exist or failed to load. Initializing a new one for new chapter...")
-        store = init_vector_store(embedding_adapter, splitted_texts, filepath)
+        store = init_vector_store(
+            embedding_adapter,
+            splitted_texts,
+            filepath,
+            metadatas=metadatas,
+            ids=ids,
+        )
         if not store:
             logging.warning("Init vector store failed, skip embedding.")
         else:
             logging.info("New vector store created successfully.")
-        return
+        return store is not None
 
     try:
-        docs = [Document(page_content=str(t)) for t in splitted_texts]
-        store.add_documents(docs)
+        docs = [
+            Document(page_content=str(text), metadata=metadata)
+            for text, metadata in zip(splitted_texts, metadatas)
+        ]
+        replace_source_documents(store, docs, ids, source_id)
         logging.info("Vector store updated with the new chapter splitted segments.")
+        return True
     except Exception as e:
         logging.warning(f"Failed to update vector store: {e}")
         traceback.print_exc()
+        return False
 
 def get_relevant_context_from_vector_store(embedding_adapter, query: str, filepath: str, k: int = 2) -> str:
     """

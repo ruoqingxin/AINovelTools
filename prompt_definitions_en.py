@@ -377,6 +377,28 @@ Requirements:
 Return only the previous-text summary text, do not explain anything.
 """
 
+plot_arcs_prompt = """\
+The following is the newly completed chapter text:
+{chapter_text}
+
+This is the current plot-point and unresolved-conflict tracker (may be empty):
+{old_plot_arcs}
+
+Update the tracker. Keep only items that can still affect later chapters and use these sections:
+# Unresolved conflicts
+# Foreshadowing to resolve
+# Character commitments and goals
+# Timeline constraints
+
+Requirements:
+- Remove items resolved in this chapter
+- Every item must be grounded in the supplied text; do not invent future facts
+- Use concise bullets and do not retell the chapter
+- Write "None" when a section has no items
+
+Return only the updated tracker, without explanation.
+"""
+
 # =============== 7. Character State Update ===================
 create_character_state_prompt = """\
 Based on the current character dynamics setting: {character_dynamics}

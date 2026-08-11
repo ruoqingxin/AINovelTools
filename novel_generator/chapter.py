@@ -11,7 +11,8 @@ from llm_adapters import create_llm_adapter
 import prompt_definitions
 from chapter_directory_parser import get_chapter_info_from_blueprint
 from novel_generator.common import invoke_with_cleaning
-from utils import read_file, clear_file_content, save_string_to_txt
+from novel_generator.storage import NovelProjectRepository
+from utils import read_file
 from novel_generator.vectorstore_utils import (
     get_relevant_context_from_vector_store,
     load_vector_store  # 添加导入
@@ -311,15 +312,20 @@ def build_chapter_prompt(
     2. 新增内容重复检测机制
     3. 集成提示词应用规则
     """
-    # 读取基础文件
-    arch_file = os.path.join(filepath, "Novel_architecture.txt")
-    novel_architecture_text = read_file(arch_file)
-    directory_file = os.path.join(filepath, "Novel_directory.txt")
-    blueprint_text = read_file(directory_file)
-    global_summary_file = os.path.join(filepath, "global_summary.txt")
-    global_summary_text = read_file(global_summary_file)
-    character_state_file = os.path.join(filepath, "character_state.txt")
-    character_state_text = read_file(character_state_file)
+    if novel_number < 1:
+        raise ValueError("章节号必须大于 0")
+    if word_number < 1:
+        raise ValueError("目标字数必须大于 0")
+
+    repository = NovelProjectRepository(filepath)
+    novel_architecture_text = repository.read(repository.ARCHITECTURE).strip()
+    blueprint_text = repository.read(repository.DIRECTORY).strip()
+    if not novel_architecture_text:
+        raise ValueError("请先生成小说架构")
+    if not blueprint_text:
+        raise ValueError("请先生成章节目录")
+    global_summary_text = repository.read(repository.GLOBAL_SUMMARY)
+    character_state_text = repository.read(repository.CHARACTER_STATE)
     
     # 获取章节信息
     chapter_info = get_chapter_info_from_blueprint(blueprint_text, novel_number)
@@ -592,8 +598,6 @@ def generate_chapter_draft(
     if not chapter_content.strip():
         logging.warning("Generated chapter draft is empty.")
         return ""
-    chapter_file = os.path.join(chapters_dir, f"chapter_{novel_number}.txt")
-    clear_file_content(chapter_file)
-    save_string_to_txt(chapter_content, chapter_file)
+    NovelProjectRepository(filepath).write_chapter(novel_number, chapter_content)
     logging.info(f"[Draft] Chapter {novel_number} generated as a draft.")
     return chapter_content

@@ -108,6 +108,8 @@ novel-generator/
 ├── config_manager.py            # Configuration manager (API keys, base URL)
 ├── config.json                  # User configuration (optional)
 ├── novel_generator/             # Core chapter generation logic
+│   ├── storage.py               # Atomic project-file storage boundary
+│   └── results.py               # Shared workflow result type
 ├── ui/                          # Graphical user interface
 └── vectorstore/                 # (Optional) Local vector DB storage
 ```
@@ -243,7 +245,10 @@ After packaging an executable (e.g., `main.exe` on Windows) will appear in the `
      - Update the global summary (`global_summary.txt`)  
      - Update character states (`character_state.txt`)  
      - Update the vector store (so future chapters can use the latest info)  
-     - Update major plot points (e.g., `plot_arcs.txt`)  
+     - Update plot points and unresolved conflicts (`plot_arcs.txt`)
+   - Summary, character state, and plot tracking are committed together and restored if a write fails.
+   - Finalizing the same chapter again replaces its previous vector entries instead of duplicating them.
+   - Vector entries created by older versions have no source metadata; clear and rebuild the vector store once after upgrading.
    - After finalizing you will see the finalized text in `chapter_X.txt`.
 
 6. **Consistency check (optional)**  

@@ -5,9 +5,8 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, filedialog
 import customtkinter as ctk
-import traceback
 import glob
-from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
+from utils import read_file, get_word_count
 from novel_generator import (
     Novel_architecture_generate,
     Chapter_blueprint_generate,
@@ -19,6 +18,8 @@ from novel_generator import (
     build_chapter_prompt
 )
 from consistency_checker import check_consistency
+from config_manager import get_llm_config
+from novel_generator.storage import NovelProjectRepository
 
 def generate_novel_architecture_ui(self):
     filepath = self.filepath_var.get().strip()
@@ -34,13 +35,14 @@ def generate_novel_architecture_ui(self):
         try:
 
 
-            interface_format = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["interface_format"]
-            api_key = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["api_key"]
-            base_url = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["base_url"]
-            model_name = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["model_name"]
-            temperature = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["temperature"]
-            max_tokens = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["max_tokens"]
-            timeout_val = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["timeout"]
+            llm_config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
+            interface_format = llm_config["interface_format"]
+            api_key = llm_config.get("api_key", "")
+            base_url = llm_config["base_url"]
+            model_name = llm_config["model_name"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_tokens"]
+            timeout_val = llm_config["timeout"]
 
 
 
@@ -52,7 +54,7 @@ def generate_novel_architecture_ui(self):
             user_guidance = self.user_guide_text.get("0.0", "end").strip()
 
             self.safe_log("开始生成小说架构...")
-            Novel_architecture_generate(
+            operation = Novel_architecture_generate(
                 interface_format=interface_format,
                 api_key=api_key,
                 base_url=base_url,
@@ -67,6 +69,9 @@ def generate_novel_architecture_ui(self):
                 timeout=timeout_val,
                 user_guidance=user_guidance  # 添加内容指导参数
             )
+            if not operation:
+                self.safe_log(f"❌ {operation.message}")
+                return
             self.safe_log("✅ 小说架构生成完成。请在 'Novel Architecture' 标签页查看或编辑。")
         except Exception:
             self.handle_exception("生成小说架构时出错")
@@ -89,19 +94,20 @@ def generate_chapter_blueprint_ui(self):
 
             number_of_chapters = self.safe_get_int(self.num_chapters_var, 10)
 
-            interface_format = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["interface_format"]
-            api_key = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["api_key"]
-            base_url = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["base_url"]
-            model_name = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["model_name"]
-            temperature = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["temperature"]
-            max_tokens = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["max_tokens"]
-            timeout_val = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["timeout"]
+            llm_config = get_llm_config(self.loaded_config, self.chapter_outline_llm_var.get())
+            interface_format = llm_config["interface_format"]
+            api_key = llm_config.get("api_key", "")
+            base_url = llm_config["base_url"]
+            model_name = llm_config["model_name"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_tokens"]
+            timeout_val = llm_config["timeout"]
 
 
             user_guidance = self.user_guide_text.get("0.0", "end").strip()  # 新增获取用户指导
 
             self.safe_log("开始生成章节蓝图...")
-            Chapter_blueprint_generate(
+            operation = Chapter_blueprint_generate(
                 interface_format=interface_format,
                 api_key=api_key,
                 base_url=base_url,
@@ -113,6 +119,9 @@ def generate_chapter_blueprint_ui(self):
                 timeout=timeout_val,
                 user_guidance=user_guidance  # 新增参数
             )
+            if not operation:
+                self.safe_log(f"❌ {operation.message}")
+                return
             self.safe_log("✅ 章节蓝图生成完成。请在 'Chapter Blueprint' 标签页查看或编辑。")
         except Exception:
             self.handle_exception("生成章节蓝图时出错")
@@ -130,13 +139,14 @@ def generate_chapter_draft_ui(self):
         self.disable_button_safe(self.btn_generate_chapter)
         try:
 
-            interface_format = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["interface_format"]
-            api_key = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["api_key"]
-            base_url = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["base_url"]
-            model_name = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["model_name"]
-            temperature = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["temperature"]
-            max_tokens = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["max_tokens"]
-            timeout_val = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["timeout"]
+            llm_config = get_llm_config(self.loaded_config, self.prompt_draft_llm_var.get())
+            interface_format = llm_config["interface_format"]
+            api_key = llm_config.get("api_key", "")
+            base_url = llm_config["base_url"]
+            model_name = llm_config["model_name"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_tokens"]
+            timeout_val = llm_config["timeout"]
 
 
             chap_num = self.safe_get_int(self.chapter_num_var, 1)
@@ -343,13 +353,14 @@ def finalize_chapter_ui(self):
         nonlocal edited_text
         try:
 
-            interface_format = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["interface_format"]
-            api_key = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["api_key"]
-            base_url = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["base_url"]
-            model_name = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["model_name"]
-            temperature = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["temperature"]
-            max_tokens = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["max_tokens"]
-            timeout_val = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["timeout"]
+            llm_config = get_llm_config(self.loaded_config, self.final_chapter_llm_var.get())
+            interface_format = llm_config["interface_format"]
+            api_key = llm_config.get("api_key", "")
+            base_url = llm_config["base_url"]
+            model_name = llm_config["model_name"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_tokens"]
+            timeout_val = llm_config["timeout"]
 
 
             embedding_api_key = self.embedding_api_key_var.get().strip()
@@ -382,10 +393,9 @@ def finalize_chapter_ui(self):
                 edited_text = enriched
                 self.master.after(0, lambda: self.chapter_result.delete("0.0", "end"))
                 self.master.after(0, lambda t=edited_text: self.chapter_result.insert("0.0", t))
-            clear_file_content(chapter_file)
-            save_string_to_txt(edited_text, chapter_file)
+            NovelProjectRepository(filepath).write_chapter(chap_num, edited_text)
 
-            finalize_chapter(
+            operation = finalize_chapter(
                 novel_number=chap_num,
                 word_number=word_number,
                 api_key=api_key,
@@ -401,7 +411,10 @@ def finalize_chapter_ui(self):
                 max_tokens=max_tokens,
                 timeout=timeout_val
             )
-            self.safe_log(f"✅ 第{chap_num}章定稿完成（已更新前文摘要、角色状态、向量库）。")
+            if not operation:
+                self.safe_log(f"❌ {operation.message}")
+                return
+            self.safe_log(f"✅ {operation.message}（已更新前文摘要、角色状态和剧情要点）。")
 
             final_text = read_file(chapter_file)
             self.master.after(0, lambda: self.show_chapter_in_textbox(final_text))
@@ -420,13 +433,14 @@ def do_consistency_check(self):
     def task():
         self.disable_button_safe(self.btn_check_consistency)
         try:
-            interface_format = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["interface_format"]
-            api_key = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["api_key"]
-            base_url = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["base_url"]
-            model_name = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["model_name"]
-            temperature = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["temperature"]
-            max_tokens = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["max_tokens"]
-            timeout = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["timeout"]
+            llm_config = get_llm_config(self.loaded_config, self.consistency_review_llm_var.get())
+            interface_format = llm_config["interface_format"]
+            api_key = llm_config.get("api_key", "")
+            base_url = llm_config["base_url"]
+            model_name = llm_config["model_name"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_tokens"]
+            timeout = llm_config["timeout"]
 
 
             chap_num = self.safe_get_int(self.chapter_num_var, 1)
@@ -439,7 +453,7 @@ def do_consistency_check(self):
 
             self.safe_log("开始一致性审校...")
             result = check_consistency(
-                novel_setting="",
+                novel_setting=read_file(os.path.join(filepath, "Novel_architecture.txt")),
                 character_state=read_file(os.path.join(filepath, "character_state.txt")),
                 global_summary=read_file(os.path.join(filepath, "global_summary.txt")),
                 chapter_text=chapter_text,
@@ -450,7 +464,7 @@ def do_consistency_check(self):
                 interface_format=interface_format,
                 max_tokens=max_tokens,
                 timeout=timeout,
-                plot_arcs=""
+                plot_arcs=read_file(os.path.join(filepath, "plot_arcs.txt"))
             )
             self.safe_log("审校结果：")
             self.safe_log(result)
@@ -548,14 +562,15 @@ def generate_batch_ui(self):
         dialog.wait_window(dialog)
         return result
     
-    def generate_chapter_batch(self ,i ,word, min, auto_enrich):
-        draft_interface_format = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["interface_format"]
-        draft_api_key = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["api_key"]
-        draft_base_url = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["base_url"]
-        draft_model_name = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["model_name"]
-        draft_temperature = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["temperature"]
-        draft_max_tokens = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["max_tokens"]
-        draft_timeout = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["timeout"]
+    def generate_chapter_batch(self, i, word, min_words, auto_enrich):
+        draft_config = get_llm_config(self.loaded_config, self.prompt_draft_llm_var.get())
+        draft_interface_format = draft_config["interface_format"]
+        draft_api_key = draft_config.get("api_key", "")
+        draft_base_url = draft_config["base_url"]
+        draft_model_name = draft_config["model_name"]
+        draft_temperature = draft_config["temperature"]
+        draft_max_tokens = draft_config["max_tokens"]
+        draft_timeout = draft_config["timeout"]
         user_guidance = self.user_guide_text.get("0.0", "end").strip()  
 
         char_inv = self.characters_involved_var.get().strip()
@@ -655,19 +670,17 @@ def generate_batch_ui(self):
         if not draft_text.strip():
             raise RuntimeError(f"第{i}章草稿生成失败或无内容，已保留原章节文件")
 
-        finalize_interface_format = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["interface_format"]
-        finalize_api_key = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["api_key"]
-        finalize_base_url = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["base_url"]
-        finalize_model_name = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["model_name"]
-        finalize_temperature = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["temperature"]
-        finalize_max_tokens = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["max_tokens"]
-        finalize_timeout = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["timeout"]
+        finalize_config = get_llm_config(self.loaded_config, self.final_chapter_llm_var.get())
+        finalize_interface_format = finalize_config["interface_format"]
+        finalize_api_key = finalize_config.get("api_key", "")
+        finalize_base_url = finalize_config["base_url"]
+        finalize_model_name = finalize_config["model_name"]
+        finalize_temperature = finalize_config["temperature"]
+        finalize_max_tokens = finalize_config["max_tokens"]
+        finalize_timeout = finalize_config["timeout"]
 
-        chapters_dir = os.path.join(self.filepath_var.get().strip(), "chapters")
-        os.makedirs(chapters_dir, exist_ok=True)
-        chapter_path = os.path.join(chapters_dir, f"chapter_{i}.txt")
-        if get_word_count(draft_text) < 0.7 * min and auto_enrich:
-            self.safe_log(f"第{i}章草稿字数 ({get_word_count(draft_text)}) 低于目标字数({min})的70%，正在扩写...")
+        if get_word_count(draft_text) < 0.7 * min_words and auto_enrich:
+            self.safe_log(f"第{i}章草稿字数 ({get_word_count(draft_text)}) 低于目标字数({min_words})的70%，正在扩写...")
             enriched = enrich_chapter_text(
                 chapter_text=draft_text,
                 word_number=word,
@@ -680,9 +693,8 @@ def generate_batch_ui(self):
                 timeout=draft_timeout
             )
             draft_text = enriched
-        clear_file_content(chapter_path)
-        save_string_to_txt(draft_text, chapter_path)
-        finalize_chapter(
+        NovelProjectRepository(self.filepath_var.get().strip()).write_chapter(i, draft_text)
+        operation = finalize_chapter(
             novel_number=i,
             word_number=word,
             api_key=finalize_api_key,
@@ -698,6 +710,8 @@ def generate_batch_ui(self):
             max_tokens=finalize_max_tokens,
             timeout=finalize_timeout
         )
+        if not operation:
+            raise RuntimeError(operation.message)
 
 
     result = open_batch_dialog()
@@ -750,21 +764,23 @@ def import_knowledge_handler(self):
 
                 # 创建临时UTF-8文件
                 import tempfile
-                import os
                 with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False, suffix='.txt') as temp:
                     temp.write(content)
                     temp_path = temp.name
 
                 try:
                     self.safe_log(f"开始导入知识库文件: {selected_file}")
-                    import_knowledge_file(
+                    imported = import_knowledge_file(
                         embedding_api_key=emb_api_key,
                         embedding_url=emb_url,
                         embedding_interface_format=emb_format,
                         embedding_model_name=emb_model,
                         file_path=temp_path,
-                        filepath=self.filepath_var.get().strip()
+                        filepath=self.filepath_var.get().strip(),
+                        source_name=selected_file,
                     )
+                    if not imported:
+                        raise RuntimeError("知识库文件导入失败，请查看 app.log")
                     self.safe_log("✅ 知识库文件导入完成。")
                 finally:
                     # 清理临时文件

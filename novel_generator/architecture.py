@@ -6,8 +6,9 @@
 import os
 import json
 import logging
-import traceback
 from novel_generator.common import invoke_with_cleaning
+from novel_generator.results import OperationResult
+from novel_generator.storage import NovelProjectRepository
 from llm_adapters import create_llm_adapter
 import prompt_definitions
 logging.basicConfig(
@@ -17,8 +18,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-from utils import clear_file_content, save_string_to_txt
-
 def load_partial_architecture_data(filepath: str) -> dict:
     """
     从 filepath 下的 partial_architecture.json 读取已有的阶段性数据。
@@ -60,7 +59,7 @@ def Novel_architecture_generate(
     temperature: float = 0.7,
     max_tokens: int = 2048,
     timeout: int = 600
-) -> None:
+) -> OperationResult:
     """
     依次调用:
       1. core_seed_prompt
@@ -75,7 +74,8 @@ def Novel_architecture_generate(
     - 在完成角色动力学设定后，依据该角色体系，使用 create_character_state_prompt 生成初始角色状态表，
       并存储到 character_state.txt，后续维护更新。
     """
-    os.makedirs(filepath, exist_ok=True)
+    repository = NovelProjectRepository(filepath)
+    repository.ensure_exists()
     partial_data = load_partial_architecture_data(filepath)
     llm_adapter = create_llm_adapter(
         interface_format=interface_format,
@@ -100,7 +100,7 @@ def Novel_architecture_generate(
         if not core_seed_result.strip():
             logging.warning("core_seed_prompt generation failed and returned empty.")
             save_partial_architecture_data(filepath, partial_data)
-            return
+            return OperationResult.fail("核心故事种子生成失败")
         partial_data["core_seed_result"] = core_seed_result
         save_partial_architecture_data(filepath, partial_data)
     else:
@@ -116,7 +116,7 @@ def Novel_architecture_generate(
         if not character_dynamics_result.strip():
             logging.warning("character_dynamics_prompt generation failed.")
             save_partial_architecture_data(filepath, partial_data)
-            return
+            return OperationResult.fail("角色动力学生成失败")
         partial_data["character_dynamics_result"] = character_dynamics_result
         save_partial_architecture_data(filepath, partial_data)
     else:
@@ -131,11 +131,9 @@ def Novel_architecture_generate(
         if not character_state_init.strip():
             logging.warning("create_character_state_prompt generation failed.")
             save_partial_architecture_data(filepath, partial_data)
-            return
+            return OperationResult.fail("初始角色状态生成失败")
         partial_data["character_state_result"] = character_state_init
-        character_state_file = os.path.join(filepath, "character_state.txt")
-        clear_file_content(character_state_file)
-        save_string_to_txt(character_state_init, character_state_file)
+        repository.write(repository.CHARACTER_STATE, character_state_init)
         save_partial_architecture_data(filepath, partial_data)
         logging.info("Initial character state created and saved.")
     # Step3: 世界观
@@ -149,7 +147,7 @@ def Novel_architecture_generate(
         if not world_building_result.strip():
             logging.warning("world_building_prompt generation failed.")
             save_partial_architecture_data(filepath, partial_data)
-            return
+            return OperationResult.fail("世界观生成失败")
         partial_data["world_building_result"] = world_building_result
         save_partial_architecture_data(filepath, partial_data)
     else:
@@ -167,7 +165,7 @@ def Novel_architecture_generate(
         if not plot_arch_result.strip():
             logging.warning("plot_architecture_prompt generation failed.")
             save_partial_architecture_data(filepath, partial_data)
-            return
+            return OperationResult.fail("情节架构生成失败")
         partial_data["plot_arch_result"] = plot_arch_result
         save_partial_architecture_data(filepath, partial_data)
     else:
@@ -191,12 +189,15 @@ def Novel_architecture_generate(
         f"{plot_arch_result}\n"
     )
 
-    arch_file = os.path.join(filepath, "Novel_architecture.txt")
-    clear_file_content(arch_file)
-    save_string_to_txt(final_content, arch_file)
+    arch_file = repository.write(repository.ARCHITECTURE, final_content)
     logging.info("Novel_architecture.txt has been generated successfully.")
 
     partial_arch_file = os.path.join(filepath, "partial_architecture.json")
     if os.path.exists(partial_arch_file):
         os.remove(partial_arch_file)
         logging.info("partial_architecture.json removed (all steps completed).")
+    return OperationResult.ok(
+        "小说架构生成完成",
+        data=final_content,
+        artifacts=(arch_file, repository.path(repository.CHARACTER_STATE)),
+    )

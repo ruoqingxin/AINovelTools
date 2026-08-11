@@ -213,6 +213,43 @@ def validate_choose_configs(config_data: dict) -> list[str]:
     return errors
 
 
+def get_llm_config(config_data: dict, config_name: str) -> dict:
+    """获取并校验一个 LLM 预设，向调用方提供一致的错误信息。"""
+    configs = config_data.get("llm_configs", {})
+    if config_name not in configs:
+        raise ValueError(f"LLM 配置不存在: {config_name}")
+
+    config = configs[config_name]
+    for key, label in (
+        ("interface_format", "接口格式"),
+        ("base_url", "Base URL"),
+        ("model_name", "模型名称"),
+    ):
+        if not str(config.get(key, "")).strip():
+            raise ValueError(f"LLM 配置“{config_name}”缺少{label}")
+
+    try:
+        temperature = float(config.get("temperature", 0.7))
+        max_tokens = int(config.get("max_tokens", 0))
+        timeout = int(config.get("timeout", 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"LLM 配置“{config_name}”包含无效数值") from exc
+    if not 0 <= temperature <= 2:
+        raise ValueError(f"LLM 配置“{config_name}”的 Temperature 应在 0 到 2 之间")
+    if max_tokens < 1:
+        raise ValueError(f"LLM 配置“{config_name}”的 Max Tokens 必须大于 0")
+    if timeout < 1:
+        raise ValueError(f"LLM 配置“{config_name}”的超时必须大于 0")
+
+    validated = deepcopy(config)
+    validated.update(
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    return validated
+
+
 def load_config(config_file: str) -> dict:
     """从指定的 config_file 加载配置，若不存在则创建一个默认配置文件。"""
 
@@ -226,10 +263,10 @@ def load_config(config_file: str) -> dict:
                 return normalize_config(json.load(f))
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         logging.error(f"配置文件格式错误: {e}")
-        return {}
+        return get_default_config()
     except (IOError, OSError) as e:
         logging.error(f"无法读取配置文件: {e}")
-        return {}
+        return get_default_config()
 
 
 # PenBo 增加了创建默认配置文件函数

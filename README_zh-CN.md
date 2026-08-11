@@ -107,6 +107,8 @@ novel-generator/
 ├── config_manager.py            # 管理配置 (API Key, Base URL)
 ├── config.json                  # 用户配置文件 (可选)
 ├── novel_generator/             # 章节生成核心逻辑
+│   ├── storage.py               # 小说工程文件边界与原子写入
+│   └── results.py               # 工作流统一结果类型
 ├── ui/                          # 图形界面
 └── vectorstore/                 # (可选) 本地向量数据库存储
 ```
@@ -245,7 +247,10 @@ pyinstaller main.spec
      - **更新全局摘要**（写入 `global_summary.txt`）  
      - **更新角色状态**（写入 `character_state.txt`）  
      - **更新向量检索库**（保证后续章节可以调用最新信息）  
-     - **更新剧情要点**（如 `plot_arcs.txt`）  
+     - **更新剧情要点与未解决冲突**（写入 `plot_arcs.txt`）
+   - 摘要、角色状态与剧情要点会作为一组提交；写入失败时恢复原文件。
+   - 重复定稿同一章节会替换该章的旧向量索引，不会重复追加。
+   - 从旧版本升级时，旧向量记录没有来源元数据，请先在界面中清空向量库并重新定稿或导入一次。
    - 定稿完成后，你可以在 `chapter_X.txt` 中看到定稿后的文本。
 
 6. **一致性检查（可选）**  

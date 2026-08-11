@@ -1,8 +1,15 @@
 import json
 import pathlib
+import tempfile
 import unittest
 
-from config_manager import get_default_config, normalize_config, validate_choose_configs
+from config_manager import (
+    get_default_config,
+    get_llm_config,
+    load_config,
+    normalize_config,
+    validate_choose_configs,
+)
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -62,6 +69,30 @@ class ConfigManagerTest(unittest.TestCase):
 
         self.assertIn('emb_interface_options = ["OpenAI", "Azure OpenAI", "Gemini", "Ollama", "ML Studio", "SiliconFlow"]', config_tab_source)
         self.assertNotIn('emb_interface_options = ["DeepSeek"', config_tab_source)
+
+    def test_invalid_json_falls_back_to_defaults(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = pathlib.Path(temp_dir) / "config.json"
+            config_path.write_text("{invalid", encoding="utf-8")
+
+            config = load_config(str(config_path))
+
+        self.assertIn("llm_configs", config)
+        self.assertEqual(config["last_llm_config_name"], "DeepSeek V4 Flash")
+
+    def test_llm_config_validation_rejects_invalid_runtime_values(self):
+        config = get_default_config()
+        config["llm_configs"]["Broken"] = {
+            "interface_format": "OpenAI",
+            "base_url": "https://example.com/v1",
+            "model_name": "model",
+            "temperature": 3,
+            "max_tokens": 0,
+            "timeout": 0,
+        }
+
+        with self.assertRaisesRegex(ValueError, "Temperature"):
+            get_llm_config(config, "Broken")
 
 
 if __name__ == "__main__":
