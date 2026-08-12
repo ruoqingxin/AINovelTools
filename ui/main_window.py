@@ -72,6 +72,23 @@ from ui.chapters_tab import build_chapters_tab, refresh_chapters_list, on_chapte
 from ui.other_settings import build_other_settings_tab
 
 
+LOG_ROLE_STYLES = {
+    "[发送给 AI]": ("◆ 我的请求", "log_ai_request", "#1976d2"),
+    "[AI 返回]": ("◆ AI 返回", "log_ai_response", "#16803a"),
+}
+
+
+def split_log_role_marker(message: str):
+    """Return a display marker, tag and untouched body for AI interaction logs."""
+    for source_marker, (display_marker, tag_name, color) in LOG_ROLE_STYLES.items():
+        if message == source_marker:
+            return display_marker, tag_name, color, ""
+        prefix = source_marker + "\n"
+        if message.startswith(prefix):
+            return display_marker, tag_name, color, message[len(prefix):]
+    return None
+
+
 class NovelGeneratorGUI:
     """
     小说生成器的主GUI类，包含所有的界面布局、事件处理、与后端逻辑的交互等。
@@ -262,11 +279,58 @@ class NovelGeneratorGUI:
         for log_widget in self._log_widgets():
             try:
                 log_widget.configure(state="normal")
-                log_widget.insert("end", message + "\n")
+                self._insert_colored_log(log_widget, message)
                 log_widget.see("end")
                 log_widget.configure(state="disabled")
             except tk.TclError:
                 continue
+
+    @staticmethod
+    def _insert_colored_log(log_widget, message: str):
+        role = split_log_role_marker(message)
+        if role is None:
+            log_widget.insert("end", message + "\n")
+            return
+        marker, tag_name, color, body = role
+        log_widget.tag_config(tag_name, foreground=color)
+        log_widget.insert("end", marker, tag_name)
+        log_widget.insert("end", "\n")
+        if body:
+            log_widget.insert("end", body)
+        log_widget.insert("end", "\n")
+
+    def _insert_log_history(self, log_widget, content: str):
+        """Restore copied log history while retaining role marker colors."""
+        history_markers = {
+            "[发送给 AI]": LOG_ROLE_STYLES["[发送给 AI]"],
+            "[AI 返回]": LOG_ROLE_STYLES["[AI 返回]"],
+            "◆ 我的请求": LOG_ROLE_STYLES["[发送给 AI]"],
+            "◆ AI 返回": LOG_ROLE_STYLES["[AI 返回]"],
+        }
+        cursor = 0
+        while cursor < len(content):
+            candidates = []
+            for marker in history_markers:
+                index = content.find(marker, cursor)
+                if index >= 0 and (index == 0 or content[index - 1] == "\n"):
+                    candidates.append((index, marker))
+            if not candidates:
+                log_widget.insert("end", content[cursor:])
+                break
+            marker_start, source_marker = min(candidates, key=lambda item: item[0])
+            if marker_start > cursor:
+                log_widget.insert("end", content[cursor:marker_start])
+            marker_end = content.find("\n", marker_start)
+            if marker_end < 0:
+                marker_end = len(content)
+            display_marker, tag_name, color = history_markers[source_marker]
+            log_widget.tag_config(tag_name, foreground=color)
+            log_widget.insert("end", display_marker, tag_name)
+            if marker_end < len(content):
+                log_widget.insert("end", "\n")
+                cursor = marker_end + 1
+            else:
+                cursor = marker_end
 
     def _log_widgets(self):
         widgets = []
@@ -334,7 +398,7 @@ class NovelGeneratorGUI:
         if source_log is not None:
             content = source_log.get("0.0", "end-1c")
             if content:
-                detail_log_text.insert("0.0", content)
+                self._insert_log_history(detail_log_text, content)
                 detail_log_text.see("end")
         detail_log_text.configure(state="disabled")
 
