@@ -290,7 +290,51 @@ def on_architecture_editor_tab_changed(self):
         self.refresh_architecture_sections()
 
 
+def architecture_section_tree_key(section, sections):
+    """Build a stable hierarchy key that survives character-offset changes."""
+    path = []
+    current = section
+    while current is not None:
+        sibling_number = 0
+        for candidate in sections[:current.index]:
+            if (
+                candidate.parent_index == current.parent_index
+                and candidate.heading == current.heading
+            ):
+                sibling_number += 1
+        path.append((current.heading, sibling_number))
+        current = (
+            sections[current.parent_index]
+            if current.parent_index is not None
+            else None
+        )
+    return tuple(reversed(path))
+
+
+def _capture_architecture_tree_state(self):
+    """Remember open/closed nodes before rebuilding the parsed tree."""
+    sections = sorted(
+        self._architecture_sections_by_id.values(),
+        key=lambda item: item.index,
+    )
+    state = {}
+    for item_id, section in self._architecture_sections_by_id.items():
+        if self.architecture_section_tree.exists(item_id):
+            state[architecture_section_tree_key(section, sections)] = bool(
+                self.architecture_section_tree.item(item_id, "open")
+            )
+    overview_open = True
+    if self.architecture_section_tree.exists(self._architecture_overview_item):
+        overview_open = bool(
+            self.architecture_section_tree.item(
+                self._architecture_overview_item, "open"
+            )
+        )
+    return state, overview_open
+
+
 def refresh_architecture_sections(self, select_heading=None):
+    open_state, overview_open = _capture_architecture_tree_state(self)
     current_selection = self.architecture_section_tree.selection()
     select_overview = bool(
         current_selection
@@ -311,7 +355,7 @@ def refresh_architecture_sections(self, select_heading=None):
         "end",
         iid=self._architecture_overview_item,
         text="总览",
-        open=True,
+        open=overview_open,
     )
     item_by_index = {}
     selected_item = None
@@ -325,7 +369,10 @@ def refresh_architecture_sections(self, select_heading=None):
             "end",
             iid=item_id,
             text=section.title,
-            open=section.level <= 2,
+            open=open_state.get(
+                architecture_section_tree_key(section, sections),
+                False,
+            ),
         )
         item_by_index[section.index] = item_id
         self._architecture_sections_by_id[item_id] = section

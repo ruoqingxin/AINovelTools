@@ -18,6 +18,7 @@ from novel_generator.architecture_sections import (
     upsert_architecture_subsection_body,
     upsert_architecture_overview_section_body,
 )
+from ui.setting_tab import architecture_section_tree_key
 
 
 SAMPLE_ARCHITECTURE = """前言保持原样
@@ -50,6 +51,23 @@ class FakeAdapter:
 
 
 class ArchitectureSectionTest(unittest.TestCase):
+    def test_tree_keys_survive_content_length_changes(self):
+        original_sections = parse_architecture_sections(SAMPLE_ARCHITECTURE)
+        original_law = next(
+            item for item in original_sections if item.title == "1.2 法则体系"
+        )
+        changed = SAMPLE_ARCHITECTURE.replace("世界观概述", "更长的世界观概述内容")
+        changed_sections = parse_architecture_sections(changed)
+        changed_law = next(
+            item for item in changed_sections if item.title == "1.2 法则体系"
+        )
+
+        self.assertNotEqual(original_law.start, changed_law.start)
+        self.assertEqual(
+            architecture_section_tree_key(original_law, original_sections),
+            architecture_section_tree_key(changed_law, changed_sections),
+        )
+
     def test_parses_special_and_standard_headings_as_hierarchy(self):
         sections = parse_architecture_sections(SAMPLE_ARCHITECTURE)
         by_title = {section.title: section for section in sections}
