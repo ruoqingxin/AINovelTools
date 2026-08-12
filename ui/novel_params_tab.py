@@ -42,20 +42,15 @@ def _add_textbox(parent, row, label_text, tooltip_key, height):
     return textbox, line
 
 
-def build_novel_params_area(self, start_row=0):
-    self.params_frame = ctk.CTkScrollableFrame(
-        self.right_frame,
-        orientation="vertical",
-        label_text="创作流程",
-        label_font=TITLE_FONT,
-    )
-    self.params_frame.grid(row=start_row, column=0, sticky="nsew", padx=5, pady=5)
-    self.params_frame.columnconfigure(0, weight=1)
+def build_project_setup_area(self, parent):
+    """Build project path and resource preparation controls under Settings."""
+    self.project_setup_frame = ctk.CTkFrame(parent)
+    self.project_setup_frame.pack(fill="x", padx=10, pady=10)
+    self.project_setup_frame.columnconfigure(0, weight=1)
     row = 0
 
-    # 0. 工程准备
-    row = _add_section(self.params_frame, row, "0  工程准备")
-    path_line = ctk.CTkFrame(self.params_frame, fg_color="transparent")
+    row = _add_section(self.project_setup_frame, row, "工程准备")
+    path_line = ctk.CTkFrame(self.project_setup_frame, fg_color="transparent")
     path_line.grid(row=row, column=0, sticky="ew", padx=8, pady=3)
     path_line.columnconfigure(1, weight=1)
     create_label_with_help_for_novel_params(
@@ -69,9 +64,9 @@ def build_novel_params_area(self, start_row=0):
     ).grid(row=0, column=2)
     row += 1
 
-    prep_actions = ctk.CTkFrame(self.params_frame, fg_color="transparent")
+    prep_actions = ctk.CTkFrame(self.project_setup_frame, fg_color="transparent")
     prep_actions.grid(row=row, column=0, sticky="ew", padx=8, pady=4)
-    prep_actions.columnconfigure((0, 1), weight=1)
+    prep_actions.columnconfigure(0, weight=1)
 
     def open_model_settings():
         self.tabview.set("设置")
@@ -79,17 +74,36 @@ def build_novel_params_area(self, start_row=0):
 
     ctk.CTkButton(
         prep_actions, text="配置任务模型", command=open_model_settings, font=FONT
-    ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
-    self.btn_import_knowledge = ctk.CTkButton(
-        prep_actions, text="管理资料 / 写作规范", command=self.import_knowledge_handler, font=FONT
+    ).grid(row=0, column=0, sticky="ew")
+
+
+def build_architecture_params_area(self, parent):
+    """Build the inputs used to generate the novel architecture."""
+    self.params_frame = ctk.CTkScrollableFrame(
+        parent,
+        orientation="vertical",
+        label_text="小说架构生成",
+        label_font=TITLE_FONT,
     )
-    self.btn_import_knowledge.grid(row=0, column=1, sticky="ew", padx=(3, 0))
+    self.params_frame.pack(fill="both", expand=True, padx=5, pady=5)
+    self.params_frame.columnconfigure(0, weight=1)
+    row = 0
+
+    self.btn_import_knowledge = ctk.CTkButton(
+        self.params_frame,
+        text="管理资料 / 写作规范",
+        command=self.import_knowledge_handler,
+        font=FONT,
+        height=34,
+    )
+    self.btn_import_knowledge.grid(
+        row=row, column=0, sticky="ew", padx=8, pady=(5, 4)
+    )
     row += 1
 
-    # 1-2. 全书规划
-    row = _add_section(self.params_frame, row, "1-2  全书规划")
+    row = _add_section(self.params_frame, row, "全书规划输入")
     self.topic_text, _ = _add_textbox(
-        self.params_frame, row, "故事主题", "topic", height=76
+        self.params_frame, row, "故事主题", "topic", height=110
     )
     if getattr(self, "topic_default", ""):
         self.topic_text.insert("0.0", self.topic_default)
@@ -109,7 +123,7 @@ def build_novel_params_area(self, start_row=0):
     row += 1
 
     self.planning_guide_text, _ = _add_textbox(
-        self.params_frame, row, "全书规划要求", "planning_guidance", height=72
+        self.params_frame, row, "全书规划要求", "planning_guidance", height=120
     )
     if getattr(self, "planning_guidance_default", ""):
         self.planning_guide_text.insert("0.0", self.planning_guidance_default)
@@ -117,30 +131,30 @@ def build_novel_params_area(self, start_row=0):
 
     self.btn_generate_architecture = ctk.CTkButton(
         self.params_frame,
-        text="步骤 1  生成小说架构",
+        text="生成小说架构",
         command=self.generate_novel_architecture_ui,
         font=FONT,
         height=34,
     )
     self.btn_generate_architecture.grid(row=row, column=0, sticky="ew", padx=8, pady=(5, 2))
     row += 1
-    ctk.CTkLabel(
-        self.params_frame, text="↓  在“小说架构”中检查并保存", font=("Microsoft YaHei", 11)
-    ).grid(row=row, column=0, pady=1)
-    row += 1
+
+
+def build_blueprint_generation_area(self, parent):
+    """Build the chapter-blueprint generation command on its destination tab."""
+    self.blueprint_generation_frame = ctk.CTkFrame(parent)
+    self.blueprint_generation_frame.grid(
+        row=0, column=0, sticky="ew", padx=5, pady=(5, 2)
+    )
+    self.blueprint_generation_frame.columnconfigure(0, weight=1)
     self.btn_generate_directory = ctk.CTkButton(
-        self.params_frame,
-        text="步骤 2  生成章节蓝图",
+        self.blueprint_generation_frame,
+        text="生成章节蓝图",
         command=self.generate_chapter_blueprint_ui,
         font=FONT,
         height=34,
     )
-    self.btn_generate_directory.grid(row=row, column=0, sticky="ew", padx=8, pady=2)
-    row += 1
-    ctk.CTkLabel(
-        self.params_frame, text="↓  在“章节蓝图”中调整每章任务", font=("Microsoft YaHei", 11)
-    ).grid(row=row, column=0, pady=1)
-    row += 1
+    self.btn_generate_directory.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
 
 def build_chapter_params_area(self, start_row=0):
     self.chapter_params_frame = ctk.CTkScrollableFrame(

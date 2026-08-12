@@ -49,18 +49,6 @@ def build_global_log_area(self):
     self.log_text.configure(state="disabled")
 
 
-def build_main_tab(self):
-    """Build the project setup and full-book planning workspace."""
-    self.main_tab = self.tabview.add("全书规划")
-    self.main_tab.rowconfigure(0, weight=1)
-    self.main_tab.columnconfigure(0, weight=1)
-
-    self.right_frame = ctk.CTkFrame(self.main_tab)
-    self.right_frame.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
-
-    build_right_layout(self)
-
-
 def build_chapter_editor_tab(self):
     """Build the dedicated current-chapter writing workspace."""
     self.chapter_editor_tab = self.tabview.add("章节创作")
@@ -144,11 +132,6 @@ def build_left_layout(self):
 
     self.chapter_result.bind("<KeyRelease>", update_word_count)
     self.chapter_result.bind("<ButtonRelease>", update_word_count)
-
-
-def build_right_layout(self):
-    self.right_frame.grid_rowconfigure(0, weight=1)
-    self.right_frame.columnconfigure(0, weight=1)
 
 
 def build_chapter_right_layout(self):

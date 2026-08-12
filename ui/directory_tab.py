@@ -5,16 +5,20 @@ import customtkinter as ctk
 from tkinter import messagebox
 from utils import read_file, save_string_to_txt, get_word_count
 from ui.context_menu import TextWidgetContextMenu
+from ui.novel_params_tab import build_blueprint_generation_area
 
 def build_directory_tab(self):
     self.directory_tab = self.tabview.add("章节蓝图")
     self.directory_tab.rowconfigure(0, weight=0)
-    self.directory_tab.rowconfigure(1, weight=3)
-    self.directory_tab.rowconfigure(3, weight=1)
+    self.directory_tab.rowconfigure(1, weight=0)
+    self.directory_tab.rowconfigure(2, weight=3)
+    self.directory_tab.rowconfigure(4, weight=1)
     self.directory_tab.columnconfigure(0, weight=1)
 
+    build_blueprint_generation_area(self, self.directory_tab)
+
     toolbar = ctk.CTkFrame(self.directory_tab, fg_color="transparent")
-    toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+    toolbar.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
     toolbar.columnconfigure(1, weight=1)
 
     load_btn = ctk.CTkButton(toolbar, text="加载蓝图", command=self.load_chapter_blueprint, font=("Microsoft YaHei", 12))
@@ -39,15 +43,15 @@ def build_directory_tab(self):
     self.directory_text.bind("<KeyRelease>", update_word_count)
     self.directory_text.bind("<ButtonRelease>", update_word_count)
     TextWidgetContextMenu(self.directory_text)
-    self.directory_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
+    self.directory_text.grid(row=2, column=0, sticky="nsew", padx=5, pady=(0, 5))
 
-    ctk.CTkLabel(self.directory_tab, text="个人修改意见", anchor="w", font=("Microsoft YaHei", 12, "bold")).grid(row=2, column=0, sticky="ew", padx=5, pady=(4, 2))
+    ctk.CTkLabel(self.directory_tab, text="个人修改意见", anchor="w", font=("Microsoft YaHei", 12, "bold")).grid(row=3, column=0, sticky="ew", padx=5, pady=(4, 2))
     self.blueprint_revision_guide_text = ctk.CTkTextbox(self.directory_tab, wrap="word", height=100, font=("Microsoft YaHei", 12))
     TextWidgetContextMenu(self.blueprint_revision_guide_text)
-    self.blueprint_revision_guide_text.grid(row=3, column=0, sticky="nsew", padx=5, pady=(0, 5))
+    self.blueprint_revision_guide_text.grid(row=4, column=0, sticky="nsew", padx=5, pady=(0, 5))
 
     self.btn_revise_blueprint = ctk.CTkButton(self.directory_tab, text="AI 重新写章节蓝图", command=self.revise_chapter_blueprint_ui, height=34, font=("Microsoft YaHei", 12))
-    self.btn_revise_blueprint.grid(row=4, column=0, sticky="ew", padx=5, pady=(0, 5))
+    self.btn_revise_blueprint.grid(row=5, column=0, sticky="ew", padx=5, pady=(0, 5))
 
 def load_chapter_blueprint(self):
     filepath = self.filepath_var.get().strip()

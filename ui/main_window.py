@@ -25,11 +25,10 @@ from utils import read_file, get_word_count
 from tooltips import tooltips
 
 from ui.context_menu import TextWidgetContextMenu
-from ui.main_tab import build_chapter_editor_tab, build_global_log_area, build_main_tab
+from ui.main_tab import build_chapter_editor_tab, build_global_log_area
 from ui.config_tab import load_config_btn, save_config_btn, save_embedding_config
 from ui.novel_params_tab import (
     build_chapter_params_area,
-    build_novel_params_area,
     build_optional_buttons_area,
 )
 from ui.generation_handlers import (
@@ -204,8 +203,6 @@ class NovelGeneratorGUI:
         self.tabview.grid(row=1, column=0, sticky="nsew")
 
         # 创建各个标签页
-        build_main_tab(self)
-        build_novel_params_area(self, start_row=0)
         build_setting_tab(self)
         build_directory_tab(self)
         build_chapter_editor_tab(self)
@@ -515,7 +512,7 @@ class NovelGeneratorGUI:
             self.config_tabview.set("嵌入模型设置")
             self.log("启动检查：项目已有知识库，请先补全并保存嵌入模型配置。")
         else:
-            self.tabview.set("全书规划")
+            self.tabview.set("小说架构")
             if restored:
                 self.log(f"已恢复当前项目，共加载 {restored} 项内容。")
 

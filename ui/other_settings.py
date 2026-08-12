@@ -1,6 +1,7 @@
 # ui/other_settings.py
 import customtkinter as ctk
 from ui.config_tab import build_config_tabview, create_label_with_help
+from ui.novel_params_tab import build_project_setup_area
 from tkinter import messagebox
 from config_manager import load_config, save_config
 import requests
@@ -18,6 +19,8 @@ REQUEST_TIMEOUT = (5, 30)
 def build_other_settings_tab(self):
     self.other_settings_tab = self.tabview.add("设置")
     build_config_tabview(self, self.other_settings_tab)
+    self.project_settings_tab = self.config_tabview.add("工程设置")
+    build_project_setup_area(self, self.project_settings_tab)
     self.webdav_settings_tab = self.config_tabview.add("WebDAV 设置")
     if "webdav_config" not in self.loaded_config:
         self.loaded_config["webdav_config"] = {

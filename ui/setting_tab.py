@@ -5,15 +5,27 @@ import customtkinter as ctk
 from tkinter import messagebox
 from utils import read_file, save_string_to_txt, get_word_count
 from ui.context_menu import TextWidgetContextMenu
+from ui.novel_params_tab import build_architecture_params_area
 
 def build_setting_tab(self):
     self.setting_tab = self.tabview.add("小说架构")
-    self.setting_tab.rowconfigure(0, weight=0)
-    self.setting_tab.rowconfigure(1, weight=3)
-    self.setting_tab.rowconfigure(3, weight=1)
-    self.setting_tab.columnconfigure(0, weight=1)
+    self.setting_tab.rowconfigure(0, weight=1)
+    self.setting_tab.columnconfigure(0, weight=3, uniform="architecture_columns")
+    self.setting_tab.columnconfigure(1, weight=2, uniform="architecture_columns")
 
-    toolbar = ctk.CTkFrame(self.setting_tab, fg_color="transparent")
+    editor_frame = ctk.CTkFrame(self.setting_tab)
+    editor_frame.grid(row=0, column=0, sticky="nsew", padx=(5, 2), pady=5)
+    editor_frame.rowconfigure(1, weight=3)
+    editor_frame.rowconfigure(3, weight=1)
+    editor_frame.columnconfigure(0, weight=1)
+
+    params_frame = ctk.CTkFrame(self.setting_tab)
+    params_frame.grid(row=0, column=1, sticky="nsew", padx=(2, 5), pady=5)
+    params_frame.rowconfigure(0, weight=1)
+    params_frame.columnconfigure(0, weight=1)
+    build_architecture_params_area(self, params_frame)
+
+    toolbar = ctk.CTkFrame(editor_frame, fg_color="transparent")
     toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
     toolbar.columnconfigure(1, weight=1)
 
@@ -29,16 +41,16 @@ def build_setting_tab(self):
     save_btn = ctk.CTkButton(toolbar, text="保存修改", command=self.save_novel_architecture, width=90, font=("Microsoft YaHei", 12))
     save_btn.grid(row=0, column=3, sticky="e")
 
-    self.setting_text = ctk.CTkTextbox(self.setting_tab, wrap="word", font=("Microsoft YaHei", 12))
+    self.setting_text = ctk.CTkTextbox(editor_frame, wrap="word", font=("Microsoft YaHei", 12))
     TextWidgetContextMenu(self.setting_text)
     self.setting_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
 
-    ctk.CTkLabel(self.setting_tab, text="个人修改意见", anchor="w", font=("Microsoft YaHei", 12, "bold")).grid(row=2, column=0, sticky="ew", padx=5, pady=(4, 2))
-    self.architecture_revision_guide_text = ctk.CTkTextbox(self.setting_tab, wrap="word", height=100, font=("Microsoft YaHei", 12))
+    ctk.CTkLabel(editor_frame, text="个人修改意见", anchor="w", font=("Microsoft YaHei", 12, "bold")).grid(row=2, column=0, sticky="ew", padx=5, pady=(4, 2))
+    self.architecture_revision_guide_text = ctk.CTkTextbox(editor_frame, wrap="word", height=100, font=("Microsoft YaHei", 12))
     TextWidgetContextMenu(self.architecture_revision_guide_text)
     self.architecture_revision_guide_text.grid(row=3, column=0, sticky="nsew", padx=5, pady=(0, 5))
 
-    self.btn_revise_architecture = ctk.CTkButton(self.setting_tab, text="AI 重新写小说架构", command=self.revise_novel_architecture_ui, height=34, font=("Microsoft YaHei", 12))
+    self.btn_revise_architecture = ctk.CTkButton(editor_frame, text="AI 重新写小说架构", command=self.revise_novel_architecture_ui, height=34, font=("Microsoft YaHei", 12))
     self.btn_revise_architecture.grid(row=4, column=0, sticky="ew", padx=5, pady=(0, 5))
 
     def update_word_count(event=None):

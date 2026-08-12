@@ -320,6 +320,6 @@ JSON 格式：
             self.app.num_chapters_var.set(chapters)
         self.app.planning_guide_text.delete("0.0", "end")
         self.app.planning_guide_text.insert("0.0", guidance)
-        self.app.tabview.set("全书规划")
+        self.app.tabview.set("小说架构")
         self.app.log("已将资料提炼结果应用到全书规划。")
         messagebox.showinfo("应用完成", "已回填故事主题、类型、章节数和全书规划要求。", parent=self.window)
