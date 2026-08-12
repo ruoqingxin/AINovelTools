@@ -22,6 +22,8 @@ _EXPORTS = {
     "import_knowledge_file": (".knowledge", "import_knowledge_file"),
     "collect_knowledge_files": (".knowledge", "collect_knowledge_files"),
     "clear_vector_store": (".vectorstore_utils", "clear_vector_store"),
+    "list_knowledge_sources": (".vectorstore_utils", "list_knowledge_sources"),
+    "delete_knowledge_sources": (".vectorstore_utils", "delete_knowledge_sources"),
 }
 
 __all__ = tuple(_EXPORTS)

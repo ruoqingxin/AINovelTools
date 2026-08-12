@@ -83,6 +83,7 @@ def import_knowledge_file(
     file_path: str,
     filepath: str,
     source_name: Optional[str] = None,
+    source_display_name: Optional[str] = None,
     embedding_adapter=None,
 ) -> bool:
     logging.info(f"开始导入知识库文件: {file_path}, 接口格式: {embedding_interface_format}, 模型: {embedding_model_name}")
@@ -98,12 +99,13 @@ def import_knowledge_file(
         logging.warning("知识库文件无法切分出有效内容。")
         return False
     source_name = source_name or os.path.abspath(file_path)
+    source_display_name = source_display_name or os.path.basename(source_name)
     source_id = "knowledge:" + hashlib.sha256(source_name.encode("utf-8")).hexdigest()[:20]
     metadatas = [
         {
             "source_type": "knowledge",
             "source_id": source_id,
-            "source_name": os.path.basename(source_name),
+            "source_name": source_display_name,
             "chunk_index": index,
         }
         for index in range(len(paragraphs))

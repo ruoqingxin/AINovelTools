@@ -975,10 +975,41 @@ def generate_batch_ui(self):
 
 
 def import_knowledge_handler(self):
+    from ui.knowledge_manager import KnowledgeManager
+
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先配置小说保存路径。")
         return
+
+    existing = getattr(self, "_knowledge_manager", None)
+    if existing is not None and existing.window.winfo_exists():
+        existing.refresh_sources()
+        existing.window.deiconify()
+        existing.window.lift()
+        return
+    self._knowledge_manager = KnowledgeManager(self)
+
+
+def import_knowledge_folder(self, folder, on_complete=None):
+    selected_files = collect_knowledge_files(folder)
+    if not selected_files:
+        messagebox.showinfo(
+            "导入知识库", "所选文件夹及其子文件夹中没有 .txt 或 .md 文件。"
+        )
+        return False
+    return import_knowledge_files(
+        self, selected_files, selected_folder=folder, on_complete=on_complete
+    )
+
+
+def import_knowledge_files(
+    self, selected_files, selected_folder="", on_complete=None
+):
+    filepath = self.filepath_var.get().strip()
+    if not filepath:
+        messagebox.showwarning("警告", "请先配置小说保存路径。")
+        return False
 
     emb_api_key = self.embedding_api_key_var.get().strip()
     emb_url = self.embedding_url_var.get().strip()
@@ -986,45 +1017,16 @@ def import_knowledge_handler(self):
     emb_model = self.embedding_model_name_var.get().strip()
     if not emb_model:
         messagebox.showwarning("Embedding 配置不完整", "请先填写嵌入模型名称。")
-        return
+        return False
     if not emb_url:
         messagebox.showwarning("Embedding 配置不完整", "请先填写嵌入服务 Base URL。")
-        return
+        return False
     if emb_format.lower() in {"openai", "azure openai", "gemini", "siliconflow"} and not emb_api_key:
         messagebox.showwarning(
             "Embedding 配置不完整",
             f"{emb_format} 嵌入服务需要 API Key，请先在“设置 > 嵌入模型设置”中填写并测试。",
         )
-        return
-
-    import_folder = messagebox.askyesnocancel(
-        "导入知识库",
-        "选择“是”导入整个文件夹，选择“否”导入一个或多个文件。",
-    )
-    if import_folder is None:
-        return
-
-    selected_folder = ""
-    if import_folder:
-        selected_folder = filedialog.askdirectory(title="选择知识库文件夹")
-        if not selected_folder:
-            return
-        selected_files = collect_knowledge_files(selected_folder)
-        if not selected_files:
-            messagebox.showinfo("导入知识库", "所选文件夹及其子文件夹中没有 .txt 或 .md 文件。")
-            return
-    else:
-        selected_files = filedialog.askopenfilenames(
-            title="选择一个或多个知识库文件",
-            filetypes=[
-                ("知识库文件", "*.txt *.md"),
-                ("文本文件", "*.txt"),
-                ("Markdown 文件", "*.md"),
-                ("所有文件", "*.*"),
-            ]
-        )
-        if not selected_files:
-            return
+        return False
 
     if selected_files:
         def task():
@@ -1069,6 +1071,7 @@ def import_knowledge_handler(self):
                             file_path=selected_file,
                             filepath=filepath,
                             source_name=selected_file,
+                            source_display_name=display_name,
                             embedding_adapter=embedding_adapter,
                         )
                         if imported:
@@ -1087,6 +1090,8 @@ def import_knowledge_handler(self):
                 if failures:
                     self.safe_log("失败文件：" + "、".join(failures))
                 self.call_in_ui(lambda: messagebox.showinfo("导入结果", summary))
+                if on_complete is not None:
+                    self.call_in_ui(on_complete)
 
             except Exception:
                 self.handle_exception("导入知识库时出错")
@@ -1094,9 +1099,11 @@ def import_knowledge_handler(self):
                 self.enable_button_safe(self.btn_import_knowledge)
 
         try:
-            _start_background(self, "import_knowledge", task)
+            return _start_background(self, "import_knowledge", task)
         except Exception as e:
             messagebox.showerror("错误", f"线程启动失败: {str(e)}")
+            return False
+    return False
 
 def clear_vectorstore_handler(self):
     filepath = self.filepath_var.get().strip()

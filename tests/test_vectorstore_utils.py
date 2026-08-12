@@ -19,7 +19,9 @@ except ImportError:
     sys.modules["langchain_core.documents"] = documents_module
 
 from novel_generator.vectorstore_utils import (
+    delete_knowledge_sources,
     get_knowledge_context_from_store,
+    list_knowledge_sources,
     replace_source_documents,
     update_vector_store,
 )
@@ -52,6 +54,33 @@ class FakeStore:
 
 
 class VectorStoreTest(unittest.TestCase):
+    def test_lists_and_reconstructs_imported_sources(self):
+        store = FakeStore()
+        store.get = lambda **kwargs: {
+            "ids": ["a:1", "b:0", "a:0"],
+            "documents": ["第二段", "人物资料", "第一段"],
+            "metadatas": [
+                {"source_type": "knowledge", "source_id": "a", "source_name": "世界.md", "chunk_index": 1},
+                {"source_type": "knowledge", "source_id": "b", "source_name": "人物.txt", "chunk_index": 0},
+                {"source_type": "knowledge", "source_id": "a", "source_name": "世界.md", "chunk_index": 0},
+            ],
+        }
+        with patch("novel_generator.vectorstore_utils.open_vector_store", return_value=store):
+            sources = list_knowledge_sources("project")
+
+        self.assertEqual([source["source_name"] for source in sources], ["世界.md", "人物.txt"])
+        self.assertEqual(sources[0]["content"], "第一段\n\n第二段")
+        self.assertEqual(sources[0]["chunk_count"], 2)
+
+    def test_deletes_only_selected_knowledge_sources(self):
+        store = FakeStore()
+        store.get = lambda **kwargs: {"ids": [f"{kwargs['where']['source_id']}:0"]}
+        with patch("novel_generator.vectorstore_utils.open_vector_store", return_value=store):
+            deleted = delete_knowledge_sources("project", ["a", "b", "a"])
+
+        self.assertEqual(deleted, 2)
+        self.assertEqual(store.deleted, [["a:0"], ["b:0"]])
+
     def test_knowledge_context_uses_only_knowledge_and_keeps_source(self):
         store = FakeStore()
 

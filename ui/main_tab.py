@@ -20,6 +20,15 @@ def build_global_log_area(self):
     self.global_log_header = _build_log_header(
         self, self.global_log_frame, 0, "btn_clear_log"
     )
+    self.btn_view_log_details = ctk.CTkButton(
+        self.global_log_header,
+        text="查看详情",
+        command=self.show_log_details,
+        width=80,
+        height=26,
+        font=FONT,
+    )
+    self.btn_view_log_details.grid(row=0, column=2, padx=(8, 0), sticky="e")
     self.btn_cancel_ai = ctk.CTkButton(
         self.global_log_header,
         text="中止 AI",
@@ -31,7 +40,7 @@ def build_global_log_area(self):
         fg_color=("#b42318", "#8f1d16"),
         hover_color=("#912018", "#731712"),
     )
-    self.btn_cancel_ai.grid(row=0, column=2, padx=(8, 0), sticky="e")
+    self.btn_cancel_ai.grid(row=0, column=3, padx=(8, 0), sticky="e")
     self.log_text = ctk.CTkTextbox(
         self.global_log_frame, height=120, wrap="word", font=FONT
     )

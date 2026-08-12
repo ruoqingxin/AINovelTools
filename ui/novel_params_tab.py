@@ -81,7 +81,7 @@ def build_novel_params_area(self, start_row=0):
         prep_actions, text="配置任务模型", command=open_model_settings, font=FONT
     ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
     self.btn_import_knowledge = ctk.CTkButton(
-        prep_actions, text="导入资料 / 写作规范", command=self.import_knowledge_handler, font=FONT
+        prep_actions, text="管理资料 / 写作规范", command=self.import_knowledge_handler, font=FONT
     )
     self.btn_import_knowledge.grid(row=0, column=1, sticky="ew", padx=(3, 0))
     row += 1

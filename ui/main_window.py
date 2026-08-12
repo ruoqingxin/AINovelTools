@@ -42,6 +42,8 @@ from ui.generation_handlers import (
     finalize_chapter_ui,
     do_consistency_check,
     import_knowledge_handler,
+    import_knowledge_files,
+    import_knowledge_folder,
     clear_vectorstore_handler,
     show_plot_arcs_ui,
     generate_batch_ui
@@ -223,7 +225,7 @@ class NovelGeneratorGUI:
             
             command=self.toggle_english_mode
         )
-        self.english_mode_btn.grid(row=0, column=3, padx=(8, 0), sticky="e")
+        self.english_mode_btn.grid(row=0, column=4, padx=(8, 0), sticky="e")
 
         self.master.protocol("WM_DELETE_WINDOW", self.close)
         self.master.after_idle(self.finish_startup)
@@ -243,13 +245,99 @@ class NovelGeneratorGUI:
             return default
 
     def log(self, message: str):
-        log_widget = getattr(self, "log_text", None)
-        if log_widget is None:
-            return
-        log_widget.configure(state="normal")
-        log_widget.insert("end", message + "\n")
-        log_widget.see("end")
-        log_widget.configure(state="disabled")
+        for log_widget in self._log_widgets():
+            try:
+                log_widget.configure(state="normal")
+                log_widget.insert("end", message + "\n")
+                log_widget.see("end")
+                log_widget.configure(state="disabled")
+            except tk.TclError:
+                continue
+
+    def _log_widgets(self):
+        widgets = []
+        for widget_name in ("log_text", "detail_log_text"):
+            widget = getattr(self, widget_name, None)
+            if widget is not None and widget not in widgets:
+                widgets.append(widget)
+        return tuple(widgets)
+
+    def show_log_details(self):
+        """Open a large read-only window and keep it synchronized with the log."""
+        existing = getattr(self, "_log_detail_window", None)
+        try:
+            if existing is not None and existing.winfo_exists():
+                existing.deiconify()
+                existing.lift()
+                existing.focus_force()
+                return
+        except tk.TclError:
+            pass
+
+        window = ctk.CTkToplevel(self.master)
+        window.title("运行日志详情")
+        window.geometry("1100x720")
+        window.minsize(760, 500)
+        window.transient(self.master)
+        window.grid_rowconfigure(1, weight=1)
+        window.grid_columnconfigure(0, weight=1)
+
+        header = ctk.CTkFrame(window, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
+        header.columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            header,
+            text="输出日志（只读）",
+            font=("Microsoft YaHei", 14, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(
+            header,
+            text="清空日志",
+            command=self.clear_app_log,
+            width=90,
+            height=28,
+            font=("Microsoft YaHei", 12),
+        ).grid(row=0, column=1, padx=(8, 0))
+        ctk.CTkButton(
+            header,
+            text="关闭",
+            command=self._close_log_details,
+            width=70,
+            height=28,
+            font=("Microsoft YaHei", 12),
+        ).grid(row=0, column=2, padx=(8, 0))
+
+        detail_log_text = ctk.CTkTextbox(
+            window,
+            wrap="word",
+            font=("Microsoft YaHei", 13),
+        )
+        TextWidgetContextMenu(detail_log_text)
+        detail_log_text.grid(
+            row=1, column=0, sticky="nsew", padx=10, pady=(4, 10)
+        )
+        source_log = getattr(self, "log_text", None)
+        if source_log is not None:
+            content = source_log.get("0.0", "end-1c")
+            if content:
+                detail_log_text.insert("0.0", content)
+                detail_log_text.see("end")
+        detail_log_text.configure(state="disabled")
+
+        self._log_detail_window = window
+        self.detail_log_text = detail_log_text
+        window.protocol("WM_DELETE_WINDOW", self._close_log_details)
+        window.after(50, window.focus_force)
+
+    def _close_log_details(self):
+        window = getattr(self, "_log_detail_window", None)
+        self._log_detail_window = None
+        self.detail_log_text = None
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
 
     def safe_log(self, message: str):
         self.call_in_ui(lambda: self.log(message))
@@ -459,11 +547,13 @@ class NovelGeneratorGUI:
             for log_path in log_paths:
                 with open(log_path, "w", encoding="utf-8"):
                     pass
-            log_widget = getattr(self, "log_text", None)
-            if log_widget is not None:
-                log_widget.configure(state="normal")
-                log_widget.delete("0.0", "end")
-                log_widget.configure(state="disabled")
+            for log_widget in self._log_widgets():
+                try:
+                    log_widget.configure(state="normal")
+                    log_widget.delete("0.0", "end")
+                    log_widget.configure(state="disabled")
+                except tk.TclError:
+                    continue
             messagebox.showinfo("清空日志", "运行日志已清空。")
         except OSError as exc:
             messagebox.showerror("清空失败", f"无法清空 app.log：{exc}")
@@ -714,6 +804,8 @@ class NovelGeneratorGUI:
     do_consistency_check = do_consistency_check
     generate_batch_ui = generate_batch_ui
     import_knowledge_handler = import_knowledge_handler
+    import_knowledge_files = import_knowledge_files
+    import_knowledge_folder = import_knowledge_folder
     clear_vectorstore_handler = clear_vectorstore_handler
     show_plot_arcs_ui = show_plot_arcs_ui
     load_config_btn = load_config_btn

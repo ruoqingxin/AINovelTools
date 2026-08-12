@@ -17,6 +17,80 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"  # 禁用tokenizer并行警告
 from .common import call_with_retry
 from .text_utils import split_sentences
 
+
+def open_vector_store(filepath: str):
+    """Open the persisted collection without requiring an embedding service."""
+    from chromadb.config import Settings
+    from langchain_chroma import Chroma
+
+    store_dir = get_vectorstore_dir(filepath)
+    if not os.path.isdir(store_dir):
+        return None
+    return Chroma(
+        persist_directory=store_dir,
+        client_settings=Settings(anonymized_telemetry=False),
+        collection_name="novel_collection",
+    )
+
+
+def list_knowledge_sources(filepath: str) -> tuple[dict, ...]:
+    """List imported knowledge sources and reconstruct their readable content."""
+    store = open_vector_store(filepath)
+    if store is None:
+        return ()
+    result = store.get(
+        where={"source_type": "knowledge"},
+        include=["documents", "metadatas"],
+    )
+    grouped = {}
+    for document, metadata in zip(
+        result.get("documents", []), result.get("metadatas", [])
+    ):
+        metadata = metadata or {}
+        source_id = metadata.get("source_id")
+        if not source_id:
+            continue
+        source = grouped.setdefault(
+            source_id,
+            {
+                "source_id": source_id,
+                "source_name": metadata.get("source_name", "未知来源"),
+                "chunks": [],
+            },
+        )
+        source["chunks"].append(
+            (int(metadata.get("chunk_index", 0)), str(document or ""))
+        )
+
+    sources = []
+    for source in grouped.values():
+        chunks = sorted(source.pop("chunks"), key=lambda item: item[0])
+        content = "\n\n".join(text for _, text in chunks if text.strip())
+        sources.append(
+            {
+                **source,
+                "chunk_count": len(chunks),
+                "character_count": len(content),
+                "content": content,
+            }
+        )
+    return tuple(sorted(sources, key=lambda item: item["source_name"].lower()))
+
+
+def delete_knowledge_sources(filepath: str, source_ids) -> int:
+    """Delete only the selected imported sources from the vector collection."""
+    store = open_vector_store(filepath)
+    if store is None:
+        return 0
+    deleted = 0
+    for source_id in dict.fromkeys(source_ids):
+        existing = store.get(where={"source_id": source_id}, include=[])
+        ids = existing.get("ids", []) if existing else []
+        if ids:
+            store.delete(ids=ids)
+            deleted += 1
+    return deleted
+
 def get_vectorstore_dir(filepath: str) -> str:
     """获取 vectorstore 路径"""
     return os.path.join(filepath, "vectorstore")
