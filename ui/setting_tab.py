@@ -6,6 +6,7 @@ from tkinter import messagebox, simpledialog, ttk
 
 from novel_generator.architecture_sections import (
     append_architecture_subsection,
+    delete_architecture_section,
     parse_architecture_sections,
     replace_architecture_section,
     replace_architecture_section_body,
@@ -132,7 +133,7 @@ def _build_section_editor(self, parent):
 
     section_toolbar = ctk.CTkFrame(parent, fg_color="transparent")
     section_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
-    section_toolbar.columnconfigure(3, weight=1)
+    section_toolbar.columnconfigure(4, weight=1)
     ctk.CTkButton(
         section_toolbar,
         text="刷新分区",
@@ -152,12 +153,21 @@ def _build_section_editor(self, parent):
         command=self.extract_architecture_section_from_files_ui,
     )
     self.btn_extract_architecture_section.grid(row=0, column=2, padx=(0, 6))
+    self.btn_delete_architecture_section = ctk.CTkButton(
+        section_toolbar,
+        text="删除分区",
+        width=88,
+        command=self.delete_architecture_section,
+        fg_color="#c0392b",
+        hover_color="#a93226",
+    )
+    self.btn_delete_architecture_section.grid(row=0, column=3, padx=(0, 6))
     self.architecture_section_status_label = ctk.CTkLabel(
         section_toolbar,
         text="从左侧选择要单独修改的内容",
         anchor="w",
     )
-    self.architecture_section_status_label.grid(row=0, column=3, sticky="ew")
+    self.architecture_section_status_label.grid(row=0, column=4, sticky="ew")
 
     extraction_options = ctk.CTkFrame(parent, fg_color="transparent")
     extraction_options.grid(
@@ -349,6 +359,59 @@ def get_selected_architecture_section(self):
     if not selection:
         return None
     return self._architecture_sections_by_id.get(selection[0])
+
+
+def delete_selected_architecture_section(self):
+    filepath = self.filepath_var.get().strip()
+    section = self.get_selected_architecture_section()
+    if not filepath:
+        messagebox.showwarning("警告", "请先设置保存文件路径。")
+        return
+    if section is None:
+        messagebox.showwarning("未选择分区", "请先从左侧选择要删除的分区。")
+        return
+
+    document = _architecture_text(self)
+    sections = parse_architecture_sections(document)
+    descendants = [
+        item
+        for item in sections
+        if section.start < item.start < section.end
+    ]
+    parent_heading = (
+        sections[section.parent_index].heading
+        if section.parent_index is not None
+        and section.parent_index < len(sections)
+        else None
+    )
+    descendant_note = (
+        f"\n同时会删除其下 {len(descendants)} 个子分区。"
+        if descendants
+        else ""
+    )
+    if not messagebox.askyesno(
+        "确认删除分区",
+        f"确定删除“{section.title}”吗？{descendant_note}\n\n"
+        f"将删除 {section.end - section.start} 个字符，并立即写入架构文件。",
+    ):
+        return
+
+    try:
+        merged = delete_architecture_section(document, section)
+        NovelProjectRepository(filepath).write(
+            NovelProjectRepository.ARCHITECTURE, merged
+        )
+    except (OSError, ValueError) as exc:
+        messagebox.showerror("删除失败", str(exc))
+        return
+
+    _show_complete_architecture(self, merged)
+    self.architecture_section_guide_text.delete("0.0", "end")
+    self.refresh_architecture_sections(select_heading=parent_heading)
+    self.log(
+        f"已删除小说架构分区“{section.title}”"
+        f"及其 {len(descendants)} 个子分区，并保存架构文件。"
+    )
 
 
 def update_architecture_extraction_controls(self):

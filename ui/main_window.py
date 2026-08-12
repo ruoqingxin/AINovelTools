@@ -54,6 +54,7 @@ from ui.setting_tab import (
     apply_extracted_architecture_content,
     build_setting_tab,
     clear_novel_architecture,
+    delete_selected_architecture_section,
     get_selected_architecture_section,
     load_novel_architecture,
     on_architecture_editor_tab_changed,
@@ -829,6 +830,7 @@ class NovelGeneratorGUI:
     load_novel_architecture = load_novel_architecture
     save_novel_architecture = save_novel_architecture
     clear_novel_architecture = clear_novel_architecture
+    delete_architecture_section = delete_selected_architecture_section
     on_architecture_editor_tab_changed = on_architecture_editor_tab_changed
     refresh_architecture_sections = refresh_architecture_sections
     on_architecture_section_selected = on_architecture_section_selected

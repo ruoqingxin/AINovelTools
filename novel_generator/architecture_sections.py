@@ -93,6 +93,19 @@ def replace_architecture_section(
     return document[:section.start] + replacement + document[section.end:]
 
 
+def delete_architecture_section(
+    document: str,
+    section: ArchitectureSection,
+) -> str:
+    """Delete one heading and its complete descendant subtree."""
+    if not (0 <= section.start < section.end <= len(document)):
+        raise ValueError("分区位置已经失效，请刷新分区后重试")
+    current = document[section.start:section.end]
+    if not current.startswith(section.heading):
+        raise ValueError("架构内容已经变化，请刷新分区后重试")
+    return document[:section.start] + document[section.end:]
+
+
 def append_architecture_subsection(
     document: str,
     parent: ArchitectureSection,

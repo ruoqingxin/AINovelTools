@@ -10,6 +10,7 @@ from novel_generator.architecture import (
 from novel_generator.architecture_sections import (
     append_architecture_subsection,
     architecture_section_body,
+    delete_architecture_section,
     parse_architecture_sections,
     replace_architecture_section,
     replace_architecture_section_body,
@@ -85,6 +86,24 @@ class ArchitectureSectionTest(unittest.TestCase):
         )
         self.assertIn("空间说明", merged)
         self.assertIn("主线内容", merged)
+
+    def test_delete_parent_removes_its_complete_subtree_only(self):
+        world = next(
+            item
+            for item in parse_architecture_sections(SAMPLE_ARCHITECTURE)
+            if item.title == "2) 世界观"
+        )
+        merged = delete_architecture_section(SAMPLE_ARCHITECTURE, world)
+
+        self.assertNotIn("#=== 2) 世界观 ===", merged)
+        self.assertNotIn("### 1.2 法则体系", merged)
+        self.assertIn("#=== 1) 核心种子 ===\n核心内容", merged)
+        self.assertIn("#=== 3) 主线 ===\n主线内容", merged)
+        self.assertEqual(
+            merged,
+            SAMPLE_ARCHITECTURE[:world.start]
+            + SAMPLE_ARCHITECTURE[world.end:],
+        )
 
     def test_can_add_a_targeted_child_section(self):
         world = next(
