@@ -35,6 +35,7 @@ from ui.generation_handlers import (
     generate_novel_architecture_ui,
     generate_chapter_blueprint_ui,
     revise_novel_architecture_ui,
+    revise_architecture_section_ui,
     revise_chapter_blueprint_ui,
     generate_chapter_draft_ui,
     revise_chapter_draft_ui,
@@ -47,7 +48,18 @@ from ui.generation_handlers import (
     show_plot_arcs_ui,
     generate_batch_ui
 )
-from ui.setting_tab import build_setting_tab, load_novel_architecture, save_novel_architecture, clear_novel_architecture
+from ui.setting_tab import (
+    add_architecture_subsection,
+    build_setting_tab,
+    clear_novel_architecture,
+    get_selected_architecture_section,
+    load_novel_architecture,
+    on_architecture_editor_tab_changed,
+    on_architecture_section_selected,
+    refresh_architecture_sections,
+    save_architecture_section,
+    save_novel_architecture,
+)
 from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint, clear_chapter_blueprint
 from ui.character_tab import build_character_tab, load_character_state, save_character_state
 from ui.summary_tab import build_summary_tab, load_global_summary, save_global_summary
@@ -794,6 +806,7 @@ class NovelGeneratorGUI:
     generate_novel_architecture_ui = generate_novel_architecture_ui
     generate_chapter_blueprint_ui = generate_chapter_blueprint_ui
     revise_novel_architecture_ui = revise_novel_architecture_ui
+    revise_architecture_section_ui = revise_architecture_section_ui
     revise_chapter_blueprint_ui = revise_chapter_blueprint_ui
     generate_chapter_draft_ui = generate_chapter_draft_ui
     revise_chapter_draft_ui = revise_chapter_draft_ui
@@ -811,6 +824,12 @@ class NovelGeneratorGUI:
     load_novel_architecture = load_novel_architecture
     save_novel_architecture = save_novel_architecture
     clear_novel_architecture = clear_novel_architecture
+    on_architecture_editor_tab_changed = on_architecture_editor_tab_changed
+    refresh_architecture_sections = refresh_architecture_sections
+    on_architecture_section_selected = on_architecture_section_selected
+    get_selected_architecture_section = get_selected_architecture_section
+    save_architecture_section = save_architecture_section
+    add_architecture_subsection = add_architecture_subsection
     load_chapter_blueprint = load_chapter_blueprint
     save_chapter_blueprint = save_chapter_blueprint
     clear_chapter_blueprint = clear_chapter_blueprint

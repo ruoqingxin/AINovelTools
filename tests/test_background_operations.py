@@ -38,6 +38,7 @@ class BackgroundOperationTest(unittest.TestCase):
                 "generate_architecture": "btn_generate_architecture",
                 "generate_blueprint": "btn_generate_directory",
                 "revise_architecture": "btn_revise_architecture",
+                "revise_architecture_section": "btn_revise_architecture_section",
                 "revise_blueprint": "btn_revise_blueprint",
                 "generate_chapter": "btn_generate_chapter",
                 "revise_chapter": "btn_revise_chapter",

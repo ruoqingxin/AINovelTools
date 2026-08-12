@@ -11,6 +11,7 @@ from utils import read_file, get_word_count
 from novel_generator import (
     Novel_architecture_generate,
     revise_novel_architecture,
+    revise_architecture_section,
     Chapter_blueprint_generate,
     revise_chapter_blueprint,
     generate_chapter_draft,
@@ -33,6 +34,7 @@ _BACKGROUND_OPERATION_BUTTONS = {
     "generate_architecture": "btn_generate_architecture",
     "generate_blueprint": "btn_generate_directory",
     "revise_architecture": "btn_revise_architecture",
+    "revise_architecture_section": "btn_revise_architecture_section",
     "revise_blueprint": "btn_revise_blueprint",
     "generate_chapter": "btn_generate_chapter",
     "revise_chapter": "btn_revise_chapter",
@@ -232,6 +234,61 @@ def revise_novel_architecture_ui(self):
             self.enable_button_safe(self.btn_revise_architecture)
 
     _start_background(self, "revise_architecture", task)
+
+
+def revise_architecture_section_ui(self):
+    filepath = self.filepath_var.get().strip()
+    if not filepath:
+        messagebox.showwarning("警告", "请先选择保存文件路径")
+        return
+
+    section = self.get_selected_architecture_section()
+    if section is None:
+        messagebox.showwarning("未选择分区", "请先从左侧选择要修改的分区。")
+        return
+    guidance = self.architecture_section_guide_text.get("0.0", "end").strip()
+    if not guidance:
+        messagebox.showwarning("缺少修改要求", "请先填写本分区的 AI 修改要求。")
+        return
+    current_text = self.setting_text.get("0.0", "end-1c")
+
+    def task():
+        try:
+            llm_config = get_llm_config(
+                self.loaded_config, self.architecture_llm_var.get()
+            )
+            self.safe_log(f"正在单独重写小说架构分区：{section.title}...")
+            merged, replacement = revise_architecture_section(
+                interface_format=llm_config["interface_format"],
+                api_key=llm_config.get("api_key", ""),
+                base_url=llm_config["base_url"],
+                llm_model=llm_config["model_name"],
+                filepath=filepath,
+                current_architecture=current_text,
+                section=section,
+                revision_guidance=guidance,
+                temperature=llm_config["temperature"],
+                max_tokens=llm_config["max_tokens"],
+                timeout=llm_config["timeout"],
+            )
+
+            def show_revision():
+                self.setting_text.delete("0.0", "end")
+                self.setting_text.insert("0.0", merged)
+                self.setting_word_count_label.configure(
+                    text=f"字数：{get_word_count(merged)}"
+                )
+                self.architecture_section_guide_text.delete("0.0", "end")
+                self.refresh_architecture_sections(
+                    select_heading=replacement.splitlines()[0]
+                )
+
+            self.call_in_ui(show_revision)
+            self.safe_log(f"✅ 已重写并保存小说架构分区：{section.title}。")
+        except Exception:
+            self.handle_exception(f"AI 重写架构分区“{section.title}”时出错")
+
+    _start_background(self, "revise_architecture_section", task)
 
 
 def revise_chapter_blueprint_ui(self):

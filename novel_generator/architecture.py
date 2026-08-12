@@ -11,6 +11,10 @@ from typing import Callable, Optional
 from novel_generator.common import invoke_with_cleaning
 from novel_generator.results import OperationResult
 from novel_generator.storage import NovelProjectRepository
+from novel_generator.architecture_sections import (
+    ArchitectureSection,
+    replace_architecture_section,
+)
 from novel_generator.vectorstore_utils import (
     get_knowledge_context_from_store,
     get_vectorstore_dir,
@@ -365,3 +369,63 @@ def revise_novel_architecture(
         revised_text,
     )
     return revised_text
+
+
+def revise_architecture_section(
+    interface_format: str,
+    api_key: str,
+    base_url: str,
+    llm_model: str,
+    filepath: str,
+    current_architecture: str,
+    section: ArchitectureSection,
+    revision_guidance: str,
+    temperature: float = 0.7,
+    max_tokens: int = 8192,
+    timeout: int = 600,
+) -> tuple[str, str]:
+    """Rewrite one heading subtree and atomically persist the merged document."""
+    revision_guidance = revision_guidance.strip()
+    if not revision_guidance:
+        raise ValueError("请先填写本分区的修改要求")
+
+    section_content = section.content_from(current_architecture)
+    prompt = prompt_definitions.architecture_section_revision_prompt.format(
+        revision_guidance=revision_guidance,
+        section_heading=section.heading,
+        section_content=section_content,
+        current_architecture=current_architecture,
+    )
+    llm_adapter = create_llm_adapter(
+        interface_format=interface_format,
+        base_url=base_url,
+        model_name=llm_model,
+        api_key=api_key,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    replacement = invoke_with_cleaning(llm_adapter, prompt).strip()
+    if not replacement:
+        raise RuntimeError("AI 返回空内容，已保留原分区")
+
+    lines = replacement.splitlines()
+    if lines and lines[0].lstrip().startswith("#"):
+        lines[0] = section.heading
+        replacement = "\n".join(lines)
+    else:
+        replacement = f"{section.heading}\n{replacement}"
+
+    original_had_trailing_newline = section_content.endswith(("\n", "\r"))
+    if original_had_trailing_newline and not replacement.endswith("\n"):
+        replacement += "\n"
+    merged = replace_architecture_section(
+        current_architecture,
+        section,
+        replacement,
+    )
+    NovelProjectRepository(filepath).write(
+        NovelProjectRepository.ARCHITECTURE,
+        merged,
+    )
+    return merged, replacement
