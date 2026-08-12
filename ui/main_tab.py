@@ -9,19 +9,46 @@ from utils import get_word_count
 FONT = ("Microsoft YaHei", 12)
 
 
+def build_global_log_area(self):
+    """Build the window-level log that stays visible while tabs change."""
+    self.global_log_frame = ctk.CTkFrame(self.master)
+    self.global_log_frame.grid(
+        row=0, column=0, sticky="ew", padx=5, pady=(5, 0)
+    )
+    self.global_log_frame.columnconfigure(0, weight=1)
+
+    self.global_log_header = _build_log_header(
+        self, self.global_log_frame, 0, "btn_clear_log"
+    )
+    self.btn_cancel_ai = ctk.CTkButton(
+        self.global_log_header,
+        text="中止 AI",
+        command=self.cancel_active_operation,
+        state="disabled",
+        width=80,
+        height=26,
+        font=FONT,
+        fg_color=("#b42318", "#8f1d16"),
+        hover_color=("#912018", "#731712"),
+    )
+    self.btn_cancel_ai.grid(row=0, column=2, padx=(8, 0), sticky="e")
+    self.log_text = ctk.CTkTextbox(
+        self.global_log_frame, height=120, wrap="word", font=FONT
+    )
+    TextWidgetContextMenu(self.log_text)
+    self.log_text.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 5))
+    self.log_text.configure(state="disabled")
+
+
 def build_main_tab(self):
     """Build the project setup and full-book planning workspace."""
     self.main_tab = self.tabview.add("全书规划")
     self.main_tab.rowconfigure(0, weight=1)
-    self.main_tab.columnconfigure(0, weight=3, uniform="planning_columns", minsize=560)
-    self.main_tab.columnconfigure(1, weight=2, uniform="planning_columns", minsize=440)
+    self.main_tab.columnconfigure(0, weight=1)
 
-    self.planning_left_frame = ctk.CTkFrame(self.main_tab)
-    self.planning_left_frame.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
     self.right_frame = ctk.CTkFrame(self.main_tab)
-    self.right_frame.grid(row=0, column=1, sticky="nsew", padx=2, pady=2)
+    self.right_frame.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
 
-    build_planning_log_layout(self)
     build_right_layout(self)
 
 
@@ -62,28 +89,13 @@ def _build_log_header(self, parent, row, button_attr):
     )
     clear_button.grid(row=0, column=1, sticky="e")
     setattr(self, button_attr, clear_button)
-
-
-def build_planning_log_layout(self):
-    self.planning_left_frame.rowconfigure(0, weight=0)
-    self.planning_left_frame.rowconfigure(1, weight=1)
-    self.planning_left_frame.columnconfigure(0, weight=1)
-
-    _build_log_header(self, self.planning_left_frame, 0, "btn_clear_planning_log")
-    self.planning_log_text = ctk.CTkTextbox(
-        self.planning_left_frame, wrap="word", font=FONT
-    )
-    TextWidgetContextMenu(self.planning_log_text)
-    self.planning_log_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
-    self.planning_log_text.configure(state="disabled")
+    return header
 
 
 def build_left_layout(self):
-    """Side-by-side chapter versions and their synchronized operation log."""
+    """Build the side-by-side chapter version editors."""
     frame = self.chapter_left_frame
-    frame.grid_rowconfigure(0, weight=2)
-    frame.grid_rowconfigure(1, weight=0)
-    frame.grid_rowconfigure(2, weight=1)
+    frame.grid_rowconfigure(0, weight=1)
     frame.columnconfigure(0, weight=1)
 
     comparison = ctk.CTkFrame(frame, fg_color="transparent")
@@ -123,12 +135,6 @@ def build_left_layout(self):
 
     self.chapter_result.bind("<KeyRelease>", update_word_count)
     self.chapter_result.bind("<ButtonRelease>", update_word_count)
-
-    _build_log_header(self, frame, 1, "btn_clear_log")
-    self.log_text = ctk.CTkTextbox(frame, wrap="word", font=FONT)
-    TextWidgetContextMenu(self.log_text)
-    self.log_text.grid(row=2, column=0, sticky="nsew", padx=5, pady=(0, 5))
-    self.log_text.configure(state="disabled")
 
 
 def build_right_layout(self):

@@ -2,6 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Mapping
+from ai_cancellation import raise_if_cancelled
 
 
 class NovelProjectRepository:
@@ -58,11 +59,13 @@ class NovelProjectRepository:
         return path.read_text(encoding="utf-8")
 
     def write(self, relative_path: str, content: str) -> Path:
+        raise_if_cancelled()
         path = self.path(relative_path)
         self._write_atomic(path, content)
         return path
 
     def write_chapter(self, chapter_number: int, content: str) -> Path:
+        raise_if_cancelled()
         path = self.chapter_path(chapter_number)
         self._write_atomic(path, content)
         return path
@@ -84,6 +87,7 @@ class NovelProjectRepository:
 
     def write_many(self, files: Mapping[str, str]) -> tuple[Path, ...]:
         """写入一组文件；任何一步失败时恢复写入前的内容。"""
+        raise_if_cancelled()
         targets = {self.path(name): content for name, content in files.items()}
         previous = {
             path: path.read_bytes() if path.exists() else None
@@ -92,9 +96,10 @@ class NovelProjectRepository:
         written = []
         try:
             for path, content in targets.items():
+                raise_if_cancelled()
                 self._write_atomic(path, content)
                 written.append(path)
-        except Exception:
+        except BaseException:
             for path in reversed(written):
                 old_content = previous[path]
                 if old_content is None:

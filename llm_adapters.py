@@ -10,6 +10,7 @@ from azure.core.credentials import AzureKeyCredential
 from azure.ai.inference.models import SystemMessage, UserMessage
 from openai import OpenAI
 import requests
+from ai_cancellation import CancellableAdapter
 
 
 def check_base_url(url: str) -> str:
@@ -403,26 +404,27 @@ def create_llm_adapter(
     """
     fmt = interface_format.strip().lower()
     if fmt == "deepseek":
-        return DeepSeekAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = DeepSeekAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     elif fmt == "openai":
-        return OpenAIAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = OpenAIAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     elif fmt == "azure openai":
-        return AzureOpenAIAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = AzureOpenAIAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     elif fmt == "azure ai":
-        return AzureAIAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = AzureAIAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     elif fmt == "ollama":
-        return OllamaAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = OllamaAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     elif fmt == "ml studio":
-        return MLStudioAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = MLStudioAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     elif fmt == "gemini":
-        return GeminiAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = GeminiAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     elif fmt == "阿里云百炼":
-        return OpenAIAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = OpenAIAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     elif fmt == "火山引擎":
-        return VolcanoEngineAIAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = VolcanoEngineAIAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     elif fmt == "硅基流动":
-        return SiliconFlowAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = SiliconFlowAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     elif fmt == "grok":
-        return GrokAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
+        adapter = GrokAdapter(api_key, base_url, model_name, max_tokens, temperature, timeout)
     else:
         raise ValueError(f"Unknown interface_format: {interface_format}")
+    return CancellableAdapter(adapter)

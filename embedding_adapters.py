@@ -6,6 +6,7 @@ from typing import List
 import requests
 from google import genai
 from langchain_openai import AzureOpenAIEmbeddings, OpenAIEmbeddings
+from ai_cancellation import CancellableAdapter
 
 DEFAULT_REQUEST_TIMEOUT = (5, 60)
 
@@ -292,16 +293,17 @@ def create_embedding_adapter(
     """
     fmt = interface_format.strip().lower()
     if fmt == "openai":
-        return OpenAIEmbeddingAdapter(api_key, base_url, model_name)
+        adapter = OpenAIEmbeddingAdapter(api_key, base_url, model_name)
     elif fmt == "azure openai":
-        return AzureOpenAIEmbeddingAdapter(api_key, base_url, model_name)
+        adapter = AzureOpenAIEmbeddingAdapter(api_key, base_url, model_name)
     elif fmt == "ollama":
-        return OllamaEmbeddingAdapter(model_name, base_url)
+        adapter = OllamaEmbeddingAdapter(model_name, base_url)
     elif fmt == "ml studio":
-        return MLStudioEmbeddingAdapter(api_key, base_url, model_name)
+        adapter = MLStudioEmbeddingAdapter(api_key, base_url, model_name)
     elif fmt == "gemini":
-        return GeminiEmbeddingAdapter(api_key, model_name, base_url)
+        adapter = GeminiEmbeddingAdapter(api_key, model_name, base_url)
     elif fmt == "siliconflow":
-        return SiliconFlowEmbeddingAdapter(api_key, base_url, model_name)
+        adapter = SiliconFlowEmbeddingAdapter(api_key, base_url, model_name)
     else:
         raise ValueError(f"Unknown embedding interface_format: {interface_format}")
+    return CancellableAdapter(adapter)

@@ -8,11 +8,19 @@ import os
 import re
 import random
 import time
+from ai_cancellation import cancellable_sleep, get_current_token, raise_if_cancelled
 
 
 def _retry_delay(base_delay: float, attempt: int, max_delay: float) -> float:
     exponential_delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
     return exponential_delay * random.uniform(0.85, 1.15)
+
+
+def _sleep_before_retry(delay: float) -> None:
+    if get_current_token() is None:
+        time.sleep(delay)
+    else:
+        cancellable_sleep(delay)
 
 
 def call_with_retry(
@@ -33,6 +41,7 @@ def call_with_retry(
     :return: func的结果，若失败则返回 fallback_return
     """
     for attempt in range(1, max_retries + 1):
+        raise_if_cancelled()
         try:
             return func(**kwargs)
         except Exception as exc:
@@ -46,7 +55,7 @@ def call_with_retry(
             if attempt < max_retries:
                 delay = _retry_delay(sleep_time, attempt, max_sleep_time)
                 logging.info("Retrying in %.2f seconds", delay)
-                time.sleep(delay)
+                _sleep_before_retry(delay)
             else:
                 logging.error("Max retries reached, returning fallback_return.")
                 return fallback_return
@@ -120,6 +129,7 @@ def invoke_with_cleaning(
     retry_count = 0
 
     while retry_count < max_retries:
+        raise_if_cancelled()
         try:
             result = normalize_llm_text(llm_adapter.invoke(prompt))
             log_llm_io("Response", result)
@@ -145,6 +155,6 @@ def invoke_with_cleaning(
         if retry_count < max_retries and retry_delay > 0:
             delay = _retry_delay(retry_delay, retry_count, max_retry_delay)
             logging.info("LLM request retrying in %.2f seconds", delay)
-            time.sleep(delay)
+            _sleep_before_retry(delay)
 
     raise RuntimeError(f"LLM 在 {max_retries} 次重试后仍返回空内容")

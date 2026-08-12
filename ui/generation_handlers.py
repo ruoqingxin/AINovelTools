@@ -26,6 +26,7 @@ from consistency_checker import check_consistency
 from config_manager import get_llm_config
 from embedding_adapters import create_embedding_adapter
 from novel_generator.storage import NovelProjectRepository
+from ai_cancellation import raise_if_cancelled
 
 
 _BACKGROUND_OPERATION_BUTTONS = {
@@ -962,6 +963,7 @@ def generate_batch_ui(self):
     def batch_task():
         try:
             for i in range(int(result["start"]), int(result["end"]) + 1):
+                raise_if_cancelled()
                 self.safe_log(f"批量生成：正在生成第 {i} 章...")
                 generate_chapter_batch(self, i, int(result["word"]), int(result["min"]), result["auto_enrich"])
                 self.safe_log(f"批量生成：第 {i} 章完成。")
@@ -1051,6 +1053,7 @@ def import_knowledge_handler(self):
                 failures = []
                 total = len(selected_files)
                 for index, selected_file in enumerate(selected_files, 1):
+                    raise_if_cancelled()
                     display_name = (
                         os.path.relpath(selected_file, selected_folder)
                         if selected_folder

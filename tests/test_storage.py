@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from novel_generator.storage import NovelProjectRepository
+from ai_cancellation import CancellationToken, OperationCancelled, reset_current_token, set_current_token
 
 
 class NovelProjectRepositoryTest(unittest.TestCase):
@@ -38,6 +39,20 @@ class NovelProjectRepositoryTest(unittest.TestCase):
 
             self.assertEqual(repository.read("first.txt"), "old first")
             self.assertEqual(repository.read("second.txt"), "old second")
+
+    def test_cancelled_operation_cannot_write_project_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = NovelProjectRepository(temp_dir)
+            token = CancellationToken()
+            context_token = set_current_token(token)
+            try:
+                token.cancel()
+                with self.assertRaises(OperationCancelled):
+                    repository.write("chapter.txt", "late AI result")
+            finally:
+                reset_current_token(context_token)
+
+            self.assertFalse(repository.path("chapter.txt").exists())
 
 
 if __name__ == "__main__":

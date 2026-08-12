@@ -21,6 +21,16 @@ class FakeButton:
             self.enabled.set()
 
 
+class FakeCancelButton:
+    def __init__(self):
+        self.state = "disabled"
+        self.text = "中止 AI"
+
+    def configure(self, **kwargs):
+        self.state = kwargs.get("state", self.state)
+        self.text = kwargs.get("text", self.text)
+
+
 class BackgroundOperationTest(unittest.TestCase):
     def test_generation_operations_map_to_their_own_buttons(self):
         self.assertEqual(
@@ -45,6 +55,8 @@ class BackgroundOperationTest(unittest.TestCase):
         gui._closing = False
         gui._operation_lock = threading.Lock()
         gui._active_operations = set()
+        gui._active_cancellation_token = None
+        gui.btn_cancel_ai = FakeCancelButton()
         button = FakeButton()
         started = threading.Event()
         release = threading.Event()
@@ -65,6 +77,38 @@ class BackgroundOperationTest(unittest.TestCase):
         self.assertTrue(button.enabled.wait(timeout=2))
         self.assertEqual(set(), gui._active_operations)
         self.assertEqual("normal", button.state)
+
+    def test_cancel_active_operation_stops_a_blocked_ai_request(self):
+        from ai_cancellation import run_cancellable_request
+
+        gui = object.__new__(NovelGeneratorGUI)
+        gui.master = FakeMaster()
+        gui._closing = False
+        gui._operation_lock = threading.Lock()
+        gui._active_operations = set()
+        gui._active_cancellation_token = None
+        gui.btn_cancel_ai = FakeCancelButton()
+        gui.log = lambda _message: None
+        gui.safe_log = lambda _message: None
+
+        request_started = threading.Event()
+        operation_finished = threading.Event()
+
+        def blocked_request():
+            request_started.set()
+            threading.Event().wait(5)
+
+        def operation():
+            try:
+                run_cancellable_request(blocked_request)
+            finally:
+                operation_finished.set()
+
+        self.assertTrue(gui.start_background_operation("blocked", operation))
+        self.assertTrue(request_started.wait(timeout=2))
+        gui.cancel_active_operation()
+
+        self.assertTrue(operation_finished.wait(timeout=2))
 
 
 if __name__ == "__main__":

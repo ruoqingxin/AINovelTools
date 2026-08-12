@@ -1,6 +1,7 @@
 # ui/role_library.py
 import os
 import logging
+import threading
 import tkinter as tk
 from tkinter import filedialog
 import shutil
@@ -21,13 +22,22 @@ WINDOWS_RESERVED_NAMES = {
 }
 
 class RoleLibrary:
-    def __init__(self, master, save_path, llm_adapter):  # 新增llm_adapter参数
+    def __init__(
+        self,
+        master,
+        save_path,
+        llm_adapter,
+        start_ai_operation=None,
+        cancel_ai_operation=None,
+    ):
         self.master = master
         self.save_path = os.path.join(save_path, "角色库")
         self.selected_category = None
         self.current_roles = []
         self.selected_del = []
         self.llm_adapter = llm_adapter  # 保存LLM适配器实例
+        self.start_ai_operation = start_ai_operation
+        self.cancel_ai_operation = cancel_ai_operation
 
         # 初始化窗口
         self.window = ctk.CTkToplevel(master)
@@ -372,13 +382,26 @@ class RoleLibrary:
         ).pack(side="left", padx=10)
 
         # 分析文件按钮
-        ctk.CTkButton(
+        self.analyze_roles_button = ctk.CTkButton(
             btn_frame,
             text="分析文件",
             width=100,
             command=lambda: self.analyze_character_state(right_panel, left_panel),
             font=DEFAULT_FONT
-        ).pack(side="left", padx=10)
+        )
+        self.analyze_roles_button.pack(side="left", padx=10)
+
+        self.cancel_analysis_button = ctk.CTkButton(
+            btn_frame,
+            text="中止 AI",
+            width=100,
+            state="disabled",
+            command=self._cancel_role_analysis,
+            font=DEFAULT_FONT,
+            fg_color=("#b42318", "#8f1d16"),
+            hover_color=("#912018", "#731712"),
+        )
+        self.cancel_analysis_button.pack(side="left", padx=10)
 
         # 加载character_state.txt按钮
         ctk.CTkButton(
@@ -413,39 +436,74 @@ class RoleLibrary:
             messagebox.showwarning("警告", "未找到可分析的内容", parent=self.window)
             return
 
-        try:
-            # 创建临时角色库目录
-            target_dir = self._category_dir_path("临时角色库")
-            # 清空现有临时角色库
-            if os.path.exists(target_dir):
-                for filename in os.listdir(target_dir):
-                    file_path = os.path.join(target_dir, filename)
-                    try:
-                        if os.path.isfile(file_path):
-                            os.unlink(file_path)
-                    except Exception as e:
-                        logging.warning("删除临时角色文件 %s 失败: %s", file_path, e)
-            os.makedirs(target_dir, exist_ok=True)
-
-            # 调用LLM进行分析
-            prompt = f"{prompt_definitions.Character_Import_Prompt}\n<<待分析小说文本开始>>\n{content}\n<<待分析小说文本结束>>"
-            response = invoke_with_cleaning(
-                self.llm_adapter,
-                prompt
+        def task():
+            self.master.after(
+                0, lambda: self.analyze_roles_button.configure(state="disabled")
             )
-            
-            # 解析LLM响应
-            roles = self._parse_llm_response(response)
-            
-            if not roles:
-                messagebox.showwarning("警告", "未解析到有效角色信息", parent=self.window)
-                return
+            self.master.after(
+                0, lambda: self.cancel_analysis_button.configure(state="normal")
+            )
+            try:
+                # 创建临时角色库目录
+                target_dir = self._category_dir_path("临时角色库")
+                # 清空现有临时角色库
+                if os.path.exists(target_dir):
+                    for filename in os.listdir(target_dir):
+                        file_path = os.path.join(target_dir, filename)
+                        try:
+                            if os.path.isfile(file_path):
+                                os.unlink(file_path)
+                        except Exception as e:
+                            logging.warning("删除临时角色文件 %s 失败: %s", file_path, e)
+                os.makedirs(target_dir, exist_ok=True)
 
-            # 直接显示分析结果而不保存到文件
-            self._display_analyzed_roles(left_panel, roles)
+                # 调用LLM进行分析
+                prompt = f"{prompt_definitions.Character_Import_Prompt}\n<<待分析小说文本开始>>\n{content}\n<<待分析小说文本结束>>"
+                response = invoke_with_cleaning(self.llm_adapter, prompt)
 
-        except Exception as e:
-            messagebox.showerror("分析失败", f"LLM分析出错：{str(e)}", parent=self.window)
+                # 解析LLM响应
+                roles = self._parse_llm_response(response)
+
+                if not roles:
+                    self.master.after(
+                        0,
+                        lambda: messagebox.showwarning(
+                            "警告", "未解析到有效角色信息", parent=self.window
+                        ),
+                    )
+                    return
+
+                self.master.after(
+                    0, lambda: self._display_analyzed_roles(left_panel, roles)
+                )
+
+            except Exception as e:
+                self.master.after(
+                    0,
+                    lambda error=str(e): messagebox.showerror(
+                        "分析失败", f"LLM分析出错：{error}", parent=self.window
+                    ),
+                )
+            finally:
+                self.master.after(
+                    0, lambda: self.analyze_roles_button.configure(state="normal")
+                )
+                self.master.after(
+                    0, lambda: self.cancel_analysis_button.configure(state="disabled")
+                )
+
+        if self.start_ai_operation is not None:
+            self.start_ai_operation("analyze_roles", task, self.analyze_roles_button)
+        else:
+            threading.Thread(target=task, daemon=True).start()
+
+    def _cancel_role_analysis(self):
+        if self.cancel_ai_operation is not None:
+            self.cancel_ai_operation()
+        self.cancel_analysis_button.configure(state="disabled", text="正在中止...")
+        self.master.after(
+            500, lambda: self.cancel_analysis_button.configure(text="中止 AI")
+        )
 
     def _display_temp_roles(self, parent, temp_dir):
         """显示临时角色库中的角色"""

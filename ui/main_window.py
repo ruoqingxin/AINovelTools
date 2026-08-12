@@ -11,13 +11,19 @@ from .role_library import RoleLibrary
 from app_runtime import APP_LOG_HANDLER_MARKER, get_application_dir, get_config_path, get_log_path
 from llm_adapters import create_llm_adapter
 from novel_generator.storage import NovelProjectRepository
+from ai_cancellation import (
+    CancellationToken,
+    OperationCancelled,
+    reset_current_token,
+    set_current_token,
+)
 
 from config_manager import load_config, save_config, test_llm_config, test_embedding_config
 from utils import read_file, get_word_count
 from tooltips import tooltips
 
 from ui.context_menu import TextWidgetContextMenu
-from ui.main_tab import build_main_tab, build_chapter_editor_tab
+from ui.main_tab import build_chapter_editor_tab, build_global_log_area, build_main_tab
 from ui.config_tab import load_config_btn, save_config_btn, save_embedding_config
 from ui.novel_params_tab import (
     build_chapter_params_area,
@@ -55,6 +61,7 @@ class NovelGeneratorGUI:
         self._closing = False
         self._operation_lock = threading.Lock()
         self._active_operations = set()
+        self._active_cancellation_token = None
         self.master.title("AI 小说生成器")
         try:
             icon_path = get_application_dir() / "icon.ico"
@@ -182,9 +189,15 @@ class NovelGeneratorGUI:
             self.planning_guidance_default = ""
             self.chapter_guidance_default = ""
 
-        # --------------- 整体Tab布局 ---------------
+        # --------------- 全局日志与整体Tab布局 ---------------
+        self.master.grid_rowconfigure(0, weight=0)
+        self.master.grid_rowconfigure(1, weight=1)
+        self.master.grid_columnconfigure(0, weight=1)
+
+        build_global_log_area(self)
+
         self.tabview = ctk.CTkTabview(self.master)
-        self.tabview.pack(fill="both", expand=True)
+        self.tabview.grid(row=1, column=0, sticky="nsew")
 
         # 创建各个标签页
         build_main_tab(self)
@@ -201,14 +214,14 @@ class NovelGeneratorGUI:
 
         # English Mode Button
         self.english_mode_btn = ctk.CTkButton(
-            self.master, 
+            self.global_log_header,
             text="切换为英文模式",
             width=100, 
-            height=20,
+            height=26,
             
             command=self.toggle_english_mode
         )
-        self.english_mode_btn.place(relx=0.98, rely=0.015, anchor="ne")
+        self.english_mode_btn.grid(row=0, column=3, padx=(8, 0), sticky="e")
 
         self.master.protocol("WM_DELETE_WINDOW", self.close)
         self.master.after_idle(self.finish_startup)
@@ -228,14 +241,13 @@ class NovelGeneratorGUI:
             return default
 
     def log(self, message: str):
-        for widget_name in ("planning_log_text", "log_text"):
-            log_widget = getattr(self, widget_name, None)
-            if log_widget is None:
-                continue
-            log_widget.configure(state="normal")
-            log_widget.insert("end", message + "\n")
-            log_widget.see("end")
-            log_widget.configure(state="disabled")
+        log_widget = getattr(self, "log_text", None)
+        if log_widget is None:
+            return
+        log_widget.configure(state="normal")
+        log_widget.insert("end", message + "\n")
+        log_widget.see("end")
+        log_widget.configure(state="disabled")
 
     def safe_log(self, message: str):
         self.call_in_ui(lambda: self.log(message))
@@ -264,18 +276,32 @@ class NovelGeneratorGUI:
                 self.safe_log("已有后台任务正在运行，请等待当前任务完成。")
                 return False
             self._active_operations.add(name)
+            cancellation_token = CancellationToken()
+            self._active_cancellation_token = cancellation_token
 
         if button is not None:
             button.configure(state="disabled")
+        cancel_button = getattr(self, "btn_cancel_ai", None)
+        if cancel_button is not None:
+            self.call_in_ui(lambda: cancel_button.configure(state="normal"))
 
         def run():
+            context_token = set_current_token(cancellation_token)
             try:
                 target()
+                cancellation_token.raise_if_cancelled()
+            except OperationCancelled:
+                self.safe_log("⏹ AI 操作已中止，未完成的结果已丢弃。")
             finally:
+                reset_current_token(context_token)
                 with self._operation_lock:
                     self._active_operations.discard(name)
+                    if self._active_cancellation_token is cancellation_token:
+                        self._active_cancellation_token = None
                 if button is not None:
                     self.enable_button_safe(button)
+                if cancel_button is not None:
+                    self.call_in_ui(lambda: cancel_button.configure(state="disabled"))
 
         try:
             threading.Thread(
@@ -287,9 +313,31 @@ class NovelGeneratorGUI:
         except Exception:
             with self._operation_lock:
                 self._active_operations.discard(name)
+                if self._active_cancellation_token is cancellation_token:
+                    self._active_cancellation_token = None
             if button is not None:
                 button.configure(state="normal")
+            if cancel_button is not None:
+                cancel_button.configure(state="disabled")
             raise
+
+    def cancel_active_operation(self):
+        """Request cancellation of the currently active AI operation."""
+        with self._operation_lock:
+            token = self._active_cancellation_token
+            active_operations = tuple(self._active_operations)
+        if token is None or not active_operations:
+            self.log("当前没有可中止的 AI 操作。")
+            return
+        token.cancel()
+        self.btn_cancel_ai.configure(state="disabled", text="正在中止...")
+        self.log("正在中止当前 AI 操作...")
+
+        def restore_label():
+            if not self._closing:
+                self.btn_cancel_ai.configure(text="中止 AI")
+
+        self.master.after(500, restore_label)
 
     def close(self):
         """Close cleanly, warning when background work is still in progress."""
@@ -301,6 +349,8 @@ class NovelGeneratorGUI:
         ):
             return
         self._closing = True
+        if self._active_cancellation_token is not None:
+            self._active_cancellation_token.cancel()
         logging.info("Application closing; active operations: %s", active_operations)
         self.master.destroy()
 
@@ -405,10 +455,8 @@ class NovelGeneratorGUI:
             for log_path in log_paths:
                 with open(log_path, "w", encoding="utf-8"):
                     pass
-            for widget_name in ("planning_log_text", "log_text"):
-                log_widget = getattr(self, widget_name, None)
-                if log_widget is None:
-                    continue
+            log_widget = getattr(self, "log_text", None)
+            if log_widget is not None:
                 log_widget.configure(state="normal")
                 log_widget.delete("0.0", "end")
                 log_widget.configure(state="disabled")
@@ -463,16 +511,19 @@ class NovelGeneratorGUI:
         max_tokens = self.max_tokens_var.get()
         timeout = self.timeout_var.get()
 
-        test_llm_config(
-            interface_format=interface_format,
-            api_key=api_key,
-            base_url=base_url,
-            model_name=model_name,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout,
-            log_func=self.safe_log,
-            handle_exception_func=self.handle_exception
+        self.start_background_operation(
+            "test_llm_config",
+            lambda: test_llm_config(
+                interface_format=interface_format,
+                api_key=api_key,
+                base_url=base_url,
+                model_name=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                log_func=self.safe_log,
+                handle_exception_func=self.handle_exception,
+            ),
         )
 
     def test_embedding_config(self):
@@ -484,13 +535,16 @@ class NovelGeneratorGUI:
         interface_format = self.embedding_interface_format_var.get().strip()
         model_name = self.embedding_model_name_var.get().strip()
 
-        test_embedding_config(
-            api_key=api_key,
-            base_url=base_url,
-            interface_format=interface_format,
-            model_name=model_name,
-            log_func=self.safe_log,
-            handle_exception_func=self.handle_exception
+        self.start_background_operation(
+            "test_embedding_config",
+            lambda: test_embedding_config(
+                api_key=api_key,
+                base_url=base_url,
+                interface_format=interface_format,
+                model_name=model_name,
+                log_func=self.safe_log,
+                handle_exception_func=self.handle_exception,
+            ),
         )
     
     def browse_folder(self):
@@ -612,7 +666,13 @@ class NovelGeneratorGUI:
             if self._role_lib.window and self._role_lib.window.winfo_exists():
                 self._role_lib.window.destroy()
         
-        self._role_lib = RoleLibrary(self.master, save_path, llm_adapter)  # 新增参数
+        self._role_lib = RoleLibrary(
+            self.master,
+            save_path,
+            llm_adapter,
+            start_ai_operation=self.start_background_operation,
+            cancel_ai_operation=self.cancel_active_operation,
+        )
 
     def toggle_english_mode(self):
         import config_manager
