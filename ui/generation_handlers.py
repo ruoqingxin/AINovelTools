@@ -303,13 +303,13 @@ def revise_architecture_section_ui(self):
 
 
 def extract_architecture_section_from_files_ui(self):
+    overview_selected = self.is_architecture_overview_selected()
     section = self.get_selected_architecture_section()
-    if section is None:
+    if section is None and not overview_selected:
         messagebox.showwarning("未选择分区", "请先从左侧选择要提炼资料的分区。")
         return
-    mode = self.architecture_extraction_mode_var.get()
     target_title = self.architecture_extraction_title_entry.get().strip()
-    if mode == "新建/更新子分区" and not target_title:
+    if not target_title:
         messagebox.showwarning(
             "缺少目标名称",
             "请输入固定的子分区名称，例如“境界体系”，再选择文件提炼。",
@@ -318,7 +318,11 @@ def extract_architecture_section_from_files_ui(self):
         return
     files = filedialog.askopenfilenames(
         parent=self.master,
-        title=f"选择用于提炼“{section.title}”的资料",
+        title=(
+            f"选择用于提炼“{section.title}”的资料"
+            if section is not None
+            else "选择用于在总览下新建分区的资料"
+        ),
         filetypes=[("文字资料", "*.txt *.md"), ("所有文件", "*.*")],
     )
     if not files:
@@ -327,38 +331,43 @@ def extract_architecture_section_from_files_ui(self):
     current_architecture = self.setting_text.get("0.0", "end-1c")
     editor_content = self.architecture_section_text.get("0.0", "end-1c")
     try:
-        candidate_architecture = replace_architecture_section(
-            current_architecture, section, editor_content
-        )
-        candidate_section = next(
-            item
-            for item in parse_architecture_sections(candidate_architecture)
-            if item.start == section.start
-        )
-        sections = parse_architecture_sections(candidate_architecture)
-        if mode == "合并当前分区正文":
-            target_content = architecture_section_body(
-                candidate_architecture, candidate_section
-            )
-            target_location = f"当前分区“{candidate_section.title}”的正文"
+        if overview_selected:
+            candidate_architecture = editor_content
+            candidate_section = None
         else:
-            existing = next(
-                (
-                    item
-                    for item in sections
-                    if item.parent_index == candidate_section.index
-                    and item.title.strip() == target_title
-                ),
-                None,
+            candidate_architecture = replace_architecture_section(
+                current_architecture, section, editor_content
             )
-            target_content = (
-                architecture_section_body(candidate_architecture, existing)
-                if existing is not None
-                else ""
+            candidate_section = next(
+                item
+                for item in parse_architecture_sections(candidate_architecture)
+                if item.start == section.start
             )
-            target_location = (
-                f"“{candidate_section.title}”下的直接子分区“{target_title}”"
-            )
+        sections = parse_architecture_sections(candidate_architecture)
+        existing = next(
+            (
+                item
+                for item in sections
+                if (
+                    item.parent_index is None
+                    if overview_selected
+                    else item.parent_index == candidate_section.index
+                )
+                and item.title.strip() == target_title
+            ),
+            None,
+        )
+        target_content = (
+            architecture_section_body(candidate_architecture, existing)
+            if existing is not None
+            else ""
+        )
+        target_location = (
+            f"总览下面的顶层分区“{target_title}”"
+            if overview_selected
+            else f"当前选中分区“{candidate_section.title}”下面的直接子分区"
+            f"“{target_title}”"
+        )
     except (StopIteration, ValueError, IndexError) as exc:
         messagebox.showerror("无法提炼", f"当前分区内容无效：{exc}")
         return
@@ -409,16 +418,18 @@ def extract_architecture_section_from_files_ui(self):
                     candidate_architecture,
                     candidate_section,
                     extracted_body,
-                    mode,
                     target_title,
                 )
             )
-            updated_parent = next(
-                item
-                for item in parse_architecture_sections(positioned_architecture)
-                if item.start == candidate_section.start
-            )
-            parent_candidate = updated_parent.content_from(positioned_architecture)
+            if overview_selected:
+                parent_candidate = positioned_architecture
+            else:
+                updated_parent = next(
+                    item
+                    for item in parse_architecture_sections(positioned_architecture)
+                    if item.start == candidate_section.start
+                )
+                parent_candidate = updated_parent.content_from(positioned_architecture)
 
             def show_extraction():
                 self.architecture_section_text.delete("0.0", "end")
@@ -433,7 +444,8 @@ def extract_architecture_section_from_files_ui(self):
                 f"{positioned_heading}。请检查后同步总架构或保存本分区。"
             )
         except Exception:
-            self.handle_exception(f"从文件提炼架构分区“{section.title}”时出错")
+            target_parent = "总览" if overview_selected else section.title
+            self.handle_exception(f"从文件提炼到“{target_parent}”时出错")
 
     _start_background(self, "extract_architecture_section", task)
 

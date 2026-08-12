@@ -8,6 +8,7 @@ from novel_generator.architecture import (
     revise_architecture_section,
 )
 from novel_generator.architecture_sections import (
+    append_architecture_overview_section,
     append_architecture_subsection,
     architecture_section_body,
     delete_architecture_section,
@@ -15,6 +16,7 @@ from novel_generator.architecture_sections import (
     replace_architecture_section,
     replace_architecture_section_body,
     upsert_architecture_subsection_body,
+    upsert_architecture_overview_section_body,
 )
 
 
@@ -227,6 +229,26 @@ class ArchitectureSectionTest(unittest.TestCase):
         self.assertEqual(heading, second_heading)
         self.assertEqual(1, second.count("# 境界体系"))
         self.assertNotIn("炼体、筑基、金丹\n", second)
+        self.assertIn("炼体、筑基、结丹、元婴", second)
+
+    def test_overview_can_add_and_update_top_level_sections(self):
+        added, heading = append_architecture_overview_section(
+            SAMPLE_ARCHITECTURE, "补充设定"
+        )
+        self.assertEqual("#=== 补充设定 ===", heading)
+        self.assertTrue(added.rstrip().endswith("#=== 补充设定 ==="))
+
+        first, heading, created = upsert_architecture_overview_section_body(
+            SAMPLE_ARCHITECTURE, "境界体系", "炼体、筑基、金丹"
+        )
+        self.assertTrue(created)
+        self.assertEqual("#=== 境界体系 ===", heading)
+        second, second_heading, created = upsert_architecture_overview_section_body(
+            first, "境界体系", "炼体、筑基、结丹、元婴"
+        )
+        self.assertFalse(created)
+        self.assertEqual(heading, second_heading)
+        self.assertEqual(1, second.count("#=== 境界体系 ==="))
         self.assertIn("炼体、筑基、结丹、元婴", second)
 
 

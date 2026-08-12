@@ -56,13 +56,13 @@ from ui.setting_tab import (
     clear_novel_architecture,
     delete_selected_architecture_section,
     get_selected_architecture_section,
+    is_architecture_overview_selected,
     load_novel_architecture,
     on_architecture_editor_tab_changed,
     on_architecture_section_selected,
     refresh_architecture_sections,
     save_architecture_section,
     sync_architecture_section,
-    update_architecture_extraction_controls,
     save_novel_architecture,
 )
 from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint, clear_chapter_blueprint
@@ -835,9 +835,9 @@ class NovelGeneratorGUI:
     refresh_architecture_sections = refresh_architecture_sections
     on_architecture_section_selected = on_architecture_section_selected
     get_selected_architecture_section = get_selected_architecture_section
+    is_architecture_overview_selected = is_architecture_overview_selected
     save_architecture_section = save_architecture_section
     sync_architecture_section = sync_architecture_section
-    update_architecture_extraction_controls = update_architecture_extraction_controls
     apply_extracted_architecture_content = apply_extracted_architecture_content
     add_architecture_subsection = add_architecture_subsection
     load_chapter_blueprint = load_chapter_blueprint

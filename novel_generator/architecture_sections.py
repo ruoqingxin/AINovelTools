@@ -127,6 +127,18 @@ def append_architecture_subsection(
     return prefix + separator + heading + "\n" + suffix, heading
 
 
+def append_architecture_overview_section(
+    document: str,
+    title: str,
+) -> tuple[str, str]:
+    """Append a top-level generated-style section under the virtual overview."""
+    clean_title = _clean_section_title(title, "请输入新分区名称")
+    heading = f"#=== {clean_title} ==="
+    prefix = document
+    separator = "\n\n" if prefix and not prefix.endswith("\n") else "\n"
+    return prefix + separator + heading + "\n", heading
+
+
 def architecture_section_body(
     document: str,
     section: ArchitectureSection,
@@ -198,6 +210,47 @@ def upsert_architecture_subsection_body(
     content = body.strip()
     addition = heading + (f"\n{content}" if content else "") + "\n"
     return prefix + separator + addition + suffix, heading, True
+
+
+def upsert_architecture_overview_section_body(
+    document: str,
+    title: str,
+    body: str,
+) -> tuple[str, str, bool]:
+    """Create a top-level overview child, or update an existing one's prose."""
+    clean_title = _clean_section_title(title, "请输入提炼目标分区名称")
+    existing = next(
+        (
+            item
+            for item in parse_architecture_sections(document)
+            if item.parent_index is None and item.title.strip() == clean_title
+        ),
+        None,
+    )
+    if existing is not None:
+        return (
+            replace_architecture_section_body(document, existing, body),
+            existing.heading,
+            False,
+        )
+
+    heading = f"#=== {clean_title} ==="
+    prefix = document
+    separator = "\n\n" if prefix and not prefix.endswith("\n") else "\n"
+    content = body.strip()
+    addition = heading + (f"\n{content}" if content else "") + "\n"
+    return prefix + separator + addition, heading, True
+
+
+def _clean_section_title(title: str, empty_message: str) -> str:
+    clean_title = title.strip().lstrip("#").strip()
+    if clean_title.startswith("===") and clean_title.endswith("==="):
+        clean_title = clean_title[3:-3].strip()
+    if not clean_title:
+        raise ValueError(empty_message)
+    if "\n" in clean_title or "\r" in clean_title:
+        raise ValueError("分区名称不能换行")
+    return clean_title
 
 
 def _section_body_span(

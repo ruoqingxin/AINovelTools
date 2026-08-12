@@ -5,11 +5,12 @@ import customtkinter as ctk
 from tkinter import messagebox, simpledialog, ttk
 
 from novel_generator.architecture_sections import (
+    append_architecture_overview_section,
     append_architecture_subsection,
     delete_architecture_section,
     parse_architecture_sections,
     replace_architecture_section,
-    replace_architecture_section_body,
+    upsert_architecture_overview_section_body,
     upsert_architecture_subsection_body,
 )
 from novel_generator.storage import NovelProjectRepository
@@ -173,24 +174,20 @@ def _build_section_editor(self, parent):
     extraction_options.grid(
         row=1, column=0, columnspan=2, sticky="ew", padx=3, pady=(0, 4)
     )
-    extraction_options.columnconfigure(3, weight=1)
-    ctk.CTkLabel(extraction_options, text="提炼位置").grid(
+    extraction_options.columnconfigure(2, weight=1)
+    ctk.CTkLabel(extraction_options, text="当前父分区").grid(
         row=0, column=0, padx=(0, 6), sticky="w"
     )
-    self.architecture_extraction_mode_var = ctk.StringVar(
-        value="新建/更新子分区"
-    )
-    self.architecture_extraction_mode_menu = ctk.CTkOptionMenu(
+    self.architecture_extraction_parent_label = ctk.CTkLabel(
         extraction_options,
-        variable=self.architecture_extraction_mode_var,
-        values=["新建/更新子分区", "合并当前分区正文"],
+        text="请从总览下选择具体分区",
         width=155,
-        command=lambda _value: self.update_architecture_extraction_controls(),
+        anchor="w",
     )
-    self.architecture_extraction_mode_menu.grid(row=0, column=1, padx=(0, 6))
+    self.architecture_extraction_parent_label.grid(row=0, column=1, padx=(0, 6))
     self.architecture_extraction_title_entry = ctk.CTkEntry(
         extraction_options,
-        placeholder_text="固定子分区名称，例如：境界体系",
+        placeholder_text="新建/更新的直接子分区名称，例如：境界体系",
         width=220,
     )
     self.architecture_extraction_title_entry.grid(
@@ -198,7 +195,7 @@ def _build_section_editor(self, parent):
     )
     self.architecture_extraction_location_label = ctk.CTkLabel(
         extraction_options,
-        text="将固定追加到当前分区末尾；同名时原位更新",
+        text="提炼结果固定放在当前选中分区下面；同名时原位更新",
         anchor="w",
     )
     self.architecture_extraction_location_label.grid(
@@ -226,6 +223,7 @@ def _build_section_editor(self, parent):
         "<<TreeviewSelect>>", self.on_architecture_section_selected
     )
     self._architecture_sections_by_id = {}
+    self._architecture_overview_item = "architecture-overview"
 
     self.architecture_section_text = ctk.CTkTextbox(
         parent, wrap="word", font=("Microsoft YaHei", 12)
@@ -294,6 +292,11 @@ def on_architecture_editor_tab_changed(self):
 
 def refresh_architecture_sections(self, select_heading=None):
     current_selection = self.architecture_section_tree.selection()
+    select_overview = bool(
+        current_selection
+        and current_selection[0] == self._architecture_overview_item
+        and select_heading is None
+    )
     if select_heading is None and current_selection:
         selected = self._architecture_sections_by_id.get(current_selection[0])
         select_heading = selected.heading if selected else None
@@ -303,11 +306,20 @@ def refresh_architecture_sections(self, select_heading=None):
     )
     self._architecture_sections_by_id = {}
     sections = parse_architecture_sections(_architecture_text(self))
+    self.architecture_section_tree.insert(
+        "",
+        "end",
+        iid=self._architecture_overview_item,
+        text="总览",
+        open=True,
+    )
     item_by_index = {}
     selected_item = None
     for section in sections:
         item_id = f"section-{section.index}"
-        parent_id = item_by_index.get(section.parent_index, "")
+        parent_id = item_by_index.get(
+            section.parent_index, self._architecture_overview_item
+        )
         self.architecture_section_tree.insert(
             parent_id,
             "end",
@@ -322,12 +334,21 @@ def refresh_architecture_sections(self, select_heading=None):
 
     if not sections:
         self.architecture_section_text.delete("0.0", "end")
-        self.architecture_section_status_label.configure(
-            text="未识别到标题，请先在完整架构中添加 # 标题"
+        self.architecture_section_tree.selection_set(
+            self._architecture_overview_item
         )
+        self.architecture_section_tree.focus(self._architecture_overview_item)
+        self.architecture_section_status_label.configure(
+            text="当前：总览（可新增顶层分区）"
+        )
+        self.architecture_extraction_parent_label.configure(text="总览")
         return
 
-    selected_item = selected_item or item_by_index[sections[0].index]
+    selected_item = (
+        self._architecture_overview_item
+        if select_overview
+        else selected_item or item_by_index[sections[0].index]
+    )
     self.architecture_section_tree.selection_set(selected_item)
     self.architecture_section_tree.focus(selected_item)
     self.architecture_section_tree.see(selected_item)
@@ -337,6 +358,15 @@ def refresh_architecture_sections(self, select_heading=None):
 def on_architecture_section_selected(self, event=None):
     selection = self.architecture_section_tree.selection()
     if not selection:
+        return
+    if selection[0] == self._architecture_overview_item:
+        document = _architecture_text(self)
+        self.architecture_section_text.delete("0.0", "end")
+        self.architecture_section_text.insert("0.0", document)
+        self.architecture_section_status_label.configure(text="当前：总览")
+        self.architecture_extraction_parent_label.configure(
+            text="总览（将新增顶层分区）"
+        )
         return
     section = self._architecture_sections_by_id.get(selection[0])
     if section is None:
@@ -352,6 +382,7 @@ def on_architecture_section_selected(self, event=None):
     self.architecture_section_text.delete("0.0", "end")
     self.architecture_section_text.insert("0.0", content)
     self.architecture_section_status_label.configure(text=f"当前：{section.title}")
+    self.architecture_extraction_parent_label.configure(text=section.title)
 
 
 def get_selected_architecture_section(self):
@@ -361,8 +392,18 @@ def get_selected_architecture_section(self):
     return self._architecture_sections_by_id.get(selection[0])
 
 
+def is_architecture_overview_selected(self):
+    selection = self.architecture_section_tree.selection()
+    return bool(
+        selection and selection[0] == self._architecture_overview_item
+    )
+
+
 def delete_selected_architecture_section(self):
     filepath = self.filepath_var.get().strip()
+    if self.is_architecture_overview_selected():
+        messagebox.showinfo("无法删除", "总览是分区树的根节点，不能删除。")
+        return
     section = self.get_selected_architecture_section()
     if not filepath:
         messagebox.showwarning("警告", "请先设置保存文件路径。")
@@ -414,41 +455,33 @@ def delete_selected_architecture_section(self):
     )
 
 
-def update_architecture_extraction_controls(self):
-    merge_current = (
-        self.architecture_extraction_mode_var.get() == "合并当前分区正文"
-    )
-    self.architecture_extraction_title_entry.configure(
-        state="disabled" if merge_current else "normal"
-    )
-    self.architecture_extraction_location_label.configure(
-        text=(
-            "只更新当前节点正文，保留全部下级分区及顺序"
-            if merge_current
-            else "将固定追加到当前分区末尾；同名时原位更新"
-        )
-    )
-
-
 def apply_extracted_architecture_content(
     self,
     document,
     parent_section,
     extracted_body,
-    mode,
     target_title,
 ):
-    if mode == "合并当前分区正文":
-        merged = replace_architecture_section_body(
-            document, parent_section, extracted_body
+    if parent_section is None:
+        return upsert_architecture_overview_section_body(
+            document, target_title, extracted_body
         )
-        return merged, parent_section.heading, False
     return upsert_architecture_subsection_body(
         document, parent_section, target_title, extracted_body
     )
 
 
 def sync_architecture_section(self):
+    if self.is_architecture_overview_selected():
+        content = self.architecture_section_text.get("0.0", "end-1c")
+        _show_complete_architecture(self, content)
+        self.refresh_architecture_sections()
+        self.architecture_section_tree.selection_set(
+            self._architecture_overview_item
+        )
+        self.on_architecture_section_selected()
+        self.log("已将总览内容同步到完整架构编辑区，尚未写入文件。")
+        return
     section = self.get_selected_architecture_section()
     if section is None:
         messagebox.showwarning("未选择分区", "请先从左侧选择要同步的分区。")
@@ -468,6 +501,22 @@ def sync_architecture_section(self):
 
 def save_architecture_section(self):
     filepath = self.filepath_var.get().strip()
+    if self.is_architecture_overview_selected():
+        if not filepath:
+            messagebox.showwarning("警告", "请先设置保存文件路径。")
+            return
+        content = self.architecture_section_text.get("0.0", "end-1c")
+        try:
+            NovelProjectRepository(filepath).write(
+                NovelProjectRepository.ARCHITECTURE, content
+            )
+        except OSError as exc:
+            messagebox.showerror("保存失败", str(exc))
+            return
+        _show_complete_architecture(self, content)
+        self.refresh_architecture_sections()
+        self.log("已保存总览中的完整小说架构。")
+        return
     section = self.get_selected_architecture_section()
     if not filepath:
         messagebox.showwarning("警告", "请先设置保存文件路径。")
@@ -493,24 +542,34 @@ def save_architecture_section(self):
 
 def add_architecture_subsection(self):
     filepath = self.filepath_var.get().strip()
+    overview_selected = self.is_architecture_overview_selected()
     parent = self.get_selected_architecture_section()
     if not filepath:
         messagebox.showwarning("警告", "请先设置保存文件路径。")
         return
-    if parent is None:
+    if parent is None and not overview_selected:
         messagebox.showwarning("未选择分区", "请先选择新分区所属的上级分区。")
         return
     title = simpledialog.askstring(
         "新增子分区",
-        f"在“{parent.title}”下新增分区：",
+        (
+            "在“总览”下新增顶层分区："
+            if overview_selected
+            else f"在“{parent.title}”下新增分区："
+        ),
         parent=self.master,
     )
     if title is None:
         return
     try:
-        merged, heading = append_architecture_subsection(
-            _architecture_text(self), parent, title
-        )
+        if overview_selected:
+            merged, heading = append_architecture_overview_section(
+                _architecture_text(self), title
+            )
+        else:
+            merged, heading = append_architecture_subsection(
+                _architecture_text(self), parent, title
+            )
         NovelProjectRepository(filepath).write(
             NovelProjectRepository.ARCHITECTURE, merged
         )
@@ -519,7 +578,10 @@ def add_architecture_subsection(self):
         return
     _show_complete_architecture(self, merged)
     self.refresh_architecture_sections(select_heading=heading)
-    self.log(f"已新增小说架构分区：{title.strip()}。")
+    self.log(
+        f"已在{'总览' if overview_selected else parent.title}下新增小说架构分区："
+        f"{title.strip()}。"
+    )
 
 
 def load_novel_architecture(self):
