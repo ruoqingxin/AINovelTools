@@ -52,6 +52,14 @@ from ui.generation_handlers import (
 from ui.setting_tab import (
     add_architecture_subsection,
     apply_extracted_architecture_content,
+    architecture_section_has_unsaved_changes,
+    architecture_section_unsaved_reasons,
+    _architecture_active_title,
+    _architecture_item_key,
+    _display_architecture_section,
+    _save_active_architecture_section,
+    _set_architecture_active_baseline,
+    _set_architecture_tree_selection,
     build_setting_tab,
     clear_novel_architecture,
     delete_selected_architecture_section,
@@ -903,6 +911,14 @@ class NovelGeneratorGUI:
     save_architecture_section = save_architecture_section
     sync_architecture_section = sync_architecture_section
     apply_extracted_architecture_content = apply_extracted_architecture_content
+    architecture_section_has_unsaved_changes = architecture_section_has_unsaved_changes
+    architecture_section_unsaved_reasons = architecture_section_unsaved_reasons
+    _architecture_active_title = _architecture_active_title
+    _architecture_item_key = _architecture_item_key
+    _display_architecture_section = _display_architecture_section
+    _save_active_architecture_section = _save_active_architecture_section
+    _set_architecture_active_baseline = _set_architecture_active_baseline
+    _set_architecture_tree_selection = _set_architecture_tree_selection
     add_architecture_subsection = add_architecture_subsection
     load_chapter_blueprint = load_chapter_blueprint
     save_chapter_blueprint = save_chapter_blueprint

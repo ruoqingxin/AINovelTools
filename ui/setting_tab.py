@@ -224,6 +224,13 @@ def _build_section_editor(self, parent):
     )
     self._architecture_sections_by_id = {}
     self._architecture_overview_item = "architecture-overview"
+    self._architecture_active_item_id = None
+    self._architecture_active_section_key = None
+    self._architecture_active_original_text = ""
+    self._architecture_active_document_snapshot = ""
+    self._architecture_pending_save = False
+    self._architecture_pending_reason = ""
+    self._architecture_tree_selection_guard = False
 
     self.architecture_section_text = ctk.CTkTextbox(
         parent, wrap="word", font=("Microsoft YaHei", 12)
@@ -333,57 +340,77 @@ def _capture_architecture_tree_state(self):
     return state, overview_open
 
 
-def refresh_architecture_sections(self, select_heading=None):
+def refresh_architecture_sections(
+    self,
+    select_heading=None,
+    select_start=None,
+    select_key=None,
+):
     open_state, overview_open = _capture_architecture_tree_state(self)
     current_selection = self.architecture_section_tree.selection()
     select_overview = bool(
         current_selection
         and current_selection[0] == self._architecture_overview_item
         and select_heading is None
+        and select_start is None
+        and select_key is None
     )
-    if select_heading is None and current_selection:
+    if (
+        select_heading is None
+        and select_start is None
+        and select_key is None
+        and current_selection
+    ):
         selected = self._architecture_sections_by_id.get(current_selection[0])
         select_heading = selected.heading if selected else None
 
-    self.architecture_section_tree.delete(
-        *self.architecture_section_tree.get_children()
-    )
-    self._architecture_sections_by_id = {}
-    sections = parse_architecture_sections(_architecture_text(self))
-    self.architecture_section_tree.insert(
-        "",
-        "end",
-        iid=self._architecture_overview_item,
-        text="总览",
-        open=overview_open,
-    )
-    item_by_index = {}
-    selected_item = None
-    for section in sections:
-        item_id = f"section-{section.index}"
-        parent_id = item_by_index.get(
-            section.parent_index, self._architecture_overview_item
+    self._architecture_tree_selection_guard = True
+    try:
+        self.architecture_section_tree.delete(
+            *self.architecture_section_tree.get_children()
         )
+        self._architecture_sections_by_id = {}
+        sections = parse_architecture_sections(_architecture_text(self))
         self.architecture_section_tree.insert(
-            parent_id,
+            "",
             "end",
-            iid=item_id,
-            text=section.title,
-            open=open_state.get(
-                architecture_section_tree_key(section, sections),
-                False,
-            ),
+            iid=self._architecture_overview_item,
+            text="总览",
+            open=overview_open,
         )
-        item_by_index[section.index] = item_id
-        self._architecture_sections_by_id[item_id] = section
-        if select_heading == section.heading:
-            selected_item = item_id
+        item_by_index = {}
+        selected_item = None
+        for section in sections:
+            item_id = f"section-{section.index}"
+            parent_id = item_by_index.get(
+                section.parent_index, self._architecture_overview_item
+            )
+            section_key = architecture_section_tree_key(section, sections)
+            self.architecture_section_tree.insert(
+                parent_id,
+                "end",
+                iid=item_id,
+                text=section.title,
+                open=open_state.get(section_key, False),
+            )
+            item_by_index[section.index] = item_id
+            self._architecture_sections_by_id[item_id] = section
+            if select_key is not None and select_key == section_key:
+                selected_item = item_id
+            elif select_start is not None and select_start == section.start:
+                selected_item = item_id
+            elif (
+                select_key is None
+                and select_start is None
+                and select_heading == section.heading
+            ):
+                selected_item = item_id
+    finally:
+        self._architecture_tree_selection_guard = False
 
     if not sections:
         self.architecture_section_text.delete("0.0", "end")
-        self.architecture_section_tree.selection_set(
-            self._architecture_overview_item
-        )
+        self._set_architecture_tree_selection(self._architecture_overview_item)
         self.architecture_section_tree.focus(self._architecture_overview_item)
         self.architecture_section_status_label.configure(
             text="当前：总览（可新增顶层分区）"
@@ -396,17 +423,54 @@ def refresh_architecture_sections(self, select_heading=None):
         if select_overview
         else selected_item or item_by_index[sections[0].index]
     )
-    self.architecture_section_tree.selection_set(selected_item)
+    self._set_architecture_tree_selection(selected_item)
     self.architecture_section_tree.focus(selected_item)
     self.architecture_section_tree.see(selected_item)
-    self.on_architecture_section_selected()
+    self._display_architecture_section(selected_item)
 
 
 def on_architecture_section_selected(self, event=None):
+    if self._architecture_tree_selection_guard:
+        return
     selection = self.architecture_section_tree.selection()
     if not selection:
         return
-    if selection[0] == self._architecture_overview_item:
+    target_item = selection[0]
+    active_item = self._architecture_active_item_id
+    if active_item is not None and target_item == active_item:
+        return
+    if active_item is not None and target_item != active_item:
+        target_key = self._architecture_item_key(target_item)
+        if self.architecture_section_has_unsaved_changes():
+            current_name = self._architecture_active_title()
+            reasons = self.architecture_section_unsaved_reasons()
+            reason_text = "\n".join(f"- {reason}" for reason in reasons)
+            choice = messagebox.askyesnocancel(
+                "分区尚未保存",
+                f"“{current_name}”存在以下未保存内容：\n\n"
+                f"{reason_text}\n\n"
+                "选择“是”保存后切换，选择“否”放弃修改，选择“取消”继续编辑。",
+            )
+            if choice is None:
+                self._set_architecture_tree_selection(active_item)
+                return
+            if choice:
+                if not self._save_active_architecture_section():
+                    self._set_architecture_tree_selection(active_item)
+                    return
+            else:
+                _show_complete_architecture(
+                    self, self._architecture_active_document_snapshot
+                )
+            self._architecture_pending_save = False
+            self._architecture_pending_reason = ""
+            self.refresh_architecture_sections(select_key=target_key)
+            return
+    self._display_architecture_section(target_item)
+
+
+def _display_architecture_section(self, item_id):
+    if item_id == self._architecture_overview_item:
         document = _architecture_text(self)
         self.architecture_section_text.delete("0.0", "end")
         self.architecture_section_text.insert("0.0", document)
@@ -414,8 +478,9 @@ def on_architecture_section_selected(self, event=None):
         self.architecture_extraction_parent_label.configure(
             text="总览（将新增顶层分区）"
         )
+        self._set_architecture_active_baseline(item_id, None, document)
         return
-    section = self._architecture_sections_by_id.get(selection[0])
+    section = self._architecture_sections_by_id.get(item_id)
     if section is None:
         return
     document = _architecture_text(self)
@@ -430,6 +495,109 @@ def on_architecture_section_selected(self, event=None):
     self.architecture_section_text.insert("0.0", content)
     self.architecture_section_status_label.configure(text=f"当前：{section.title}")
     self.architecture_extraction_parent_label.configure(text=section.title)
+    self._set_architecture_active_baseline(item_id, section, content)
+
+
+def _set_architecture_active_baseline(self, item_id, section, editor_text):
+    sections = sorted(
+        self._architecture_sections_by_id.values(), key=lambda item: item.index
+    )
+    self._architecture_active_item_id = item_id
+    self._architecture_active_section_key = (
+        architecture_section_tree_key(section, sections)
+        if section is not None
+        else None
+    )
+    self._architecture_active_original_text = editor_text
+    self._architecture_active_document_snapshot = _architecture_text(self)
+    self._architecture_pending_save = False
+    self._architecture_pending_reason = ""
+
+
+def _set_architecture_tree_selection(self, item_id):
+    self._architecture_tree_selection_guard = True
+    try:
+        self.architecture_section_tree.selection_set(item_id)
+    finally:
+        self._architecture_tree_selection_guard = False
+
+
+def _architecture_item_key(self, item_id):
+    if item_id == self._architecture_overview_item:
+        return None
+    section = self._architecture_sections_by_id.get(item_id)
+    if section is None:
+        return None
+    sections = sorted(
+        self._architecture_sections_by_id.values(), key=lambda item: item.index
+    )
+    return architecture_section_tree_key(section, sections)
+
+
+def _architecture_active_title(self):
+    if self._architecture_active_item_id == self._architecture_overview_item:
+        return "总览"
+    section = self._architecture_sections_by_id.get(
+        self._architecture_active_item_id
+    )
+    return section.title if section is not None else "当前分区"
+
+
+def architecture_section_has_unsaved_changes(self):
+    return bool(self.architecture_section_unsaved_reasons())
+
+
+def architecture_section_unsaved_reasons(self):
+    reasons = []
+    current_text = self.architecture_section_text.get("0.0", "end-1c")
+    if current_text != self._architecture_active_original_text:
+        reasons.append(
+            f"分区“{self._architecture_active_title()}”的正文已修改，"
+            "编辑框内容尚未写入 Novel_architecture.txt"
+        )
+    if self._architecture_pending_save:
+        reasons.append(
+            self._architecture_pending_reason
+            or "总架构编辑区包含尚未写入 Novel_architecture.txt 的分区变更"
+        )
+    return tuple(reasons)
+
+
+def _save_active_architecture_section(self):
+    filepath = self.filepath_var.get().strip()
+    if not filepath:
+        messagebox.showwarning("警告", "请先设置保存文件路径。")
+        return False
+    document = _architecture_text(self)
+    editor_text = self.architecture_section_text.get("0.0", "end-1c")
+    try:
+        if self._architecture_active_item_id == self._architecture_overview_item:
+            merged = editor_text
+        else:
+            sections = parse_architecture_sections(document)
+            section = next(
+                (
+                    item
+                    for item in sections
+                    if architecture_section_tree_key(item, sections)
+                    == self._architecture_active_section_key
+                ),
+                None,
+            )
+            if section is None:
+                raise ValueError("当前分区位置已经失效，请刷新后重试")
+            merged = replace_architecture_section(document, section, editor_text)
+        NovelProjectRepository(filepath).write(
+            NovelProjectRepository.ARCHITECTURE, merged
+        )
+    except (OSError, ValueError) as exc:
+        messagebox.showerror("保存失败", str(exc))
+        return False
+    _show_complete_architecture(self, merged)
+    self._architecture_pending_save = False
+    self._architecture_pending_reason = ""
+    self.log(f"已保存小说架构分区：{self._architecture_active_title()}。")
+    return True
 
 
 def get_selected_architecture_section(self):
@@ -519,6 +687,8 @@ def apply_extracted_architecture_content(
 
 
 def sync_architecture_section(self):
+    discard_snapshot = self._architecture_active_document_snapshot
+    active_title = self._architecture_active_title()
     if self.is_architecture_overview_selected():
         content = self.architecture_section_text.get("0.0", "end-1c")
         _show_complete_architecture(self, content)
@@ -527,6 +697,12 @@ def sync_architecture_section(self):
             self._architecture_overview_item
         )
         self.on_architecture_section_selected()
+        self._architecture_active_document_snapshot = discard_snapshot
+        self._architecture_pending_save = True
+        self._architecture_pending_reason = (
+            "总览中的完整架构修改已同步到总架构编辑区，但尚未写入 "
+            "Novel_architecture.txt"
+        )
         self.log("已将总览内容同步到完整架构编辑区，尚未写入文件。")
         return
     section = self.get_selected_architecture_section()
@@ -543,6 +719,12 @@ def sync_architecture_section(self):
         return
     _show_complete_architecture(self, merged)
     self.refresh_architecture_sections(select_heading=replacement.splitlines()[0])
+    self._architecture_active_document_snapshot = discard_snapshot
+    self._architecture_pending_save = True
+    self._architecture_pending_reason = (
+        f"分区“{active_title}”的修改已同步到总架构编辑区，但尚未写入 "
+        "Novel_architecture.txt"
+    )
     self.log(f"已将分区“{section.title}”同步到总架构编辑区，尚未写入文件。")
 
 

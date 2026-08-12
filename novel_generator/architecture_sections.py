@@ -90,6 +90,8 @@ def replace_architecture_section(
         raise ValueError("分区内容不能为空")
     if document[section.start:section.end].splitlines()[0] != section.heading:
         raise ValueError("架构内容已经变化，请刷新分区后重试")
+    if section.end < len(document) and not replacement.endswith(("\n", "\r")):
+        replacement += "\n"
     return document[:section.start] + replacement + document[section.end:]
 
 

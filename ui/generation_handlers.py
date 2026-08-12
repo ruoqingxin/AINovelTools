@@ -330,6 +330,7 @@ def extract_architecture_section_from_files_ui(self):
 
     current_architecture = self.setting_text.get("0.0", "end-1c")
     editor_content = self.architecture_section_text.get("0.0", "end-1c")
+    discard_snapshot = self._architecture_active_document_snapshot
     try:
         if overview_selected:
             candidate_architecture = editor_content
@@ -421,27 +422,52 @@ def extract_architecture_section_from_files_ui(self):
                     target_title,
                 )
             )
+            positioned_sections = parse_architecture_sections(
+                positioned_architecture
+            )
             if overview_selected:
-                parent_candidate = positioned_architecture
+                target_section = next(
+                    item
+                    for item in positioned_sections
+                    if item.parent_index is None
+                    and item.heading == positioned_heading
+                )
             else:
                 updated_parent = next(
                     item
-                    for item in parse_architecture_sections(positioned_architecture)
+                    for item in positioned_sections
                     if item.start == candidate_section.start
                 )
-                parent_candidate = updated_parent.content_from(positioned_architecture)
+                target_section = next(
+                    item
+                    for item in positioned_sections
+                    if item.parent_index == updated_parent.index
+                    and item.heading == positioned_heading
+                )
 
             def show_extraction():
-                self.architecture_section_text.delete("0.0", "end")
-                self.architecture_section_text.insert("0.0", parent_candidate)
+                self.setting_text.delete("0.0", "end")
+                self.setting_text.insert("0.0", positioned_architecture)
+                self.setting_word_count_label.configure(
+                    text=f"字数：{get_word_count(positioned_architecture)}"
+                )
+                self.refresh_architecture_sections(
+                    select_start=target_section.start
+                )
+                self._architecture_active_document_snapshot = discard_snapshot
+                self._architecture_pending_save = True
+                self._architecture_pending_reason = (
+                    f"AI 提炼结果“{target_title}”已放入{target_location}并同步到"
+                    "总架构编辑区，但尚未写入 Novel_architecture.txt"
+                )
                 self.architecture_section_status_label.configure(
-                    text=f"已固定到：{target_location}（待同步或保存）"
+                    text=f"已提炼到：{target_location}（已同步总架构，待保存）"
                 )
 
             self.call_in_ui(show_extraction)
             self.safe_log(
                 f"✅ 提炼内容已{'新建' if created else '更新'}到固定位置："
-                f"{positioned_heading}。请检查后同步总架构或保存本分区。"
+                f"{positioned_heading}。已同步总架构编辑区，请检查后保存本分区。"
             )
         except Exception:
             target_parent = "总览" if overview_selected else section.title

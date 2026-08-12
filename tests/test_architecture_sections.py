@@ -107,6 +107,22 @@ class ArchitectureSectionTest(unittest.TestCase):
         self.assertIn("空间说明", merged)
         self.assertIn("主线内容", merged)
 
+    def test_replacement_keeps_next_sibling_heading_parseable(self):
+        section = next(
+            item
+            for item in parse_architecture_sections(SAMPLE_ARCHITECTURE)
+            if item.title == "1.2 法则体系"
+        )
+        merged = replace_architecture_section(
+            SAMPLE_ARCHITECTURE,
+            section,
+            "### 1.2 法则体系\n末尾手动增加内容",
+        )
+
+        self.assertIn("末尾手动增加内容\n## 二、社会维度", merged)
+        titles = [item.title for item in parse_architecture_sections(merged)]
+        self.assertIn("二、社会维度", titles)
+
     def test_delete_parent_removes_its_complete_subtree_only(self):
         world = next(
             item
@@ -234,10 +250,18 @@ class ArchitectureSectionTest(unittest.TestCase):
         self.assertTrue(created)
         self.assertEqual("# 境界体系", heading)
         self.assertLess(first.index("# 境界体系"), first.index("#=== 3) 主线 ==="))
+        first_sections = parse_architecture_sections(first)
+        first_world = next(
+            item for item in first_sections if item.title == "2) 世界观"
+        )
+        first_target = next(
+            item for item in first_sections if item.heading == heading
+        )
+        self.assertEqual(first_world.index, first_target.parent_index)
 
         refreshed_world = next(
             item
-            for item in parse_architecture_sections(first)
+            for item in first_sections
             if item.title == "2) 世界观"
         )
         second, second_heading, created = upsert_architecture_subsection_body(
