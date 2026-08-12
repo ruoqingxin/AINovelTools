@@ -14,7 +14,9 @@ from novel_generator.storage import NovelProjectRepository
 from ai_cancellation import (
     CancellationToken,
     OperationCancelled,
+    reset_progress_callback,
     reset_current_token,
+    set_progress_callback,
     set_current_token,
 )
 
@@ -287,12 +289,14 @@ class NovelGeneratorGUI:
 
         def run():
             context_token = set_current_token(cancellation_token)
+            progress_token = set_progress_callback(self.safe_log)
             try:
                 target()
                 cancellation_token.raise_if_cancelled()
             except OperationCancelled:
                 self.safe_log("⏹ AI 操作已中止，未完成的结果已丢弃。")
             finally:
+                reset_progress_callback(progress_token)
                 reset_current_token(context_token)
                 with self._operation_lock:
                     self._active_operations.discard(name)

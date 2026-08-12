@@ -110,6 +110,35 @@ class BackgroundOperationTest(unittest.TestCase):
 
         self.assertTrue(operation_finished.wait(timeout=2))
 
+    def test_adapter_reports_prompt_waiting_and_response(self):
+        from ai_cancellation import (
+            CancellableAdapter,
+            CancellationToken,
+            reset_current_token,
+            reset_progress_callback,
+            set_current_token,
+            set_progress_callback,
+        )
+
+        class SlowAdapter:
+            def invoke(self, prompt):
+                threading.Event().wait(0.05)
+                return f"reply to {prompt}"
+
+        messages = []
+        token_context = set_current_token(CancellationToken())
+        progress_context = set_progress_callback(messages.append)
+        try:
+            adapter = CancellableAdapter(SlowAdapter())
+            result = adapter.invoke("完整提示词")
+        finally:
+            reset_progress_callback(progress_context)
+            reset_current_token(token_context)
+
+        self.assertEqual("reply to 完整提示词", result)
+        self.assertIn("[发送给 AI]\n完整提示词", messages)
+        self.assertIn("[AI 返回]\nreply to 完整提示词", messages)
+
 
 if __name__ == "__main__":
     unittest.main()
