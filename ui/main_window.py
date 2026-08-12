@@ -36,6 +36,7 @@ from ui.generation_handlers import (
     generate_chapter_blueprint_ui,
     revise_novel_architecture_ui,
     revise_architecture_section_ui,
+    extract_architecture_section_from_files_ui,
     revise_chapter_blueprint_ui,
     generate_chapter_draft_ui,
     revise_chapter_draft_ui,
@@ -50,6 +51,7 @@ from ui.generation_handlers import (
 )
 from ui.setting_tab import (
     add_architecture_subsection,
+    apply_extracted_architecture_content,
     build_setting_tab,
     clear_novel_architecture,
     get_selected_architecture_section,
@@ -58,6 +60,8 @@ from ui.setting_tab import (
     on_architecture_section_selected,
     refresh_architecture_sections,
     save_architecture_section,
+    sync_architecture_section,
+    update_architecture_extraction_controls,
     save_novel_architecture,
 )
 from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint, clear_chapter_blueprint
@@ -807,6 +811,7 @@ class NovelGeneratorGUI:
     generate_chapter_blueprint_ui = generate_chapter_blueprint_ui
     revise_novel_architecture_ui = revise_novel_architecture_ui
     revise_architecture_section_ui = revise_architecture_section_ui
+    extract_architecture_section_from_files_ui = extract_architecture_section_from_files_ui
     revise_chapter_blueprint_ui = revise_chapter_blueprint_ui
     generate_chapter_draft_ui = generate_chapter_draft_ui
     revise_chapter_draft_ui = revise_chapter_draft_ui
@@ -829,6 +834,9 @@ class NovelGeneratorGUI:
     on_architecture_section_selected = on_architecture_section_selected
     get_selected_architecture_section = get_selected_architecture_section
     save_architecture_section = save_architecture_section
+    sync_architecture_section = sync_architecture_section
+    update_architecture_extraction_controls = update_architecture_extraction_controls
+    apply_extracted_architecture_content = apply_extracted_architecture_content
     add_architecture_subsection = add_architecture_subsection
     load_chapter_blueprint = load_chapter_blueprint
     save_chapter_blueprint = save_chapter_blueprint

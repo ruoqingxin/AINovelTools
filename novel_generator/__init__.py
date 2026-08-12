@@ -10,6 +10,7 @@ _EXPORTS = {
     "Novel_architecture_generate": (".architecture", "Novel_architecture_generate"),
     "revise_novel_architecture": (".architecture", "revise_novel_architecture"),
     "revise_architecture_section": (".architecture", "revise_architecture_section"),
+    "extract_architecture_section_from_material": (".architecture", "extract_architecture_section_from_material"),
     "Chapter_blueprint_generate": (".blueprint", "Chapter_blueprint_generate"),
     "revise_chapter_blueprint": (".blueprint", "revise_chapter_blueprint"),
     "get_last_n_chapters_text": (".chapter", "get_last_n_chapters_text"),

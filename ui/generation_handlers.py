@@ -12,6 +12,7 @@ from novel_generator import (
     Novel_architecture_generate,
     revise_novel_architecture,
     revise_architecture_section,
+    extract_architecture_section_from_material,
     Chapter_blueprint_generate,
     revise_chapter_blueprint,
     generate_chapter_draft,
@@ -27,7 +28,16 @@ from consistency_checker import check_consistency
 from config_manager import get_llm_config
 from embedding_adapters import create_embedding_adapter
 from novel_generator.storage import NovelProjectRepository
+from novel_generator.architecture_sections import (
+    architecture_section_body,
+    parse_architecture_sections,
+    replace_architecture_section,
+)
+from novel_generator.knowledge import read_knowledge_file
 from ai_cancellation import raise_if_cancelled
+
+
+MAX_SECTION_EXTRACTION_CHARS = 120_000
 
 
 _BACKGROUND_OPERATION_BUTTONS = {
@@ -35,6 +45,7 @@ _BACKGROUND_OPERATION_BUTTONS = {
     "generate_blueprint": "btn_generate_directory",
     "revise_architecture": "btn_revise_architecture",
     "revise_architecture_section": "btn_revise_architecture_section",
+    "extract_architecture_section": "btn_extract_architecture_section",
     "revise_blueprint": "btn_revise_blueprint",
     "generate_chapter": "btn_generate_chapter",
     "revise_chapter": "btn_revise_chapter",
@@ -289,6 +300,142 @@ def revise_architecture_section_ui(self):
             self.handle_exception(f"AI 重写架构分区“{section.title}”时出错")
 
     _start_background(self, "revise_architecture_section", task)
+
+
+def extract_architecture_section_from_files_ui(self):
+    section = self.get_selected_architecture_section()
+    if section is None:
+        messagebox.showwarning("未选择分区", "请先从左侧选择要提炼资料的分区。")
+        return
+    mode = self.architecture_extraction_mode_var.get()
+    target_title = self.architecture_extraction_title_entry.get().strip()
+    if mode == "新建/更新子分区" and not target_title:
+        messagebox.showwarning(
+            "缺少目标名称",
+            "请输入固定的子分区名称，例如“境界体系”，再选择文件提炼。",
+        )
+        self.architecture_extraction_title_entry.focus_set()
+        return
+    files = filedialog.askopenfilenames(
+        parent=self.master,
+        title=f"选择用于提炼“{section.title}”的资料",
+        filetypes=[("文字资料", "*.txt *.md"), ("所有文件", "*.*")],
+    )
+    if not files:
+        return
+
+    current_architecture = self.setting_text.get("0.0", "end-1c")
+    editor_content = self.architecture_section_text.get("0.0", "end-1c")
+    try:
+        candidate_architecture = replace_architecture_section(
+            current_architecture, section, editor_content
+        )
+        candidate_section = next(
+            item
+            for item in parse_architecture_sections(candidate_architecture)
+            if item.start == section.start
+        )
+        sections = parse_architecture_sections(candidate_architecture)
+        if mode == "合并当前分区正文":
+            target_content = architecture_section_body(
+                candidate_architecture, candidate_section
+            )
+            target_location = f"当前分区“{candidate_section.title}”的正文"
+        else:
+            existing = next(
+                (
+                    item
+                    for item in sections
+                    if item.parent_index == candidate_section.index
+                    and item.title.strip() == target_title
+                ),
+                None,
+            )
+            target_content = (
+                architecture_section_body(candidate_architecture, existing)
+                if existing is not None
+                else ""
+            )
+            target_location = (
+                f"“{candidate_section.title}”下的直接子分区“{target_title}”"
+            )
+    except (StopIteration, ValueError, IndexError) as exc:
+        messagebox.showerror("无法提炼", f"当前分区内容无效：{exc}")
+        return
+
+    material_parts = []
+    for file_path in files:
+        content = read_knowledge_file(file_path).strip()
+        if content:
+            material_parts.append(
+                f"===== 资料：{os.path.basename(file_path)} =====\n{content}"
+            )
+        else:
+            self.log(f"未能读取或文件内容为空，已跳过：{file_path}")
+    source_material = "\n\n".join(material_parts)
+    if not source_material:
+        messagebox.showwarning("没有内容", "所选文件中没有可提炼的文字内容。")
+        return
+    if len(source_material) > MAX_SECTION_EXTRACTION_CHARS:
+        source_material = source_material[:MAX_SECTION_EXTRACTION_CHARS]
+        self.log(
+            f"所选资料超过 {MAX_SECTION_EXTRACTION_CHARS} 字，本次提炼使用前 "
+            f"{MAX_SECTION_EXTRACTION_CHARS} 字。"
+        )
+
+    def task():
+        try:
+            llm_config = get_llm_config(
+                self.loaded_config, self.architecture_llm_var.get()
+            )
+            self.safe_log(
+                f"正在从 {len(material_parts)} 个文件提炼到固定位置：{target_location}..."
+            )
+            extracted_body = extract_architecture_section_from_material(
+                interface_format=llm_config["interface_format"],
+                api_key=llm_config.get("api_key", ""),
+                base_url=llm_config["base_url"],
+                llm_model=llm_config["model_name"],
+                current_architecture=candidate_architecture,
+                target_location=target_location,
+                target_content=target_content,
+                source_material=source_material,
+                temperature=llm_config["temperature"],
+                max_tokens=llm_config["max_tokens"],
+                timeout=llm_config["timeout"],
+            )
+            positioned_architecture, positioned_heading, created = (
+                self.apply_extracted_architecture_content(
+                    candidate_architecture,
+                    candidate_section,
+                    extracted_body,
+                    mode,
+                    target_title,
+                )
+            )
+            updated_parent = next(
+                item
+                for item in parse_architecture_sections(positioned_architecture)
+                if item.start == candidate_section.start
+            )
+            parent_candidate = updated_parent.content_from(positioned_architecture)
+
+            def show_extraction():
+                self.architecture_section_text.delete("0.0", "end")
+                self.architecture_section_text.insert("0.0", parent_candidate)
+                self.architecture_section_status_label.configure(
+                    text=f"已固定到：{target_location}（待同步或保存）"
+                )
+
+            self.call_in_ui(show_extraction)
+            self.safe_log(
+                f"✅ 提炼内容已{'新建' if created else '更新'}到固定位置："
+                f"{positioned_heading}。请检查后同步总架构或保存本分区。"
+            )
+        except Exception:
+            self.handle_exception(f"从文件提炼架构分区“{section.title}”时出错")
+
+    _start_background(self, "extract_architecture_section", task)
 
 
 def revise_chapter_blueprint_ui(self):

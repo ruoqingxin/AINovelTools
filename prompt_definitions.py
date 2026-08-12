@@ -786,6 +786,29 @@ architecture_section_revision_prompt = """\
 5. 不解释修改过程，不使用 Markdown 代码块。
 """
 
+architecture_section_material_extraction_prompt = """\
+你是小说设定资料编辑。请从用户选择的资料中，提炼可放入指定位置的正文内容。
+
+固定目标位置（由程序控制，你不得输出标题）：
+{target_location}
+
+目标位置当前正文：
+{target_content}
+
+完整小说架构（仅用于核对上下文和避免冲突，不得整体输出）：
+{current_architecture}
+
+待提炼资料：
+{source_material}
+
+提炼规则：
+1. 只返回目标位置的正文，禁止输出任何 Markdown 标题；
+2. 提炼资料中与目标位置有关的事实、规则、层级、限制、名词和关系，删除重复及无关内容；
+3. 将有效资料与当前正文自然整合，不要只写摘要，也不要丢失未冲突的原有设定；
+4. 资料与现有架构冲突时，以现有架构为准，并忽略冲突资料；
+5. 不决定插入位置，不输出分区标题，不解释提炼过程，不使用 Markdown 代码块。
+"""
+
 blueprint_revision_prompt = """\
 你是小说章节规划编辑。请根据用户意见，重新编写一份完整的章节蓝图。
 

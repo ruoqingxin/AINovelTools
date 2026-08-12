@@ -3,11 +3,17 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from novel_generator.architecture import revise_architecture_section
+from novel_generator.architecture import (
+    extract_architecture_section_from_material,
+    revise_architecture_section,
+)
 from novel_generator.architecture_sections import (
     append_architecture_subsection,
+    architecture_section_body,
     parse_architecture_sections,
     replace_architecture_section,
+    replace_architecture_section_body,
+    upsert_architecture_subsection_body,
 )
 
 
@@ -127,6 +133,82 @@ class ArchitectureSectionTest(unittest.TestCase):
                 (project / "Novel_architecture.txt").read_text(encoding="utf-8"),
                 merged,
             )
+
+    def test_material_extraction_returns_candidate_without_writing_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = pathlib.Path(temp_dir)
+            section = next(
+                item
+                for item in parse_architecture_sections(SAMPLE_ARCHITECTURE)
+                if item.title == "1.2 法则体系"
+            )
+            adapter = FakeAdapter("提炼后的五层境界与晋升限制")
+
+            with patch(
+                "novel_generator.architecture.create_llm_adapter",
+                return_value=adapter,
+            ):
+                result = extract_architecture_section_from_material(
+                    interface_format="OpenAI",
+                    api_key="key",
+                    base_url="https://example.com/v1",
+                    llm_model="model",
+                    current_architecture=SAMPLE_ARCHITECTURE,
+                    target_location="法则体系正文",
+                    target_content=architecture_section_body(
+                        SAMPLE_ARCHITECTURE, section
+                    ),
+                    source_material="资料中的境界分为炼体、筑基、金丹。",
+                )
+
+            self.assertEqual("提炼后的五层境界与晋升限制", result)
+            self.assertIn("炼体、筑基、金丹", adapter.prompt)
+            self.assertIn("法则说明", adapter.prompt)
+            self.assertFalse((project / "Novel_architecture.txt").exists())
+
+    def test_body_update_preserves_all_child_headings_and_order(self):
+        world = next(
+            item
+            for item in parse_architecture_sections(SAMPLE_ARCHITECTURE)
+            if item.title == "2) 世界观"
+        )
+        merged = replace_architecture_section_body(
+            SAMPLE_ARCHITECTURE, world, "更新后的世界观总述"
+        )
+
+        self.assertIn("#=== 2) 世界观 ===\n更新后的世界观总述", merged)
+        self.assertLess(
+            merged.index("# 三维交织世界观构建"),
+            merged.index("## 一、物理维度"),
+        )
+        self.assertIn("### 1.2 法则体系\n法则说明", merged)
+
+    def test_subsection_upsert_uses_fixed_location_and_reuses_same_title(self):
+        world = next(
+            item
+            for item in parse_architecture_sections(SAMPLE_ARCHITECTURE)
+            if item.title == "2) 世界观"
+        )
+        first, heading, created = upsert_architecture_subsection_body(
+            SAMPLE_ARCHITECTURE, world, "境界体系", "炼体、筑基、金丹"
+        )
+        self.assertTrue(created)
+        self.assertEqual("# 境界体系", heading)
+        self.assertLess(first.index("# 境界体系"), first.index("#=== 3) 主线 ==="))
+
+        refreshed_world = next(
+            item
+            for item in parse_architecture_sections(first)
+            if item.title == "2) 世界观"
+        )
+        second, second_heading, created = upsert_architecture_subsection_body(
+            first, refreshed_world, "境界体系", "炼体、筑基、结丹、元婴"
+        )
+        self.assertFalse(created)
+        self.assertEqual(heading, second_heading)
+        self.assertEqual(1, second.count("# 境界体系"))
+        self.assertNotIn("炼体、筑基、金丹\n", second)
+        self.assertIn("炼体、筑基、结丹、元婴", second)
 
 
 if __name__ == "__main__":

@@ -112,3 +112,94 @@ def append_architecture_subsection(
     suffix = document[parent.end:]
     separator = "\n\n" if prefix and not prefix.endswith("\n") else "\n"
     return prefix + separator + heading + "\n" + suffix, heading
+
+
+def architecture_section_body(
+    document: str,
+    section: ArchitectureSection,
+) -> str:
+    """Return only a section's own prose, excluding its heading and children."""
+    body_start, body_end = _section_body_span(document, section)
+    return document[body_start:body_end]
+
+
+def replace_architecture_section_body(
+    document: str,
+    section: ArchitectureSection,
+    body: str,
+) -> str:
+    """Replace a section's own prose while preserving its complete child tree."""
+    body_start, body_end = _section_body_span(document, section)
+    normalized = body.strip()
+    if normalized:
+        normalized = f"\n{normalized}\n"
+        if body_end < section.end:
+            normalized += "\n"
+    else:
+        normalized = "\n"
+    return document[:body_start] + normalized + document[body_end:]
+
+
+def upsert_architecture_subsection_body(
+    document: str,
+    parent: ArchitectureSection,
+    title: str,
+    body: str,
+) -> tuple[str, str, bool]:
+    """Create a direct child at a fixed position, or update its prose in place."""
+    clean_title = title.strip().lstrip("#").strip()
+    if not clean_title:
+        raise ValueError("请输入提炼目标分区名称")
+    if "\n" in clean_title or "\r" in clean_title:
+        raise ValueError("提炼目标分区名称不能换行")
+
+    sections = parse_architecture_sections(document)
+    current_parent = next(
+        (item for item in sections if item.start == parent.start),
+        None,
+    )
+    if current_parent is None or current_parent.heading != parent.heading:
+        raise ValueError("架构内容已经变化，请刷新分区后重试")
+    existing = next(
+        (
+            item
+            for item in sections
+            if item.parent_index == current_parent.index
+            and item.title.strip() == clean_title
+        ),
+        None,
+    )
+    if existing is not None:
+        return (
+            replace_architecture_section_body(document, existing, body),
+            existing.heading,
+            False,
+        )
+
+    if current_parent.level >= 6:
+        raise ValueError("六级标题下不能继续新增子分区")
+    heading = f"{'#' * (current_parent.level + 1)} {clean_title}"
+    prefix = document[:current_parent.end]
+    suffix = document[current_parent.end:]
+    separator = "\n\n" if prefix and not prefix.endswith("\n") else "\n"
+    content = body.strip()
+    addition = heading + (f"\n{content}" if content else "") + "\n"
+    return prefix + separator + addition + suffix, heading, True
+
+
+def _section_body_span(
+    document: str,
+    section: ArchitectureSection,
+) -> tuple[int, int]:
+    if not (0 <= section.start < section.end <= len(document)):
+        raise ValueError("分区位置已经失效，请刷新分区后重试")
+    if not document[section.start:section.end].startswith(section.heading):
+        raise ValueError("架构内容已经变化，请刷新分区后重试")
+    body_start = section.start + len(section.heading)
+    descendant_starts = [
+        item.start
+        for item in parse_architecture_sections(document)
+        if section.start < item.start < section.end
+    ]
+    body_end = min(descendant_starts, default=section.end)
+    return body_start, body_end

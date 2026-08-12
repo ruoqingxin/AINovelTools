@@ -8,6 +8,8 @@ from novel_generator.architecture_sections import (
     append_architecture_subsection,
     parse_architecture_sections,
     replace_architecture_section,
+    replace_architecture_section_body,
+    upsert_architecture_subsection_body,
 )
 from novel_generator.storage import NovelProjectRepository
 from utils import read_file, save_string_to_txt, get_word_count
@@ -124,7 +126,7 @@ def build_setting_tab(self):
 
 
 def _build_section_editor(self, parent):
-    parent.rowconfigure(1, weight=1)
+    parent.rowconfigure(2, weight=1)
     parent.columnconfigure(0, weight=1)
     parent.columnconfigure(1, weight=3)
 
@@ -143,6 +145,13 @@ def _build_section_editor(self, parent):
         width=96,
         command=self.add_architecture_subsection,
     ).grid(row=0, column=1, padx=(0, 6))
+    self.btn_extract_architecture_section = ctk.CTkButton(
+        section_toolbar,
+        text="选择文件提炼",
+        width=108,
+        command=self.extract_architecture_section_from_files_ui,
+    )
+    self.btn_extract_architecture_section.grid(row=0, column=2, padx=(0, 6))
     self.architecture_section_status_label = ctk.CTkLabel(
         section_toolbar,
         text="从左侧选择要单独修改的内容",
@@ -150,8 +159,44 @@ def _build_section_editor(self, parent):
     )
     self.architecture_section_status_label.grid(row=0, column=3, sticky="ew")
 
+    extraction_options = ctk.CTkFrame(parent, fg_color="transparent")
+    extraction_options.grid(
+        row=1, column=0, columnspan=2, sticky="ew", padx=3, pady=(0, 4)
+    )
+    extraction_options.columnconfigure(3, weight=1)
+    ctk.CTkLabel(extraction_options, text="提炼位置").grid(
+        row=0, column=0, padx=(0, 6), sticky="w"
+    )
+    self.architecture_extraction_mode_var = ctk.StringVar(
+        value="新建/更新子分区"
+    )
+    self.architecture_extraction_mode_menu = ctk.CTkOptionMenu(
+        extraction_options,
+        variable=self.architecture_extraction_mode_var,
+        values=["新建/更新子分区", "合并当前分区正文"],
+        width=155,
+        command=lambda _value: self.update_architecture_extraction_controls(),
+    )
+    self.architecture_extraction_mode_menu.grid(row=0, column=1, padx=(0, 6))
+    self.architecture_extraction_title_entry = ctk.CTkEntry(
+        extraction_options,
+        placeholder_text="固定子分区名称，例如：境界体系",
+        width=220,
+    )
+    self.architecture_extraction_title_entry.grid(
+        row=0, column=2, padx=(0, 6), sticky="ew"
+    )
+    self.architecture_extraction_location_label = ctk.CTkLabel(
+        extraction_options,
+        text="将固定追加到当前分区末尾；同名时原位更新",
+        anchor="w",
+    )
+    self.architecture_extraction_location_label.grid(
+        row=0, column=3, sticky="ew"
+    )
+
     tree_frame = ctk.CTkFrame(parent)
-    tree_frame.grid(row=1, column=0, rowspan=4, sticky="nsew", padx=(3, 4), pady=(0, 3))
+    tree_frame.grid(row=2, column=0, rowspan=4, sticky="nsew", padx=(3, 4), pady=(0, 3))
     tree_frame.rowconfigure(0, weight=1)
     tree_frame.columnconfigure(0, weight=1)
     self.architecture_section_tree = ttk.Treeview(
@@ -177,7 +222,7 @@ def _build_section_editor(self, parent):
     )
     TextWidgetContextMenu(self.architecture_section_text)
     self.architecture_section_text.grid(
-        row=1, column=1, sticky="nsew", padx=(4, 3), pady=(0, 4)
+        row=2, column=1, sticky="nsew", padx=(4, 3), pady=(0, 4)
     )
 
     ctk.CTkLabel(
@@ -185,25 +230,32 @@ def _build_section_editor(self, parent):
         text="本分区 AI 修改要求",
         anchor="w",
         font=("Microsoft YaHei", 12, "bold"),
-    ).grid(row=2, column=1, sticky="ew", padx=(4, 3), pady=(2, 2))
+    ).grid(row=3, column=1, sticky="ew", padx=(4, 3), pady=(2, 2))
     self.architecture_section_guide_text = ctk.CTkTextbox(
         parent, wrap="word", height=80, font=("Microsoft YaHei", 12)
     )
     TextWidgetContextMenu(self.architecture_section_guide_text)
     self.architecture_section_guide_text.grid(
-        row=3, column=1, sticky="ew", padx=(4, 3), pady=(0, 4)
+        row=4, column=1, sticky="ew", padx=(4, 3), pady=(0, 4)
     )
 
     section_actions = ctk.CTkFrame(parent, fg_color="transparent")
-    section_actions.grid(row=4, column=1, sticky="ew", padx=(4, 3), pady=(0, 3))
+    section_actions.grid(row=5, column=1, sticky="ew", padx=(4, 3), pady=(0, 3))
     section_actions.columnconfigure(0, weight=1)
     section_actions.columnconfigure(1, weight=1)
+    section_actions.columnconfigure(2, weight=1)
+    ctk.CTkButton(
+        section_actions,
+        text="同步总架构",
+        command=self.sync_architecture_section,
+        height=34,
+    ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
     ctk.CTkButton(
         section_actions,
         text="保存本分区",
         command=self.save_architecture_section,
         height=34,
-    ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+    ).grid(row=0, column=1, sticky="ew", padx=3)
     self.btn_revise_architecture_section = ctk.CTkButton(
         section_actions,
         text="AI 重写本分区",
@@ -211,7 +263,7 @@ def _build_section_editor(self, parent):
         height=34,
     )
     self.btn_revise_architecture_section.grid(
-        row=0, column=1, sticky="ew", padx=(3, 0)
+        row=0, column=2, sticky="ew", padx=(3, 0)
     )
 
 
@@ -297,6 +349,58 @@ def get_selected_architecture_section(self):
     if not selection:
         return None
     return self._architecture_sections_by_id.get(selection[0])
+
+
+def update_architecture_extraction_controls(self):
+    merge_current = (
+        self.architecture_extraction_mode_var.get() == "合并当前分区正文"
+    )
+    self.architecture_extraction_title_entry.configure(
+        state="disabled" if merge_current else "normal"
+    )
+    self.architecture_extraction_location_label.configure(
+        text=(
+            "只更新当前节点正文，保留全部下级分区及顺序"
+            if merge_current
+            else "将固定追加到当前分区末尾；同名时原位更新"
+        )
+    )
+
+
+def apply_extracted_architecture_content(
+    self,
+    document,
+    parent_section,
+    extracted_body,
+    mode,
+    target_title,
+):
+    if mode == "合并当前分区正文":
+        merged = replace_architecture_section_body(
+            document, parent_section, extracted_body
+        )
+        return merged, parent_section.heading, False
+    return upsert_architecture_subsection_body(
+        document, parent_section, target_title, extracted_body
+    )
+
+
+def sync_architecture_section(self):
+    section = self.get_selected_architecture_section()
+    if section is None:
+        messagebox.showwarning("未选择分区", "请先从左侧选择要同步的分区。")
+        return
+    replacement = self.architecture_section_text.get("0.0", "end-1c")
+    try:
+        merged = replace_architecture_section(
+            _architecture_text(self), section, replacement
+        )
+    except ValueError as exc:
+        messagebox.showerror("同步失败", str(exc))
+        return
+    _show_complete_architecture(self, merged)
+    self.refresh_architecture_sections(select_heading=replacement.splitlines()[0])
+    self.log(f"已将分区“{section.title}”同步到总架构编辑区，尚未写入文件。")
 
 
 def save_architecture_section(self):

@@ -409,16 +409,9 @@ def revise_architecture_section(
     if not replacement:
         raise RuntimeError("AI 返回空内容，已保留原分区")
 
-    lines = replacement.splitlines()
-    if lines and lines[0].lstrip().startswith("#"):
-        lines[0] = section.heading
-        replacement = "\n".join(lines)
-    else:
-        replacement = f"{section.heading}\n{replacement}"
-
-    original_had_trailing_newline = section_content.endswith(("\n", "\r"))
-    if original_had_trailing_newline and not replacement.endswith("\n"):
-        replacement += "\n"
+    replacement = _normalize_section_replacement(
+        section, section_content, replacement
+    )
     merged = replace_architecture_section(
         current_architecture,
         section,
@@ -429,3 +422,61 @@ def revise_architecture_section(
         merged,
     )
     return merged, replacement
+
+
+def extract_architecture_section_from_material(
+    interface_format: str,
+    api_key: str,
+    base_url: str,
+    llm_model: str,
+    current_architecture: str,
+    target_location: str,
+    target_content: str,
+    source_material: str,
+    temperature: float = 0.7,
+    max_tokens: int = 8192,
+    timeout: int = 600,
+) -> str:
+    """Extract source material as body text; placement remains program-controlled."""
+    source_material = source_material.strip()
+    if not source_material:
+        raise ValueError("所选文件没有可提炼的文字内容")
+    prompt = prompt_definitions.architecture_section_material_extraction_prompt.format(
+        target_location=target_location.strip(),
+        target_content=target_content.strip() or "（当前为空）",
+        current_architecture=current_architecture,
+        source_material=source_material,
+    )
+    llm_adapter = create_llm_adapter(
+        interface_format=interface_format,
+        base_url=base_url,
+        model_name=llm_model,
+        api_key=api_key,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    replacement = invoke_with_cleaning(llm_adapter, prompt).strip()
+    if not replacement:
+        raise RuntimeError("AI 返回空内容，当前分区未改变")
+    lines = [line for line in replacement.splitlines() if not line.lstrip().startswith("#")]
+    body = "\n".join(lines).strip()
+    if not body:
+        raise RuntimeError("AI 未返回有效正文，当前分区未改变")
+    return body
+
+
+def _normalize_section_replacement(
+    section: ArchitectureSection,
+    original_content: str,
+    replacement: str,
+) -> str:
+    lines = replacement.strip().splitlines()
+    if lines and lines[0].lstrip().startswith("#"):
+        lines[0] = section.heading
+        replacement = "\n".join(lines)
+    else:
+        replacement = f"{section.heading}\n{replacement.strip()}"
+    if original_content.endswith(("\n", "\r")) and not replacement.endswith("\n"):
+        replacement += "\n"
+    return replacement
