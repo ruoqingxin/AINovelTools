@@ -48,6 +48,9 @@ def build_chapters_tab(self):
     
     self.chapter_view_text.bind("<KeyRelease>", update_word_count)
     self.chapter_view_text.bind("<ButtonRelease>", update_word_count)
+    self.chapter_view_text.bind(
+        "<KeyRelease>", lambda _event: setattr(self, "_chapters_view_dirty", True), add="+"
+    )
     TextWidgetContextMenu(self.chapter_view_text)
     self.chapter_view_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5, columnspan=6)
 
@@ -82,6 +85,11 @@ def refresh_chapters_list(self):
             self.chapter_view_text.delete("0.0", "end")
 
 def on_chapter_selected(self, value):
+    if not _confirm_chapters_view(self):
+        current = getattr(self, "_chapters_view_current", "")
+        if current:
+            self.chapter_select_var.set(current)
+        return
     load_chapter_content(self, value)
 
 def load_chapter_content(self, chapter_number_str):
@@ -95,9 +103,14 @@ def load_chapter_content(self, chapter_number_str):
     content = read_file(chapter_file)
     self.chapter_view_text.delete("0.0", "end")
     self.chapter_view_text.insert("0.0", content)
+    self._chapters_view_baseline = content
+    self._chapters_view_dirty = False
+    self._chapters_view_current = str(chapter_number_str)
+
+
 
 def save_current_chapter(self):
-    chapter_number_str = self.chapter_select_var.get()
+    chapter_number_str = getattr(self, "_chapters_view_current", self.chapter_select_var.get())
     if not chapter_number_str:
         messagebox.showwarning("警告", "尚未选择章节，无法保存。")
         return
@@ -108,6 +121,8 @@ def save_current_chapter(self):
     chapter_file = os.path.join(filepath, "chapters", f"chapter_{chapter_number_str}.txt")
     content = self.chapter_view_text.get("0.0", "end").strip()
     if save_string_to_txt(content, chapter_file):
+        self._chapters_view_baseline = content
+        self._chapters_view_dirty = False
         self.safe_log(f"已保存对第 {chapter_number_str} 章的修改。")
     else:
         messagebox.showerror("保存失败", f"无法保存第 {chapter_number_str} 章，请检查目录权限。")
@@ -120,6 +135,8 @@ def prev_chapter(self):
         return
     idx = self.chapters_list.index(current)
     if idx > 0:
+        if not _confirm_chapters_view(self):
+            return
         new_idx = idx - 1
         self.chapter_select_var.set(self.chapters_list[new_idx])
         load_chapter_content(self, self.chapters_list[new_idx])
@@ -134,8 +151,21 @@ def next_chapter(self):
         return
     idx = self.chapters_list.index(current)
     if idx < len(self.chapters_list) - 1:
+        if not _confirm_chapters_view(self):
+            return
         new_idx = idx + 1
         self.chapter_select_var.set(self.chapters_list[new_idx])
         load_chapter_content(self, self.chapters_list[new_idx])
     else:
         messagebox.showinfo("提示", "已经是最后一章了。")
+
+
+def _confirm_chapters_view(self):
+    if not getattr(self, "_chapters_view_dirty", False):
+        return True
+    choice = messagebox.askyesnocancel(
+        "章节尚未保存", "当前章节管理编辑区有未保存修改，是否先保存？"
+    )
+    if choice is None:
+        return False
+    return not choice or save_current_chapter(self)

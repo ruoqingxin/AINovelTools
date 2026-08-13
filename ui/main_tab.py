@@ -17,8 +17,17 @@ def build_global_log_area(self):
     )
     self.global_log_frame.columnconfigure(0, weight=1)
 
+    self.task_status_label = ctk.CTkLabel(
+        self.global_log_frame,
+        text="状态：就绪",
+        anchor="w",
+        font=("Microsoft YaHei", 11),
+        text_color=("#475467", "#98A2B3"),
+    )
+    self.task_status_label.grid(row=0, column=0, sticky="ew", padx=8, pady=(4, 0))
+
     self.global_log_header = _build_log_header(
-        self, self.global_log_frame, 0, "btn_clear_log"
+        self, self.global_log_frame, 1, "btn_clear_log"
     )
     self.btn_view_log_details = ctk.CTkButton(
         self.global_log_header,
@@ -45,7 +54,7 @@ def build_global_log_area(self):
         self.global_log_frame, height=120, wrap="word", font=FONT
     )
     TextWidgetContextMenu(self.log_text)
-    self.log_text.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 5))
+    self.log_text.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))
     self.log_text.configure(state="disabled")
 
 
@@ -128,10 +137,16 @@ def build_left_layout(self):
 
     def update_word_count(_event=None):
         count = get_word_count(self.chapter_result.get("0.0", "end-1c"))
-        self.chapter_label.configure(text=f"修改后正文（可编辑）  字数：{count}")
+        if getattr(self, "_chapter_draft_dirty", False):
+            self._set_chapter_draft_dirty(True)
+        else:
+            self.chapter_label.configure(text=f"修改后正文（可编辑）  字数：{count} · 已保存")
 
     self.chapter_result.bind("<KeyRelease>", update_word_count)
     self.chapter_result.bind("<ButtonRelease>", update_word_count)
+    self.chapter_result.bind(
+        "<KeyRelease>", lambda _event: self._set_chapter_draft_dirty(True), add="+"
+    )
 
 
 def build_chapter_right_layout(self):

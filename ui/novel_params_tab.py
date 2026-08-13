@@ -56,9 +56,18 @@ def build_project_setup_area(self, parent):
     create_label_with_help_for_novel_params(
         self, path_line, "工程目录", "filepath", 0, 0, font=FONT
     )
-    ctk.CTkEntry(path_line, textvariable=self.filepath_var, font=FONT).grid(
+    path_entry = ctk.CTkEntry(path_line, textvariable=self.filepath_var, font=FONT)
+    path_entry.grid(
         row=0, column=1, sticky="ew", padx=(6, 4)
     )
+    path_entry.bind("<FocusOut>", lambda _event: self.persist_project_settings())
+    path_entry.bind("<Return>", lambda _event: self.persist_project_settings())
+    for variable in (
+        self.filepath_var, self.genre_var, self.num_chapters_var,
+        self.word_number_var, self.chapter_num_var, self.characters_involved_var,
+        self.key_items_var, self.scene_location_var, self.time_constraint_var,
+    ):
+        variable.trace_add("write", lambda *_args: self._schedule_persist_project_settings())
     ctk.CTkButton(
         path_line, text="浏览...", command=self.browse_folder, width=64, font=FONT
     ).grid(row=0, column=2)
@@ -75,6 +84,10 @@ def build_project_setup_area(self, parent):
     ctk.CTkButton(
         prep_actions, text="配置任务模型", command=open_model_settings, font=FONT
     ).grid(row=0, column=0, sticky="ew")
+    ctk.CTkButton(
+        prep_actions, text="保存工程设置", command=self.persist_project_settings, font=FONT
+    ).grid(row=0, column=1, padx=(6, 0), sticky="ew")
+    prep_actions.columnconfigure(1, weight=1)
 
 
 def build_architecture_params_area(self, parent):
@@ -107,6 +120,7 @@ def build_architecture_params_area(self, parent):
     )
     if getattr(self, "topic_default", ""):
         self.topic_text.insert("0.0", self.topic_default)
+    self.topic_text.bind("<KeyRelease>", lambda _event: self._schedule_persist_project_settings(), add="+")
     row += 1
 
     book_line = ctk.CTkFrame(self.params_frame, fg_color="transparent")
@@ -127,6 +141,7 @@ def build_architecture_params_area(self, parent):
     )
     if getattr(self, "planning_guidance_default", ""):
         self.planning_guide_text.insert("0.0", self.planning_guidance_default)
+    self.planning_guide_text.bind("<KeyRelease>", lambda _event: self._schedule_persist_project_settings(), add="+")
     row += 1
 
     self.btn_generate_architecture = ctk.CTkButton(
@@ -188,6 +203,7 @@ def build_chapter_params_area(self, start_row=0):
     )
     if getattr(self, "chapter_guidance_default", ""):
         self.user_guide_text.insert("0.0", self.chapter_guidance_default)
+    self.user_guide_text.bind("<KeyRelease>", lambda _event: self._schedule_persist_project_settings(), add="+")
     row += 1
 
     self.char_inv_text, character_line = _add_textbox(
@@ -242,6 +258,15 @@ def build_chapter_params_area(self, start_row=0):
         height=34,
     )
     self.btn_generate_chapter.grid(row=row, column=0, sticky="ew", padx=8, pady=(5, 2))
+    row += 1
+    self.btn_save_draft = ctk.CTkButton(
+        self.chapter_params_frame,
+        text="保存当前草稿",
+        command=self.save_current_draft,
+        font=FONT,
+        height=32,
+    )
+    self.btn_save_draft.grid(row=row, column=0, sticky="ew", padx=8, pady=(2, 2))
     row += 1
     ctk.CTkLabel(
         self.chapter_params_frame,

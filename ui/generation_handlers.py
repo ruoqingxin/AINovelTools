@@ -62,6 +62,10 @@ def _start_background(self, operation_name, task):
 
 
 def generate_novel_architecture_ui(self):
+    validation_error = self.validate_generation_config("architecture", require_embedding=True)
+    if validation_error:
+        messagebox.showwarning("生成前检查", validation_error)
+        return
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先选择保存文件路径")
@@ -131,6 +135,7 @@ def generate_novel_architecture_ui(self):
             if not operation:
                 self.safe_log(f"❌ {operation.message}")
                 return
+            self.call_in_ui(lambda: (self.load_novel_architecture(), self.tabview.set("小说架构")))
             self.safe_log("✅ 小说架构生成完成。请在“小说架构”标签页查看或编辑。")
         except Exception:
             self.handle_exception("生成小说架构时出错")
@@ -139,6 +144,10 @@ def generate_novel_architecture_ui(self):
     _start_background(self, "generate_architecture", task)
 
 def generate_chapter_blueprint_ui(self):
+    validation_error = self.validate_generation_config("chapter_outline")
+    if validation_error:
+        messagebox.showwarning("生成前检查", validation_error)
+        return
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先选择保存文件路径")
@@ -181,6 +190,7 @@ def generate_chapter_blueprint_ui(self):
             if not operation:
                 self.safe_log(f"❌ {operation.message}")
                 return
+            self.call_in_ui(lambda: (self.load_chapter_blueprint(), self.tabview.set("章节蓝图")))
             self.safe_log("✅ 章节蓝图生成完成。请在“章节蓝图”标签页查看或编辑。")
         except Exception:
             self.handle_exception("生成章节蓝图时出错")
@@ -190,6 +200,10 @@ def generate_chapter_blueprint_ui(self):
 
 
 def revise_novel_architecture_ui(self):
+    validation_error = self.validate_generation_config("architecture")
+    if validation_error:
+        messagebox.showwarning("生成前检查", validation_error)
+        return
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先选择保存文件路径")
@@ -248,6 +262,10 @@ def revise_novel_architecture_ui(self):
 
 
 def revise_architecture_section_ui(self):
+    validation_error = self.validate_generation_config("architecture")
+    if validation_error:
+        messagebox.showwarning("生成前检查", validation_error)
+        return
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先选择保存文件路径")
@@ -477,6 +495,10 @@ def extract_architecture_section_from_files_ui(self):
 
 
 def revise_chapter_blueprint_ui(self):
+    validation_error = self.validate_generation_config("chapter_outline")
+    if validation_error:
+        messagebox.showwarning("生成前检查", validation_error)
+        return
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先选择保存文件路径")
@@ -531,6 +553,10 @@ def revise_chapter_blueprint_ui(self):
     _start_background(self, "revise_blueprint", task)
 
 def generate_chapter_draft_ui(self):
+    validation_error = self.validate_generation_config("prompt_draft", require_embedding=True)
+    if validation_error:
+        messagebox.showwarning("生成前检查", validation_error)
+        return
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先配置保存文件路径。")
@@ -725,7 +751,7 @@ def generate_chapter_draft_ui(self):
                 self.safe_log(f"✅ 第{chap_num}章草稿生成完成。请在左侧查看或编辑。")
                 def show_new_draft():
                     self.clear_chapter_before_textbox()
-                    self.show_chapter_in_textbox(draft_text)
+                    self.show_chapter_in_textbox(draft_text, mark_dirty=True)
 
                 self.call_in_ui(show_new_draft)
             else:
@@ -738,6 +764,10 @@ def generate_chapter_draft_ui(self):
 
 
 def revise_chapter_draft_ui(self):
+    validation_error = self.validate_generation_config("prompt_draft", require_embedding=True)
+    if validation_error:
+        messagebox.showwarning("生成前检查", validation_error)
+        return
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先配置保存文件路径。")
@@ -782,7 +812,7 @@ def revise_chapter_draft_ui(self):
 
             def show_revision():
                 self.show_chapter_before_textbox(chapter_text)
-                self.show_chapter_in_textbox(revised_text)
+                self.show_chapter_in_textbox(revised_text, mark_dirty=True)
                 self.revision_guide_text.delete("0.0", "end")
 
             self.call_in_ui(show_revision)
@@ -797,6 +827,10 @@ def revise_chapter_draft_ui(self):
     _start_background(self, "revise_chapter", task)
 
 def finalize_chapter_ui(self):
+    validation_error = self.validate_generation_config("final_chapter", require_embedding=True)
+    if validation_error:
+        messagebox.showwarning("定稿前检查", validation_error)
+        return
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先配置保存文件路径。")
@@ -897,7 +931,7 @@ def finalize_chapter_ui(self):
             self.safe_log(f"✅ {operation.message}（已更新前文摘要、角色状态和剧情要点）。")
 
             final_text = read_file(chapter_file)
-            self.call_in_ui(lambda: self.show_chapter_in_textbox(final_text))
+            self.call_in_ui(lambda: (self.show_chapter_in_textbox(final_text), self.refresh_chapters_list()))
         except Exception:
             self.handle_exception("定稿章节时出错")
         finally:
@@ -905,6 +939,10 @@ def finalize_chapter_ui(self):
     _start_background(self, "finalize_chapter", task)
 
 def do_consistency_check(self):
+    validation_error = self.validate_generation_config("consistency_review", require_embedding=True)
+    if validation_error:
+        messagebox.showwarning("审校前检查", validation_error)
+        return
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先配置保存文件路径。")
@@ -954,6 +992,11 @@ def do_consistency_check(self):
             self.enable_button_safe(self.btn_check_consistency)
     _start_background(self, "consistency_check", task)
 def generate_batch_ui(self):
+
+    validation_error = self.validate_generation_config("prompt_draft", require_embedding=True)
+    if validation_error:
+        messagebox.showwarning("批量生成前检查", validation_error)
+        return
 
     # PenBo 优化界面，使用customtkinter进行批量生成章节界面
     def open_batch_dialog():

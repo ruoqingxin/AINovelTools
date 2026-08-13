@@ -4,6 +4,7 @@ import os
 import threading
 import logging
 import traceback
+import time
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -107,6 +108,12 @@ class NovelGeneratorGUI:
         self._operation_lock = threading.Lock()
         self._active_operations = set()
         self._active_cancellation_token = None
+        self._task_status_after_id = None
+        self._task_started_at = None
+        self._task_status_message = "就绪"
+        self._chapter_draft_dirty = False
+        self._chapter_draft_baseline = ""
+        self._project_persist_after_id = None
         self.master.title("AI 小说生成器")
         try:
             icon_path = get_application_dir() / "icon.ico"
@@ -426,7 +433,45 @@ class NovelGeneratorGUI:
                 pass
 
     def safe_log(self, message: str):
-        self.call_in_ui(lambda: self.log(message))
+        self.call_in_ui(lambda: (self.log(message), self._set_task_status_from_log(message)))
+
+    def _set_task_status_from_log(self, message: str):
+        if self._task_started_at is not None:
+            self._task_status_message = str(message).strip().replace("\n", " ")
+        self.set_task_status(self._task_status_message if self._task_started_at else message)
+
+    def set_task_status(self, message: str):
+        label = getattr(self, "task_status_label", None)
+        if label is None:
+            return
+        text = str(message).strip().replace("\n", " ") or "就绪"
+        if len(text) > 100:
+            text = text[:97] + "..."
+        if self._task_started_at is not None:
+            elapsed = int(max(0, time.monotonic() - self._task_started_at))
+            text = f"{text} · 已耗时 {elapsed // 60:02d}:{elapsed % 60:02d}"
+        label.configure(text=f"状态：{text}")
+
+    def _refresh_task_status_clock(self):
+        if self._task_started_at is not None:
+            self.set_task_status(self._task_status_message)
+            self._task_status_after_id = self.master.after(1000, self._refresh_task_status_clock)
+
+    def _begin_task_status(self, message: str):
+        self._task_started_at = time.monotonic()
+        self._task_status_message = message
+        self.set_task_status(message)
+        self._task_status_after_id = self.master.after(1000, self._refresh_task_status_clock)
+
+    def _end_task_status(self, message: str):
+        self._task_started_at = None
+        if self._task_status_after_id is not None:
+            try:
+                self.master.after_cancel(self._task_status_after_id)
+            except tk.TclError:
+                pass
+            self._task_status_after_id = None
+        self.set_task_status(message)
 
     def call_in_ui(self, callback) -> bool:
         """Schedule a callback only while the Tk application is alive."""
@@ -460,6 +505,7 @@ class NovelGeneratorGUI:
         cancel_button = getattr(self, "btn_cancel_ai", None)
         if cancel_button is not None:
             self.call_in_ui(lambda: cancel_button.configure(state="normal"))
+        self.call_in_ui(lambda: self._begin_task_status(f"正在执行：{name}"))
 
         def run():
             context_token = set_current_token(cancellation_token)
@@ -480,6 +526,7 @@ class NovelGeneratorGUI:
                     self.enable_button_safe(button)
                 if cancel_button is not None:
                     self.call_in_ui(lambda: cancel_button.configure(state="disabled"))
+                self.call_in_ui(lambda: self._end_task_status("任务结束"))
 
         try:
             threading.Thread(
@@ -519,6 +566,9 @@ class NovelGeneratorGUI:
 
     def close(self):
         """Close cleanly, warning when background work is still in progress."""
+        if not self._confirm_unsaved_content():
+            return
+        self.persist_project_settings()
         with self._operation_lock:
             active_operations = tuple(self._active_operations)
         if active_operations and not messagebox.askyesno(
@@ -658,13 +708,12 @@ class NovelGeneratorGUI:
         logging.error(full_message)
         self.safe_log(f"{context}。详情已写入 app.log。")
 
-    def show_chapter_in_textbox(self, text: str):
+    def show_chapter_in_textbox(self, text: str, mark_dirty: bool = False):
         self.chapter_result.delete("0.0", "end")
         self.chapter_result.insert("0.0", text)
         self.chapter_result.see("end")
-        self.chapter_label.configure(
-            text=f"修改后正文（可编辑）  字数：{get_word_count(text)}"
-        )
+        self._chapter_draft_baseline = text
+        self._set_chapter_draft_dirty(mark_dirty)
 
     def show_chapter_before_textbox(self, text: str):
         self.chapter_before_result.configure(state="normal")
@@ -731,6 +780,117 @@ class NovelGeneratorGUI:
         selected_dir = filedialog.askdirectory()
         if selected_dir:
             self.filepath_var.set(selected_dir)
+            self.persist_project_settings()
+
+    def persist_project_settings(self):
+        """Persist project inputs without replacing model settings."""
+        try:
+            config = load_config(self.config_file)
+            other = dict(config.get("other_params", {}))
+            fields = {
+                "filepath": self.filepath_var.get().strip(),
+                "genre": self.genre_var.get().strip(),
+                "num_chapters": self.safe_get_int(self.num_chapters_var, 10),
+                "word_number": self.safe_get_int(self.word_number_var, 3000),
+                "chapter_num": self.chapter_num_var.get().strip(),
+                "characters_involved": self.characters_involved_var.get().strip(),
+                "key_items": self.key_items_var.get().strip(),
+                "scene_location": self.scene_location_var.get().strip(),
+                "time_constraint": self.time_constraint_var.get().strip(),
+            }
+            if hasattr(self, "topic_text"):
+                fields["topic"] = self.topic_text.get("0.0", "end").strip()
+            if hasattr(self, "planning_guide_text"):
+                fields["planning_guidance"] = self.planning_guide_text.get("0.0", "end").strip()
+            if hasattr(self, "user_guide_text"):
+                fields["chapter_guidance"] = self.user_guide_text.get("0.0", "end").strip()
+            other.update(fields)
+            config["other_params"] = other
+            if save_config(config, self.config_file):
+                self.loaded_config = config
+                return True
+        except (OSError, tk.TclError, ValueError) as exc:
+            logging.warning("保存工程设置失败: %s", exc)
+        return False
+
+    def _schedule_persist_project_settings(self):
+        if self._project_persist_after_id is not None:
+            try:
+                self.master.after_cancel(self._project_persist_after_id)
+            except tk.TclError:
+                pass
+        self._project_persist_after_id = self.master.after(600, self._run_scheduled_project_persist)
+
+    def _run_scheduled_project_persist(self):
+        self._project_persist_after_id = None
+        if not self._closing:
+            self.persist_project_settings()
+
+    def _set_chapter_draft_dirty(self, dirty: bool):
+        self._chapter_draft_dirty = bool(dirty)
+        label = getattr(self, "chapter_label", None)
+        if label is not None:
+            count = get_word_count(self.chapter_result.get("0.0", "end-1c"))
+            marker = " · 未保存" if dirty else " · 已保存"
+            label.configure(text=f"修改后正文（可编辑）  字数：{count}{marker}")
+
+    def save_current_draft(self):
+        filepath = self.filepath_var.get().strip()
+        if not filepath:
+            messagebox.showwarning("无法保存", "请先设置工程目录。")
+            return False
+        content = self.chapter_result.get("0.0", "end").strip()
+        if not content:
+            messagebox.showwarning("无法保存", "当前草稿为空。")
+            return False
+        try:
+            chapter_number = self.safe_get_int(self.chapter_num_var, 1)
+            NovelProjectRepository(filepath).write_chapter(chapter_number, content)
+            self._chapter_draft_baseline = content
+            self._set_chapter_draft_dirty(False)
+            self.persist_project_settings()
+            self.safe_log(f"第 {chapter_number} 章草稿已保存。")
+            return True
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("保存失败", str(exc))
+            return False
+
+    def _confirm_unsaved_content(self):
+        if not self._chapter_draft_dirty:
+            return True
+        choice = messagebox.askyesnocancel("草稿尚未保存", "当前章节草稿有未保存修改，是否先保存？")
+        if choice is None:
+            return False
+        return not choice or self.save_current_draft()
+
+    def validate_generation_config(self, task_key: str, require_embedding: bool = False):
+        filepath = self.filepath_var.get().strip()
+        if not filepath:
+            return "请先设置工程目录。"
+        if not os.path.isdir(filepath):
+            return f"工程目录不存在：{filepath}。请先选择有效目录。"
+        config_var = getattr(self, f"{task_key}_llm_var", None)
+        if config_var is None:
+            return f"未找到任务“{task_key}”对应的模型配置。"
+        selected = config_var.get().strip()
+        try:
+            from config_manager import get_llm_config
+            config = get_llm_config(self.loaded_config, selected)
+        except (ValueError, TypeError) as exc:
+            return str(exc)
+        if not self._service_config_ready(config):
+            return f"模型配置“{selected}”未完成，请填写 API Key、Base URL 和模型名称并保存。"
+        if self.safe_get_int(self.num_chapters_var, 0) < 1:
+            return "总章节数必须大于 0。"
+        if self.safe_get_int(self.word_number_var, 0) < 1:
+            return "目标字数必须大于 0。"
+        if require_embedding:
+            emb_format = self.embedding_interface_format_var.get().strip().lower()
+            if not self.embedding_url_var.get().strip() or not self.embedding_model_name_var.get().strip():
+                return "Embedding 配置不完整，请填写服务地址和模型名称。"
+            if emb_format not in {"ollama", "ml studio"} and not self.embedding_api_key_var.get().strip():
+                return "当前 Embedding 服务需要 API Key。"
+        return None
 
     def show_character_import_window(self):
         """显示角色导入窗口"""
