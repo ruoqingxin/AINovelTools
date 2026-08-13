@@ -77,6 +77,11 @@ from ui.setting_tab import (
     update_architecture_workflow_state,
     update_architecture_input_visibility,
     toggle_architecture_input_panel,
+    load_outline_workflow_step,
+    confirm_outline_step,
+    extract_outline_step_from_file,
+    derive_outline_step_with_ai,
+    finalize_outline_workflow,
 )
 from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint, clear_chapter_blueprint
 from ui.character_tab import build_character_tab, load_character_state, save_character_state
@@ -1054,6 +1059,11 @@ class NovelGeneratorGUI:
     update_architecture_workflow_state = update_architecture_workflow_state
     update_architecture_input_visibility = update_architecture_input_visibility
     toggle_architecture_input_panel = toggle_architecture_input_panel
+    load_outline_workflow_step = load_outline_workflow_step
+    confirm_outline_step = confirm_outline_step
+    extract_outline_step_from_file = extract_outline_step_from_file
+    derive_outline_step_with_ai = derive_outline_step_with_ai
+    finalize_outline_workflow = finalize_outline_workflow
     clear_novel_architecture = clear_novel_architecture
     delete_architecture_section = delete_selected_architecture_section
     on_architecture_editor_tab_changed = on_architecture_editor_tab_changed

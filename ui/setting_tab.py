@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import os
 import customtkinter as ctk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, simpledialog, ttk, filedialog
 
 from novel_generator.architecture_sections import (
     append_architecture_overview_section,
@@ -17,12 +17,16 @@ from novel_generator.storage import NovelProjectRepository
 from utils import read_file, save_string_to_txt, get_word_count
 from ui.context_menu import TextWidgetContextMenu
 from ui.novel_params_tab import build_architecture_params_area
+from novel_generator.outline_workflow import OutlineWorkflow, OUTLINE_STEPS
+from llm_adapters import create_llm_adapter
+from config_manager import get_llm_config
 
 
 def build_setting_tab(self):
     self.setting_tab = self.tabview.add("大纲工作台")
     self.setting_tab.rowconfigure(0, weight=0)
-    self.setting_tab.rowconfigure(1, weight=1)
+    self.setting_tab.rowconfigure(1, weight=0)
+    self.setting_tab.rowconfigure(2, weight=1)
     self.setting_tab.columnconfigure(0, weight=3, uniform="architecture_columns")
     self.setting_tab.columnconfigure(1, weight=2, uniform="architecture_columns")
 
@@ -46,7 +50,7 @@ def build_setting_tab(self):
         self.architecture_step_labels.append(label)
     self.architecture_next_step_label = ctk.CTkLabel(
         workflow,
-        text="请先填写右侧的全书规划输入。",
+        text="大纲工作台：先准备输入，再逐个确认 34 个大纲分区。",
         anchor="w",
         font=("Microsoft YaHei", 11),
         text_color=("#475467", "#D0D5DD"),
@@ -56,12 +60,12 @@ def build_setting_tab(self):
     )
 
     editor_frame = ctk.CTkFrame(self.setting_tab)
-    editor_frame.grid(row=1, column=0, sticky="nsew", padx=(5, 2), pady=5)
+    editor_frame.grid(row=2, column=0, sticky="nsew", padx=(5, 2), pady=5)
     editor_frame.rowconfigure(1, weight=1)
     editor_frame.columnconfigure(0, weight=1)
 
     params_frame = ctk.CTkFrame(self.setting_tab)
-    params_frame.grid(row=1, column=1, sticky="nsew", padx=(2, 5), pady=5)
+    params_frame.grid(row=2, column=1, sticky="nsew", padx=(2, 5), pady=5)
     params_frame.rowconfigure(1, weight=1)
     params_frame.columnconfigure(0, weight=1)
     self.architecture_input_summary = ctk.CTkLabel(
@@ -185,10 +189,11 @@ def update_architecture_workflow_state(self):
     except (AttributeError, ctk.TclError):
         has_architecture = False
     if has_architecture:
+        # Labels are zero-based: 0=prepare, 1=generate, 2=review, 3=blueprint.
         active_index = 2
         next_text = "大纲已生成：先检查全文内容；确认后打开“蓝图工作台”安排章节。"
     else:
-        active_index = 1
+        active_index = 0
         next_text = "请先完成右侧 4 项输入，然后点击“开始生成全书架构”。"
     for index, label in enumerate(getattr(self, "architecture_step_labels", ())):
         if index == active_index:
@@ -202,6 +207,87 @@ def update_architecture_workflow_state(self):
     if getattr(self, "architecture_next_step_label", None) is not None:
         self.architecture_next_step_label.configure(text=f"下一步：{next_text}")
     self.update_architecture_input_visibility(has_architecture)
+
+
+def _outline_workflow(self):
+    filepath = self.filepath_var.get().strip()
+    if not filepath:
+        raise ValueError("请先设置保存文件路径")
+    workflow = getattr(self, "_outline_workflow_state", None)
+    if workflow is None or str(workflow.repository.root) != str(NovelProjectRepository(filepath).root):
+        workflow = OutlineWorkflow(filepath)
+        self._outline_workflow_state = workflow
+    return workflow
+
+
+def _outline_step_index(self):
+    return int(str(self.outline_step_var.get()).split(".", 1)[0])
+
+
+def load_outline_workflow_step(self):
+    try:
+        item = _outline_workflow(self).step(_outline_step_index(self))
+    except (ValueError, IndexError) as exc:
+        self.outline_step_status.configure(text=str(exc)); return
+    editor = getattr(self, "architecture_section_text", self.setting_text)
+    editor.delete("0.0", "end")
+    editor.insert("0.0", item.get("content", ""))
+    self.outline_step_status.configure(text={"confirmed": "已确认", "draft": "草稿"}.get(item.get("status"), "未开始"))
+
+
+def _save_outline_editor(self, source="manual"):
+    workflow = _outline_workflow(self)
+    editor = getattr(self, "architecture_section_text", self.setting_text)
+    return workflow.update(_outline_step_index(self), editor.get("0.0", "end-1c"), source)
+
+
+def confirm_outline_step(self):
+    try:
+        workflow = _outline_workflow(self)
+        editor = getattr(self, "architecture_section_text", self.setting_text)
+        item = workflow.confirm(_outline_step_index(self), editor.get("0.0", "end-1c"))
+        self.outline_step_status.configure(text="分区已确认并保存")
+        next_index = min(item["index"] + 1, len(OUTLINE_STEPS))
+        self.outline_step_var.set(f"{next_index}. {OUTLINE_STEPS[next_index - 1]}")
+        self.load_outline_workflow_step()
+    except (ValueError, IndexError, OSError) as exc:
+        messagebox.showwarning("无法确认", str(exc))
+
+
+def extract_outline_step_from_file(self):
+    path = filedialog.askopenfilename(title="选择用于提炼的资料", filetypes=[("文本文件", "*.txt *.md"), ("所有文件", "*.*")])
+    if not path: return
+    try:
+        workflow = _outline_workflow(self)
+        item = workflow.set_from_file(_outline_step_index(self), path)
+        editor = getattr(self, "architecture_section_text", self.setting_text)
+        editor.delete("0.0", "end"); editor.insert("0.0", item["content"])
+        self.outline_step_status.configure(text="已提炼，待确认")
+    except (OSError, ValueError) as exc:
+        messagebox.showerror("提炼失败", str(exc))
+
+
+def derive_outline_step_with_ai(self):
+    try:
+        workflow = _outline_workflow(self); index = _outline_step_index(self)
+        config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
+        adapter = create_llm_adapter(**config)
+        item = workflow.set_from_ai(index, lambda title, prior: adapter.invoke(
+            f"请根据已有小说设定，推导并输出“{title}”。已有步骤：\n" +
+            "\n".join(f"{p['index']}.{p['title']}：{p['content']}" for p in prior)))
+        editor = getattr(self, "architecture_section_text", self.setting_text)
+        editor.delete("0.0", "end"); editor.insert("0.0", item["content"])
+        self.outline_step_status.configure(text="AI 已推导，待确认")
+    except Exception as exc:
+        messagebox.showerror("AI 推导失败", str(exc))
+
+
+def finalize_outline_workflow(self):
+    try:
+        path = _outline_workflow(self).finalize()
+        messagebox.showinfo("大纲定稿", f"已完成 34 步确认并写入：\n{path}")
+    except (ValueError, OSError) as exc:
+        messagebox.showwarning("尚未定稿", str(exc))
 
 
 def update_architecture_input_visibility(self, has_architecture=None):
@@ -238,12 +324,26 @@ def toggle_architecture_input_panel(self):
 
 
 def _build_section_editor(self, parent):
-    parent.rowconfigure(2, weight=1)
+    parent.rowconfigure(0, weight=0)
+    parent.rowconfigure(2, weight=0)
+    parent.rowconfigure(3, weight=1)
     parent.columnconfigure(0, weight=1)
     parent.columnconfigure(1, weight=3)
 
+    stepbar = ctk.CTkFrame(parent, fg_color="transparent")
+    stepbar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=3, pady=(3, 1))
+    stepbar.columnconfigure(1, weight=1)
+    ctk.CTkLabel(stepbar, text="大纲分区").grid(row=0, column=0, padx=(4, 6))
+    self.outline_step_var = ctk.StringVar(value="1. 题材类型")
+    self.outline_step_menu = ctk.CTkOptionMenu(stepbar, variable=self.outline_step_var, values=[f"{i}. {title}" for i, title in enumerate(OUTLINE_STEPS, 1)], command=lambda _: self.load_outline_workflow_step(), width=220)
+    self.outline_step_menu.grid(row=0, column=1, sticky="w")
+    self.outline_step_status = ctk.CTkLabel(stepbar, text="未开始", anchor="w")
+    self.outline_step_status.grid(row=0, column=2, padx=8, sticky="w")
+    for col, (label, command) in enumerate((("文件提炼", self.extract_outline_step_from_file), ("AI 推导", self.derive_outline_step_with_ai), ("确认分区", self.confirm_outline_step), ("定稿", self.finalize_outline_workflow)), 3):
+        ctk.CTkButton(stepbar, text=label, command=command, width=78, height=28).grid(row=0, column=col, padx=2)
+
     section_toolbar = ctk.CTkFrame(parent, fg_color="transparent")
-    section_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
+    section_toolbar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
     section_toolbar.columnconfigure(4, weight=1)
     ctk.CTkButton(
         section_toolbar,
@@ -257,13 +357,6 @@ def _build_section_editor(self, parent):
         width=96,
         command=self.add_architecture_subsection,
     ).grid(row=0, column=1, padx=(0, 6))
-    self.btn_extract_architecture_section = ctk.CTkButton(
-        section_toolbar,
-        text="选择文件提炼",
-        width=108,
-        command=self.extract_architecture_section_from_files_ui,
-    )
-    self.btn_extract_architecture_section.grid(row=0, column=2, padx=(0, 6))
     self.btn_delete_architecture_section = ctk.CTkButton(
         section_toolbar,
         text="删除分区",
@@ -272,7 +365,7 @@ def _build_section_editor(self, parent):
         fg_color="#c0392b",
         hover_color="#a93226",
     )
-    self.btn_delete_architecture_section.grid(row=0, column=3, padx=(0, 6))
+    self.btn_delete_architecture_section.grid(row=0, column=2, padx=(0, 6))
     self.architecture_section_status_label = ctk.CTkLabel(
         section_toolbar,
         text="从左侧选择要单独修改的内容",
@@ -282,10 +375,10 @@ def _build_section_editor(self, parent):
 
     extraction_options = ctk.CTkFrame(parent, fg_color="transparent")
     extraction_options.grid(
-        row=1, column=0, columnspan=2, sticky="ew", padx=3, pady=(0, 4)
+        row=2, column=0, columnspan=2, sticky="ew", padx=3, pady=(0, 4)
     )
     extraction_options.columnconfigure(2, weight=1)
-    ctk.CTkLabel(extraction_options, text="当前父分区").grid(
+    ctk.CTkLabel(extraction_options, text="提炼到子分区").grid(
         row=0, column=0, padx=(0, 6), sticky="w"
     )
     self.architecture_extraction_parent_label = ctk.CTkLabel(
@@ -313,7 +406,7 @@ def _build_section_editor(self, parent):
     )
 
     tree_frame = ctk.CTkFrame(parent)
-    tree_frame.grid(row=2, column=0, rowspan=4, sticky="nsew", padx=(3, 4), pady=(0, 3))
+    tree_frame.grid(row=3, column=0, rowspan=4, sticky="nsew", padx=(3, 4), pady=(0, 3))
     tree_frame.rowconfigure(0, weight=1)
     tree_frame.columnconfigure(0, weight=1)
     self.architecture_section_tree = ttk.Treeview(
@@ -347,7 +440,7 @@ def _build_section_editor(self, parent):
     )
     TextWidgetContextMenu(self.architecture_section_text)
     self.architecture_section_text.grid(
-        row=2, column=1, sticky="nsew", padx=(4, 3), pady=(0, 4)
+        row=3, column=1, sticky="nsew", padx=(4, 3), pady=(0, 4)
     )
 
     ctk.CTkLabel(
@@ -355,17 +448,17 @@ def _build_section_editor(self, parent):
         text="本分区 AI 修改要求",
         anchor="w",
         font=("Microsoft YaHei", 12, "bold"),
-    ).grid(row=3, column=1, sticky="ew", padx=(4, 3), pady=(2, 2))
+    ).grid(row=4, column=1, sticky="ew", padx=(4, 3), pady=(2, 2))
     self.architecture_section_guide_text = ctk.CTkTextbox(
         parent, wrap="word", height=80, font=("Microsoft YaHei", 12)
     )
     TextWidgetContextMenu(self.architecture_section_guide_text)
     self.architecture_section_guide_text.grid(
-        row=4, column=1, sticky="ew", padx=(4, 3), pady=(0, 4)
+        row=5, column=1, sticky="ew", padx=(4, 3), pady=(0, 4)
     )
 
     section_actions = ctk.CTkFrame(parent, fg_color="transparent")
-    section_actions.grid(row=5, column=1, sticky="ew", padx=(4, 3), pady=(0, 3))
+    section_actions.grid(row=6, column=1, sticky="ew", padx=(4, 3), pady=(0, 3))
     section_actions.columnconfigure(0, weight=1)
     section_actions.columnconfigure(1, weight=1)
     section_actions.columnconfigure(2, weight=1)
@@ -952,6 +1045,31 @@ def save_novel_architecture(self):
 
 
 def clear_novel_architecture(self):
+    # Resolve edits made in the advanced section editor before clearing the
+    # complete document.  Clearing first would remove the section that the
+    # save action needs to locate, causing a misleading "保存失败" dialog.
+    if self.architecture_section_has_unsaved_changes():
+        current_name = self._architecture_active_title()
+        reasons = self.architecture_section_unsaved_reasons()
+        reason_text = "\n".join(f"- {reason}" for reason in reasons)
+        choice = messagebox.askyesnocancel(
+            "分区尚未保存",
+            f"“{current_name}”存在以下未保存内容：\n\n"
+            f"{reason_text}\n\n"
+            "选择“是”保存后清空，选择“否”放弃修改，选择“取消”继续编辑。",
+        )
+        if choice is None:
+            return
+        if choice:
+            if not self._save_active_architecture_section():
+                return
+        else:
+            _show_complete_architecture(
+                self, self._architecture_active_document_snapshot
+            )
+        self._architecture_pending_save = False
+        self._architecture_pending_reason = ""
+
     if not _architecture_text(self).strip():
         return
     if not messagebox.askyesno(
