@@ -74,6 +74,9 @@ from ui.setting_tab import (
     save_architecture_section,
     sync_architecture_section,
     save_novel_architecture,
+    update_architecture_workflow_state,
+    update_architecture_input_visibility,
+    toggle_architecture_input_panel,
 )
 from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint, clear_chapter_blueprint
 from ui.character_tab import build_character_tab, load_character_state, save_character_state
@@ -631,6 +634,7 @@ class NovelGeneratorGUI:
     def finish_startup(self):
         """恢复项目内容，并将用户定位到当前最需要处理的配置或工作区。"""
         restored = self._restore_project_files()
+        self.update_architecture_workflow_state()
         config = self.loaded_config
         llm_configs = config.get("llm_configs", {})
         task_configs = config.get("choose_configs", {})
@@ -1042,6 +1046,9 @@ class NovelGeneratorGUI:
     save_embedding_config = save_embedding_config
     load_novel_architecture = load_novel_architecture
     save_novel_architecture = save_novel_architecture
+    update_architecture_workflow_state = update_architecture_workflow_state
+    update_architecture_input_visibility = update_architecture_input_visibility
+    toggle_architecture_input_panel = toggle_architecture_input_panel
     clear_novel_architecture = clear_novel_architecture
     delete_architecture_section = delete_selected_architecture_section
     on_architecture_editor_tab_changed = on_architecture_editor_tab_changed

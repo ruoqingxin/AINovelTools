@@ -21,20 +21,70 @@ from ui.novel_params_tab import build_architecture_params_area
 
 def build_setting_tab(self):
     self.setting_tab = self.tabview.add("小说架构")
-    self.setting_tab.rowconfigure(0, weight=1)
+    self.setting_tab.rowconfigure(0, weight=0)
+    self.setting_tab.rowconfigure(1, weight=1)
     self.setting_tab.columnconfigure(0, weight=3, uniform="architecture_columns")
     self.setting_tab.columnconfigure(1, weight=2, uniform="architecture_columns")
 
+    workflow = ctk.CTkFrame(self.setting_tab, fg_color=("#F2F4F7", "#252B33"))
+    workflow.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=(5, 2))
+    workflow.columnconfigure(0, weight=1)
+    workflow.columnconfigure(1, weight=1)
+    workflow.columnconfigure(2, weight=1)
+    workflow.columnconfigure(3, weight=1)
+    self.architecture_step_labels = []
+    for index, title in enumerate(("1 准备输入", "2 生成架构", "3 检查修改", "4 生成章节蓝图")):
+        label = ctk.CTkLabel(
+            workflow,
+            text=title,
+            height=30,
+            anchor="center",
+            font=("Microsoft YaHei", 11, "bold"),
+            text_color=("#667085", "#98A2B3"),
+        )
+        label.grid(row=0, column=index, sticky="ew", padx=2, pady=2)
+        self.architecture_step_labels.append(label)
+    self.architecture_next_step_label = ctk.CTkLabel(
+        workflow,
+        text="请先填写右侧的全书规划输入。",
+        anchor="w",
+        font=("Microsoft YaHei", 11),
+        text_color=("#475467", "#D0D5DD"),
+    )
+    self.architecture_next_step_label.grid(
+        row=1, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 5)
+    )
+
     editor_frame = ctk.CTkFrame(self.setting_tab)
-    editor_frame.grid(row=0, column=0, sticky="nsew", padx=(5, 2), pady=5)
+    editor_frame.grid(row=1, column=0, sticky="nsew", padx=(5, 2), pady=5)
     editor_frame.rowconfigure(1, weight=1)
     editor_frame.columnconfigure(0, weight=1)
 
     params_frame = ctk.CTkFrame(self.setting_tab)
-    params_frame.grid(row=0, column=1, sticky="nsew", padx=(2, 5), pady=5)
-    params_frame.rowconfigure(0, weight=1)
+    params_frame.grid(row=1, column=1, sticky="nsew", padx=(2, 5), pady=5)
+    params_frame.rowconfigure(1, weight=1)
     params_frame.columnconfigure(0, weight=1)
-    build_architecture_params_area(self, params_frame)
+    self.architecture_input_summary = ctk.CTkLabel(
+        params_frame,
+        text="创建输入",
+        anchor="w",
+        font=("Microsoft YaHei", 13, "bold"),
+    )
+    self.architecture_input_summary.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
+    self.architecture_input_toggle = ctk.CTkButton(
+        params_frame,
+        text="收起输入区",
+        width=110,
+        height=28,
+        command=self.toggle_architecture_input_panel,
+    )
+    self.architecture_input_toggle.grid(row=0, column=1, padx=(4, 8), pady=(6, 2), sticky="e")
+    params_frame.columnconfigure(1, weight=0)
+    self.architecture_input_host = ctk.CTkFrame(params_frame, fg_color="transparent")
+    self.architecture_input_host.grid(row=1, column=0, columnspan=2, sticky="nsew")
+    self.architecture_input_host.rowconfigure(0, weight=1)
+    self.architecture_input_host.columnconfigure(0, weight=1)
+    build_architecture_params_area(self, self.architecture_input_host)
 
     toolbar = ctk.CTkFrame(editor_frame, fg_color="transparent")
     toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
@@ -42,7 +92,7 @@ def build_setting_tab(self):
 
     load_btn = ctk.CTkButton(
         toolbar,
-        text="加载架构",
+        text="重新加载文件",
         command=self.load_novel_architecture,
         font=("Microsoft YaHei", 12),
     )
@@ -81,7 +131,7 @@ def build_setting_tab(self):
         row=1, column=0, sticky="nsew", padx=5, pady=(0, 5)
     )
     complete_tab = self.architecture_editor_tabview.add("完整架构")
-    section_tab = self.architecture_editor_tabview.add("分区编辑")
+    section_tab = self.architecture_editor_tabview.add("高级分区编辑")
     complete_tab.rowconfigure(0, weight=3)
     complete_tab.rowconfigure(2, weight=1)
     complete_tab.columnconfigure(0, weight=1)
@@ -125,6 +175,66 @@ def build_setting_tab(self):
 
     self.setting_text.bind("<KeyRelease>", update_word_count)
     self.setting_text.bind("<ButtonRelease>", update_word_count)
+    self.update_architecture_workflow_state()
+
+
+def update_architecture_workflow_state(self):
+    """Keep the architecture page focused on the user's next actionable step."""
+    try:
+        has_architecture = bool(self.setting_text.get("0.0", "end-1c").strip())
+    except (AttributeError, ctk.TclError):
+        has_architecture = False
+    if has_architecture:
+        active_index = 2
+        next_text = "架构已生成：先检查全文内容；确认后可切换到“章节蓝图”生成目录。"
+    else:
+        active_index = 1
+        next_text = "请先完成右侧 4 项输入，然后点击“开始生成全书架构”。"
+    for index, label in enumerate(getattr(self, "architecture_step_labels", ())):
+        if index == active_index:
+            label.configure(
+                fg_color=("#D1E9FF", "#164C7E"),
+                text_color=("#175CD3", "#B2DDFF"),
+                corner_radius=6,
+            )
+        else:
+            label.configure(fg_color="transparent", text_color=("#667085", "#98A2B3"))
+    if getattr(self, "architecture_next_step_label", None) is not None:
+        self.architecture_next_step_label.configure(text=f"下一步：{next_text}")
+    self.update_architecture_input_visibility(has_architecture)
+
+
+def update_architecture_input_visibility(self, has_architecture=None):
+    if has_architecture is None:
+        try:
+            has_architecture = bool(self.setting_text.get("0.0", "end-1c").strip())
+        except (AttributeError, ctk.TclError):
+            has_architecture = False
+    host = getattr(self, "architecture_input_host", None)
+    if host is None:
+        return
+    if has_architecture:
+        host.grid_remove()
+        self.architecture_input_summary.configure(text="架构已存在")
+        self.architecture_input_toggle.configure(text="重新生成 / 调整")
+    else:
+        host.grid()
+        self.architecture_input_summary.configure(text="创建输入")
+        self.architecture_input_toggle.configure(text="收起输入区")
+
+
+def toggle_architecture_input_panel(self):
+    host = getattr(self, "architecture_input_host", None)
+    if host is None:
+        return
+    if host.winfo_ismapped():
+        host.grid_remove()
+        self.architecture_input_summary.configure(text="创建输入（已收起）")
+        self.architecture_input_toggle.configure(text="展开输入区")
+    else:
+        host.grid()
+        self.architecture_input_summary.configure(text="创建输入")
+        self.architecture_input_toggle.configure(text="收起输入区")
 
 
 def _build_section_editor(self, parent):
@@ -293,7 +403,7 @@ def _show_complete_architecture(self, content):
 
 
 def on_architecture_editor_tab_changed(self):
-    if self.architecture_editor_tabview.get() == "分区编辑":
+    if self.architecture_editor_tabview.get() == "高级分区编辑":
         self.refresh_architecture_sections()
 
 
@@ -822,6 +932,7 @@ def load_novel_architecture(self):
     content = read_file(filename)
     _show_complete_architecture(self, content)
     self.refresh_architecture_sections()
+    self.update_architecture_workflow_state()
     self.log("已加载 Novel_architecture.txt 内容到编辑区。")
 
 
@@ -834,6 +945,7 @@ def save_novel_architecture(self):
     filename = os.path.join(filepath, "Novel_architecture.txt")
     if save_string_to_txt(content, filename):
         self.refresh_architecture_sections()
+        self.update_architecture_workflow_state()
         self.log("已保存对 Novel_architecture.txt 的修改。")
     else:
         messagebox.showerror("保存失败", "无法保存小说架构，请检查目录权限或 app.log。")
@@ -849,5 +961,6 @@ def clear_novel_architecture(self):
         return
     self.setting_text.delete("0.0", "end")
     self.setting_word_count_label.configure(text="字数：0")
+    self.update_architecture_workflow_state()
     self.refresh_architecture_sections()
     self.log("已清空小说架构编辑区，尚未写入文件。")

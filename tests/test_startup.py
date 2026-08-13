@@ -7,6 +7,14 @@ from ui.main_window import NovelGeneratorGUI
 
 
 class StartupTest(unittest.TestCase):
+    def test_architecture_page_callbacks_are_bound_to_main_window(self):
+        for callback_name in (
+            "update_architecture_workflow_state",
+            "update_architecture_input_visibility",
+            "toggle_architecture_input_panel",
+        ):
+            self.assertTrue(callable(getattr(NovelGeneratorGUI, callback_name, None)))
+
     def test_service_config_requires_key_only_for_cloud_services(self):
         self.assertTrue(NovelGeneratorGUI._service_config_ready({
             "interface_format": "Ollama",

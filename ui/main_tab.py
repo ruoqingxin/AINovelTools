@@ -56,7 +56,7 @@ def build_global_log_area(self):
     )
     self.btn_cancel_ai.grid(row=0, column=3, padx=(8, 0), sticky="e")
     self.log_text = ctk.CTkTextbox(
-        self.global_log_frame, height=120, wrap="word", font=FONT
+        self.global_log_frame, height=46, wrap="word", font=FONT
     )
     TextWidgetContextMenu(self.log_text)
     self.log_text.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))

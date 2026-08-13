@@ -71,7 +71,7 @@ def build_project_setup_area(self, parent):
     ctk.CTkButton(
         path_line, text="浏览...", command=self.browse_folder, width=64, font=FONT
     ).grid(row=0, column=2)
-    row += 1
+    row += 2
 
     prep_actions = ctk.CTkFrame(self.project_setup_frame, fg_color="transparent")
     prep_actions.grid(row=row, column=0, sticky="ew", padx=8, pady=4)
@@ -102,9 +102,18 @@ def build_architecture_params_area(self, parent):
     self.params_frame.columnconfigure(0, weight=1)
     row = 0
 
+    ctk.CTkLabel(
+        self.params_frame,
+        text="用于第一次生成，或你想用新设定重新生成架构时填写。",
+        anchor="w",
+        font=("Microsoft YaHei", 11),
+        text_color=("#475467", "#98A2B3"),
+    ).grid(row=row, column=0, sticky="ew", padx=8, pady=(4, 6))
+    row += 1
+
     self.btn_import_knowledge = ctk.CTkButton(
         self.params_frame,
-        text="管理资料 / 写作规范",
+        text="管理参考资料（可选）",
         command=self.import_knowledge_handler,
         font=FONT,
         height=34,
@@ -118,20 +127,31 @@ def build_architecture_params_area(self, parent):
     self.topic_text, _ = _add_textbox(
         self.params_frame, row, "故事主题", "topic", height=110
     )
+    ctk.CTkLabel(
+        self.params_frame,
+        text="示例：一个失去记忆的守城人，在末日城市中寻找失踪妹妹，逐步发现自己曾是灾难制造者。",
+        anchor="w",
+        justify="left",
+        wraplength=430,
+        font=("Microsoft YaHei", 10),
+        text_color=("#667085", "#98A2B3"),
+    ).grid(row=row + 1, column=0, sticky="ew", padx=(92, 8), pady=(0, 3))
     if getattr(self, "topic_default", ""):
         self.topic_text.insert("0.0", self.topic_default)
     self.topic_text.bind("<KeyRelease>", lambda _event: self._schedule_persist_project_settings(), add="+")
-    row += 1
+    row += 2
 
     book_line = ctk.CTkFrame(self.params_frame, fg_color="transparent")
     book_line.grid(row=row, column=0, sticky="ew", padx=8, pady=3)
     book_line.columnconfigure(1, weight=1)
     ctk.CTkLabel(book_line, text="类型", font=FONT).grid(row=0, column=0, sticky="e")
-    ctk.CTkEntry(book_line, textvariable=self.genre_var, font=FONT).grid(
+    genre_entry = ctk.CTkEntry(book_line, textvariable=self.genre_var, font=FONT)
+    genre_entry.grid(
         row=0, column=1, sticky="ew", padx=(6, 10)
     )
     ctk.CTkLabel(book_line, text="章节数", font=FONT).grid(row=0, column=2)
-    ctk.CTkEntry(book_line, textvariable=self.num_chapters_var, width=58, font=FONT).grid(
+    chapters_entry = ctk.CTkEntry(book_line, textvariable=self.num_chapters_var, width=58, font=FONT)
+    chapters_entry.grid(
         row=0, column=3, padx=(6, 0)
     )
     row += 1
@@ -139,14 +159,23 @@ def build_architecture_params_area(self, parent):
     self.planning_guide_text, _ = _add_textbox(
         self.params_frame, row, "全书规划要求", "planning_guidance", height=120
     )
+    ctk.CTkLabel(
+        self.params_frame,
+        text="可选示例：前 3 章完成主角入局；每 10 章安排一次阶段冲突；结局保留一个未解释的伏笔。不填写也可以。",
+        anchor="w",
+        justify="left",
+        wraplength=430,
+        font=("Microsoft YaHei", 10),
+        text_color=("#667085", "#98A2B3"),
+    ).grid(row=row + 1, column=0, sticky="ew", padx=(92, 8), pady=(0, 3))
     if getattr(self, "planning_guidance_default", ""):
         self.planning_guide_text.insert("0.0", self.planning_guidance_default)
     self.planning_guide_text.bind("<KeyRelease>", lambda _event: self._schedule_persist_project_settings(), add="+")
-    row += 1
+    row += 2
 
     self.btn_generate_architecture = ctk.CTkButton(
         self.params_frame,
-        text="生成小说架构",
+        text="开始生成全书架构",
         command=self.generate_novel_architecture_ui,
         font=FONT,
         height=34,
