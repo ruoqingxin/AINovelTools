@@ -20,7 +20,7 @@ from ui.novel_params_tab import build_architecture_params_area
 
 
 def build_setting_tab(self):
-    self.setting_tab = self.tabview.add("小说架构")
+    self.setting_tab = self.tabview.add("大纲工作台")
     self.setting_tab.rowconfigure(0, weight=0)
     self.setting_tab.rowconfigure(1, weight=1)
     self.setting_tab.columnconfigure(0, weight=3, uniform="architecture_columns")
@@ -186,7 +186,7 @@ def update_architecture_workflow_state(self):
         has_architecture = False
     if has_architecture:
         active_index = 2
-        next_text = "架构已生成：先检查全文内容；确认后可切换到“章节蓝图”生成目录。"
+        next_text = "大纲已生成：先检查全文内容；确认后打开“蓝图工作台”安排章节。"
     else:
         active_index = 1
         next_text = "请先完成右侧 4 项输入，然后点击“开始生成全书架构”。"

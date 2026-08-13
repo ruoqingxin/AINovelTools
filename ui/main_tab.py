@@ -65,7 +65,7 @@ def build_global_log_area(self):
 
 def build_chapter_editor_tab(self):
     """Build the dedicated current-chapter writing workspace."""
-    self.chapter_editor_tab = self.tabview.add("章节创作")
+    self.chapter_editor_tab = self.tabview.add("章节工作台")
     self.chapter_editor_tab.rowconfigure(0, weight=1)
     self.chapter_editor_tab.columnconfigure(
         0, weight=3, uniform="chapter_columns", minsize=620

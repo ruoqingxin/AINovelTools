@@ -243,7 +243,12 @@ class NovelGeneratorGUI:
             self.scene_location_var = ctk.StringVar(value="")
             self.time_constraint_var = ctk.StringVar(value="")
             self.planning_guidance_default = ""
-            self.chapter_guidance_default = ""
+        self.chapter_guidance_default = ""
+
+        self.blueprint_mode_var = ctk.StringVar(value="全书蓝图")
+        self.blueprint_start_var = ctk.StringVar(value="1")
+        self.blueprint_end_var = ctk.StringVar(value=str(self.num_chapters_var.get()))
+        self.blueprint_phase_var = ctk.StringVar(value="")
 
         # --------------- 全局日志与整体Tab布局 ---------------
         self.master.grid_rowconfigure(0, weight=0)
@@ -657,7 +662,7 @@ class NovelGeneratorGUI:
             self.config_tabview.set("嵌入模型设置")
             self.log("启动检查：项目已有知识库，请先补全并保存嵌入模型配置。")
         else:
-            self.tabview.set("小说架构")
+            self.tabview.set("大纲工作台")
             if restored:
                 self.log(f"已恢复当前项目，共加载 {restored} 项内容。")
 

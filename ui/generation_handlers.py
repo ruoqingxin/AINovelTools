@@ -135,8 +135,8 @@ def generate_novel_architecture_ui(self):
             if not operation:
                 self.safe_log(f"❌ {operation.message}")
                 return
-            self.call_in_ui(lambda: (self.load_novel_architecture(), self.tabview.set("小说架构")))
-            self.safe_log("✅ 小说架构生成完成。请在“小说架构”标签页查看或编辑。")
+            self.call_in_ui(lambda: (self.load_novel_architecture(), self.tabview.set("大纲工作台")))
+            self.safe_log("✅ 大纲生成完成。请在“大纲工作台”检查或修改。")
         except Exception:
             self.handle_exception("生成小说架构时出错")
         finally:
@@ -153,14 +153,32 @@ def generate_chapter_blueprint_ui(self):
         messagebox.showwarning("警告", "请先选择保存文件路径")
         return
 
-    if not messagebox.askyesno("确认", "确定要生成章节目录吗？"):
+    mode = self.blueprint_mode_var.get().strip()
+    try:
+        start = max(1, int(self.blueprint_start_var.get()))
+        end = max(start, int(self.blueprint_end_var.get()))
+    except (TypeError, ValueError):
+        messagebox.showwarning("范围无效", "起始章和结束章必须是整数。")
+        return
+    total_chapters = self.safe_get_int(self.num_chapters_var, 0)
+    if end > total_chapters:
+        messagebox.showwarning("范围无效", f"结束章不能超过全书章节数 {total_chapters}。")
+        return
+    phase = self.blueprint_phase_var.get().strip()
+    if mode == "阶段规划" and not phase:
+        messagebox.showwarning("缺少阶段目标", "阶段规划模式请填写阶段名称或阶段目标。")
+        return
+    if mode == "全书蓝图":
+        start, end = 1, total_chapters
+    range_text = f"第 {start}-{end} 章"
+    if not messagebox.askyesno("确认", f"确定生成{range_text}的章节蓝图吗？\n模式：{mode}"):
         return
 
     def task():
         self.disable_button_safe(self.btn_generate_directory)
         try:
 
-            number_of_chapters = self.safe_get_int(self.num_chapters_var, 10)
+            number_of_chapters = end
 
             llm_config = get_llm_config(self.loaded_config, self.chapter_outline_llm_var.get())
             interface_format = llm_config["interface_format"]
@@ -173,6 +191,10 @@ def generate_chapter_blueprint_ui(self):
 
 
             user_guidance = self.planning_guide_text.get("0.0", "end").strip()
+            if mode == "指定范围":
+                user_guidance += f"\n只生成第 {start}-{end} 章，保持与已有蓝图连续。"
+            elif mode == "阶段规划":
+                user_guidance += f"\n当前阶段：{phase}。重点规划第 {start}-{end} 章。"
 
             self.safe_log("开始生成章节蓝图...")
             operation = Chapter_blueprint_generate(
@@ -186,12 +208,15 @@ def generate_chapter_blueprint_ui(self):
                 max_tokens=max_tokens,
                 timeout=timeout_val,
                 user_guidance=user_guidance  # 新增参数
+                ,start_chapter=start
+                ,end_chapter=end
+                ,phase=phase
             )
             if not operation:
                 self.safe_log(f"❌ {operation.message}")
                 return
-            self.call_in_ui(lambda: (self.load_chapter_blueprint(), self.tabview.set("章节蓝图")))
-            self.safe_log("✅ 章节蓝图生成完成。请在“章节蓝图”标签页查看或编辑。")
+            self.call_in_ui(lambda: (self.load_chapter_blueprint(), self.tabview.set("蓝图工作台")))
+            self.safe_log("✅ 蓝图生成完成。请在“蓝图工作台”检查或修改。")
         except Exception:
             self.handle_exception("生成章节蓝图时出错")
         finally:

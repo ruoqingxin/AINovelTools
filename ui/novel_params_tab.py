@@ -185,26 +185,55 @@ def build_architecture_params_area(self, parent):
 
 
 def build_blueprint_generation_area(self, parent):
-    """Build the chapter-blueprint generation command on its destination tab."""
+    """Build focused range/stage controls for the blueprint workstation."""
     self.blueprint_generation_frame = ctk.CTkFrame(parent)
     self.blueprint_generation_frame.grid(
         row=0, column=0, sticky="ew", padx=5, pady=(5, 2)
     )
-    self.blueprint_generation_frame.columnconfigure(0, weight=1)
+    self.blueprint_generation_frame.columnconfigure(1, weight=1)
+    self.blueprint_generation_frame.columnconfigure(3, weight=1)
+    self.blueprint_generation_frame.columnconfigure(5, weight=1)
+    ctk.CTkLabel(
+        self.blueprint_generation_frame,
+        text="蓝图生成范围",
+        font=("Microsoft YaHei", 14, "bold"),
+    ).grid(row=0, column=0, columnspan=6, sticky="w", padx=8, pady=(6, 2))
+    ctk.CTkLabel(
+        self.blueprint_generation_frame,
+        text="可生成全书、指定章节范围，或只规划某个阶段。",
+        anchor="w",
+        text_color=("#667085", "#98A2B3"),
+    ).grid(row=1, column=0, columnspan=6, sticky="w", padx=8, pady=(0, 6))
+    ctk.CTkLabel(self.blueprint_generation_frame, text="模式").grid(row=2, column=0, padx=(8, 4), pady=4, sticky="e")
+    ctk.CTkOptionMenu(
+        self.blueprint_generation_frame,
+        values=["全书蓝图", "指定范围", "阶段规划"],
+        variable=self.blueprint_mode_var,
+    ).grid(row=2, column=1, padx=(0, 8), pady=4, sticky="ew")
+    ctk.CTkLabel(self.blueprint_generation_frame, text="起始章").grid(row=2, column=2, padx=(4, 4), pady=4, sticky="e")
+    ctk.CTkEntry(self.blueprint_generation_frame, textvariable=self.blueprint_start_var, width=70).grid(row=2, column=3, padx=(0, 8), pady=4, sticky="ew")
+    ctk.CTkLabel(self.blueprint_generation_frame, text="结束章").grid(row=2, column=4, padx=(4, 4), pady=4, sticky="e")
+    ctk.CTkEntry(self.blueprint_generation_frame, textvariable=self.blueprint_end_var, width=70).grid(row=2, column=5, padx=(0, 8), pady=4, sticky="ew")
+    ctk.CTkLabel(self.blueprint_generation_frame, text="阶段 / 目标").grid(row=3, column=0, padx=(8, 4), pady=4, sticky="e")
+    ctk.CTkEntry(
+        self.blueprint_generation_frame,
+        textvariable=self.blueprint_phase_var,
+        placeholder_text="例如：开局入局、宗门试炼、决战收束",
+    ).grid(row=3, column=1, columnspan=5, padx=(0, 8), pady=4, sticky="ew")
     self.btn_generate_directory = ctk.CTkButton(
         self.blueprint_generation_frame,
-        text="生成章节蓝图",
+        text="生成所选范围蓝图",
         command=self.generate_chapter_blueprint_ui,
         font=FONT,
         height=34,
     )
-    self.btn_generate_directory.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+    self.btn_generate_directory.grid(row=4, column=0, columnspan=6, sticky="ew", padx=8, pady=(6, 8))
 
 def build_chapter_params_area(self, start_row=0):
     self.chapter_params_frame = ctk.CTkScrollableFrame(
         self.chapter_right_frame,
         orientation="vertical",
-        label_text="章节创作",
+        label_text="章节工作台",
         label_font=TITLE_FONT,
     )
     self.chapter_params_frame.grid(
@@ -281,7 +310,7 @@ def build_chapter_params_area(self, start_row=0):
 
     self.btn_generate_chapter = ctk.CTkButton(
         self.chapter_params_frame,
-        text="步骤 3  生成本章草稿",
+        text="生成当前章节草稿",
         command=self.generate_chapter_draft_ui,
         font=FONT,
         height=34,
@@ -314,7 +343,7 @@ def build_chapter_params_area(self, start_row=0):
     row += 1
     self.btn_revise_chapter = ctk.CTkButton(
         self.chapter_params_frame,
-        text="AI 修改当前草稿",
+        text="根据意见修改正文",
         command=self.revise_chapter_draft_ui,
         font=FONT,
         height=34,
@@ -339,7 +368,7 @@ def build_chapter_params_area(self, start_row=0):
     self.btn_check_consistency.grid(row=0, column=0, sticky="ew", padx=(0, 3))
     self.btn_finalize_chapter = ctk.CTkButton(
         review_actions,
-        text="步骤 4  定稿并更新记忆",
+        text="定稿并更新全书记忆",
         command=self.finalize_chapter_ui,
         font=FONT,
     )
