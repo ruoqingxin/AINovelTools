@@ -133,7 +133,8 @@ DEFAULT_CONFIG = {
         "webdav_url": "",
         "webdav_username": "",
         "webdav_password": ""
-    }
+    },
+    "writing_skills": []
 }
 
 
@@ -179,6 +180,8 @@ def normalize_config(config_data: dict) -> dict:
         if not isinstance(config_data.get(section_name), dict):
             config_data[section_name] = {}
         _merge_missing_values(config_data[section_name], defaults[section_name])
+    if not isinstance(config_data.get("writing_skills"), list):
+        config_data["writing_skills"] = []
 
     llm_configs = config_data["llm_configs"]
     last_llm_config_name = config_data.get("last_llm_config_name")

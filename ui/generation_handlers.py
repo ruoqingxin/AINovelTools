@@ -101,6 +101,8 @@ def generate_novel_architecture_ui(self):
             word_number = self.safe_get_int(self.word_number_var, 3000)
             # 获取内容指导
             user_guidance = self.planning_guide_text.get("0.0", "end").strip()
+            from ui.skills_tab import get_selected_skill_prompt
+            user_guidance = (user_guidance + get_selected_skill_prompt(self)).strip()
 
             embedding_api_key = self.embedding_api_key_var.get().strip()
             embedding_url = self.embedding_url_var.get().strip()
@@ -191,6 +193,8 @@ def generate_chapter_blueprint_ui(self):
 
 
             user_guidance = self.planning_guide_text.get("0.0", "end").strip()
+            from ui.skills_tab import get_selected_skill_prompt
+            user_guidance = (user_guidance + get_selected_skill_prompt(self)).strip()
             if mode == "指定范围":
                 user_guidance += f"\n只生成第 {start}-{end} 章，保持与已有蓝图连续。"
             elif mode == "阶段规划":
@@ -604,6 +608,10 @@ def generate_chapter_draft_ui(self):
             chap_num = self.safe_get_int(self.chapter_num_var, 1)
             word_number = self.safe_get_int(self.word_number_var, 3000)
             user_guidance = self.user_guide_text.get("0.0", "end").strip()
+            from ui.skills_tab import get_selected_skill_prompt
+            skill_prompt = get_selected_skill_prompt(self)
+            if skill_prompt:
+                user_guidance = (user_guidance + "\n\n" + skill_prompt).strip()
 
             char_inv = self.char_inv_text.get("0.0", "end").strip()
             key_items = self.key_items_var.get().strip()
@@ -1164,7 +1172,9 @@ def generate_batch_ui(self):
         draft_temperature = draft_config["temperature"]
         draft_max_tokens = draft_config["max_tokens"]
         draft_timeout = draft_config["timeout"]
-        user_guidance = self.user_guide_text.get("0.0", "end").strip()  
+        user_guidance = self.user_guide_text.get("0.0", "end").strip()
+        from ui.skills_tab import get_selected_skill_prompt
+        user_guidance = (user_guidance + get_selected_skill_prompt(self)).strip()
 
         char_inv = self.char_inv_text.get("0.0", "end").strip()
         key_items = self.key_items_var.get().strip()

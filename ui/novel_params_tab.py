@@ -173,6 +173,16 @@ def build_architecture_params_area(self, parent):
     self.planning_guide_text.bind("<KeyRelease>", lambda _event: self._schedule_persist_project_settings(), add="+")
     row += 2
 
+    skill_line = ctk.CTkFrame(self.params_frame, fg_color="transparent")
+    skill_line.grid(row=row, column=0, sticky="ew", padx=8, pady=(2, 3))
+    skill_line.columnconfigure(1, weight=1)
+    ctk.CTkLabel(skill_line, text="写作技能", font=FONT).grid(row=0, column=0, sticky="e")
+    from ui.skills_tab import open_skill_selector, update_skill_selection_label
+    self.architecture_skill_selection_button = ctk.CTkButton(skill_line, text="选择写作技能（0）", command=lambda: open_skill_selector(self), font=FONT, height=30)
+    self.architecture_skill_selection_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+    update_skill_selection_label(self)
+    row += 1
+
     self.btn_generate_architecture = ctk.CTkButton(
         self.params_frame,
         text="开始生成全书架构",
@@ -220,6 +230,10 @@ def build_blueprint_generation_area(self, parent):
         textvariable=self.blueprint_phase_var,
         placeholder_text="例如：开局入局、宗门试炼、决战收束",
     ).grid(row=3, column=1, columnspan=5, padx=(0, 8), pady=4, sticky="ew")
+    from ui.skills_tab import open_skill_selector, update_skill_selection_label
+    self.blueprint_skill_selection_button = ctk.CTkButton(self.blueprint_generation_frame, text="选择写作技能（0）", command=lambda: open_skill_selector(self), font=FONT, height=30)
+    self.blueprint_skill_selection_button.grid(row=4, column=0, columnspan=3, sticky="ew", padx=8, pady=(2, 4))
+    update_skill_selection_label(self)
     self.btn_generate_directory = ctk.CTkButton(
         self.blueprint_generation_frame,
         text="生成所选范围蓝图",
@@ -227,7 +241,7 @@ def build_blueprint_generation_area(self, parent):
         font=FONT,
         height=34,
     )
-    self.btn_generate_directory.grid(row=4, column=0, columnspan=6, sticky="ew", padx=8, pady=(6, 8))
+    self.btn_generate_directory.grid(row=5, column=0, columnspan=6, sticky="ew", padx=8, pady=(4, 8))
 
 def build_chapter_params_area(self, start_row=0):
     self.chapter_params_frame = ctk.CTkScrollableFrame(
@@ -262,6 +276,17 @@ def build_chapter_params_area(self, start_row=0):
     if getattr(self, "chapter_guidance_default", ""):
         self.user_guide_text.insert("0.0", self.chapter_guidance_default)
     self.user_guide_text.bind("<KeyRelease>", lambda _event: self._schedule_persist_project_settings(), add="+")
+    row += 1
+
+    skill_line = ctk.CTkFrame(self.chapter_params_frame, fg_color="transparent")
+    skill_line.grid(row=row, column=0, sticky="ew", padx=8, pady=(4, 3))
+    skill_line.columnconfigure(1, weight=1)
+    ctk.CTkLabel(skill_line, text="写作技能", font=FONT).grid(row=0, column=0, sticky="e")
+    from ui.skills_tab import open_skill_selector, update_skill_selection_label
+    self.skill_selection_button = ctk.CTkButton(skill_line, text="选择写作技能（0）", command=lambda: open_skill_selector(self), font=FONT, height=30)
+    self.skill_selection_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+    ctk.CTkLabel(skill_line, text="本次生成可多选", font=("Microsoft YaHei", 10), text_color=("#667085", "#98A2B3")).grid(row=0, column=2, padx=(6, 0))
+    update_skill_selection_label(self)
     row += 1
 
     self.char_inv_text, character_line = _add_textbox(

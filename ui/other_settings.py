@@ -2,6 +2,7 @@
 import customtkinter as ctk
 from ui.config_tab import build_config_tabview, create_label_with_help
 from ui.novel_params_tab import build_project_setup_area
+from ui.skills_tab import build_skills_tab
 from tkinter import messagebox
 from config_manager import load_config, save_config
 import requests
@@ -21,6 +22,8 @@ def build_other_settings_tab(self):
     build_config_tabview(self, self.other_settings_tab)
     self.project_settings_tab = self.config_tabview.add("工程设置")
     build_project_setup_area(self, self.project_settings_tab)
+    skills_page = self.config_tabview.add("写作技能")
+    build_skills_tab(self, skills_page)
     self.webdav_settings_tab = self.config_tabview.add("WebDAV 设置")
     if "webdav_config" not in self.loaded_config:
         self.loaded_config["webdav_config"] = {
