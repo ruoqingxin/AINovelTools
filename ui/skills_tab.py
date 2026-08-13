@@ -1,16 +1,42 @@
 # -*- coding: utf-8 -*-
 """Writing skill library and generation-time skill selection UI."""
 import os
+import json
 import uuid
+from pathlib import Path
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
+from app_runtime import get_application_dir
 
 
 FONT = ("Microsoft YaHei", 12)
 
 
+def _skill_dir(self):
+    path = Path(get_application_dir()) / "self" / "skills"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _skills(self):
-    skills = self.loaded_config.setdefault("writing_skills", [])
+    if getattr(self, "_skills_loaded", False):
+        return self._skills_cache
+    skill_dir = _skill_dir(self)
+    skills = []
+    for path in sorted(skill_dir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                skills.append(data)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+    # Migrate the original config-backed library once, so existing skills are kept.
+    legacy = self.loaded_config.get("writing_skills", [])
+    if not skills and isinstance(legacy, list) and legacy:
+        skills = list(legacy)
+        self.loaded_config["writing_skills"] = []
+        from config_manager import save_config
+        save_config(self.loaded_config, self.config_file)
     for skill in skills:
         skill.setdefault("id", str(uuid.uuid4()))
         skill.setdefault("name", "未命名技能")
@@ -18,12 +44,30 @@ def _skills(self):
         skill.setdefault("description", "")
         skill.setdefault("prompt", "")
         skill.setdefault("enabled", True)
+    self._skills_cache = skills
+    self._skills_loaded = True
+    _write_skills(self, skills)
     return skills
 
 
+def _write_skills(self, skills):
+    skill_dir = _skill_dir(self)
+    expected = set()
+    for skill in skills:
+        skill_id = skill.setdefault("id", str(uuid.uuid4()))
+        expected.add(f"{skill_id}.json")
+        target = skill_dir / f"{skill_id}.json"
+        target.write_text(json.dumps(skill, ensure_ascii=False, indent=2), encoding="utf-8")
+    for path in skill_dir.glob("*.json"):
+        if path.name not in expected:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
 def _save(self):
-    from config_manager import save_config
-    save_config(self.loaded_config, self.config_file)
+    _write_skills(self, self._skills_cache)
 
 
 def build_skills_tab(self, parent):
@@ -83,7 +127,7 @@ def toggle_skill(self, skill, value):
 def delete_skill(self, skill):
     if not messagebox.askyesno("删除技能", f"确定删除“{skill.get('name', '')}”吗？"):
         return
-    self.loaded_config["writing_skills"] = [item for item in _skills(self) if item.get("id") != skill.get("id")]
+    self._skills_cache = [item for item in _skills(self) if item.get("id") != skill.get("id")]
     _save(self)
     refresh_skills(self)
 
@@ -128,7 +172,7 @@ def import_skill_file(self):
     if not path:
         return
     try:
-        content = open(path, "r", encoding="utf-8").read().strip()
+        content = Path(path).read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError) as exc:
         messagebox.showerror("导入失败", str(exc))
         return
