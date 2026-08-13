@@ -24,43 +24,12 @@ from config_manager import get_llm_config
 
 def build_setting_tab(self):
     self.setting_tab = self.tabview.add("大纲工作台")
-    self.setting_tab.rowconfigure(0, weight=0)
-    self.setting_tab.rowconfigure(1, weight=0)
-    self.setting_tab.rowconfigure(2, weight=1)
-    self.setting_tab.columnconfigure(0, weight=3, uniform="architecture_columns")
-    self.setting_tab.columnconfigure(1, weight=2, uniform="architecture_columns")
-
-    workflow = ctk.CTkFrame(self.setting_tab, fg_color=("#F2F4F7", "#252B33"))
-    workflow.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=(5, 2))
-    workflow.columnconfigure(0, weight=1)
-    workflow.columnconfigure(1, weight=1)
-    workflow.columnconfigure(2, weight=1)
-    workflow.columnconfigure(3, weight=1)
-    self.architecture_step_labels = []
-    for index, title in enumerate(("1 准备输入", "2 生成架构", "3 检查修改", "4 生成章节蓝图")):
-        label = ctk.CTkLabel(
-            workflow,
-            text=title,
-            height=30,
-            anchor="center",
-            font=("Microsoft YaHei", 11, "bold"),
-            text_color=("#667085", "#98A2B3"),
-        )
-        label.grid(row=0, column=index, sticky="ew", padx=2, pady=2)
-        self.architecture_step_labels.append(label)
-    self.architecture_next_step_label = ctk.CTkLabel(
-        workflow,
-        text="大纲工作台：先准备输入，再逐个确认 34 个大纲分区。",
-        anchor="w",
-        font=("Microsoft YaHei", 11),
-        text_color=("#475467", "#D0D5DD"),
-    )
-    self.architecture_next_step_label.grid(
-        row=1, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 5)
-    )
+    self.setting_tab.rowconfigure(0, weight=1)
+    self.setting_tab.columnconfigure(0, weight=1)
+    self.setting_tab.columnconfigure(1, weight=0)
 
     editor_frame = ctk.CTkFrame(self.setting_tab)
-    editor_frame.grid(row=2, column=0, sticky="nsew", padx=(5, 2), pady=5)
+    editor_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
     editor_frame.rowconfigure(1, weight=1)
     editor_frame.columnconfigure(0, weight=1)
 
@@ -89,6 +58,10 @@ def build_setting_tab(self):
     self.architecture_input_host.rowconfigure(0, weight=1)
     self.architecture_input_host.columnconfigure(0, weight=1)
     build_architecture_params_area(self, self.architecture_input_host)
+    # The legacy all-at-once generation inputs remain initialized for
+    # backwards-compatible handlers, but the stepwise workflow no longer
+    # exposes this panel in the outline workbench.
+    params_frame.grid_remove()
 
     toolbar = ctk.CTkFrame(editor_frame, fg_color="transparent")
     toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
@@ -194,7 +167,7 @@ def update_architecture_workflow_state(self):
         next_text = "大纲已生成：先检查全文内容；确认后打开“蓝图工作台”安排章节。"
     else:
         active_index = 0
-        next_text = "请先完成右侧 4 项输入，然后点击“开始生成全书架构”。"
+        next_text = "请打开“高级分区编辑”，从第 1 个分区开始逐步提炼、编辑并确认。"
     for index, label in enumerate(getattr(self, "architecture_step_labels", ())):
         if index == active_index:
             label.configure(
@@ -371,13 +344,15 @@ def _build_section_editor(self, parent):
         text="从左侧选择要单独修改的内容",
         anchor="w",
     )
-    self.architecture_section_status_label.grid(row=0, column=4, sticky="ew")
+    self.architecture_section_status_label.grid(row=0, column=3, sticky="ew")
 
     extraction_options = ctk.CTkFrame(parent, fg_color="transparent")
     extraction_options.grid(
         row=2, column=0, columnspan=2, sticky="ew", padx=3, pady=(0, 4)
     )
+    extraction_options.columnconfigure(1, weight=0)
     extraction_options.columnconfigure(2, weight=1)
+    extraction_options.columnconfigure(3, weight=1)
     ctk.CTkLabel(extraction_options, text="提炼到子分区").grid(
         row=0, column=0, padx=(0, 6), sticky="w"
     )
