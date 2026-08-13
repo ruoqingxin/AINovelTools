@@ -48,7 +48,8 @@ from ui.generation_handlers import (
     import_knowledge_folder,
     clear_vectorstore_handler,
     show_plot_arcs_ui,
-    generate_batch_ui
+    generate_batch_ui,
+    show_finalize_result,
 )
 from ui.setting_tab import (
     add_architecture_subsection,
@@ -77,7 +78,7 @@ from ui.setting_tab import (
 from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint, clear_chapter_blueprint
 from ui.character_tab import build_character_tab, load_character_state, save_character_state
 from ui.summary_tab import build_summary_tab, load_global_summary, save_global_summary
-from ui.chapters_tab import build_chapters_tab, refresh_chapters_list, on_chapter_selected, load_chapter_content, save_current_chapter, prev_chapter, next_chapter
+from ui.chapters_tab import refresh_chapters_list, on_chapter_selected, load_chapter_content, save_current_chapter, prev_chapter, next_chapter, build_chapter_navigation
 from ui.other_settings import build_other_settings_tab
 
 
@@ -259,19 +260,7 @@ class NovelGeneratorGUI:
         build_optional_buttons_area(self, start_row=1)
         build_character_tab(self)
         build_summary_tab(self)
-        build_chapters_tab(self)
         build_other_settings_tab(self)
-
-        # English Mode Button
-        self.english_mode_btn = ctk.CTkButton(
-            self.global_log_header,
-            text="切换为英文模式",
-            width=100, 
-            height=26,
-            
-            command=self.toggle_english_mode
-        )
-        self.english_mode_btn.grid(row=0, column=4, padx=(8, 0), sticky="e")
 
         self.master.protocol("WM_DELETE_WINDOW", self.close)
         self.master.after_idle(self.finish_startup)
@@ -461,17 +450,30 @@ class NovelGeneratorGUI:
         self._task_started_at = time.monotonic()
         self._task_status_message = message
         self.set_task_status(message)
+        progress = getattr(self, "task_progress_bar", None)
+        if progress is not None:
+            progress.set(0)
         self._task_status_after_id = self.master.after(1000, self._refresh_task_status_clock)
 
     def _end_task_status(self, message: str):
         self._task_started_at = None
-        if self._task_status_after_id is not None:
+        task_status_after_id = getattr(self, "_task_status_after_id", None)
+        if task_status_after_id is not None:
             try:
-                self.master.after_cancel(self._task_status_after_id)
+                self.master.after_cancel(task_status_after_id)
             except tk.TclError:
                 pass
             self._task_status_after_id = None
         self.set_task_status(message)
+        progress = getattr(self, "task_progress_bar", None)
+        if progress is not None:
+            progress.set(0)
+
+    def set_task_progress(self, value: float):
+        progress = getattr(self, "task_progress_bar", None)
+        if progress is not None:
+            progress.configure(mode="determinate")
+            progress.set(max(0.0, min(1.0, float(value))))
 
     def call_in_ui(self, callback) -> bool:
         """Schedule a callback only while the Tk application is alive."""
@@ -830,7 +832,11 @@ class NovelGeneratorGUI:
         self._chapter_draft_dirty = bool(dirty)
         label = getattr(self, "chapter_label", None)
         if label is not None:
-            count = get_word_count(self.chapter_result.get("0.0", "end-1c"))
+            try:
+                current_text = self.chapter_result.get("0.0", "end-1c")
+            except (AttributeError, tk.TclError):
+                current_text = ""
+            count = get_word_count(current_text) if isinstance(current_text, str) else 0
             marker = " · 未保存" if dirty else " · 已保存"
             label.configure(text=f"修改后正文（可编辑）  字数：{count}{marker}")
 
@@ -1014,31 +1020,6 @@ class NovelGeneratorGUI:
             cancel_ai_operation=self.cancel_active_operation,
         )
 
-    def toggle_english_mode(self):
-        import config_manager
-        import importlib
-        import prompt_definitions
-        
-        config_manager.IS_ENGLISH = not config_manager.IS_ENGLISH
-        
-        try:
-            if config_manager.IS_ENGLISH:
-                self.english_mode_btn.configure(text="切换为中文模式")
-                # Load English prompts and inject them into prompt_definitions module
-                source_module = importlib.import_module('prompt_definitions_en')
-                importlib.reload(source_module)
-                for attr in dir(source_module):
-                    if not attr.startswith('__'):
-                        setattr(prompt_definitions, attr, getattr(source_module, attr))
-            else:
-                self.english_mode_btn.configure(text="切换为英文模式")
-                # Reload prompt_definitions to restore original Chinese strings from file
-                importlib.reload(prompt_definitions)
-            
-            self.log(f"已切换到 {'英文' if config_manager.IS_ENGLISH else '中文'} 模式")
-        except Exception as e:
-            self.log(f"切换模式失败: {str(e)}")
-
     # ----------------- 将导入的各模块函数直接赋给类方法 -----------------
     generate_novel_architecture_ui = generate_novel_architecture_ui
     generate_chapter_blueprint_ui = generate_chapter_blueprint_ui
@@ -1092,6 +1073,8 @@ class NovelGeneratorGUI:
     save_current_chapter = save_current_chapter
     prev_chapter = prev_chapter
     next_chapter = next_chapter
+    build_chapter_navigation = build_chapter_navigation
+    show_finalize_result = show_finalize_result
     test_llm_config = test_llm_config
     test_embedding_config = test_embedding_config
     browse_folder = browse_folder

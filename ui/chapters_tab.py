@@ -6,14 +6,11 @@ from tkinter import messagebox
 from ui.context_menu import TextWidgetContextMenu
 from utils import read_file, save_string_to_txt, get_word_count
 
-def build_chapters_tab(self):
-    self.chapters_view_tab = self.tabview.add("章节管理")
-    self.chapters_view_tab.rowconfigure(0, weight=0)
-    self.chapters_view_tab.rowconfigure(1, weight=1)
-    self.chapters_view_tab.columnconfigure(0, weight=1)
-
-    top_frame = ctk.CTkFrame(self.chapters_view_tab)
-    top_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+def build_chapter_navigation(self):
+    """Add chapter navigation to the main writing workspace."""
+    top_frame = ctk.CTkFrame(self.chapter_left_frame, fg_color="transparent")
+    top_frame.grid(row=1, column=0, sticky="ew", padx=3, pady=(0, 3))
+    top_frame.columnconfigure(4, weight=1)
     top_frame.columnconfigure(0, weight=0)
     top_frame.columnconfigure(1, weight=0)
     top_frame.columnconfigure(2, weight=0)
@@ -36,26 +33,16 @@ def build_chapters_tab(self):
     refresh_btn = ctk.CTkButton(top_frame, text="刷新章节列表", command=self.refresh_chapters_list, font=("Microsoft YaHei", 12))
     refresh_btn.grid(row=0, column=5, padx=5, pady=5, sticky="e")
 
-    self.chapters_word_count_label = ctk.CTkLabel(top_frame, text="字数：0", font=("Microsoft YaHei", 12))
+    self.chapters_word_count_label = ctk.CTkLabel(top_frame, text="当前章字数：0", font=("Microsoft YaHei", 12))
     self.chapters_word_count_label.grid(row=0, column=4, padx=(0,10), sticky="e")
-
-    self.chapter_view_text = ctk.CTkTextbox(self.chapters_view_tab, wrap="word", font=("Microsoft YaHei", 12))
-    
-    def update_word_count(event=None):
-        text = self.chapter_view_text.get("0.0", "end-1c")
-        text_length = get_word_count(text)
-        self.chapters_word_count_label.configure(text=f"字数：{text_length}")
-    
-    self.chapter_view_text.bind("<KeyRelease>", update_word_count)
-    self.chapter_view_text.bind("<ButtonRelease>", update_word_count)
-    self.chapter_view_text.bind(
-        "<KeyRelease>", lambda _event: setattr(self, "_chapters_view_dirty", True), add="+"
-    )
-    TextWidgetContextMenu(self.chapter_view_text)
-    self.chapter_view_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5, columnspan=6)
 
     self.chapters_list = []
     refresh_chapters_list(self)
+
+
+def build_chapters_tab(self):
+    """Backward-compatible wrapper; chapter navigation now lives in the editor."""
+    build_chapter_navigation(self)
 
 def refresh_chapters_list(self):
     filepath = self.filepath_var.get().strip()
@@ -82,7 +69,7 @@ def refresh_chapters_list(self):
             load_chapter_content(self, self.chapters_list[0])
         else:
             self.chapter_select_var.set("")
-            self.chapter_view_text.delete("0.0", "end")
+            self.chapter_result.delete("0.0", "end")
 
 def on_chapter_selected(self, value):
     if not _confirm_chapters_view(self):
@@ -101,8 +88,10 @@ def load_chapter_content(self, chapter_number_str):
         self.safe_log(f"章节文件 {chapter_file} 不存在！")
         return
     content = read_file(chapter_file)
-    self.chapter_view_text.delete("0.0", "end")
-    self.chapter_view_text.insert("0.0", content)
+    self.chapter_result.delete("0.0", "end")
+    self.chapter_result.insert("0.0", content)
+    self.chapter_num_var.set(str(chapter_number_str))
+    self.chapters_word_count_label.configure(text=f"当前章字数：{get_word_count(content)}")
     self._chapters_view_baseline = content
     self._chapters_view_dirty = False
     self._chapters_view_current = str(chapter_number_str)
@@ -119,7 +108,8 @@ def save_current_chapter(self):
         messagebox.showwarning("警告", "请先配置保存文件路径")
         return
     chapter_file = os.path.join(filepath, "chapters", f"chapter_{chapter_number_str}.txt")
-    content = self.chapter_view_text.get("0.0", "end").strip()
+    content = self.chapter_result.get("0.0", "end").strip()
+    self.chapters_word_count_label.configure(text=f"当前章字数：{get_word_count(content)}")
     if save_string_to_txt(content, chapter_file):
         self._chapters_view_baseline = content
         self._chapters_view_dirty = False

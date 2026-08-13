@@ -3,6 +3,7 @@
 import customtkinter as ctk
 
 from ui.context_menu import TextWidgetContextMenu
+from ui.chapters_tab import build_chapter_navigation
 from utils import get_word_count
 
 
@@ -25,6 +26,10 @@ def build_global_log_area(self):
         text_color=("#475467", "#98A2B3"),
     )
     self.task_status_label.grid(row=0, column=0, sticky="ew", padx=8, pady=(4, 0))
+    self.task_progress_bar = ctk.CTkProgressBar(self.global_log_frame, height=8)
+    self.task_progress_bar.grid(row=0, column=1, padx=(8, 8), pady=(6, 0), sticky="ew")
+    self.task_progress_bar.set(0)
+    self.global_log_frame.columnconfigure(1, weight=0, minsize=180)
 
     self.global_log_header = _build_log_header(
         self, self.global_log_frame, 1, "btn_clear_log"
@@ -76,6 +81,7 @@ def build_chapter_editor_tab(self):
 
     build_left_layout(self)
     build_chapter_right_layout(self)
+    build_chapter_navigation(self)
 
 
 def _build_log_header(self, parent, row, button_attr):

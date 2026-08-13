@@ -879,6 +879,7 @@ def finalize_chapter_ui(self):
             chapters_dir = os.path.join(filepath, "chapters")
             os.makedirs(chapters_dir, exist_ok=True)
             chapter_file = os.path.join(chapters_dir, f"chapter_{chap_num}.txt")
+            finalize_steps = []
 
             if should_enrich:
                 self.safe_log("正在扩写章节内容...")
@@ -908,6 +909,7 @@ def finalize_chapter_ui(self):
                 self.call_in_ui(show_enrichment)
             else:
                 NovelProjectRepository(filepath).write_chapter(chap_num, edited_text)
+            finalize_steps.append(("正文写入", True, f"第 {chap_num} 章正文已写入"))
 
             operation = finalize_chapter(
                 novel_number=chap_num,
@@ -926,8 +928,14 @@ def finalize_chapter_ui(self):
                 timeout=timeout_val
             )
             if not operation:
+                finalize_steps.append(("摘要、角色与剧情更新", False, operation.message))
+                self.call_in_ui(lambda: self.show_finalize_result(finalize_steps))
                 self.safe_log(f"❌ {operation.message}")
                 return
+            finalize_steps.append(("摘要、角色与剧情更新", True, "全局摘要、角色状态和剧情要点已更新"))
+            indexed = bool((operation.data or {}).get("indexed"))
+            finalize_steps.append(("向量索引更新", indexed, "向量索引已更新" if indexed else "向量索引更新失败，其他内容已保留"))
+            self.call_in_ui(lambda: self.show_finalize_result(finalize_steps))
             self.safe_log(f"✅ {operation.message}（已更新前文摘要、角色状态和剧情要点）。")
 
             final_text = read_file(chapter_file)
@@ -937,6 +945,25 @@ def finalize_chapter_ui(self):
         finally:
             self.enable_button_safe(self.btn_finalize_chapter)
     _start_background(self, "finalize_chapter", task)
+
+def show_finalize_result(self, steps):
+    """Show the visible outcome of each finalization stage."""
+    dialog = ctk.CTkToplevel(self.master)
+    dialog.title("定稿结果")
+    dialog.geometry("560x300")
+    dialog.transient(self.master)
+    ctk.CTkLabel(dialog, text="定稿步骤结果", font=("Microsoft YaHei", 15, "bold")).pack(
+        anchor="w", padx=16, pady=(14, 8)
+    )
+    body = ctk.CTkFrame(dialog, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=16)
+    for row, (name, success, detail) in enumerate(steps):
+        mark = "✓" if success else "!"
+        color = ("#16803a", "#D92D20")[not success]
+        ctk.CTkLabel(body, text=mark, text_color=color, width=22).grid(row=row, column=0, sticky="w")
+        ctk.CTkLabel(body, text=name, anchor="w", width=150).grid(row=row, column=1, sticky="w")
+        ctk.CTkLabel(body, text=detail, anchor="w", wraplength=320).grid(row=row, column=2, sticky="w", padx=(8, 0), pady=5)
+    ctk.CTkButton(dialog, text="关闭", command=dialog.destroy, width=90).pack(pady=12)
 
 def do_consistency_check(self):
     validation_error = self.validate_generation_config("consistency_review", require_embedding=True)
@@ -1054,12 +1081,30 @@ def generate_batch_ui(self):
             if not entry_start.get() or not entry_end.get() or not entry_word.get() or not entry_min.get():
                 messagebox.showwarning("警告", "请填写完整信息。")
                 return
+            try:
+                start = int(entry_start.get())
+                end = int(entry_end.get())
+                word = int(entry_word.get())
+                minimum = int(entry_min.get())
+            except ValueError:
+                messagebox.showwarning("输入无效", "章节号和字数必须是整数。")
+                return
+            total_chapters = self.safe_get_int(self.num_chapters_var, 0)
+            if start < 1 or end < start:
+                messagebox.showwarning("范围无效", "结束章节必须大于或等于起始章节，且章节号从 1 开始。")
+                return
+            if total_chapters and end > total_chapters:
+                messagebox.showwarning("范围无效", f"结束章节不能超过全书章节数 {total_chapters}。")
+                return
+            if word < 1 or minimum < 1 or minimum > word:
+                messagebox.showwarning("字数无效", "目标字数和最低字数必须大于 0，且最低字数不能高于目标字数。")
+                return
 
             result = {
-                "start": entry_start.get(),
-                "end": entry_end.get(),
-                "word": entry_word.get(),
-                "min": entry_min.get(),
+                "start": start,
+                "end": end,
+                "word": word,
+                "min": minimum,
                 "auto_enrich": auto_enrich_bool.get(),
                 "close": False
             }
@@ -1247,10 +1292,17 @@ def generate_batch_ui(self):
 
     def batch_task():
         try:
-            for i in range(int(result["start"]), int(result["end"]) + 1):
+            start = result["start"]
+            end = result["end"]
+            total = end - start + 1
+            for index, i in enumerate(range(start, end + 1), 1):
                 raise_if_cancelled()
-                self.safe_log(f"批量生成：正在生成第 {i} 章...")
-                generate_chapter_batch(self, i, int(result["word"]), int(result["min"]), result["auto_enrich"])
+                self.call_in_ui(lambda index=index, total=total, i=i: self._set_task_status_from_log(
+                    f"批量生成：第 {index}/{total} 章（章节 {i}）"
+                ))
+                self.call_in_ui(lambda index=index, total=total: self.set_task_progress(index / total))
+                self.safe_log(f"批量生成：正在生成第 {i} 章（{index}/{total}）...")
+                generate_chapter_batch(self, i, result["word"], result["min"], result["auto_enrich"])
                 self.safe_log(f"批量生成：第 {i} 章完成。")
             self.safe_log("✅ 批量生成全部完成。")
         except Exception:
