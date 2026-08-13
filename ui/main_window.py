@@ -69,6 +69,7 @@ from ui.setting_tab import (
     on_architecture_section_selected,
     refresh_architecture_sections,
     save_architecture_section,
+    clear_current_architecture_section,
     sync_architecture_section,
     save_novel_architecture,
     update_architecture_workflow_state,
@@ -1068,6 +1069,7 @@ class NovelGeneratorGUI:
     get_selected_architecture_section = get_selected_architecture_section
     is_architecture_overview_selected = is_architecture_overview_selected
     save_architecture_section = save_architecture_section
+    clear_current_architecture_section = clear_current_architecture_section
     sync_architecture_section = sync_architecture_section
     apply_extracted_architecture_content = apply_extracted_architecture_content
     architecture_section_has_unsaved_changes = architecture_section_has_unsaved_changes

@@ -99,6 +99,7 @@ class OutlineWorkflow:
             "created_at": _now(),
             "updated_at": _now(),
             "finalized": False,
+            "custom_sections": [],
             "steps": [
                 {"index": i + 1, "title": title, "content": "", "source": "",
                  "status": "pending", "history": []}
@@ -115,6 +116,7 @@ class OutlineWorkflow:
             if item["index"] in old:
                 item.update(old[item["index"]])
         fresh.update({k: data[k] for k in ("version", "created_at", "finalized") if k in data})
+        fresh["custom_sections"] = data.get("custom_sections", []) if isinstance(data.get("custom_sections", []), list) else []
         fresh["updated_at"] = data.get("updated_at", _now())
         return fresh
 
@@ -204,3 +206,32 @@ class OutlineWorkflow:
                 continue
             lines.extend([f"## {item['index']}. {item['title']}", item["content"].strip(), ""])
         return self.repository.write(NovelProjectRepository.ARCHITECTURE, "\n".join(lines).rstrip() + "\n")
+
+    def add_custom_section(self, title: str, content: str = "") -> dict:
+        title = str(title or "").strip()
+        if not title:
+            raise ValueError("自定义分区标题不能为空")
+        existing = self.data.setdefault("custom_sections", [])
+        item = {"id": f"custom-{len(existing) + 1}", "title": title,
+                "content": str(content or ""), "created_at": _now(), "updated_at": _now()}
+        existing.append(item)
+        self.save()
+        return item
+
+    def custom_section(self, section_id: str) -> dict:
+        for item in self.data.setdefault("custom_sections", []):
+            if item.get("id") == section_id:
+                return item
+        raise KeyError("自定义分区不存在")
+
+    def update_custom_section(self, section_id: str, content: str) -> dict:
+        item = self.custom_section(section_id)
+        item["content"] = str(content or "")
+        item["updated_at"] = _now()
+        self.save()
+        return item
+
+    def delete_custom_section(self, section_id: str) -> None:
+        sections = self.data.setdefault("custom_sections", [])
+        self.data["custom_sections"] = [item for item in sections if item.get("id") != section_id]
+        self.save()

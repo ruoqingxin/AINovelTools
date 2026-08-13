@@ -10,6 +10,7 @@ from novel_generator.architecture_sections import (
     delete_architecture_section,
     parse_architecture_sections,
     replace_architecture_section,
+    replace_architecture_section_body,
     upsert_architecture_overview_section_body,
     upsert_architecture_subsection_body,
 )
@@ -66,6 +67,7 @@ def build_setting_tab(self):
     self.setting_text = ctk.CTkTextbox(self.setting_tab, width=1, height=1)
 
     _build_section_editor(self, editor_frame)
+    self.refresh_architecture_sections()
 
     def update_word_count(event=None):
         text = self.setting_text.get("0.0", "end-1c")
@@ -78,7 +80,10 @@ def build_setting_tab(self):
 
 def update_architecture_workflow_state(self):
     """Refresh the current workflow section after project restore."""
-    if getattr(self, "outline_step_var", None) is not None:
+    if getattr(self, "architecture_section_tree", None) is not None:
+        self.refresh_architecture_sections()
+    selection = self.architecture_section_tree.selection() if getattr(self, "architecture_section_tree", None) is not None else ()
+    if getattr(self, "outline_step_var", None) is not None and (not selection or _outline_tree_step_index(selection[0])):
         self.load_outline_workflow_step()
 
 
@@ -120,6 +125,15 @@ def load_outline_workflow_step(self):
     editor.delete("0.0", "end")
     editor.insert("0.0", item.get("content", ""))
     self.outline_step_status.configure(text={"confirmed": "已确认", "draft": "草稿"}.get(item.get("status"), "未开始"))
+
+
+def _outline_tree_step_index(item_id):
+    if not str(item_id).startswith("outline-step-"):
+        return None
+    try:
+        return int(str(item_id).split("-", 2)[2])
+    except (TypeError, ValueError):
+        return None
 
 
 def _save_outline_editor(self, source="manual"):
@@ -253,8 +267,8 @@ def _build_section_editor(self, parent):
         "重新解析 Novel_architecture.txt 并刷新左侧分区树，不调用 AI。", width=88)
     group.grid(row=0, column=0, padx=(0, 6))
     group, _ = _add_action_with_help(
-        section_toolbar, "新增子分区", self.add_architecture_subsection,
-        "在当前选中的分区下新增子分区；选中总览时新增顶层分区，并立即写入大纲文件。", width=96)
+        section_toolbar, "新增自定义分区", self.add_architecture_subsection,
+        "新增一个由你主动维护的自定义分区；它不占用 34 个固定确认步骤。", width=112)
     group.grid(row=0, column=1, padx=(0, 6))
     group, self.btn_delete_architecture_section = _add_action_with_help(
         section_toolbar, "删除分区", self.delete_architecture_section,
@@ -275,19 +289,19 @@ def _build_section_editor(self, parent):
     extraction_options.columnconfigure(1, weight=0)
     extraction_options.columnconfigure(2, weight=1)
     extraction_options.columnconfigure(3, weight=1)
-    ctk.CTkLabel(extraction_options, text="提炼到子分区").grid(
+    ctk.CTkLabel(extraction_options, text="当前 34 步分区").grid(
         row=0, column=0, padx=(0, 6), sticky="w"
     )
     self.architecture_extraction_parent_label = ctk.CTkLabel(
         extraction_options,
-        text="请从总览下选择具体分区",
+        text="每一步对应一个独立分区",
         width=155,
         anchor="w",
     )
     self.architecture_extraction_parent_label.grid(row=0, column=1, padx=(0, 6))
     self.architecture_extraction_title_entry = ctk.CTkEntry(
         extraction_options,
-        placeholder_text="新建/更新的直接子分区名称，例如：境界体系",
+        placeholder_text="当前流程不新增子分区",
         width=220,
     )
     self.architecture_extraction_title_entry.grid(
@@ -295,7 +309,7 @@ def _build_section_editor(self, parent):
     )
     self.architecture_extraction_location_label = ctk.CTkLabel(
         extraction_options,
-        text="提炼结果固定放在当前选中分区下面；同名时原位更新",
+        text="请使用顶部 34 步分区选择器进行提炼和确认",
         anchor="w",
     )
     self.architecture_extraction_location_label.grid(
@@ -323,7 +337,7 @@ def _build_section_editor(self, parent):
         "<<TreeviewSelect>>", self.on_architecture_section_selected
     )
     self._architecture_sections_by_id = {}
-    self._architecture_overview_item = "architecture-overview"
+    self._architecture_overview_item = "outline-overview"
     self._architecture_active_item_id = None
     self._architecture_active_section_key = None
     self._architecture_active_original_text = ""
@@ -356,9 +370,8 @@ def _build_section_editor(self, parent):
 
     section_actions = ctk.CTkFrame(parent, fg_color="transparent")
     section_actions.grid(row=6, column=1, sticky="ew", padx=(4, 3), pady=(0, 3))
-    section_actions.columnconfigure(0, weight=1)
-    section_actions.columnconfigure(1, weight=1)
-    section_actions.columnconfigure(2, weight=1)
+    for column in range(4):
+        section_actions.columnconfigure(column, weight=1)
     group, _ = _add_action_with_help(
         section_actions, "同步总架构", self.sync_architecture_section,
         "把当前分区编辑框内容合并到内部总架构文本，供分区树重新解析；不会替代确认分区。", width=112, height=34)
@@ -371,6 +384,12 @@ def _build_section_editor(self, parent):
         section_actions, "AI 重写本分区", self.revise_architecture_section_ui,
         "根据下方的 AI 修改要求重写当前分区；需要选择分区、填写修改要求并配置大纲模型。", width=112, height=34)
     group.grid(row=0, column=2, sticky="ew", padx=(3, 0))
+    group, self.btn_clear_architecture_section = _add_action_with_help(
+        section_actions, "清空本分区", self.clear_current_architecture_section,
+        "清空当前选中分区自己的正文，保留分区标题和子分区；确认后立即写入大纲文件。总览节点不能使用此操作。",
+        width=112, height=34)
+    self.btn_clear_architecture_section.configure(fg_color="#c0392b", hover_color="#a93226")
+    group.grid(row=0, column=3, sticky="ew", padx=(3, 0))
 
 
 def _architecture_text(self):
@@ -436,83 +455,36 @@ def refresh_architecture_sections(
     select_start=None,
     select_key=None,
 ):
-    open_state, overview_open = _capture_architecture_tree_state(self)
+    workflow = _outline_workflow(self)
     current_selection = self.architecture_section_tree.selection()
-    select_overview = bool(
-        current_selection
-        and current_selection[0] == self._architecture_overview_item
-        and select_heading is None
-        and select_start is None
-        and select_key is None
-    )
-    if (
-        select_heading is None
-        and select_start is None
-        and select_key is None
-        and current_selection
-    ):
-        selected = self._architecture_sections_by_id.get(current_selection[0])
-        select_heading = selected.heading if selected else None
-
+    requested = current_selection[0] if current_selection else "outline-step-1"
+    if select_key and str(select_key).startswith("outline-step-"):
+        requested = select_key
     self._architecture_tree_selection_guard = True
     try:
-        self.architecture_section_tree.delete(
-            *self.architecture_section_tree.get_children()
-        )
+        self.architecture_section_tree.delete(*self.architecture_section_tree.get_children())
         self._architecture_sections_by_id = {}
-        sections = parse_architecture_sections(_architecture_text(self))
         self.architecture_section_tree.insert(
-            "",
-            "end",
+            "", "end",
             iid=self._architecture_overview_item,
             text="总览",
-            open=overview_open,
+            open=True,
         )
-        item_by_index = {}
-        selected_item = None
-        for section in sections:
-            item_id = f"section-{section.index}"
-            parent_id = item_by_index.get(
-                section.parent_index, self._architecture_overview_item
-            )
-            section_key = architecture_section_tree_key(section, sections)
+        for index, title in enumerate(OUTLINE_STEPS, 1):
+            item_id = f"outline-step-{index}"
             self.architecture_section_tree.insert(
-                parent_id,
-                "end",
+                self._architecture_overview_item, "end",
                 iid=item_id,
-                text=section.title,
-                open=open_state.get(section_key, False),
+                text=f"{index}. {title}",
+                open=False,
             )
-            item_by_index[section.index] = item_id
-            self._architecture_sections_by_id[item_id] = section
-            if select_key is not None and select_key == section_key:
-                selected_item = item_id
-            elif select_start is not None and select_start == section.start:
-                selected_item = item_id
-            elif (
-                select_key is None
-                and select_start is None
-                and select_heading == section.heading
-            ):
-                selected_item = item_id
+        for custom in workflow.data.get("custom_sections", []):
+            item_id = str(custom.get("id"))
+            self.architecture_section_tree.insert(self._architecture_overview_item, "end", iid=item_id, text=custom.get("title", item_id))
+            self._architecture_sections_by_id[item_id] = custom
     finally:
         self._architecture_tree_selection_guard = False
-
-    if not sections:
-        self.architecture_section_text.delete("0.0", "end")
-        self._set_architecture_tree_selection(self._architecture_overview_item)
-        self.architecture_section_tree.focus(self._architecture_overview_item)
-        self.architecture_section_status_label.configure(
-            text="当前：总览（可新增顶层分区）"
-        )
-        self.architecture_extraction_parent_label.configure(text="总览")
-        return
-
-    selected_item = (
-        self._architecture_overview_item
-        if select_overview
-        else selected_item or item_by_index[sections[0].index]
-    )
+    selected_item = requested if requested == self._architecture_overview_item or self.architecture_section_tree.exists(requested) else "outline-step-1"
     self._set_architecture_tree_selection(selected_item)
     self.architecture_section_tree.focus(selected_item)
     self.architecture_section_tree.see(selected_item)
@@ -529,33 +501,9 @@ def on_architecture_section_selected(self, event=None):
     active_item = self._architecture_active_item_id
     if active_item is not None and target_item == active_item:
         return
-    if active_item is not None and target_item != active_item:
-        target_key = self._architecture_item_key(target_item)
-        if self.architecture_section_has_unsaved_changes():
-            current_name = self._architecture_active_title()
-            reasons = self.architecture_section_unsaved_reasons()
-            reason_text = "\n".join(f"- {reason}" for reason in reasons)
-            choice = messagebox.askyesnocancel(
-                "分区尚未保存",
-                f"“{current_name}”存在以下未保存内容：\n\n"
-                f"{reason_text}\n\n"
-                "选择“是”保存后切换，选择“否”放弃修改，选择“取消”继续编辑。",
-            )
-            if choice is None:
-                self._set_architecture_tree_selection(active_item)
-                return
-            if choice:
-                if not self._save_active_architecture_section():
-                    self._set_architecture_tree_selection(active_item)
-                    return
-            else:
-                _show_complete_architecture(
-                    self, self._architecture_active_document_snapshot
-                )
-            self._architecture_pending_save = False
-            self._architecture_pending_reason = ""
-            self.refresh_architecture_sections(select_key=target_key)
-            return
+    if active_item is not None and target_item != active_item and self.architecture_section_has_unsaved_changes():
+        if messagebox.askyesno("分区尚未保存", f"“{self._architecture_active_title()}”有未保存内容，是否保存？"):
+            self.save_architecture_section()
     self._display_architecture_section(target_item)
 
 
@@ -570,34 +518,26 @@ def _display_architecture_section(self, item_id):
         )
         self._set_architecture_active_baseline(item_id, None, document)
         return
-    section = self._architecture_sections_by_id.get(item_id)
-    if section is None:
-        return
-    document = _architecture_text(self)
-    try:
-        content = section.content_from(document)
-        if not content.startswith(section.heading):
-            raise ValueError
-    except (ValueError, IndexError):
-        self.refresh_architecture_sections()
-        return
+    step_index = _outline_tree_step_index(item_id)
+    if step_index:
+        item = _outline_workflow(self).step(step_index)
+        content, title = item.get("content", ""), item.get("title", "")
+        status = {"confirmed": "已确认", "draft": "草稿"}.get(item.get("status"), "未开始")
+        self.outline_step_var.set(f"{step_index}. {title}")
+    else:
+        item = self._architecture_sections_by_id.get(item_id)
+        if item is None: return
+        content, title, status = item.get("content", ""), item.get("title", ""), "自定义分区"
     self.architecture_section_text.delete("0.0", "end")
     self.architecture_section_text.insert("0.0", content)
-    self.architecture_section_status_label.configure(text=f"当前：{section.title}")
-    self.architecture_extraction_parent_label.configure(text=section.title)
-    self._set_architecture_active_baseline(item_id, section, content)
+    self.architecture_section_status_label.configure(text=f"当前：{title}（{status}）")
+    self.architecture_extraction_parent_label.configure(text=title)
+    self._set_architecture_active_baseline(item_id, item, content)
 
 
 def _set_architecture_active_baseline(self, item_id, section, editor_text):
-    sections = sorted(
-        self._architecture_sections_by_id.values(), key=lambda item: item.index
-    )
     self._architecture_active_item_id = item_id
-    self._architecture_active_section_key = (
-        architecture_section_tree_key(section, sections)
-        if section is not None
-        else None
-    )
+    self._architecture_active_section_key = item_id
     self._architecture_active_original_text = editor_text
     self._architecture_active_document_snapshot = _architecture_text(self)
     self._architecture_pending_save = False
@@ -613,24 +553,18 @@ def _set_architecture_tree_selection(self, item_id):
 
 
 def _architecture_item_key(self, item_id):
-    if item_id == self._architecture_overview_item:
-        return None
-    section = self._architecture_sections_by_id.get(item_id)
-    if section is None:
-        return None
-    sections = sorted(
-        self._architecture_sections_by_id.values(), key=lambda item: item.index
-    )
-    return architecture_section_tree_key(section, sections)
+    return item_id
 
 
 def _architecture_active_title(self):
     if self._architecture_active_item_id == self._architecture_overview_item:
         return "总览"
-    section = self._architecture_sections_by_id.get(
-        self._architecture_active_item_id
-    )
-    return section.title if section is not None else "当前分区"
+    item_id = self._architecture_active_item_id
+    index = _outline_tree_step_index(item_id)
+    if index:
+        return OUTLINE_STEPS[index - 1]
+    section = self._architecture_sections_by_id.get(item_id)
+    return section.get("title", "当前分区") if isinstance(section, dict) else "当前分区"
 
 
 def architecture_section_has_unsaved_changes(self):
@@ -658,32 +592,24 @@ def _save_active_architecture_section(self):
     if not filepath:
         messagebox.showwarning("警告", "请先设置保存文件路径。")
         return False
-    document = _architecture_text(self)
     editor_text = self.architecture_section_text.get("0.0", "end-1c")
     try:
-        if self._architecture_active_item_id == self._architecture_overview_item:
-            merged = editor_text
+        item_id = self._architecture_active_item_id
+        index = _outline_tree_step_index(item_id)
+        if index:
+            _outline_workflow(self).update(index, editor_text, "manual")
+            _outline_workflow(self).write_confirmed_sections()
+        elif item_id and item_id.startswith("custom-"):
+            _outline_workflow(self).update_custom_section(item_id, editor_text)
         else:
-            sections = parse_architecture_sections(document)
-            section = next(
-                (
-                    item
-                    for item in sections
-                    if architecture_section_tree_key(item, sections)
-                    == self._architecture_active_section_key
-                ),
-                None,
-            )
-            if section is None:
-                raise ValueError("当前分区位置已经失效，请刷新后重试")
-            merged = replace_architecture_section(document, section, editor_text)
-        NovelProjectRepository(filepath).write(
-            NovelProjectRepository.ARCHITECTURE, merged
-        )
+            NovelProjectRepository(filepath).write(NovelProjectRepository.ARCHITECTURE, editor_text)
     except (OSError, ValueError) as exc:
         messagebox.showerror("保存失败", str(exc))
         return False
-    _show_complete_architecture(self, merged)
+    if index:
+        self.load_outline_workflow_step()
+    else:
+        self.refresh_architecture_sections(select_key=item_id)
     self._architecture_pending_save = False
     self._architecture_pending_reason = ""
     self.log(f"已保存小说架构分区：{self._architecture_active_title()}。")
@@ -705,59 +631,31 @@ def is_architecture_overview_selected(self):
 
 
 def delete_selected_architecture_section(self):
-    filepath = self.filepath_var.get().strip()
     if self.is_architecture_overview_selected():
         messagebox.showinfo("无法删除", "总览是分区树的根节点，不能删除。")
         return
-    section = self.get_selected_architecture_section()
-    if not filepath:
-        messagebox.showwarning("警告", "请先设置保存文件路径。")
+    selection = self.architecture_section_tree.selection()
+    item_id = selection[0] if selection else ""
+    if _outline_tree_step_index(item_id):
+        messagebox.showinfo("无法删除", "34 个固定分区不能删除。")
         return
-    if section is None:
+    section = self.get_selected_architecture_section()
+    if not isinstance(section, dict):
         messagebox.showwarning("未选择分区", "请先从左侧选择要删除的分区。")
         return
-
-    document = _architecture_text(self)
-    sections = parse_architecture_sections(document)
-    descendants = [
-        item
-        for item in sections
-        if section.start < item.start < section.end
-    ]
-    parent_heading = (
-        sections[section.parent_index].heading
-        if section.parent_index is not None
-        and section.parent_index < len(sections)
-        else None
-    )
-    descendant_note = (
-        f"\n同时会删除其下 {len(descendants)} 个子分区。"
-        if descendants
-        else ""
-    )
     if not messagebox.askyesno(
         "确认删除分区",
-        f"确定删除“{section.title}”吗？{descendant_note}\n\n"
-        f"将删除 {section.end - section.start} 个字符，并立即写入架构文件。",
+        f"确定删除自定义分区“{section.get('title', item_id)}”吗？",
     ):
         return
-
     try:
-        merged = delete_architecture_section(document, section)
-        NovelProjectRepository(filepath).write(
-            NovelProjectRepository.ARCHITECTURE, merged
-        )
-    except (OSError, ValueError) as exc:
+        _outline_workflow(self).delete_custom_section(item_id)
+    except (OSError, ValueError, KeyError) as exc:
         messagebox.showerror("删除失败", str(exc))
         return
-
-    _show_complete_architecture(self, merged)
     self.architecture_section_guide_text.delete("0.0", "end")
-    self.refresh_architecture_sections(select_heading=parent_heading)
-    self.log(
-        f"已删除小说架构分区“{section.title}”"
-        f"及其 {len(descendants)} 个子分区，并保存架构文件。"
-    )
+    self.refresh_architecture_sections(select_key="outline-step-1")
+    self.log(f"已删除自定义分区“{section.get('title', item_id)}”。")
 
 
 def apply_extracted_architecture_content(
@@ -777,6 +675,10 @@ def apply_extracted_architecture_content(
 
 
 def sync_architecture_section(self):
+    if self._architecture_active_item_id and self._architecture_active_item_id != self._architecture_overview_item:
+        if _outline_tree_step_index(self._architecture_active_item_id) or str(self._architecture_active_item_id).startswith("custom-"):
+            self.save_architecture_section()
+            return
     discard_snapshot = self._architecture_active_document_snapshot
     active_title = self._architecture_active_title()
     if self.is_architecture_overview_selected():
@@ -818,7 +720,51 @@ def sync_architecture_section(self):
     self.log(f"已将分区“{section.title}”同步到总架构编辑区，尚未写入文件。")
 
 
+def clear_current_architecture_section(self):
+    """Clear only the selected section's own body, preserving its children."""
+    if self.is_architecture_overview_selected():
+        messagebox.showwarning("无法清空总览", "请先选择一个具体分区；总览节点不能清空。")
+        return
+    selection = self.architecture_section_tree.selection()
+    item_id = selection[0] if selection else ""
+    step_index = _outline_tree_step_index(item_id)
+    section = self.get_selected_architecture_section()
+    if not step_index and not isinstance(section, dict):
+        messagebox.showwarning("未选择分区", "请先从左侧选择要清空的分区。")
+        return
+    if not step_index and not self.filepath_var.get().strip():
+        messagebox.showwarning("缺少工程目录", "请先设置工程目录。")
+        return
+    if not messagebox.askyesno(
+        "确认清空分区",
+        f"确定清空“{OUTLINE_STEPS[step_index - 1] if step_index else section.get('title', item_id)}”的正文吗？",
+    ):
+        return
+    try:
+        workflow = _outline_workflow(self)
+        if step_index:
+            workflow.update(step_index, "", "manual")
+            workflow.write_confirmed_sections()
+        else:
+            workflow.update_custom_section(item_id, "")
+    except (OSError, ValueError, KeyError) as exc:
+        messagebox.showerror("清空失败", str(exc))
+        return
+    self.architecture_section_text.delete("0.0", "end")
+    self._architecture_active_original_text = ""
+    self._architecture_pending_save = False
+    self.refresh_architecture_sections(select_key=item_id)
+    self._set_architecture_tree_selection(item_id)
+    self._display_architecture_section(item_id)
+    self.log("已清空当前分区正文。")
+
+
 def save_architecture_section(self):
+    if self._architecture_active_item_id and self._architecture_active_item_id != self._architecture_overview_item:
+        if _outline_tree_step_index(self._architecture_active_item_id) or str(self._architecture_active_item_id).startswith("custom-"):
+            if self._save_active_architecture_section():
+                self.log(f"已保存小说架构分区：{self._architecture_active_title()}。")
+            return
     filepath = self.filepath_var.get().strip()
     if self.is_architecture_overview_selected():
         if not filepath:
@@ -860,47 +806,21 @@ def save_architecture_section(self):
 
 
 def add_architecture_subsection(self):
-    filepath = self.filepath_var.get().strip()
     overview_selected = self.is_architecture_overview_selected()
-    parent = self.get_selected_architecture_section()
-    if not filepath:
-        messagebox.showwarning("警告", "请先设置保存文件路径。")
-        return
-    if parent is None and not overview_selected:
-        messagebox.showwarning("未选择分区", "请先选择新分区所属的上级分区。")
-        return
     title = simpledialog.askstring(
         "新增子分区",
-        (
-            "在“总览”下新增顶层分区："
-            if overview_selected
-            else f"在“{parent.title}”下新增分区："
-        ),
+        "新增用户自定义分区名称：",
         parent=self.master,
     )
     if title is None:
         return
     try:
-        if overview_selected:
-            merged, heading = append_architecture_overview_section(
-                _architecture_text(self), title
-            )
-        else:
-            merged, heading = append_architecture_subsection(
-                _architecture_text(self), parent, title
-            )
-        NovelProjectRepository(filepath).write(
-            NovelProjectRepository.ARCHITECTURE, merged
-        )
+        item = _outline_workflow(self).add_custom_section(title)
     except (OSError, ValueError) as exc:
         messagebox.showerror("新增失败", str(exc))
         return
-    _show_complete_architecture(self, merged)
-    self.refresh_architecture_sections(select_heading=heading)
-    self.log(
-        f"已在{'总览' if overview_selected else parent.title}下新增小说架构分区："
-        f"{title.strip()}。"
-    )
+    self.refresh_architecture_sections(select_key=item["id"])
+    self.log(f"已新增自定义分区：{title.strip()}。")
 
 
 def load_novel_architecture(self):
