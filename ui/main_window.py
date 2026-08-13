@@ -33,11 +33,8 @@ from ui.novel_params_tab import (
     build_optional_buttons_area,
 )
 from ui.generation_handlers import (
-    generate_novel_architecture_ui,
     generate_chapter_blueprint_ui,
-    revise_novel_architecture_ui,
     revise_architecture_section_ui,
-    extract_architecture_section_from_files_ui,
     revise_chapter_blueprint_ui,
     generate_chapter_draft_ui,
     revise_chapter_draft_ui,
@@ -75,9 +72,8 @@ from ui.setting_tab import (
     sync_architecture_section,
     save_novel_architecture,
     update_architecture_workflow_state,
-    update_architecture_input_visibility,
-    toggle_architecture_input_panel,
     load_outline_workflow_step,
+    load_outline_workflow_project,
     confirm_outline_step,
     extract_outline_step_from_file,
     derive_outline_step_with_ai,
@@ -1035,11 +1031,8 @@ class NovelGeneratorGUI:
         )
 
     # ----------------- 将导入的各模块函数直接赋给类方法 -----------------
-    generate_novel_architecture_ui = generate_novel_architecture_ui
     generate_chapter_blueprint_ui = generate_chapter_blueprint_ui
-    revise_novel_architecture_ui = revise_novel_architecture_ui
     revise_architecture_section_ui = revise_architecture_section_ui
-    extract_architecture_section_from_files_ui = extract_architecture_section_from_files_ui
     revise_chapter_blueprint_ui = revise_chapter_blueprint_ui
     generate_chapter_draft_ui = generate_chapter_draft_ui
     revise_chapter_draft_ui = revise_chapter_draft_ui
@@ -1057,9 +1050,8 @@ class NovelGeneratorGUI:
     load_novel_architecture = load_novel_architecture
     save_novel_architecture = save_novel_architecture
     update_architecture_workflow_state = update_architecture_workflow_state
-    update_architecture_input_visibility = update_architecture_input_visibility
-    toggle_architecture_input_panel = toggle_architecture_input_panel
     load_outline_workflow_step = load_outline_workflow_step
+    load_outline_workflow_project = load_outline_workflow_project
     confirm_outline_step = confirm_outline_step
     extract_outline_step_from_file = extract_outline_step_from_file
     derive_outline_step_with_ai = derive_outline_step_with_ai

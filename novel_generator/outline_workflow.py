@@ -6,6 +6,7 @@ resumed without depending on the GUI or an LLM being available.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -22,6 +23,50 @@ OUTLINE_STEPS = (
     "主角身份", "主角目标", "反派与阻力", "故事主线", "分卷大纲", "章节大纲",
 )
 WORKFLOW_FILE = "outline_workflow.json"
+
+
+def outline_adapter_kwargs(config: dict) -> dict:
+    """Return only fields accepted by the LLM adapter factory."""
+    return {
+        "interface_format": config["interface_format"],
+        "base_url": config["base_url"],
+        "model_name": config["model_name"],
+        "api_key": config.get("api_key", ""),
+        "temperature": config["temperature"],
+        "max_tokens": config["max_tokens"],
+        "timeout": config["timeout"],
+    }
+
+
+def extract_step_content(text: str, title: str) -> str:
+    """Extract a matching Markdown/plain heading block from source material."""
+    source = str(text or "").strip()
+    if not source:
+        return ""
+    escaped = re.escape(str(title).strip())
+    pattern = re.compile(
+        rf"(?ims)^\s*(?:#+\s*)?(?:\d+[.)、]?\s*)?{escaped}\s*[:：]?\s*$"
+    )
+    match = pattern.search(source)
+    if not match:
+        return source
+    body_start = match.end()
+    next_heading = re.search(r"(?im)^\s*#{1,6}\s+.+$", source[body_start:])
+    body_end = body_start + next_heading.start() if next_heading else len(source)
+    return source[body_start:body_end].strip()
+
+
+def normalize_step_content(content: str, title: str) -> str:
+    """Store section prose without duplicating the workflow heading."""
+    value = str(content or "").strip()
+    if not value:
+        return ""
+    first, *rest = value.splitlines()
+    heading = re.sub(r"^\s*#+\s*", "", first).strip()
+    heading = re.sub(r"^\d+[.)、]?\s*", "", heading).strip()
+    if heading.rstrip("：:").strip() == str(title).strip():
+        return "\n".join(rest).strip()
+    return value
 
 
 def _now() -> str:
@@ -75,7 +120,7 @@ class OutlineWorkflow:
 
     def save(self) -> None:
         self.data["updated_at"] = _now()
-        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.repository.write(WORKFLOW_FILE, json.dumps(self.data, ensure_ascii=False, indent=2))
 
     def step(self, index: int) -> dict:
         if not 1 <= int(index) <= len(OUTLINE_STEPS):
@@ -90,16 +135,28 @@ class OutlineWorkflow:
 
     def update(self, index: int, content: str, source: str = "manual") -> dict:
         item = self.step(index)
-        content = str(content or "").strip()
+        content = normalize_step_content(content, item["title"])
+        was_confirmed = item["status"] == "confirmed"
+        changed = item["content"] != content
         item["content"] = content
         item["source"] = source or "manual"
         item["status"] = "draft" if content else "pending"
+        if was_confirmed and changed:
+            # Later sections were derived from this confirmed premise and must
+            # be reviewed again when that premise changes.
+            for later in self.data["steps"][int(index):]:
+                if later["status"] == "confirmed":
+                    later["status"] = "draft" if later["content"] else "pending"
+            self.data["finalized"] = False
         item["history"].append({"at": _now(), "action": "update", "source": item["source"], "content": content})
         self.save()
         return item
 
     def confirm(self, index: int, content: Optional[str] = None) -> dict:
         item = self.step(index)
+        index = int(index)
+        if any(previous["status"] != "confirmed" for previous in self.data["steps"][:index - 1]):
+            raise ValueError("请先确认前面的分区，再确认当前分区")
         if content is not None:
             self.update(index, content, item.get("source") or "manual")
         if not item["content"].strip():
@@ -123,11 +180,11 @@ class OutlineWorkflow:
     def set_from_file(self, index: int, file_path: str | Path,
                       extractor: Optional[Callable[[str, str], str]] = None) -> dict:
         text = Path(file_path).read_text(encoding="utf-8")
-        content = extractor(text, self.step(index)["title"]) if extractor else text
+        content = extractor(text, self.step(index)["title"]) if extractor else extract_step_content(text, self.step(index)["title"])
         return self.update(index, content, "file_extract")
 
     def set_from_ai(self, index: int, generator: Callable[[str, Iterable[dict]], str]) -> dict:
-        prior = self.data["steps"][:int(index) - 1]
+        prior = [item for item in self.data["steps"][:int(index) - 1] if item["status"] == "confirmed"]
         content = generator(self.step(index)["title"], prior)
         return self.update(index, content, "ai_derive")
 

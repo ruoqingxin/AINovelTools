@@ -16,135 +16,34 @@ from novel_generator.architecture_sections import (
 from novel_generator.storage import NovelProjectRepository
 from utils import read_file, save_string_to_txt, get_word_count
 from ui.context_menu import TextWidgetContextMenu
-from ui.novel_params_tab import build_architecture_params_area
-from novel_generator.outline_workflow import OutlineWorkflow, OUTLINE_STEPS
+from novel_generator.outline_workflow import OutlineWorkflow, OUTLINE_STEPS, outline_adapter_kwargs
 from llm_adapters import create_llm_adapter
 from config_manager import get_llm_config
+from novel_generator.knowledge import read_knowledge_file
 
 
 def build_setting_tab(self):
     self.setting_tab = self.tabview.add("大纲工作台")
     self.setting_tab.rowconfigure(0, weight=1)
     self.setting_tab.columnconfigure(0, weight=1)
-    self.setting_tab.columnconfigure(1, weight=0)
 
     editor_frame = ctk.CTkFrame(self.setting_tab)
-    editor_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
-    editor_frame.rowconfigure(1, weight=1)
+    editor_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+    editor_frame.rowconfigure(0, weight=1)
     editor_frame.columnconfigure(0, weight=1)
 
-    params_frame = ctk.CTkFrame(self.setting_tab)
-    params_frame.grid(row=2, column=1, sticky="nsew", padx=(2, 5), pady=5)
-    params_frame.rowconfigure(1, weight=1)
-    params_frame.columnconfigure(0, weight=1)
-    self.architecture_input_summary = ctk.CTkLabel(
-        params_frame,
-        text="创建输入",
-        anchor="w",
-        font=("Microsoft YaHei", 13, "bold"),
-    )
-    self.architecture_input_summary.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
-    self.architecture_input_toggle = ctk.CTkButton(
-        params_frame,
-        text="收起输入区",
-        width=110,
-        height=28,
-        command=self.toggle_architecture_input_panel,
-    )
-    self.architecture_input_toggle.grid(row=0, column=1, padx=(4, 8), pady=(6, 2), sticky="e")
-    params_frame.columnconfigure(1, weight=0)
-    self.architecture_input_host = ctk.CTkFrame(params_frame, fg_color="transparent")
-    self.architecture_input_host.grid(row=1, column=0, columnspan=2, sticky="nsew")
-    self.architecture_input_host.rowconfigure(0, weight=1)
-    self.architecture_input_host.columnconfigure(0, weight=1)
-    build_architecture_params_area(self, self.architecture_input_host)
-    # The legacy all-at-once generation inputs remain initialized for
-    # backwards-compatible handlers, but the stepwise workflow no longer
-    # exposes this panel in the outline workbench.
-    params_frame.grid_remove()
-
     toolbar = ctk.CTkFrame(editor_frame, fg_color="transparent")
-    toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+    toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=(2, 3))
     toolbar.columnconfigure(1, weight=1)
+    ctk.CTkButton(toolbar, text="加载已确认分区", command=self.load_outline_workflow_project, width=120).grid(row=0, column=0, sticky="w")
+    self.setting_word_count_label = ctk.CTkLabel(toolbar, text="34 个分区逐个确认", font=("Microsoft YaHei", 12))
+    self.setting_word_count_label.grid(row=0, column=1, sticky="w", padx=10)
 
-    load_btn = ctk.CTkButton(
-        toolbar,
-        text="重新加载文件",
-        command=self.load_novel_architecture,
-        font=("Microsoft YaHei", 12),
-    )
-    load_btn.grid(row=0, column=0, padx=(0, 8), sticky="w")
+    # This hidden document buffer is the canonical aggregate used by the
+    # existing section-tree helpers and project restore code.
+    self.setting_text = ctk.CTkTextbox(self.setting_tab, width=1, height=1)
 
-    self.setting_word_count_label = ctk.CTkLabel(
-        toolbar, text="字数：0", font=("Microsoft YaHei", 12)
-    )
-    self.setting_word_count_label.grid(row=0, column=1, sticky="w")
-
-    clear_btn = ctk.CTkButton(
-        toolbar,
-        text="清空内容",
-        command=self.clear_novel_architecture,
-        width=90,
-        fg_color="#c0392b",
-        hover_color="#a93226",
-        font=("Microsoft YaHei", 12),
-    )
-    clear_btn.grid(row=0, column=2, padx=8, sticky="e")
-
-    save_btn = ctk.CTkButton(
-        toolbar,
-        text="保存修改",
-        command=self.save_novel_architecture,
-        width=90,
-        font=("Microsoft YaHei", 12),
-    )
-    save_btn.grid(row=0, column=3, sticky="e")
-
-    self.architecture_editor_tabview = ctk.CTkTabview(
-        editor_frame,
-        command=self.on_architecture_editor_tab_changed,
-    )
-    self.architecture_editor_tabview.grid(
-        row=1, column=0, sticky="nsew", padx=5, pady=(0, 5)
-    )
-    complete_tab = self.architecture_editor_tabview.add("完整架构")
-    section_tab = self.architecture_editor_tabview.add("高级分区编辑")
-    complete_tab.rowconfigure(0, weight=3)
-    complete_tab.rowconfigure(2, weight=1)
-    complete_tab.columnconfigure(0, weight=1)
-
-    self.setting_text = ctk.CTkTextbox(
-        complete_tab, wrap="word", font=("Microsoft YaHei", 12)
-    )
-    TextWidgetContextMenu(self.setting_text)
-    self.setting_text.grid(row=0, column=0, sticky="nsew", padx=3, pady=(3, 5))
-
-    ctk.CTkLabel(
-        complete_tab,
-        text="整篇修改意见",
-        anchor="w",
-        font=("Microsoft YaHei", 12, "bold"),
-    ).grid(row=1, column=0, sticky="ew", padx=3, pady=(4, 2))
-    self.architecture_revision_guide_text = ctk.CTkTextbox(
-        complete_tab, wrap="word", height=90, font=("Microsoft YaHei", 12)
-    )
-    TextWidgetContextMenu(self.architecture_revision_guide_text)
-    self.architecture_revision_guide_text.grid(
-        row=2, column=0, sticky="nsew", padx=3, pady=(0, 5)
-    )
-
-    self.btn_revise_architecture = ctk.CTkButton(
-        complete_tab,
-        text="AI 重写完整架构",
-        command=self.revise_novel_architecture_ui,
-        height=34,
-        font=("Microsoft YaHei", 12),
-    )
-    self.btn_revise_architecture.grid(
-        row=3, column=0, sticky="ew", padx=3, pady=(0, 3)
-    )
-
-    _build_section_editor(self, section_tab)
+    _build_section_editor(self, editor_frame)
 
     def update_word_count(event=None):
         text = self.setting_text.get("0.0", "end-1c")
@@ -156,30 +55,9 @@ def build_setting_tab(self):
 
 
 def update_architecture_workflow_state(self):
-    """Keep the architecture page focused on the user's next actionable step."""
-    try:
-        has_architecture = bool(self.setting_text.get("0.0", "end-1c").strip())
-    except (AttributeError, ctk.TclError):
-        has_architecture = False
-    if has_architecture:
-        # Labels are zero-based: 0=prepare, 1=generate, 2=review, 3=blueprint.
-        active_index = 2
-        next_text = "大纲已生成：先检查全文内容；确认后打开“蓝图工作台”安排章节。"
-    else:
-        active_index = 0
-        next_text = "请打开“高级分区编辑”，从第 1 个分区开始逐步提炼、编辑并确认。"
-    for index, label in enumerate(getattr(self, "architecture_step_labels", ())):
-        if index == active_index:
-            label.configure(
-                fg_color=("#D1E9FF", "#164C7E"),
-                text_color=("#175CD3", "#B2DDFF"),
-                corner_radius=6,
-            )
-        else:
-            label.configure(fg_color="transparent", text_color=("#667085", "#98A2B3"))
-    if getattr(self, "architecture_next_step_label", None) is not None:
-        self.architecture_next_step_label.configure(text=f"下一步：{next_text}")
-    self.update_architecture_input_visibility(has_architecture)
+    """Refresh the current workflow section after project restore."""
+    if getattr(self, "outline_step_var", None) is not None:
+        self.load_outline_workflow_step()
 
 
 def _outline_workflow(self):
@@ -195,6 +73,20 @@ def _outline_workflow(self):
 
 def _outline_step_index(self):
     return int(str(self.outline_step_var.get()).split(".", 1)[0])
+
+
+def load_outline_workflow_project(self):
+    """Load the persisted confirmed outline into the section editor."""
+    filepath = self.filepath_var.get().strip()
+    if not filepath:
+        messagebox.showwarning("缺少工程目录", "请先设置工程目录")
+        return
+    content = read_file(os.path.join(filepath, NovelProjectRepository.ARCHITECTURE))
+    self.setting_text.delete("0.0", "end")
+    self.setting_text.insert("0.0", content)
+    self.refresh_architecture_sections()
+    self.load_outline_workflow_step()
+    self.log("已加载已确认的大纲分区。")
 
 
 def load_outline_workflow_step(self):
@@ -232,7 +124,15 @@ def extract_outline_step_from_file(self):
     if not path: return
     try:
         workflow = _outline_workflow(self)
-        item = workflow.set_from_file(_outline_step_index(self), path)
+        index = _outline_step_index(self)
+        source = read_knowledge_file(path).strip()
+        if not source:
+            raise ValueError("所选文件没有可读取的文字内容")
+        config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
+        adapter = _create_outline_adapter(config)
+        item = workflow.set_from_ai(index, lambda title, prior: adapter.invoke(
+            _outline_material_prompt(title, prior, source)
+        ))
         editor = getattr(self, "architecture_section_text", self.setting_text)
         editor.delete("0.0", "end"); editor.insert("0.0", item["content"])
         self.outline_step_status.configure(text="已提炼，待确认")
@@ -244,7 +144,7 @@ def derive_outline_step_with_ai(self):
     try:
         workflow = _outline_workflow(self); index = _outline_step_index(self)
         config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
-        adapter = create_llm_adapter(**config)
+        adapter = _create_outline_adapter(config)
         item = workflow.set_from_ai(index, lambda title, prior: adapter.invoke(
             f"请根据已有小说设定，推导并输出“{title}”。已有步骤：\n" +
             "\n".join(f"{p['index']}.{p['title']}：{p['content']}" for p in prior)))
@@ -253,6 +153,22 @@ def derive_outline_step_with_ai(self):
         self.outline_step_status.configure(text="AI 已推导，待确认")
     except Exception as exc:
         messagebox.showerror("AI 推导失败", str(exc))
+
+
+def _create_outline_adapter(config):
+    """Pass only model-constructor fields; config metadata is not API input."""
+    return create_llm_adapter(**outline_adapter_kwargs(config))
+
+
+def _outline_material_prompt(title, prior, source):
+    context = "\n".join(
+        f"{item['index']}. {item['title']}：{item['content']}" for item in prior
+    ) or "（暂无已确认设定）"
+    return (
+        f"你是小说大纲编辑。请从下方资料中提炼与“{title}”直接相关的设定，"
+        "整理成可直接放入该大纲分区的中文正文。不要输出标题、解释、免责声明或与该分区无关的内容。\n\n"
+        f"已确认设定：\n{context}\n\n资料：\n{source}"
+    )
 
 
 def finalize_outline_workflow(self):
@@ -264,36 +180,11 @@ def finalize_outline_workflow(self):
 
 
 def update_architecture_input_visibility(self, has_architecture=None):
-    if has_architecture is None:
-        try:
-            has_architecture = bool(self.setting_text.get("0.0", "end-1c").strip())
-        except (AttributeError, ctk.TclError):
-            has_architecture = False
-    host = getattr(self, "architecture_input_host", None)
-    if host is None:
-        return
-    if has_architecture:
-        host.grid_remove()
-        self.architecture_input_summary.configure(text="架构已存在")
-        self.architecture_input_toggle.configure(text="重新生成 / 调整")
-    else:
-        host.grid()
-        self.architecture_input_summary.configure(text="创建输入")
-        self.architecture_input_toggle.configure(text="收起输入区")
+    return None
 
 
 def toggle_architecture_input_panel(self):
-    host = getattr(self, "architecture_input_host", None)
-    if host is None:
-        return
-    if host.winfo_ismapped():
-        host.grid_remove()
-        self.architecture_input_summary.configure(text="创建输入（已收起）")
-        self.architecture_input_toggle.configure(text="展开输入区")
-    else:
-        host.grid()
-        self.architecture_input_summary.configure(text="创建输入")
-        self.architecture_input_toggle.configure(text="收起输入区")
+    return None
 
 
 def _build_section_editor(self, parent):
@@ -471,8 +362,7 @@ def _show_complete_architecture(self, content):
 
 
 def on_architecture_editor_tab_changed(self):
-    if self.architecture_editor_tabview.get() == "高级分区编辑":
-        self.refresh_architecture_sections()
+    self.refresh_architecture_sections()
 
 
 def architecture_section_tree_key(section, sections):

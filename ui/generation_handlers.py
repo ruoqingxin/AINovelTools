@@ -41,11 +41,8 @@ MAX_SECTION_EXTRACTION_CHARS = 120_000
 
 
 _BACKGROUND_OPERATION_BUTTONS = {
-    "generate_architecture": "btn_generate_architecture",
     "generate_blueprint": "btn_generate_directory",
-    "revise_architecture": "btn_revise_architecture",
     "revise_architecture_section": "btn_revise_architecture_section",
-    "extract_architecture_section": "btn_extract_architecture_section",
     "revise_blueprint": "btn_revise_blueprint",
     "generate_chapter": "btn_generate_chapter",
     "revise_chapter": "btn_revise_chapter",
@@ -308,7 +305,7 @@ def revise_architecture_section_ui(self):
     if not guidance:
         messagebox.showwarning("缺少修改要求", "请先填写本分区的 AI 修改要求。")
         return
-    current_text = self.setting_text.get("0.0", "end-1c")
+    current_text = self.architecture_section_text.get("0.0", "end-1c")
 
     def task():
         try:
@@ -331,8 +328,8 @@ def revise_architecture_section_ui(self):
             )
 
             def show_revision():
-                self.setting_text.delete("0.0", "end")
-                self.setting_text.insert("0.0", merged)
+                self.architecture_section_text.delete("0.0", "end")
+                self.architecture_section_text.insert("0.0", replacement)
                 self.setting_word_count_label.configure(
                     text=f"字数：{get_word_count(merged)}"
                 )
