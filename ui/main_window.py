@@ -72,6 +72,8 @@ from ui.setting_tab import (
     sync_architecture_section,
     save_novel_architecture,
     update_architecture_workflow_state,
+    update_architecture_input_visibility,
+    toggle_architecture_input_panel,
     load_outline_workflow_step,
     load_outline_workflow_project,
     confirm_outline_step,
@@ -1050,6 +1052,8 @@ class NovelGeneratorGUI:
     load_novel_architecture = load_novel_architecture
     save_novel_architecture = save_novel_architecture
     update_architecture_workflow_state = update_architecture_workflow_state
+    update_architecture_input_visibility = update_architecture_input_visibility
+    toggle_architecture_input_panel = toggle_architecture_input_panel
     load_outline_workflow_step = load_outline_workflow_step
     load_outline_workflow_project = load_outline_workflow_project
     confirm_outline_step = confirm_outline_step

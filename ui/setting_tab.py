@@ -22,6 +22,21 @@ from config_manager import get_llm_config
 from novel_generator.knowledge import read_knowledge_file
 
 
+def _add_action_with_help(parent, text, command, help_text, width=88, height=28):
+    """Create an action button with an adjacent, compact help button."""
+    group = ctk.CTkFrame(parent, fg_color="transparent")
+    action = ctk.CTkButton(group, text=text, command=command, width=width, height=height)
+    action.pack(side="left")
+    ctk.CTkButton(
+        group,
+        text="?",
+        width=24,
+        height=height,
+        command=lambda: messagebox.showinfo(f"{text}：功能说明", help_text),
+    ).pack(side="left", padx=(3, 0))
+    return group, action
+
+
 def build_setting_tab(self):
     self.setting_tab = self.tabview.add("大纲工作台")
     self.setting_tab.rowconfigure(0, weight=1)
@@ -35,7 +50,14 @@ def build_setting_tab(self):
     toolbar = ctk.CTkFrame(editor_frame, fg_color="transparent")
     toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=(2, 3))
     toolbar.columnconfigure(1, weight=1)
-    ctk.CTkButton(toolbar, text="加载已确认分区", command=self.load_outline_workflow_project, width=120).grid(row=0, column=0, sticky="w")
+    load_group, self.btn_load_outline_workflow = _add_action_with_help(
+        toolbar,
+        "加载已确认分区",
+        self.load_outline_workflow_project,
+        "读取工程目录中的 Novel_architecture.txt，恢复已经写入的大纲分区和当前编辑内容。",
+        width=120,
+    )
+    load_group.grid(row=0, column=0, sticky="w")
     self.setting_word_count_label = ctk.CTkLabel(toolbar, text="34 个分区逐个确认", font=("Microsoft YaHei", 12))
     self.setting_word_count_label.grid(row=0, column=1, sticky="w", padx=10)
 
@@ -130,9 +152,8 @@ def extract_outline_step_from_file(self):
             raise ValueError("所选文件没有可读取的文字内容")
         config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
         adapter = _create_outline_adapter(config)
-        item = workflow.set_from_ai(index, lambda title, prior: adapter.invoke(
-            _outline_material_prompt(title, prior, source)
-        ))
+        extracted = adapter.invoke(_outline_file_prompt(workflow.step(index)["title"], source))
+        item = workflow.update(index, extracted, "file_extract_ai")
         editor = getattr(self, "architecture_section_text", self.setting_text)
         editor.delete("0.0", "end"); editor.insert("0.0", item["content"])
         self.outline_step_status.configure(text="已提炼，待确认")
@@ -146,8 +167,7 @@ def derive_outline_step_with_ai(self):
         config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
         adapter = _create_outline_adapter(config)
         item = workflow.set_from_ai(index, lambda title, prior: adapter.invoke(
-            f"请根据已有小说设定，推导并输出“{title}”。已有步骤：\n" +
-            "\n".join(f"{p['index']}.{p['title']}：{p['content']}" for p in prior)))
+            _outline_derive_prompt(title, prior)))
         editor = getattr(self, "architecture_section_text", self.setting_text)
         editor.delete("0.0", "end"); editor.insert("0.0", item["content"])
         self.outline_step_status.configure(text="AI 已推导，待确认")
@@ -160,14 +180,22 @@ def _create_outline_adapter(config):
     return create_llm_adapter(**outline_adapter_kwargs(config))
 
 
-def _outline_material_prompt(title, prior, source):
+def _outline_file_prompt(title, source):
+    return (
+        f"你是小说大纲编辑。请只从下方这一个文件中提炼与“{title}”直接相关的设定，"
+        "整理成可直接放入该大纲分区的中文正文。不要使用文件之外的知识，不要输出标题、解释、免责声明或与该分区无关的内容。\n\n"
+        f"文件内容：\n{source}"
+    )
+
+
+def _outline_derive_prompt(title, prior):
     context = "\n".join(
         f"{item['index']}. {item['title']}：{item['content']}" for item in prior
     ) or "（暂无已确认设定）"
     return (
-        f"你是小说大纲编辑。请从下方资料中提炼与“{title}”直接相关的设定，"
-        "整理成可直接放入该大纲分区的中文正文。不要输出标题、解释、免责声明或与该分区无关的内容。\n\n"
-        f"已确认设定：\n{context}\n\n资料：\n{source}"
+        f"你是小说大纲编辑。请根据前面已经确认的分区内容，围绕当前分区标题“{title}”推导具体正文。"
+        "只输出当前分区正文，不要输出标题、解释或免责声明。\n\n"
+        f"前面已确认的分区：\n{context}"
     )
 
 
@@ -203,33 +231,36 @@ def _build_section_editor(self, parent):
     self.outline_step_menu.grid(row=0, column=1, sticky="w")
     self.outline_step_status = ctk.CTkLabel(stepbar, text="未开始", anchor="w")
     self.outline_step_status.grid(row=0, column=2, padx=8, sticky="w")
-    for col, (label, command) in enumerate((("文件提炼", self.extract_outline_step_from_file), ("AI 推导", self.derive_outline_step_with_ai), ("确认分区", self.confirm_outline_step), ("定稿", self.finalize_outline_workflow)), 3):
-        ctk.CTkButton(stepbar, text=label, command=command, width=78, height=28).grid(row=0, column=col, padx=2)
+    workflow_actions = (
+        ("文件提炼", self.extract_outline_step_from_file,
+         "选择一份资料文件，调用 AI 只从该文件中提炼当前分区标题对应的正文，不使用前面分区上下文。"),
+        ("AI 推导", self.derive_outline_step_with_ai,
+         "读取前面已经确认的分区作为上下文，围绕当前分区标题推导正文，不读取文件。"),
+        ("确认分区", self.confirm_outline_step,
+         "保存当前分区内容并标记为已确认，同时写入工作流状态和 Novel_architecture.txt；必须按顺序确认。"),
+        ("定稿", self.finalize_outline_workflow,
+         "仅当 34 个分区全部确认后生成最终大纲文件；未完成时不会覆盖定稿。"),
+    )
+    for col, (label, command, help_text) in enumerate(workflow_actions, 3):
+        group, _ = _add_action_with_help(stepbar, label, command, help_text, width=78)
+        group.grid(row=0, column=col, padx=2)
 
     section_toolbar = ctk.CTkFrame(parent, fg_color="transparent")
     section_toolbar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
     section_toolbar.columnconfigure(4, weight=1)
-    ctk.CTkButton(
-        section_toolbar,
-        text="刷新分区",
-        width=88,
-        command=self.refresh_architecture_sections,
-    ).grid(row=0, column=0, padx=(0, 6))
-    ctk.CTkButton(
-        section_toolbar,
-        text="新增子分区",
-        width=96,
-        command=self.add_architecture_subsection,
-    ).grid(row=0, column=1, padx=(0, 6))
-    self.btn_delete_architecture_section = ctk.CTkButton(
-        section_toolbar,
-        text="删除分区",
-        width=88,
-        command=self.delete_architecture_section,
-        fg_color="#c0392b",
-        hover_color="#a93226",
-    )
-    self.btn_delete_architecture_section.grid(row=0, column=2, padx=(0, 6))
+    group, _ = _add_action_with_help(
+        section_toolbar, "刷新分区", self.refresh_architecture_sections,
+        "重新解析 Novel_architecture.txt 并刷新左侧分区树，不调用 AI。", width=88)
+    group.grid(row=0, column=0, padx=(0, 6))
+    group, _ = _add_action_with_help(
+        section_toolbar, "新增子分区", self.add_architecture_subsection,
+        "在当前选中的分区下新增子分区；选中总览时新增顶层分区，并立即写入大纲文件。", width=96)
+    group.grid(row=0, column=1, padx=(0, 6))
+    group, self.btn_delete_architecture_section = _add_action_with_help(
+        section_toolbar, "删除分区", self.delete_architecture_section,
+        "删除当前分区及其子分区，并立即写入大纲文件；总览节点不能删除。", width=88)
+    self.btn_delete_architecture_section.configure(fg_color="#c0392b", hover_color="#a93226")
+    group.grid(row=0, column=2, padx=(0, 6))
     self.architecture_section_status_label = ctk.CTkLabel(
         section_toolbar,
         text="从左侧选择要单独修改的内容",
@@ -328,27 +359,18 @@ def _build_section_editor(self, parent):
     section_actions.columnconfigure(0, weight=1)
     section_actions.columnconfigure(1, weight=1)
     section_actions.columnconfigure(2, weight=1)
-    ctk.CTkButton(
-        section_actions,
-        text="同步总架构",
-        command=self.sync_architecture_section,
-        height=34,
-    ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
-    ctk.CTkButton(
-        section_actions,
-        text="保存本分区",
-        command=self.save_architecture_section,
-        height=34,
-    ).grid(row=0, column=1, sticky="ew", padx=3)
-    self.btn_revise_architecture_section = ctk.CTkButton(
-        section_actions,
-        text="AI 重写本分区",
-        command=self.revise_architecture_section_ui,
-        height=34,
-    )
-    self.btn_revise_architecture_section.grid(
-        row=0, column=2, sticky="ew", padx=(3, 0)
-    )
+    group, _ = _add_action_with_help(
+        section_actions, "同步总架构", self.sync_architecture_section,
+        "把当前分区编辑框内容合并到内部总架构文本，供分区树重新解析；不会替代确认分区。", width=112, height=34)
+    group.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+    group, _ = _add_action_with_help(
+        section_actions, "保存本分区", self.save_architecture_section,
+        "将当前分区修改写入 Novel_architecture.txt，但不会改变 34 步确认状态。", width=112, height=34)
+    group.grid(row=0, column=1, sticky="ew", padx=3)
+    group, self.btn_revise_architecture_section = _add_action_with_help(
+        section_actions, "AI 重写本分区", self.revise_architecture_section_ui,
+        "根据下方的 AI 修改要求重写当前分区；需要选择分区、填写修改要求并配置大纲模型。", width=112, height=34)
+    group.grid(row=0, column=2, sticky="ew", padx=(3, 0))
 
 
 def _architecture_text(self):
