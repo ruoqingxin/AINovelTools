@@ -1,6 +1,7 @@
 # ui/main_window.py
 # -*- coding: utf-8 -*-
 import os
+import re
 import threading
 import logging
 import traceback
@@ -105,6 +106,14 @@ def split_log_role_marker(message: str):
         if message.startswith(prefix):
             return display_marker, tag_name, color, message[len(prefix):]
     return None
+
+
+def compact_log_text(text: str, limit: int = 100) -> str:
+    """Keep the beginning and end of long request/response log bodies."""
+    value = str(text or "")
+    if len(value) <= limit * 2:
+        return value
+    return f"{value[:limit]}\n……\n{value[-limit:]}"
 
 
 class NovelGeneratorGUI:
@@ -296,14 +305,15 @@ class NovelGeneratorGUI:
         for log_widget in self._log_widgets():
             try:
                 log_widget.configure(state="normal")
-                self._insert_colored_log(log_widget, message)
+                compact = log_widget is getattr(self, "detail_log_text", None) and getattr(self, "_log_compact_mode", False)
+                self._insert_colored_log(log_widget, message, compact=compact)
                 log_widget.see("end")
                 log_widget.configure(state="disabled")
             except tk.TclError:
                 continue
 
     @staticmethod
-    def _insert_colored_log(log_widget, message: str):
+    def _insert_colored_log(log_widget, message: str, compact: bool = False):
         role = split_log_role_marker(message)
         if role is None:
             log_widget.insert("end", message + "\n")
@@ -313,10 +323,12 @@ class NovelGeneratorGUI:
         log_widget.insert("end", marker, tag_name)
         log_widget.insert("end", "\n")
         if body:
+            if compact:
+                body = compact_log_text(body)
             log_widget.insert("end", body)
         log_widget.insert("end", "\n")
 
-    def _insert_log_history(self, log_widget, content: str):
+    def _insert_log_history(self, log_widget, content: str, compact: bool = False):
         """Restore copied log history while retaining role marker colors."""
         history_markers = {
             "[发送给 AI]": LOG_ROLE_STYLES["[发送给 AI]"],
@@ -346,8 +358,43 @@ class NovelGeneratorGUI:
             if marker_end < len(content):
                 log_widget.insert("end", "\n")
                 cursor = marker_end + 1
+                next_marker = min(
+                    (index for marker in history_markers
+                     for index in [content.find(marker, cursor)] if index >= 0),
+                    default=len(content),
+                )
+                if compact:
+                    body = content[cursor:next_marker]
+                    compacted = compact_log_text(body.rstrip("\n"))
+                    if compacted:
+                        log_widget.insert("end", compacted)
+                        if next_marker < len(content):
+                            log_widget.insert("end", "\n")
+                    cursor = next_marker
             else:
                 cursor = marker_end
+
+    def _refresh_log_details(self):
+        detail_log_text = getattr(self, "detail_log_text", None)
+        if detail_log_text is None:
+            return
+        source_log = getattr(self, "log_text", None)
+        if source_log is None:
+            return
+        try:
+            content = source_log.get("0.0", "end-1c")
+            detail_log_text.configure(state="normal")
+            detail_log_text.delete("0.0", "end")
+            if content:
+                self._insert_log_history(
+                    detail_log_text,
+                    content,
+                    compact=getattr(self, "_log_compact_mode", False),
+                )
+                detail_log_text.see("end")
+            detail_log_text.configure(state="disabled")
+        except tk.TclError:
+            return
 
     def _log_widgets(self):
         widgets = []
@@ -376,6 +423,7 @@ class NovelGeneratorGUI:
         window.transient(self.master)
         window.grid_rowconfigure(1, weight=1)
         window.grid_columnconfigure(0, weight=1)
+        self._log_compact_mode = False
 
         header = ctk.CTkFrame(window, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
@@ -393,6 +441,15 @@ class NovelGeneratorGUI:
             height=28,
             font=("Microsoft YaHei", 12),
         ).grid(row=0, column=1, padx=(8, 0))
+        compact_button = ctk.CTkButton(
+            header,
+            text="简略日志",
+            command=lambda: self._toggle_log_compact_mode(compact_button),
+            width=90,
+            height=28,
+            font=("Microsoft YaHei", 12),
+        )
+        compact_button.grid(row=0, column=2, padx=(8, 0))
         ctk.CTkButton(
             header,
             text="关闭",
@@ -400,7 +457,7 @@ class NovelGeneratorGUI:
             width=70,
             height=28,
             font=("Microsoft YaHei", 12),
-        ).grid(row=0, column=2, padx=(8, 0))
+        ).grid(row=0, column=3, padx=(8, 0))
 
         detail_log_text = ctk.CTkTextbox(
             window,
@@ -415,7 +472,7 @@ class NovelGeneratorGUI:
         if source_log is not None:
             content = source_log.get("0.0", "end-1c")
             if content:
-                self._insert_log_history(detail_log_text, content)
+                self._insert_log_history(detail_log_text, content, compact=False)
                 detail_log_text.see("end")
         detail_log_text.configure(state="disabled")
 
@@ -423,6 +480,11 @@ class NovelGeneratorGUI:
         self.detail_log_text = detail_log_text
         window.protocol("WM_DELETE_WINDOW", self._close_log_details)
         window.after(50, window.focus_force)
+
+    def _toggle_log_compact_mode(self, button):
+        self._log_compact_mode = not getattr(self, "_log_compact_mode", False)
+        button.configure(text="完整日志" if self._log_compact_mode else "简略日志")
+        self._refresh_log_details()
 
     def _close_log_details(self):
         window = getattr(self, "_log_detail_window", None)

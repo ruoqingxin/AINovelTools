@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from ui.main_window import NovelGeneratorGUI, split_log_role_marker
+from ui.main_window import NovelGeneratorGUI, compact_log_text, split_log_role_marker
 
 
 class FakeLogText:
@@ -32,6 +32,12 @@ class FakeTaggedLogText:
 
 
 class UiLoggingTest(unittest.TestCase):
+    def test_compact_log_text_keeps_first_and_last_100_characters(self):
+        value = "a" * 250
+        compacted = compact_log_text(value)
+        self.assertEqual(100, len(compacted.split("\n……\n")[0]))
+        self.assertEqual(100, len(compacted.split("\n……\n")[1]))
+
     def test_ai_log_marker_is_colored_without_coloring_body(self):
         widget = FakeTaggedLogText()
         NovelGeneratorGUI._insert_colored_log(
