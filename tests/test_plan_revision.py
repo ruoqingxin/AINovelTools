@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from novel_generator.architecture import revise_novel_architecture
-from novel_generator.blueprint import revise_chapter_blueprint, Chapter_blueprint_generate
+from novel_generator.blueprint import revise_chapter_blueprint, Chapter_blueprint_generate, generate_volume_plan
 
 
 class FakeAdapter:
@@ -18,6 +18,29 @@ class FakeAdapter:
 
 
 class PlanRevisionTest(unittest.TestCase):
+    def test_volume_plan_generation_is_bounded(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pathlib.Path(temp_dir, "Novel_architecture.txt").write_text("小说架构内容", encoding="utf-8")
+            adapter = FakeAdapter("第一卷：入局\n第二卷：升级")
+            with patch("novel_generator.blueprint.create_llm_adapter", return_value=adapter):
+                result = generate_volume_plan(
+                    interface_format="OpenAI", api_key="key", base_url="https://example.com/v1",
+                    llm_model="model", filepath=temp_dir, number_of_chapters=1000,
+                    volume_count=5,
+                )
+            self.assertEqual(result, adapter.response)
+            self.assertIn("最多20卷", adapter.prompt)
+
+    def test_volume_plan_rejects_more_than_twenty_volumes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pathlib.Path(temp_dir, "Novel_architecture.txt").write_text("小说架构内容", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "1-20"):
+                generate_volume_plan(
+                    interface_format="OpenAI", api_key="key", base_url="https://example.com/v1",
+                    llm_model="model", filepath=temp_dir, number_of_chapters=1000,
+                    volume_count=21,
+                )
+
     def test_blueprint_range_keeps_whole_novel_length(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project = pathlib.Path(temp_dir)

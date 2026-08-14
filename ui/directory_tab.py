@@ -84,3 +84,8 @@ def clear_chapter_blueprint(self):
     self.directory_text.delete("0.0", "end")
     self.directory_word_count_label.configure(text="字数：0")
     self.log("已清空章节蓝图编辑区，尚未写入文件。")
+
+
+def _set_volume_plan_text(self, content):
+    self.blueprint_volume_plan_text.delete("0.0", "end")
+    self.blueprint_volume_plan_text.insert("0.0", content)

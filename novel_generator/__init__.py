@@ -12,6 +12,7 @@ _EXPORTS = {
     "revise_architecture_section": (".architecture", "revise_architecture_section"),
     "extract_architecture_section_from_material": (".architecture", "extract_architecture_section_from_material"),
     "Chapter_blueprint_generate": (".blueprint", "Chapter_blueprint_generate"),
+    "generate_volume_plan": (".blueprint", "generate_volume_plan"),
     "revise_chapter_blueprint": (".blueprint", "revise_chapter_blueprint"),
     "get_last_n_chapters_text": (".chapter", "get_last_n_chapters_text"),
     "summarize_recent_chapters": (".chapter", "summarize_recent_chapters"),

@@ -220,19 +220,49 @@ def build_blueprint_generation_area(self, parent):
         values=["全书蓝图", "指定范围", "阶段规划"],
         variable=self.blueprint_mode_var,
     ).grid(row=2, column=1, padx=(0, 8), pady=4, sticky="ew")
-    ctk.CTkLabel(self.blueprint_generation_frame, text="起始章").grid(row=2, column=2, padx=(4, 4), pady=4, sticky="e")
-    ctk.CTkEntry(self.blueprint_generation_frame, textvariable=self.blueprint_start_var, width=70).grid(row=2, column=3, padx=(0, 8), pady=4, sticky="ew")
-    ctk.CTkLabel(self.blueprint_generation_frame, text="结束章").grid(row=2, column=4, padx=(4, 4), pady=4, sticky="e")
-    ctk.CTkEntry(self.blueprint_generation_frame, textvariable=self.blueprint_end_var, width=70).grid(row=2, column=5, padx=(0, 8), pady=4, sticky="ew")
-    ctk.CTkLabel(self.blueprint_generation_frame, text="阶段 / 目标").grid(row=3, column=0, padx=(8, 4), pady=4, sticky="e")
-    ctk.CTkEntry(
+    start_label = ctk.CTkLabel(self.blueprint_generation_frame, text="起始章")
+    start_label.grid(row=2, column=2, padx=(4, 4), pady=4, sticky="e")
+    start_entry = ctk.CTkEntry(self.blueprint_generation_frame, textvariable=self.blueprint_start_var, width=70)
+    start_entry.grid(row=2, column=3, padx=(0, 8), pady=4, sticky="ew")
+    end_label = ctk.CTkLabel(self.blueprint_generation_frame, text="结束章")
+    end_label.grid(row=2, column=4, padx=(4, 4), pady=4, sticky="e")
+    end_entry = ctk.CTkEntry(self.blueprint_generation_frame, textvariable=self.blueprint_end_var, width=70)
+    end_entry.grid(row=2, column=5, padx=(0, 8), pady=4, sticky="ew")
+    phase_label = ctk.CTkLabel(self.blueprint_generation_frame, text="本卷重点 / 目标")
+    phase_label.grid(row=3, column=0, padx=(8, 4), pady=4, sticky="e")
+    phase_entry = ctk.CTkEntry(
         self.blueprint_generation_frame,
         textvariable=self.blueprint_phase_var,
-        placeholder_text="例如：开局入局、宗门试炼、决战收束",
-    ).grid(row=3, column=1, columnspan=5, padx=(0, 8), pady=4, sticky="ew")
+        placeholder_text="例如：本卷完成主角入局并揭开身世线索",
+    )
+    phase_entry.grid(row=3, column=1, columnspan=5, padx=(0, 8), pady=4, sticky="ew")
+    volume_count_label = ctk.CTkLabel(self.blueprint_generation_frame, text="分卷数")
+    volume_count_label.grid(row=4, column=0, padx=(8, 4), pady=4, sticky="e")
+    volume_count_entry = ctk.CTkEntry(self.blueprint_generation_frame, textvariable=self.blueprint_volume_count_var, width=70)
+    volume_count_entry.grid(row=4, column=1, padx=(0, 8), pady=4, sticky="ew")
+    current_volume_label = ctk.CTkLabel(self.blueprint_generation_frame, text="当前卷")
+    current_volume_label.grid(row=4, column=2, padx=(4, 4), pady=4, sticky="e")
+    current_volume_entry = ctk.CTkEntry(self.blueprint_generation_frame, textvariable=self.blueprint_current_volume_var, width=70)
+    current_volume_entry.grid(row=4, column=3, padx=(0, 8), pady=4, sticky="ew")
+    volume_plan_label = ctk.CTkLabel(self.blueprint_generation_frame, text="分卷规划（可手填或 AI 生成）")
+    volume_plan_label.grid(row=5, column=0, columnspan=6, padx=8, pady=(4, 2), sticky="w")
+    self.blueprint_volume_plan_text = ctk.CTkTextbox(self.blueprint_generation_frame, height=82, wrap="word")
+    self.blueprint_volume_plan_text.grid(row=6, column=0, columnspan=6, padx=8, pady=(0, 4), sticky="ew")
+    if getattr(self, "blueprint_volume_plan_default", ""):
+        self.blueprint_volume_plan_text.insert("0.0", self.blueprint_volume_plan_default)
+    self.blueprint_volume_plan_text.bind("<KeyRelease>", lambda _event: self._schedule_persist_project_settings(), add="+")
+    from ui.context_menu import TextWidgetContextMenu
+    TextWidgetContextMenu(self.blueprint_volume_plan_text)
+    self.btn_generate_volume_plan = ctk.CTkButton(
+        self.blueprint_generation_frame,
+        text="AI 生成分卷规划",
+        command=self.generate_volume_plan_ui,
+        height=30,
+    )
+    self.btn_generate_volume_plan.grid(row=7, column=0, columnspan=3, sticky="ew", padx=8, pady=(2, 4))
     from ui.skills_tab import open_skill_selector, update_skill_selection_label
     self.blueprint_skill_selection_button = ctk.CTkButton(self.blueprint_generation_frame, text="选择写作技能（0）", command=lambda: open_skill_selector(self), font=FONT, height=30)
-    self.blueprint_skill_selection_button.grid(row=4, column=0, columnspan=3, sticky="ew", padx=8, pady=(2, 4))
+    self.blueprint_skill_selection_button.grid(row=7, column=3, columnspan=3, sticky="ew", padx=8, pady=(2, 4))
     update_skill_selection_label(self)
     self.btn_generate_directory = ctk.CTkButton(
         self.blueprint_generation_frame,
@@ -241,7 +271,27 @@ def build_blueprint_generation_area(self, parent):
         font=FONT,
         height=34,
     )
-    self.btn_generate_directory.grid(row=5, column=0, columnspan=6, sticky="ew", padx=8, pady=(4, 8))
+    self.btn_generate_directory.grid(row=8, column=0, columnspan=6, sticky="ew", padx=8, pady=(4, 8))
+    self._blueprint_range_widgets = (start_label, start_entry, end_label, end_entry)
+    self._blueprint_phase_widgets = (phase_label, phase_entry)
+    self._blueprint_volume_widgets = (
+        volume_count_label, volume_count_entry, current_volume_label,
+        current_volume_entry, volume_plan_label, self.blueprint_volume_plan_text,
+        self.btn_generate_volume_plan,
+    )
+    self.blueprint_mode_var.trace_add("write", lambda *_args: update_blueprint_mode_visibility(self))
+    update_blueprint_mode_visibility(self)
+
+
+def update_blueprint_mode_visibility(self):
+    """Show only controls relevant to the selected blueprint mode."""
+    mode = self.blueprint_mode_var.get().strip()
+    show_range = mode in {"指定范围", "阶段规划"}
+    show_volume = mode == "阶段规划"
+    for widget in self._blueprint_range_widgets:
+        (widget.grid if show_range else widget.grid_remove)()
+    for widget in self._blueprint_phase_widgets + self._blueprint_volume_widgets:
+        (widget.grid if show_volume else widget.grid_remove)()
 
 def build_chapter_params_area(self, start_row=0):
     self.chapter_params_frame = ctk.CTkScrollableFrame(

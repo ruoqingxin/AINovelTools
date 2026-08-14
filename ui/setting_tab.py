@@ -102,6 +102,16 @@ def _outline_step_index(self):
     return int(str(self.outline_step_var.get()).split(".", 1)[0])
 
 
+def _outline_active_target(self):
+    item_id = getattr(self, "_architecture_active_item_id", None)
+    custom = str(item_id or "")
+    if custom.startswith("custom-"):
+        item = _outline_workflow(self).custom_section(custom)
+        return "custom", custom, item["title"]
+    index = _outline_tree_step_index(item_id) or _outline_step_index(self)
+    return "step", index, _outline_workflow(self).step(index)["title"]
+
+
 def load_outline_workflow_project(self):
     """Load the persisted confirmed outline into the section editor."""
     filepath = self.filepath_var.get().strip()
@@ -215,20 +225,22 @@ def confirm_outline_step(self):
 def extract_outline_step_from_file(self):
     path = filedialog.askopenfilename(title="选择用于提炼的资料", filetypes=[("文本文件", "*.txt *.md"), ("所有文件", "*.*")])
     if not path: return
-    index = _outline_step_index(self)
+    target_type, target_id, target_title = _outline_active_target(self)
 
     def task():
         try:
-            workflow = _outline_workflow(self)
             source = read_knowledge_file(path).strip()
             if not source:
                 raise ValueError("所选文件没有可读取的文字内容")
             config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
             adapter = _create_outline_adapter(config)
-            extracted = adapter.invoke(_outline_file_prompt(workflow.step(index)["title"], source))
+            extracted = adapter.invoke(_outline_file_prompt(target_title, source))
 
             def apply_result():
-                commit_outline_ai_result(self, index, extracted, "file_extract_ai", "文件提炼")
+                if target_type == "custom":
+                    commit_custom_outline_ai_result(self, target_id, extracted, "文件提炼")
+                else:
+                    commit_outline_ai_result(self, target_id, extracted, "file_extract_ai", "文件提炼")
 
             self.call_in_ui(apply_result)
         except Exception as exc:
@@ -238,7 +250,7 @@ def extract_outline_step_from_file(self):
 
 
 def derive_outline_step_with_ai(self):
-    index = _outline_step_index(self)
+    target_type, target_id, target_title = _outline_active_target(self)
 
     def task():
         try:
@@ -246,10 +258,14 @@ def derive_outline_step_with_ai(self):
             config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
             adapter = _create_outline_adapter(config)
             generated = adapter.invoke(_outline_derive_prompt(
-                workflow.step(index)["title"], workflow.confirmed_context(index)))
+                target_title,
+                workflow.confirmed_context(target_id if target_type == "step" else 1)))
 
             def apply_result():
-                commit_outline_ai_result(self, index, generated, "ai_derive", "AI 推导")
+                if target_type == "custom":
+                    commit_custom_outline_ai_result(self, target_id, generated, "AI 推导")
+                else:
+                    commit_outline_ai_result(self, target_id, generated, "ai_derive", "AI 推导")
 
             self.call_in_ui(apply_result)
         except Exception as exc:
@@ -311,6 +327,27 @@ def commit_outline_ai_result(self, index, content, source, operation_label):
     else:
         self.log(
             f"{operation_label}结果已保存到第 {index} 步“{item['title']}”，"
+            f"当前正在编辑“{self._architecture_active_title()}”，未覆盖当前正文。"
+        )
+    return True
+
+
+def commit_custom_outline_ai_result(self, section_id, content, operation_label):
+    """Write an async result back to its original custom section only."""
+    active_item = getattr(self, "_architecture_active_item_id", None)
+    item = _outline_workflow(self).update_custom_section(section_id, content)
+    if active_item == section_id:
+        editor = getattr(self, "architecture_section_text", self.setting_text)
+        editor.delete("0.0", "end")
+        editor.insert("0.0", item["content"])
+        self.outline_step_status.configure(text="AI 已生成，待确认")
+        self.architecture_section_status_label.configure(
+            text=f"当前：{item['title']}（草稿）"
+        )
+        self._set_architecture_active_baseline(section_id, item, item["content"])
+    else:
+        self.log(
+            f"{operation_label}结果已保存到自定义分区“{item['title']}”，"
             f"当前正在编辑“{self._architecture_active_title()}”，未覆盖当前正文。"
         )
     return True

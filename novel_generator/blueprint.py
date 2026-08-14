@@ -43,6 +43,49 @@ def limit_chapter_blueprint(blueprint_text: str, limit_chapters: int = 100) -> s
     selected = chapters[-limit_chapters:]
     return "\n\n".join(selected).strip()
 
+
+def generate_volume_plan(
+    interface_format: str,
+    api_key: str,
+    base_url: str,
+    llm_model: str,
+    filepath: str,
+    number_of_chapters: int,
+    volume_count: int,
+    temperature: float = 0.7,
+    max_tokens: int = 4096,
+    timeout: int = 600,
+) -> str:
+    """Generate an editable whole-book volume plan without changing the blueprint."""
+    total_chapters = max(1, int(number_of_chapters))
+    volume_count = int(volume_count)
+    if not 1 <= volume_count <= 20:
+        raise ValueError("分卷数必须在 1-20 之间")
+
+    repository = NovelProjectRepository(filepath)
+    architecture_text = repository.read(repository.ARCHITECTURE).strip()
+    if not architecture_text:
+        raise ValueError("小说架构为空，请先生成或保存小说架构")
+
+    prompt = prompt_definitions.volume_plan_prompt.format(
+        number_of_chapters=total_chapters,
+        volume_count=volume_count,
+        novel_architecture=architecture_text,
+    )
+    adapter = create_llm_adapter(
+        interface_format=interface_format,
+        base_url=base_url,
+        model_name=llm_model,
+        api_key=api_key,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    result = invoke_with_cleaning(adapter, prompt).strip()
+    if not result:
+        raise RuntimeError("AI 未返回分卷规划")
+    return result
+
 def Chapter_blueprint_generate(
     interface_format: str,
     api_key: str,

@@ -14,6 +14,7 @@ from novel_generator import (
     revise_architecture_section,
     extract_architecture_section_from_material,
     Chapter_blueprint_generate,
+    generate_volume_plan,
     revise_chapter_blueprint,
     generate_chapter_draft,
     revise_chapter_draft,
@@ -153,22 +154,37 @@ def generate_chapter_blueprint_ui(self):
         return
 
     mode = self.blueprint_mode_var.get().strip()
-    try:
-        start = max(1, int(self.blueprint_start_var.get()))
-        end = max(start, int(self.blueprint_end_var.get()))
-    except (TypeError, ValueError):
-        messagebox.showwarning("范围无效", "起始章和结束章必须是整数。")
-        return
     total_chapters = self.safe_get_int(self.num_chapters_var, 0)
-    if end > total_chapters:
-        messagebox.showwarning("范围无效", f"结束章不能超过全书章节数 {total_chapters}。")
-        return
+    if mode == "全书蓝图":
+        start, end = 1, total_chapters
+    else:
+        try:
+            start = max(1, int(self.blueprint_start_var.get()))
+            end = max(start, int(self.blueprint_end_var.get()))
+        except (TypeError, ValueError):
+            messagebox.showwarning("范围无效", "起始章和结束章必须是整数。")
+            return
+        if end > total_chapters:
+            messagebox.showwarning("范围无效", f"结束章不能超过全书章节数 {total_chapters}。")
+            return
     phase = self.blueprint_phase_var.get().strip()
     if mode == "阶段规划" and not phase:
         messagebox.showwarning("缺少阶段目标", "阶段规划模式请填写阶段名称或阶段目标。")
         return
-    if mode == "全书蓝图":
-        start, end = 1, total_chapters
+    volume_count, current_volume = 0, 0
+    if mode == "阶段规划":
+        try:
+            volume_count = int(self.blueprint_volume_count_var.get())
+            current_volume = int(self.blueprint_current_volume_var.get())
+        except (TypeError, ValueError):
+            messagebox.showwarning("分卷信息无效", "分卷数和当前卷必须是整数。")
+            return
+        if not 1 <= volume_count <= 20:
+            messagebox.showwarning("分卷数无效", "分卷数必须在 1-20 之间。")
+            return
+        if not 1 <= current_volume <= volume_count:
+            messagebox.showwarning("当前卷无效", "当前卷必须在计划分卷范围内。")
+            return
     range_text = f"第 {start}-{end} 章"
     if not messagebox.askyesno("确认", f"确定生成{range_text}的章节蓝图吗？\n模式：{mode}"):
         return
@@ -192,12 +208,18 @@ def generate_chapter_blueprint_ui(self):
 
 
             user_guidance = self.planning_guide_text.get("0.0", "end").strip()
+            volume_plan = self.blueprint_volume_plan_text.get("0.0", "end").strip()
             from ui.skills_tab import get_selected_skill_prompt
             user_guidance = (user_guidance + get_selected_skill_prompt(self)).strip()
             if mode == "指定范围":
                 user_guidance += f"\n只生成第 {start}-{end} 章，保持与已有蓝图连续。"
             elif mode == "阶段规划":
-                user_guidance += f"\n当前阶段：{phase}。重点规划第 {start}-{end} 章。"
+                user_guidance += (
+                    f"\n当前为全书第 {current_volume}/{volume_count} 卷，"
+                    f"卷阶段目标：{phase}。重点规划第 {start}-{end} 章。"
+                )
+            if volume_plan:
+                user_guidance += f"\n分卷总规划（以此为结构约束）：\n{volume_plan}"
 
             self.safe_log("开始生成章节蓝图...")
             operation = Chapter_blueprint_generate(
@@ -225,6 +247,46 @@ def generate_chapter_blueprint_ui(self):
         finally:
             self.enable_button_safe(self.btn_generate_directory)
     _start_background(self, "generate_blueprint", task)
+
+
+def generate_volume_plan_ui(self):
+    validation_error = self.validate_generation_config("chapter_outline")
+    if validation_error:
+        messagebox.showwarning("生成前检查", validation_error)
+        return
+    try:
+        volume_count = int(self.blueprint_volume_count_var.get())
+    except (TypeError, ValueError):
+        messagebox.showwarning("分卷数无效", "分卷数必须是 1-20 的整数。")
+        return
+    if not 1 <= volume_count <= 20:
+        messagebox.showwarning("分卷数无效", "分卷数必须在 1-20 之间。")
+        return
+    filepath = self.filepath_var.get().strip()
+
+    def task():
+        self.disable_button_safe(self.btn_generate_volume_plan)
+        try:
+            config = get_llm_config(self.loaded_config, self.chapter_outline_llm_var.get())
+            plan = generate_volume_plan(
+                interface_format=config["interface_format"],
+                api_key=config.get("api_key", ""),
+                base_url=config["base_url"],
+                llm_model=config["model_name"],
+                filepath=filepath,
+                number_of_chapters=self.safe_get_int(self.num_chapters_var, 0),
+                volume_count=volume_count,
+                temperature=config["temperature"],
+                max_tokens=config["max_tokens"],
+                timeout=config["timeout"],
+            )
+            self.call_in_ui(lambda: self._set_volume_plan_text(plan))
+            self.safe_log("✅ 分卷规划已生成，可直接修改后用于阶段规划。")
+        except Exception:
+            self.handle_exception("生成分卷规划时出错")
+        finally:
+            self.enable_button_safe(self.btn_generate_volume_plan)
+    self.start_background_operation("generate_volume_plan", task, self.btn_generate_volume_plan)
 
 
 def revise_novel_architecture_ui(self):

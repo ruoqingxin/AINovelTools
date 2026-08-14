@@ -35,6 +35,7 @@ from ui.novel_params_tab import (
 )
 from ui.generation_handlers import (
     generate_chapter_blueprint_ui,
+    generate_volume_plan_ui,
     revise_architecture_section_ui,
     revise_chapter_blueprint_ui,
     generate_chapter_draft_ui,
@@ -84,7 +85,7 @@ from ui.setting_tab import (
     derive_outline_step_with_ai,
     finalize_outline_workflow,
 )
-from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint, clear_chapter_blueprint
+from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint, clear_chapter_blueprint, _set_volume_plan_text
 from ui.character_tab import build_character_tab, load_character_state, save_character_state
 from ui.summary_tab import build_summary_tab, load_global_summary, save_global_summary
 from ui.chapters_tab import refresh_chapters_list, on_chapter_selected, load_chapter_content, save_current_chapter, prev_chapter, next_chapter, build_chapter_navigation
@@ -263,6 +264,9 @@ class NovelGeneratorGUI:
         self.blueprint_start_var = ctk.StringVar(value="1")
         self.blueprint_end_var = ctk.StringVar(value=str(self.num_chapters_var.get()))
         self.blueprint_phase_var = ctk.StringVar(value="")
+        self.blueprint_volume_count_var = ctk.StringVar(value=str(op.get("blueprint_volume_count", 5) if self.loaded_config and "other_params" in self.loaded_config else 5))
+        self.blueprint_current_volume_var = ctk.StringVar(value=str(op.get("blueprint_current_volume", 1) if self.loaded_config and "other_params" in self.loaded_config else 1))
+        self.blueprint_volume_plan_default = op.get("blueprint_volume_plan", "") if self.loaded_config and "other_params" in self.loaded_config else ""
 
         # --------------- 全局日志与整体Tab布局 ---------------
         self.master.grid_rowconfigure(0, weight=0)
@@ -875,11 +879,15 @@ class NovelGeneratorGUI:
                 "key_items": self.key_items_var.get().strip(),
                 "scene_location": self.scene_location_var.get().strip(),
                 "time_constraint": self.time_constraint_var.get().strip(),
+                "blueprint_volume_count": self.safe_get_int(self.blueprint_volume_count_var, 5),
+                "blueprint_current_volume": self.safe_get_int(self.blueprint_current_volume_var, 1),
             }
             if hasattr(self, "topic_text"):
                 fields["topic"] = self.topic_text.get("0.0", "end").strip()
             if hasattr(self, "planning_guide_text"):
                 fields["planning_guidance"] = self.planning_guide_text.get("0.0", "end").strip()
+            if hasattr(self, "blueprint_volume_plan_text"):
+                fields["blueprint_volume_plan"] = self.blueprint_volume_plan_text.get("0.0", "end").strip()
             if hasattr(self, "user_guide_text"):
                 fields["chapter_guidance"] = self.user_guide_text.get("0.0", "end").strip()
             other.update(fields)
@@ -1105,6 +1113,7 @@ class NovelGeneratorGUI:
 
     # ----------------- 将导入的各模块函数直接赋给类方法 -----------------
     generate_chapter_blueprint_ui = generate_chapter_blueprint_ui
+    generate_volume_plan_ui = generate_volume_plan_ui
     revise_architecture_section_ui = revise_architecture_section_ui
     revise_chapter_blueprint_ui = revise_chapter_blueprint_ui
     generate_chapter_draft_ui = generate_chapter_draft_ui
@@ -1155,6 +1164,7 @@ class NovelGeneratorGUI:
     load_chapter_blueprint = load_chapter_blueprint
     save_chapter_blueprint = save_chapter_blueprint
     clear_chapter_blueprint = clear_chapter_blueprint
+    _set_volume_plan_text = _set_volume_plan_text
     load_character_state = load_character_state
     save_character_state = save_character_state
     load_global_summary = load_global_summary
