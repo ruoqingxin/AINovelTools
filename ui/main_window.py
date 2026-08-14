@@ -76,6 +76,7 @@ from ui.setting_tab import (
     update_architecture_input_visibility,
     toggle_architecture_input_panel,
     load_outline_workflow_step,
+    on_outline_step_menu_changed,
     load_outline_workflow_project,
     confirm_outline_step,
     extract_outline_step_from_file,
@@ -1056,6 +1057,7 @@ class NovelGeneratorGUI:
     update_architecture_input_visibility = update_architecture_input_visibility
     toggle_architecture_input_panel = toggle_architecture_input_panel
     load_outline_workflow_step = load_outline_workflow_step
+    on_outline_step_menu_changed = on_outline_step_menu_changed
     load_outline_workflow_project = load_outline_workflow_project
     confirm_outline_step = confirm_outline_step
     extract_outline_step_from_file = extract_outline_step_from_file

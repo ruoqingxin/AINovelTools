@@ -125,6 +125,37 @@ def load_outline_workflow_step(self):
     editor.delete("0.0", "end")
     editor.insert("0.0", item.get("content", ""))
     self.outline_step_status.configure(text={"confirmed": "已确认", "draft": "草稿"}.get(item.get("status"), "未开始"))
+    target_item = f"outline-step-{item['index']}"
+    if getattr(self, "architecture_section_tree", None) is not None and self.architecture_section_tree.exists(target_item):
+        self._set_architecture_tree_selection(target_item)
+        self._set_architecture_active_baseline(target_item, item, item.get("content", ""))
+        self.architecture_section_status_label.configure(
+            text=f"当前：{item['title']}（{ {'confirmed': '已确认', 'draft': '草稿'}.get(item.get('status'), '未开始') }）"
+        )
+
+
+def on_outline_step_menu_changed(self, value=None):
+    """Keep the dropdown and fixed-section tree on the same active step."""
+    target_item = f"outline-step-{_outline_step_index(self)}"
+    active_item = getattr(self, "_architecture_active_item_id", None)
+    if active_item and active_item != target_item and self.architecture_section_has_unsaved_changes():
+        choice = messagebox.askyesnocancel(
+            "分区尚未保存",
+            f"“{self._architecture_active_title()}”有未保存内容，是否保存后切换？",
+        )
+        if choice is None:
+            if _outline_tree_step_index(active_item):
+                self.outline_step_var.set(
+                    f"{_outline_tree_step_index(active_item)}. {OUTLINE_STEPS[_outline_tree_step_index(active_item) - 1]}"
+                )
+            return
+        if choice and not self.save_architecture_section():
+            return
+    if getattr(self, "architecture_section_tree", None) is not None and self.architecture_section_tree.exists(target_item):
+        self._set_architecture_tree_selection(target_item)
+        self._display_architecture_section(target_item)
+    else:
+        self.load_outline_workflow_step()
 
 
 def _outline_tree_step_index(item_id):
@@ -145,12 +176,24 @@ def _save_outline_editor(self, source="manual"):
 def confirm_outline_step(self):
     try:
         workflow = _outline_workflow(self)
+        index = _outline_step_index(self)
         editor = getattr(self, "architecture_section_text", self.setting_text)
-        item = workflow.confirm(_outline_step_index(self), editor.get("0.0", "end-1c"))
+        item = workflow.confirm(index, editor.get("0.0", "end-1c"))
         self.outline_step_status.configure(text="分区已确认并保存")
-        next_index = min(item["index"] + 1, len(OUTLINE_STEPS))
-        self.outline_step_var.set(f"{next_index}. {OUTLINE_STEPS[next_index - 1]}")
-        self.load_outline_workflow_step()
+        # Keep the confirmed text visible. The next step is selected manually
+        # so confirmation never looks like it cleared the current editor.
+        self.outline_step_var.set(f"{index}. {OUTLINE_STEPS[index - 1]}")
+        editor.delete("0.0", "end")
+        editor.insert("0.0", item.get("content", ""))
+        self.architecture_section_status_label.configure(
+            text=f"当前：{item['title']}（已确认）"
+        )
+        target_item = f"outline-step-{index}"
+        if getattr(self, "architecture_section_tree", None) is not None and self.architecture_section_tree.exists(target_item):
+            self._set_architecture_tree_selection(target_item)
+        self._set_architecture_active_baseline(
+            target_item, item, item.get("content", "")
+        )
     except (ValueError, IndexError, OSError) as exc:
         messagebox.showwarning("无法确认", str(exc))
 
@@ -158,35 +201,54 @@ def confirm_outline_step(self):
 def extract_outline_step_from_file(self):
     path = filedialog.askopenfilename(title="选择用于提炼的资料", filetypes=[("文本文件", "*.txt *.md"), ("所有文件", "*.*")])
     if not path: return
-    try:
-        workflow = _outline_workflow(self)
-        index = _outline_step_index(self)
-        source = read_knowledge_file(path).strip()
-        if not source:
-            raise ValueError("所选文件没有可读取的文字内容")
-        config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
-        adapter = _create_outline_adapter(config)
-        extracted = adapter.invoke(_outline_file_prompt(workflow.step(index)["title"], source))
-        item = workflow.update(index, extracted, "file_extract_ai")
-        editor = getattr(self, "architecture_section_text", self.setting_text)
-        editor.delete("0.0", "end"); editor.insert("0.0", item["content"])
-        self.outline_step_status.configure(text="已提炼，待确认")
-    except (OSError, ValueError) as exc:
-        messagebox.showerror("提炼失败", str(exc))
+    index = _outline_step_index(self)
+
+    def task():
+        try:
+            workflow = _outline_workflow(self)
+            source = read_knowledge_file(path).strip()
+            if not source:
+                raise ValueError("所选文件没有可读取的文字内容")
+            config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
+            adapter = _create_outline_adapter(config)
+            extracted = adapter.invoke(_outline_file_prompt(workflow.step(index)["title"], source))
+            item = workflow.update(index, extracted, "file_extract_ai")
+
+            def apply_result():
+                editor = getattr(self, "architecture_section_text", self.setting_text)
+                editor.delete("0.0", "end")
+                editor.insert("0.0", item["content"])
+                self.outline_step_status.configure(text="已提炼，待确认")
+
+            self.call_in_ui(apply_result)
+        except Exception as exc:
+            self.call_in_ui(lambda: messagebox.showerror("提炼失败", str(exc)))
+
+    self.start_background_operation("文件提炼", task)
 
 
 def derive_outline_step_with_ai(self):
-    try:
-        workflow = _outline_workflow(self); index = _outline_step_index(self)
-        config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
-        adapter = _create_outline_adapter(config)
-        item = workflow.set_from_ai(index, lambda title, prior: adapter.invoke(
-            _outline_derive_prompt(title, prior)))
-        editor = getattr(self, "architecture_section_text", self.setting_text)
-        editor.delete("0.0", "end"); editor.insert("0.0", item["content"])
-        self.outline_step_status.configure(text="AI 已推导，待确认")
-    except Exception as exc:
-        messagebox.showerror("AI 推导失败", str(exc))
+    index = _outline_step_index(self)
+
+    def task():
+        try:
+            workflow = _outline_workflow(self)
+            config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
+            adapter = _create_outline_adapter(config)
+            item = workflow.set_from_ai(index, lambda title, prior: adapter.invoke(
+                _outline_derive_prompt(title, prior)))
+
+            def apply_result():
+                editor = getattr(self, "architecture_section_text", self.setting_text)
+                editor.delete("0.0", "end")
+                editor.insert("0.0", item["content"])
+                self.outline_step_status.configure(text="AI 已推导，待确认")
+
+            self.call_in_ui(apply_result)
+        except Exception as exc:
+            self.call_in_ui(lambda: messagebox.showerror("AI 推导失败", str(exc)))
+
+    self.start_background_operation("AI 推导", task)
 
 
 def _create_outline_adapter(config):
@@ -206,6 +268,8 @@ def _outline_derive_prompt(title, prior):
     context = "\n".join(
         f"{item['index']}. {item['title']}：{item['content']}" for item in prior
     ) or "（暂无已确认设定）"
+    if not prior:
+        context += "\n注意：前面可能存在已保存但尚未点击“确认分区”的草稿；草稿不能作为已确认设定使用。"
     return (
         f"你是小说大纲编辑。请根据前面已经确认的分区内容，围绕当前分区标题“{title}”推导具体正文。"
         "只输出当前分区正文，不要输出标题、解释或免责声明。\n\n"
@@ -241,7 +305,7 @@ def _build_section_editor(self, parent):
     stepbar.columnconfigure(1, weight=1)
     ctk.CTkLabel(stepbar, text="大纲分区").grid(row=0, column=0, padx=(4, 6))
     self.outline_step_var = ctk.StringVar(value="1. 题材类型")
-    self.outline_step_menu = ctk.CTkOptionMenu(stepbar, variable=self.outline_step_var, values=[f"{i}. {title}" for i, title in enumerate(OUTLINE_STEPS, 1)], command=lambda _: self.load_outline_workflow_step(), width=220)
+    self.outline_step_menu = ctk.CTkOptionMenu(stepbar, variable=self.outline_step_var, values=[f"{i}. {title}" for i, title in enumerate(OUTLINE_STEPS, 1)], command=lambda value: self.on_outline_step_menu_changed(value), width=220)
     self.outline_step_menu.grid(row=0, column=1, sticky="w")
     self.outline_step_status = ctk.CTkLabel(stepbar, text="未开始", anchor="w")
     self.outline_step_status.grid(row=0, column=2, padx=8, sticky="w")
@@ -378,7 +442,7 @@ def _build_section_editor(self, parent):
     group.grid(row=0, column=0, sticky="ew", padx=(0, 3))
     group, _ = _add_action_with_help(
         section_actions, "保存本分区", self.save_architecture_section,
-        "将当前分区修改写入 Novel_architecture.txt，但不会改变 34 步确认状态。", width=112, height=34)
+        "保存当前正文；如果修改了已确认内容，该分区会变为待复核，必须再次点击“确认分区”。未修改的已确认内容会保持确认状态。", width=112, height=34)
     group.grid(row=0, column=1, sticky="ew", padx=3)
     group, self.btn_revise_architecture_section = _add_action_with_help(
         section_actions, "AI 重写本分区", self.revise_architecture_section_ui,
@@ -612,7 +676,12 @@ def _save_active_architecture_section(self):
         self.refresh_architecture_sections(select_key=item_id)
     self._architecture_pending_save = False
     self._architecture_pending_reason = ""
-    self.log(f"已保存小说架构分区：{self._architecture_active_title()}。")
+    status = _outline_workflow(self).step(index).get("status") if index else "custom"
+    self.log(
+        f"已保存已确认小说架构分区：{self._architecture_active_title()}。"
+        if status == "confirmed"
+        else f"已保存小说架构分区草稿：{self._architecture_active_title()}。"
+    )
     return True
 
 

@@ -43,6 +43,13 @@ class OutlineWorkflowTest(unittest.TestCase):
             self.assertEqual("draft", workflow.step(2)["status"])
             self.assertFalse(workflow.data["finalized"])
 
+    def test_saving_unchanged_confirmed_section_keeps_confirmation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workflow = OutlineWorkflow(directory)
+            workflow.confirm(1, "玄幻")
+            workflow.update(1, "玄幻", "manual")
+            self.assertEqual("confirmed", workflow.step(1)["status"])
+
     def test_state_survives_reload_and_finalization(self):
         with tempfile.TemporaryDirectory() as directory:
             workflow = OutlineWorkflow(directory)

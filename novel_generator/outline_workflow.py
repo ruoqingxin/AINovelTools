@@ -142,7 +142,12 @@ class OutlineWorkflow:
         changed = item["content"] != content
         item["content"] = content
         item["source"] = source or "manual"
-        item["status"] = "draft" if content else "pending"
+        if was_confirmed and not changed:
+            # Saving an unchanged confirmed section must not silently revoke
+            # its confirmation or remove it from later AI context.
+            item["status"] = "confirmed"
+        else:
+            item["status"] = "draft" if content else "pending"
         if was_confirmed and changed:
             # Later sections were derived from this confirmed premise and must
             # be reviewed again when that premise changes.
