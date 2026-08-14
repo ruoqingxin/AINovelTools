@@ -177,7 +177,9 @@ def generate_chapter_blueprint_ui(self):
         self.disable_button_safe(self.btn_generate_directory)
         try:
 
-            number_of_chapters = end
+            # Keep the configured whole-book length (for example 1000) while
+            # generating only the requested range (for example chapters 1-10).
+            number_of_chapters = total_chapters
 
             llm_config = get_llm_config(self.loaded_config, self.chapter_outline_llm_var.get())
             interface_format = llm_config["interface_format"]

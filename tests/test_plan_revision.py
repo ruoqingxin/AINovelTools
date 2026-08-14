@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from novel_generator.architecture import revise_novel_architecture
-from novel_generator.blueprint import revise_chapter_blueprint
+from novel_generator.blueprint import revise_chapter_blueprint, Chapter_blueprint_generate
 
 
 class FakeAdapter:
@@ -18,6 +18,36 @@ class FakeAdapter:
 
 
 class PlanRevisionTest(unittest.TestCase):
+    def test_blueprint_range_keeps_whole_novel_length(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = pathlib.Path(temp_dir)
+            (project / "Novel_architecture.txt").write_text("小说架构内容", encoding="utf-8")
+            adapter = FakeAdapter("第1章 - 开端\n第2章 - 线索")
+            with patch("novel_generator.blueprint.create_llm_adapter", return_value=adapter):
+                result = Chapter_blueprint_generate(
+                    interface_format="OpenAI", api_key="key", base_url="https://example.com/v1",
+                    llm_model="model", filepath=temp_dir, number_of_chapters=1000,
+                    start_chapter=1, end_chapter=10, max_tokens=4096,
+                )
+            self.assertTrue(result)
+            self.assertIn("总计1000章", adapter.prompt)
+            self.assertIn("第1章到第10章", adapter.prompt)
+            self.assertNotIn("第10章大结局", adapter.prompt)
+
+    def test_later_existing_chapters_do_not_skip_requested_range(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = pathlib.Path(temp_dir)
+            (project / "Novel_architecture.txt").write_text("小说架构内容", encoding="utf-8")
+            (project / "Novel_directory.txt").write_text("第100章 - 后续记录", encoding="utf-8")
+            adapter = FakeAdapter("第1章 - 开端\n第2章 - 线索")
+            with patch("novel_generator.blueprint.create_llm_adapter", return_value=adapter):
+                Chapter_blueprint_generate(
+                    interface_format="OpenAI", api_key="key", base_url="https://example.com/v1",
+                    llm_model="model", filepath=temp_dir, number_of_chapters=1000,
+                    start_chapter=1, end_chapter=10, max_tokens=4096,
+                )
+            self.assertIn("第1章到第10章", adapter.prompt)
+
     def test_architecture_rewrite_uses_feedback_and_saves_complete_result(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project = pathlib.Path(temp_dir)
