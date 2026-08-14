@@ -4,7 +4,12 @@ import unittest
 from unittest.mock import patch
 
 from novel_generator.architecture import revise_novel_architecture
-from novel_generator.blueprint import revise_chapter_blueprint, Chapter_blueprint_generate, generate_volume_plan
+from novel_generator.blueprint import (
+    revise_chapter_blueprint,
+    Chapter_blueprint_generate,
+    generate_volume_plan,
+    blueprint_stage_guardrail,
+)
 
 
 class FakeAdapter:
@@ -18,6 +23,15 @@ class FakeAdapter:
 
 
 class PlanRevisionTest(unittest.TestCase):
+    def test_blueprint_stage_guardrails_change_across_novel_progress(self):
+        self.assertIn("立足期", blueprint_stage_guardrail(1000, 51, 100))
+        self.assertIn("成长扩张期", blueprint_stage_guardrail(1000, 151, 300))
+        self.assertIn("中段展开期", blueprint_stage_guardrail(1000, 351, 500))
+        self.assertIn("主线汇聚期", blueprint_stage_guardrail(1000, 601, 750))
+        self.assertIn("终局准备期", blueprint_stage_guardrail(1000, 801, 900))
+        self.assertIn("尚未覆盖最后一章", blueprint_stage_guardrail(1000, 951, 999))
+        self.assertIn("最后一章", blueprint_stage_guardrail(1000, 991, 1000))
+
     def test_volume_plan_generation_is_bounded(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pathlib.Path(temp_dir, "Novel_architecture.txt").write_text("小说架构内容", encoding="utf-8")
@@ -56,6 +70,13 @@ class PlanRevisionTest(unittest.TestCase):
             self.assertIn("总计1000章", adapter.prompt)
             self.assertIn("第1章到第10章", adapter.prompt)
             self.assertNotIn("第10章大结局", adapter.prompt)
+            self.assertIn("局部蓝图防剧透规则", adapter.prompt)
+            self.assertIn("不得提前确认上述终局答案", adapter.prompt)
+            self.assertIn("全书前5%的开局期", adapter.prompt)
+            self.assertIn("禁止自行创造近似名称", adapter.prompt)
+            self.assertIn("不得在一个短范围内跨越大域", adapter.prompt)
+            self.assertIn("逐章核对伤亡人数", adapter.prompt)
+            self.assertIn("不得用终局答案给未知线索命名", adapter.prompt)
 
     def test_later_existing_chapters_do_not_skip_requested_range(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -84,6 +105,26 @@ class PlanRevisionTest(unittest.TestCase):
                 )
             self.assertFalse(result)
             self.assertIn("不连续", result.message)
+
+    def test_existing_range_can_be_replaced(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = pathlib.Path(temp_dir)
+            (project / "Novel_architecture.txt").write_text("小说架构内容", encoding="utf-8")
+            (project / "Novel_directory.txt").write_text(
+                "第1章 - 旧内容\n\n第2章 - 旧内容\n\n第20章 - 后续", encoding="utf-8"
+            )
+            adapter = FakeAdapter("第1章 - 新内容\n\n第2章 - 新内容")
+            with patch("novel_generator.blueprint.create_llm_adapter", return_value=adapter):
+                result = Chapter_blueprint_generate(
+                    interface_format="OpenAI", api_key="key", base_url="https://example.com/v1",
+                    llm_model="model", filepath=temp_dir, number_of_chapters=20,
+                    start_chapter=1, end_chapter=2, replace_range=True,
+                )
+            saved = (project / "Novel_directory.txt").read_text(encoding="utf-8")
+            self.assertTrue(result)
+            self.assertIn("第1章 - 新内容", saved)
+            self.assertNotIn("第1章 - 旧内容", saved)
+            self.assertIn("第20章 - 后续", saved)
 
     def test_architecture_rewrite_uses_feedback_and_saves_complete_result(self):
         with tempfile.TemporaryDirectory() as temp_dir:

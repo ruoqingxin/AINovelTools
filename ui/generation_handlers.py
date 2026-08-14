@@ -195,7 +195,15 @@ def generate_chapter_blueprint_ui(self):
             messagebox.showwarning("当前卷无效", "当前卷必须在计划分卷范围内。")
             return
     range_text = f"第 {start}-{end} 章"
-    if not messagebox.askyesno("确认", f"确定生成{range_text}的章节蓝图吗？\n模式：{mode}"):
+    existing_path = os.path.join(filepath, "Novel_directory.txt")
+    existing_numbers = {
+        int(value) for value in re.findall(r"第\s*(\d+)\s*章", read_file(existing_path))
+    } if os.path.exists(existing_path) else set()
+    replace_existing_range = bool(existing_numbers) and all(
+        chapter in existing_numbers for chapter in range(start, end + 1)
+    )
+    action_text = "重新生成并替换" if replace_existing_range else "生成"
+    if not messagebox.askyesno("确认", f"确定{action_text}{range_text}的章节蓝图吗？\n模式：{mode}"):
         return
 
     def task():
@@ -243,6 +251,7 @@ def generate_chapter_blueprint_ui(self):
                 ,start_chapter=start
                 ,end_chapter=end
                 ,phase=phase
+                ,replace_range=replace_existing_range
             )
             if not operation:
                 self.safe_log(f"❌ {operation.message}")
