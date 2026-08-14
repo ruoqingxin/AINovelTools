@@ -259,7 +259,9 @@ def derive_outline_step_with_ai(self):
             adapter = _create_outline_adapter(config)
             generated = adapter.invoke(_outline_derive_prompt(
                 target_title,
-                workflow.confirmed_context(target_id if target_type == "step" else 1)))
+                workflow.confirmed_context(
+                    target_id if target_type == "step" else len(OUTLINE_STEPS) + 1
+                )))
 
             def apply_result():
                 if target_type == "custom":
