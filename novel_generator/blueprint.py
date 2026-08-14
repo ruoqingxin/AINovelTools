@@ -50,22 +50,17 @@ def Chapter_blueprint_generate(
     llm_model: str,
     filepath: str,
     number_of_chapters: int,
-    user_guidance: str = "",  # 新增参数
+    user_guidance: str = "",
     temperature: float = 0.7,
     max_tokens: int = 4096,
-    timeout: int = 600
-    ,start_chapter: int = 1
-    ,end_chapter: int | None = None
-    ,phase: str = ""
+    timeout: int = 600,
+    start_chapter: int = 1,
+    end_chapter: int | None = None,
+    phase: str = "",
 ) -> OperationResult:
     """
-    若 Novel_directory.txt 已存在且内容非空，则表示可能是之前的部分生成结果；
-      解析其中已有的章节数，从下一个章节继续分块生成；
-      对于已有章节目录，传入时仅保留最近100章目录，避免prompt过长。
-    否则：
-      - 若章节数 <= chunk_size，直接一次性生成
-      - 若章节数 > chunk_size，进行分块生成
-    生成完成后输出至 Novel_directory.txt。
+    `number_of_chapters` 是全书总章数；`start_chapter` 和 `end_chapter`
+    定义本次生成范围。已有蓝图会从该范围内的下一章继续生成。
     """
     # Total novel length and this run's range are separate concepts.
     total_chapters = max(1, int(number_of_chapters))
@@ -101,49 +96,26 @@ def Chapter_blueprint_generate(
     chunk_size = compute_chunk_size(requested_chapters, max_tokens)
     logging.info("Novel chapters=%s, requested range=[%s..%s], chunk_size=%s", total_chapters, start_chapter, end_chapter, chunk_size)
 
+    final_blueprint = existing_blueprint
+    current_start = start_chapter
     if existing_blueprint:
-        logging.info("Detected existing blueprint content. Will resume chunked generation from that point.")
-        pattern = r"第\s*(\d+)\s*章"
-        existing_chapter_numbers = re.findall(pattern, existing_blueprint)
-        existing_chapter_numbers = [int(x) for x in existing_chapter_numbers if x.isdigit()]
-        existing_in_range = [
-            chapter for chapter in existing_chapter_numbers
-            if start_chapter <= chapter <= end_chapter
+        logging.info("Resuming blueprint generation from existing content.")
+        chapter_numbers = [
+            int(value) for value in re.findall(r"第\s*(\d+)\s*章", existing_blueprint)
         ]
-        max_existing_chap = max(existing_in_range) if existing_in_range else start_chapter - 1
-        logging.info(
-            "Existing blueprint covers up to chapter %s in requested range.",
-            max_existing_chap,
-        )
-        final_blueprint = existing_blueprint
-        current_start = max(start_chapter, max_existing_chap + 1)
-        while current_start <= end_chapter:
-            current_end = min(current_start + chunk_size - 1, end_chapter)
-            limited_blueprint = limit_chapter_blueprint(final_blueprint, 100)
-            chunk_prompt = prompt_definitions.chunked_chapter_blueprint_prompt.format(
-                novel_architecture=architecture_text,
-                chapter_list=limited_blueprint,
-                number_of_chapters=total_chapters,
-                n=current_start,
-                m=current_end,
-                user_guidance=(user_guidance + (f"\n当前阶段：{phase}" if phase else "")).strip()
-            )
-            logging.info(f"Generating chapters [{current_start}..{current_end}] in a chunk...")
-            chunk_result = invoke_with_cleaning(llm_adapter, chunk_prompt)
-            if not chunk_result.strip():
-                logging.warning(f"Chunk generation for chapters [{current_start}..{current_end}] is empty.")
-                repository.write(repository.DIRECTORY, final_blueprint.strip())
-                return OperationResult.fail(f"第 {current_start}-{current_end} 章目录生成失败")
-            final_blueprint += "\n\n" + chunk_result.strip()
-            repository.write(repository.DIRECTORY, final_blueprint.strip())
-            current_start = current_end + 1
+        covered = [n for n in chapter_numbers if start_chapter <= n <= end_chapter]
+        current_start = max(covered, default=start_chapter - 1) + 1
 
-        logging.info("All chapters blueprint have been generated (resumed chunked).")
-        return OperationResult.ok("章节目录生成完成", final_blueprint, (filename_dir,))
-
-    if chunk_size >= requested_chapters:
-        guidance = (user_guidance + (f"\n当前阶段：{phase}" if phase else "")).strip()
-        if start_chapter == 1 and end_chapter == total_chapters:
+    guidance = (user_guidance + (f"\n当前阶段：{phase}" if phase else "")).strip()
+    single_full_book = (
+        not existing_blueprint
+        and start_chapter == 1
+        and end_chapter == total_chapters
+        and chunk_size >= requested_chapters
+    )
+    while current_start <= end_chapter:
+        current_end = min(current_start + chunk_size - 1, end_chapter)
+        if single_full_book:
             prompt = prompt_definitions.chapter_blueprint_prompt.format(
                 novel_architecture=architecture_text,
                 number_of_chapters=total_chapters,
@@ -152,37 +124,14 @@ def Chapter_blueprint_generate(
         else:
             prompt = prompt_definitions.chunked_chapter_blueprint_prompt.format(
                 novel_architecture=architecture_text,
-                chapter_list=limit_chapter_blueprint(existing_blueprint, 100),
+                chapter_list=limit_chapter_blueprint(final_blueprint, 100),
                 number_of_chapters=total_chapters,
-                n=start_chapter,
-                m=end_chapter,
+                n=current_start,
+                m=current_end,
                 user_guidance=guidance,
             )
-        blueprint_text = invoke_with_cleaning(llm_adapter, prompt)
-        if not blueprint_text.strip():
-            logging.warning("Chapter blueprint generation result is empty.")
-            return OperationResult.fail("章节目录生成结果为空")
-
-        repository.write(repository.DIRECTORY, blueprint_text)
-        logging.info("Novel_directory.txt (chapter blueprint) has been generated successfully (single-shot).")
-        return OperationResult.ok("章节目录生成完成", blueprint_text, (filename_dir,))
-
-    logging.info("Will generate chapter blueprint in chunked mode from scratch.")
-    final_blueprint = ""
-    current_start = start_chapter
-    while current_start <= end_chapter:
-        current_end = min(current_start + chunk_size - 1, end_chapter)
-        limited_blueprint = limit_chapter_blueprint(final_blueprint, 100)
-        chunk_prompt = prompt_definitions.chunked_chapter_blueprint_prompt.format(
-            novel_architecture=architecture_text,
-            chapter_list=limited_blueprint,
-            number_of_chapters=total_chapters,
-            n=current_start,
-            m=current_end,
-            user_guidance=(user_guidance + (f"\n当前阶段：{phase}" if phase else "")).strip()
-        )
         logging.info(f"Generating chapters [{current_start}..{current_end}] in a chunk...")
-        chunk_result = invoke_with_cleaning(llm_adapter, chunk_prompt)
+        chunk_result = invoke_with_cleaning(llm_adapter, prompt)
         if not chunk_result.strip():
             logging.warning(f"Chunk generation for chapters [{current_start}..{current_end}] is empty.")
             repository.write(repository.DIRECTORY, final_blueprint.strip())
@@ -193,8 +142,9 @@ def Chapter_blueprint_generate(
             final_blueprint = chunk_result.strip()
         repository.write(repository.DIRECTORY, final_blueprint.strip())
         current_start = current_end + 1
+        single_full_book = False
 
-    logging.info("Novel_directory.txt (chapter blueprint) has been generated successfully (chunked).")
+    logging.info("Novel_directory.txt (chapter blueprint) generated successfully.")
     return OperationResult.ok("章节目录生成完成", final_blueprint, (filename_dir,))
 
 
