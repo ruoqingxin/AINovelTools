@@ -71,6 +71,20 @@ class PlanRevisionTest(unittest.TestCase):
                 )
             self.assertIn("第1章到第10章", adapter.prompt)
 
+    def test_non_contiguous_existing_range_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = pathlib.Path(temp_dir)
+            (project / "Novel_architecture.txt").write_text("小说架构内容", encoding="utf-8")
+            (project / "Novel_directory.txt").write_text("第1章 - 开端\n第3章 - 跳跃", encoding="utf-8")
+            with patch("novel_generator.blueprint.create_llm_adapter"):
+                result = Chapter_blueprint_generate(
+                    interface_format="OpenAI", api_key="key", base_url="https://example.com/v1",
+                    llm_model="model", filepath=temp_dir, number_of_chapters=10,
+                    start_chapter=1, end_chapter=3, max_tokens=4096,
+                )
+            self.assertFalse(result)
+            self.assertIn("不连续", result.message)
+
     def test_architecture_rewrite_uses_feedback_and_saves_complete_result(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project = pathlib.Path(temp_dir)

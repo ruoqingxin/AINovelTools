@@ -59,6 +59,15 @@ def _start_background(self, operation_name, task):
     return self.start_background_operation(operation_name, task, button)
 
 
+def _get_planning_guidance(self):
+    """Read planning guidance from the editor when present, otherwise config."""
+    widget = getattr(self, "planning_guide_text", None)
+    if widget is not None:
+        return widget.get("0.0", "end").strip()
+    other_params = (getattr(self, "loaded_config", None) or {}).get("other_params", {})
+    return str(other_params.get("planning_guidance", "")).strip()
+
+
 def generate_novel_architecture_ui(self):
     validation_error = self.validate_generation_config("architecture", require_embedding=True)
     if validation_error:
@@ -98,7 +107,7 @@ def generate_novel_architecture_ui(self):
             num_chapters = self.safe_get_int(self.num_chapters_var, 10)
             word_number = self.safe_get_int(self.word_number_var, 3000)
             # 获取内容指导
-            user_guidance = self.planning_guide_text.get("0.0", "end").strip()
+            user_guidance = _get_planning_guidance(self)
             from ui.skills_tab import get_selected_skill_prompt
             user_guidance = (user_guidance + get_selected_skill_prompt(self)).strip()
 
@@ -207,13 +216,11 @@ def generate_chapter_blueprint_ui(self):
             timeout_val = llm_config["timeout"]
 
 
-            user_guidance = self.planning_guide_text.get("0.0", "end").strip()
+            user_guidance = _get_planning_guidance(self)
             volume_plan = self.blueprint_volume_plan_text.get("0.0", "end").strip()
             from ui.skills_tab import get_selected_skill_prompt
             user_guidance = (user_guidance + get_selected_skill_prompt(self)).strip()
-            if mode == "指定范围":
-                user_guidance += f"\n只生成第 {start}-{end} 章，保持与已有蓝图连续。"
-            elif mode == "阶段规划":
+            if mode == "阶段规划":
                 user_guidance += (
                     f"\n当前为全书第 {current_volume}/{volume_count} 卷，"
                     f"卷阶段目标：{phase}。重点规划第 {start}-{end} 章。"

@@ -2,7 +2,7 @@ import threading
 import unittest
 
 from ui.main_window import NovelGeneratorGUI
-from ui.generation_handlers import _BACKGROUND_OPERATION_BUTTONS
+from ui.generation_handlers import _BACKGROUND_OPERATION_BUTTONS, _get_planning_guidance
 
 
 class FakeMaster:
@@ -32,6 +32,11 @@ class FakeCancelButton:
 
 
 class BackgroundOperationTest(unittest.TestCase):
+    def test_planning_guidance_falls_back_to_saved_config(self):
+        gui = object.__new__(NovelGeneratorGUI)
+        gui.loaded_config = {"other_params": {"planning_guidance": "保持慢热节奏"}}
+        self.assertEqual("保持慢热节奏", _get_planning_guidance(gui))
+
     def test_generation_operations_map_to_their_own_buttons(self):
         self.assertEqual(
             {

@@ -146,8 +146,17 @@ def Chapter_blueprint_generate(
         chapter_numbers = [
             int(value) for value in re.findall(r"第\s*(\d+)\s*章", existing_blueprint)
         ]
-        covered = [n for n in chapter_numbers if start_chapter <= n <= end_chapter]
-        current_start = max(covered, default=start_chapter - 1) + 1
+        covered = {
+            n for n in chapter_numbers if start_chapter <= n <= end_chapter
+        }
+        current_start = start_chapter
+        while current_start in covered:
+            current_start += 1
+        if any(n > current_start for n in covered):
+            return OperationResult.fail(
+                f"已有蓝图第 {start_chapter}-{end_chapter} 章不连续，"
+                "请先补齐缺失章节或清理重复内容后再续写"
+            )
 
     guidance = (user_guidance + (f"\n当前阶段：{phase}" if phase else "")).strip()
     single_full_book = (

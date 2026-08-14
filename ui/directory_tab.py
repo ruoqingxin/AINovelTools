@@ -62,6 +62,7 @@ def load_chapter_blueprint(self):
     content = read_file(filename)
     self.directory_text.delete("0.0", "end")
     self.directory_text.insert("0.0", content)
+    self.directory_word_count_label.configure(text=f"字数：{get_word_count(content)}")
     self.log("已加载 Novel_directory.txt 内容到编辑区。")
 
 def save_chapter_blueprint(self):
@@ -89,3 +90,4 @@ def clear_chapter_blueprint(self):
 def _set_volume_plan_text(self, content):
     self.blueprint_volume_plan_text.delete("0.0", "end")
     self.blueprint_volume_plan_text.insert("0.0", content)
+    self.persist_project_settings()

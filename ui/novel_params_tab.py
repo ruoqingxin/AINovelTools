@@ -236,6 +236,7 @@ def build_blueprint_generation_area(self, parent):
         placeholder_text="例如：本卷完成主角入局并揭开身世线索",
     )
     phase_entry.grid(row=3, column=1, columnspan=5, padx=(0, 8), pady=4, sticky="ew")
+    phase_entry.bind("<FocusOut>", lambda _event: self._schedule_persist_project_settings(), add="+")
     volume_count_label = ctk.CTkLabel(self.blueprint_generation_frame, text="分卷数")
     volume_count_label.grid(row=4, column=0, padx=(8, 4), pady=4, sticky="e")
     volume_count_entry = ctk.CTkEntry(self.blueprint_generation_frame, textvariable=self.blueprint_volume_count_var, width=70)
@@ -244,6 +245,8 @@ def build_blueprint_generation_area(self, parent):
     current_volume_label.grid(row=4, column=2, padx=(4, 4), pady=4, sticky="e")
     current_volume_entry = ctk.CTkEntry(self.blueprint_generation_frame, textvariable=self.blueprint_current_volume_var, width=70)
     current_volume_entry.grid(row=4, column=3, padx=(0, 8), pady=4, sticky="ew")
+    for entry in (volume_count_entry, current_volume_entry):
+        entry.bind("<FocusOut>", lambda _event: self._schedule_persist_project_settings(), add="+")
     volume_plan_label = ctk.CTkLabel(self.blueprint_generation_frame, text="分卷规划（可手填或 AI 生成）")
     volume_plan_label.grid(row=5, column=0, columnspan=6, padx=8, pady=(4, 2), sticky="w")
     self.blueprint_volume_plan_text = ctk.CTkTextbox(self.blueprint_generation_frame, height=82, wrap="word")
