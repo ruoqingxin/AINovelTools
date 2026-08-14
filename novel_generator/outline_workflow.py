@@ -186,6 +186,21 @@ class OutlineWorkflow:
         self.save()
         return item
 
+    @staticmethod
+    def _previous_history_content(item: dict):
+        updates = [entry for entry in item.get("history", [])
+                   if entry.get("action") in {"update", "restore"} and "content" in entry]
+        if len(updates) < 2:
+            return None
+        return str(updates[-2].get("content", ""))
+
+    def restore_step(self, index: int) -> dict:
+        item = self.step(index)
+        previous = self._previous_history_content(item)
+        if previous is None:
+            raise ValueError("当前分区没有可还原的上一版内容")
+        return self.update(index, previous, "restore")
+
     def set_from_file(self, index: int, file_path: str | Path,
                       extractor: Optional[Callable[[str, str], str]] = None) -> dict:
         text = Path(file_path).read_text(encoding="utf-8")
@@ -281,6 +296,13 @@ class OutlineWorkflow:
         self.save()
         self.write_confirmed_sections()
         return item
+
+    def restore_custom_section(self, section_id: str) -> dict:
+        item = self.custom_section(section_id)
+        previous = self._previous_history_content(item)
+        if previous is None:
+            raise ValueError("当前自定义分区没有可还原的上一版内容")
+        return self.update_custom_section(section_id, previous)
 
     def delete_custom_section(self, section_id: str) -> None:
         sections = self.data.setdefault("custom_sections", [])

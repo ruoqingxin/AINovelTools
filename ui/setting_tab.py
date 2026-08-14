@@ -512,7 +512,7 @@ def _build_section_editor(self, parent):
 
     section_actions = ctk.CTkFrame(parent, fg_color="transparent")
     section_actions.grid(row=6, column=1, sticky="ew", padx=(4, 3), pady=(0, 3))
-    for column in range(4):
+    for column in range(5):
         section_actions.columnconfigure(column, weight=1)
     group, _ = _add_action_with_help(
         section_actions, "同步总架构", self.sync_architecture_section,
@@ -526,12 +526,16 @@ def _build_section_editor(self, parent):
         section_actions, "AI 重写本分区", self.revise_architecture_section_ui,
         "根据下方的 AI 修改要求重写当前分区；需要选择分区、填写修改要求并配置大纲模型。", width=112, height=34)
     group.grid(row=0, column=2, sticky="ew", padx=(3, 0))
+    group, _ = _add_action_with_help(
+        section_actions, "还原草稿", self.restore_current_architecture_section,
+        "放弃当前分区草稿，恢复该分区历史记录中的上一版正文。", width=112, height=34)
+    group.grid(row=0, column=3, sticky="ew", padx=3)
     group, self.btn_clear_architecture_section = _add_action_with_help(
         section_actions, "清空本分区", self.clear_current_architecture_section,
         "清空当前选中分区自己的正文，保留分区标题和子分区；确认后立即写入大纲文件。总览节点不能使用此操作。",
         width=112, height=34)
     self.btn_clear_architecture_section.configure(fg_color="#c0392b", hover_color="#a93226")
-    group.grid(row=0, column=3, sticky="ew", padx=(3, 0))
+    group.grid(row=0, column=4, sticky="ew", padx=(3, 0))
 
 
 def _architecture_text(self):
@@ -905,6 +909,44 @@ def clear_current_architecture_section(self):
     self._set_architecture_tree_selection(item_id)
     self._display_architecture_section(item_id)
     self.log("已清空当前分区正文。")
+
+
+def restore_current_architecture_section(self):
+    selection = self.architecture_section_tree.selection()
+    item_id = selection[0] if selection else ""
+    if item_id == self._architecture_overview_item:
+        messagebox.showwarning("无法还原总览", "请先选择一个具体分区。")
+        return
+    step_index = _outline_tree_step_index(item_id)
+    if not step_index and not str(item_id).startswith("custom-"):
+        messagebox.showwarning("未选择分区", "请先选择要还原的分区。")
+        return
+    if not messagebox.askyesno(
+        "确认还原草稿",
+        "放弃当前分区草稿并还原到上一版正文吗？\n当前编辑内容将被替换。",
+    ):
+        return
+    try:
+        workflow = _outline_workflow(self)
+        editor = getattr(self, "architecture_section_text", self.setting_text)
+        stored = workflow.step(step_index) if step_index else workflow.custom_section(item_id)
+        current_text = editor.get("0.0", "end-1c")
+        item = stored if current_text != stored.get("content", "") else (
+            workflow.restore_step(step_index)
+            if step_index else workflow.restore_custom_section(item_id)
+        )
+        editor.delete("0.0", "end")
+        editor.insert("0.0", item.get("content", ""))
+        self._set_architecture_active_baseline(item_id, item, item.get("content", ""))
+        status = {"confirmed": "已确认", "draft": "草稿"}.get(item.get("status"), "未开始")
+        self.architecture_section_status_label.configure(
+            text=f"当前：{item.get('title', '当前分区')}（{status}）"
+        )
+        if step_index:
+            self.outline_step_status.configure(text=f"已还原：{status}")
+        self.log(f"已还原分区“{item.get('title', '当前分区')}”上一版正文。")
+    except (OSError, ValueError, KeyError) as exc:
+        messagebox.showwarning("无法还原", str(exc))
 
 
 def save_architecture_section(self):
