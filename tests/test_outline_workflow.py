@@ -20,11 +20,11 @@ class OutlineWorkflowTest(unittest.TestCase):
         source = "# 题材类型\n玄幻冒险\n# 核心主题\n寻找自我"
         self.assertEqual("玄幻冒险", extract_step_content(source, "题材类型"))
         self.assertEqual("玄幻冒险", normalize_step_content("## 1. 题材类型\n玄幻冒险", "题材类型"))
-    def test_confirmation_is_sequential_and_ai_sees_confirmed_context_only(self):
+    def test_confirmation_is_independent_and_ai_sees_confirmed_context_only(self):
         with tempfile.TemporaryDirectory() as directory:
             workflow = OutlineWorkflow(directory)
-            with self.assertRaises(ValueError):
-                workflow.confirm(2, "先跳过")
+            workflow.confirm(2, "先确认第二步")
+            self.assertEqual("confirmed", workflow.step(2)["status"])
             workflow.confirm(1, "玄幻")
             captured = {}
             def generator(title, prior):
@@ -32,6 +32,31 @@ class OutlineWorkflowTest(unittest.TestCase):
                 return "主题"
             workflow.set_from_ai(2, generator)
             self.assertEqual([1], [item["index"] for item in captured["prior"]])
+
+    def test_ai_context_includes_saved_custom_sections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workflow = OutlineWorkflow(directory)
+            custom = workflow.add_custom_section("补充设定", "自定义世界规则")
+            workflow.confirm_custom_section(custom["id"])
+            captured = {}
+
+            def generator(title, prior):
+                captured["prior"] = list(prior)
+                return "核心主题"
+
+            workflow.set_from_ai(1, generator)
+            self.assertEqual(custom["id"], captured["prior"][0]["index"])
+            self.assertEqual("custom", captured["prior"][0]["source"])
+
+    def test_custom_section_can_be_confirmed_and_written(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workflow = OutlineWorkflow(directory)
+            custom = workflow.add_custom_section("补充设定", "自定义正文")
+            confirmed = workflow.confirm_custom_section(custom["id"])
+            self.assertEqual("confirmed", confirmed["status"])
+            architecture = Path(directory, "Novel_architecture.txt").read_text(encoding="utf-8")
+            self.assertIn("## 补充设定", architecture)
+            self.assertIn("自定义正文", architecture)
 
     def test_changing_a_confirmed_section_reopens_later_sections(self):
         with tempfile.TemporaryDirectory() as directory:

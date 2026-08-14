@@ -176,8 +176,22 @@ def _save_outline_editor(self, source="manual"):
 def confirm_outline_step(self):
     try:
         workflow = _outline_workflow(self)
-        index = _outline_step_index(self)
         editor = getattr(self, "architecture_section_text", self.setting_text)
+        active_item = getattr(self, "_architecture_active_item_id", None)
+        if str(active_item).startswith("custom-"):
+            item = workflow.confirm_custom_section(
+                active_item, editor.get("0.0", "end-1c")
+            )
+            self.outline_step_status.configure(text="自定义分区已确认并保存")
+            self.architecture_section_status_label.configure(
+                text=f"当前：{item['title']}（已确认）"
+            )
+            self._set_architecture_active_baseline(
+                active_item, item, item.get("content", "")
+            )
+            return
+
+        index = _outline_tree_step_index(active_item) or _outline_step_index(self)
         item = workflow.confirm(index, editor.get("0.0", "end-1c"))
         self.outline_step_status.configure(text="分区已确认并保存")
         # Keep the confirmed text visible. The next step is selected manually
@@ -212,13 +226,9 @@ def extract_outline_step_from_file(self):
             config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
             adapter = _create_outline_adapter(config)
             extracted = adapter.invoke(_outline_file_prompt(workflow.step(index)["title"], source))
-            item = workflow.update(index, extracted, "file_extract_ai")
 
             def apply_result():
-                editor = getattr(self, "architecture_section_text", self.setting_text)
-                editor.delete("0.0", "end")
-                editor.insert("0.0", item["content"])
-                self.outline_step_status.configure(text="已提炼，待确认")
+                commit_outline_ai_result(self, index, extracted, "file_extract_ai", "文件提炼")
 
             self.call_in_ui(apply_result)
         except Exception as exc:
@@ -235,14 +245,11 @@ def derive_outline_step_with_ai(self):
             workflow = _outline_workflow(self)
             config = get_llm_config(self.loaded_config, self.architecture_llm_var.get())
             adapter = _create_outline_adapter(config)
-            item = workflow.set_from_ai(index, lambda title, prior: adapter.invoke(
-                _outline_derive_prompt(title, prior)))
+            generated = adapter.invoke(_outline_derive_prompt(
+                workflow.step(index)["title"], workflow.confirmed_context(index)))
 
             def apply_result():
-                editor = getattr(self, "architecture_section_text", self.setting_text)
-                editor.delete("0.0", "end")
-                editor.insert("0.0", item["content"])
-                self.outline_step_status.configure(text="AI 已推导，待确认")
+                commit_outline_ai_result(self, index, generated, "ai_derive", "AI 推导")
 
             self.call_in_ui(apply_result)
         except Exception as exc:
@@ -266,7 +273,12 @@ def _outline_file_prompt(title, source):
 
 def _outline_derive_prompt(title, prior):
     context = "\n".join(
-        f"{item['index']}. {item['title']}：{item['content']}" for item in prior
+        (
+            f"用户自定义分区《{item['title']}》：{item['content']}"
+            if item.get("source") == "custom"
+            else f"{item['index']}. {item['title']}：{item['content']}"
+        )
+        for item in prior
     ) or "（暂无已确认设定）"
     if not prior:
         context += "\n注意：前面可能存在已保存但尚未点击“确认分区”的草稿；草稿不能作为已确认设定使用。"
@@ -275,6 +287,33 @@ def _outline_derive_prompt(title, prior):
         "只输出当前分区正文，不要输出标题、解释或免责声明。\n\n"
         f"前面已确认的分区：\n{context}"
     )
+
+
+def commit_outline_ai_result(self, index, content, source, operation_label):
+    """Commit an async result only to its original step, never the new selection."""
+    target_item = f"outline-step-{int(index)}"
+    active_item = getattr(self, "_architecture_active_item_id", None)
+    editor = getattr(self, "architecture_section_text", self.setting_text)
+    manual_override = (
+        active_item == target_item
+        and editor.get("0.0", "end-1c")
+        != getattr(self, "_architecture_active_original_text", "")
+    )
+    item = _outline_workflow(self).update(index, content, source)
+    if active_item == target_item:
+        editor.delete("0.0", "end")
+        editor.insert("0.0", item["content"])
+        self.outline_step_status.configure(text="AI 已生成，待确认")
+        self.architecture_section_status_label.configure(text=f"当前：{item['title']}（草稿）")
+        self._set_architecture_active_baseline(target_item, item, item["content"])
+        if manual_override:
+            self.log(f"{operation_label}已返回，已按要求覆盖当前分区的手动修改。")
+    else:
+        self.log(
+            f"{operation_label}结果已保存到第 {index} 步“{item['title']}”，"
+            f"当前正在编辑“{self._architecture_active_title()}”，未覆盖当前正文。"
+        )
+    return True
 
 
 def finalize_outline_workflow(self):
@@ -315,7 +354,7 @@ def _build_section_editor(self, parent):
         ("AI 推导", self.derive_outline_step_with_ai,
          "读取前面已经确认的分区作为上下文，围绕当前分区标题推导正文，不读取文件。"),
         ("确认分区", self.confirm_outline_step,
-         "保存当前分区内容并标记为已确认，同时写入工作流状态和 Novel_architecture.txt；必须按顺序确认。"),
+         "保存当前分区内容并标记为已确认，同时写入工作流状态和 Novel_architecture.txt；各分区可独立确认，确认后停留在当前分区。"),
         ("定稿", self.finalize_outline_workflow,
          "仅当 34 个分区全部确认后生成最终大纲文件；未完成时不会覆盖定稿。"),
     )
@@ -591,7 +630,8 @@ def _display_architecture_section(self, item_id):
     else:
         item = self._architecture_sections_by_id.get(item_id)
         if item is None: return
-        content, title, status = item.get("content", ""), item.get("title", ""), "自定义分区"
+        content, title = item.get("content", ""), item.get("title", "")
+        status = {"confirmed": "已确认", "draft": "草稿"}.get(item.get("status"), "未开始")
     self.architecture_section_text.delete("0.0", "end")
     self.architecture_section_text.insert("0.0", content)
     self.architecture_section_status_label.configure(text=f"当前：{title}（{status}）")

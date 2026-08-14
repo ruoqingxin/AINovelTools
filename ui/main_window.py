@@ -940,6 +940,13 @@ class NovelGeneratorGUI:
     def _confirm_unsaved_content(self):
         if not self._chapter_draft_dirty:
             return True
+        try:
+            current_text = self.chapter_result.get("0.0", "end-1c")
+            if current_text == getattr(self, "_chapter_draft_baseline", ""):
+                self._set_chapter_draft_dirty(False)
+                return True
+        except (AttributeError, tk.TclError):
+            pass
         choice = messagebox.askyesnocancel("草稿尚未保存", "当前章节草稿有未保存修改，是否先保存？")
         if choice is None:
             return False

@@ -117,6 +117,10 @@ class OutlineWorkflow:
                 item.update(old[item["index"]])
         fresh.update({k: data[k] for k in ("version", "created_at", "finalized") if k in data})
         fresh["custom_sections"] = data.get("custom_sections", []) if isinstance(data.get("custom_sections", []), list) else []
+        for custom in fresh["custom_sections"]:
+            custom.setdefault("content", "")
+            custom.setdefault("status", "draft" if custom["content"] else "pending")
+            custom.setdefault("history", [])
         fresh["updated_at"] = data.get("updated_at", _now())
         return fresh
 
@@ -162,8 +166,6 @@ class OutlineWorkflow:
     def confirm(self, index: int, content: Optional[str] = None) -> dict:
         item = self.step(index)
         index = int(index)
-        if any(previous["status"] != "confirmed" for previous in self.data["steps"][:index - 1]):
-            raise ValueError("请先确认前面的分区，再确认当前分区")
         if content is not None:
             self.update(index, content, item.get("source") or "manual")
         if not item["content"].strip():
@@ -191,9 +193,23 @@ class OutlineWorkflow:
         return self.update(index, content, "file_extract")
 
     def set_from_ai(self, index: int, generator: Callable[[str, Iterable[dict]], str]) -> dict:
-        prior = [item for item in self.data["steps"][:int(index) - 1] if item["status"] == "confirmed"]
+        prior = self.confirmed_context(index)
         content = generator(self.step(index)["title"], prior)
         return self.update(index, content, "ai_derive")
+
+    def confirmed_context(self, index: int) -> list[dict]:
+        prior = [item for item in self.data["steps"][:int(index) - 1] if item["status"] == "confirmed"]
+        for custom in self.data.get("custom_sections", []):
+            if custom.get("status") != "confirmed" or not str(custom.get("content", "")).strip():
+                continue
+            prior.append({
+                "index": custom.get("id", "custom"),
+                "title": custom.get("title", "自定义分区"),
+                "content": custom.get("content", ""),
+                "status": "confirmed",
+                "source": "custom",
+            })
+        return prior
 
     def finalize(self) -> Path:
         if not self.data["finalized"]:
@@ -201,6 +217,11 @@ class OutlineWorkflow:
         lines = ["# 小说大纲（34 个分区确认定稿）", ""]
         for item in self.data["steps"]:
             lines.extend([f"## {item['index']}. {item['title']}", item["content"].strip(), ""])
+        confirmed_custom = [item for item in self.data.get("custom_sections", []) if item.get("status") == "confirmed"]
+        if confirmed_custom:
+            lines.extend(["# 用户自定义分区", ""])
+            for item in confirmed_custom:
+                lines.extend([f"## {item['title']}", item.get("content", "").strip(), ""])
         return self.repository.write(NovelProjectRepository.ARCHITECTURE, "\n".join(lines).rstrip() + "\n")
 
     def write_confirmed_sections(self) -> Path:
@@ -210,6 +231,11 @@ class OutlineWorkflow:
             if item["status"] != "confirmed":
                 continue
             lines.extend([f"## {item['index']}. {item['title']}", item["content"].strip(), ""])
+        confirmed_custom = [item for item in self.data.get("custom_sections", []) if item.get("status") == "confirmed"]
+        if confirmed_custom:
+            lines.extend(["# 用户自定义分区", ""])
+            for item in confirmed_custom:
+                lines.extend([f"## {item['title']}", item.get("content", "").strip(), ""])
         return self.repository.write(NovelProjectRepository.ARCHITECTURE, "\n".join(lines).rstrip() + "\n")
 
     def add_custom_section(self, title: str, content: str = "") -> dict:
@@ -217,8 +243,10 @@ class OutlineWorkflow:
         if not title:
             raise ValueError("自定义分区标题不能为空")
         existing = self.data.setdefault("custom_sections", [])
+        value = str(content or "")
         item = {"id": f"custom-{len(existing) + 1}", "title": title,
-                "content": str(content or ""), "created_at": _now(), "updated_at": _now()}
+                "content": value, "status": "draft" if value else "pending",
+                "history": [], "created_at": _now(), "updated_at": _now()}
         existing.append(item)
         self.save()
         return item
@@ -231,9 +259,27 @@ class OutlineWorkflow:
 
     def update_custom_section(self, section_id: str, content: str) -> dict:
         item = self.custom_section(section_id)
-        item["content"] = str(content or "")
+        value = str(content or "")
+        was_confirmed = item.get("status") == "confirmed"
+        changed = item.get("content", "") != value
+        item["content"] = value
+        item["status"] = "confirmed" if was_confirmed and not changed else ("draft" if value else "pending")
         item["updated_at"] = _now()
+        item.setdefault("history", []).append({"at": _now(), "action": "update", "content": value})
         self.save()
+        return item
+
+    def confirm_custom_section(self, section_id: str, content: Optional[str] = None) -> dict:
+        item = self.custom_section(section_id)
+        if content is not None:
+            self.update_custom_section(section_id, content)
+        if not str(item.get("content", "")).strip():
+            raise ValueError("确认前请先填写自定义分区内容")
+        item["status"] = "confirmed"
+        item["confirmed_at"] = _now()
+        item.setdefault("history", []).append({"at": _now(), "action": "confirm", "content": item["content"]})
+        self.save()
+        self.write_confirmed_sections()
         return item
 
     def delete_custom_section(self, section_id: str) -> None:
