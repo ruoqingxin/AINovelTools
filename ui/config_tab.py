@@ -244,12 +244,18 @@ def build_ai_config_tab(self):
         self.loaded_config["other_params"] = other_params
 
 
-        # 保存到JSON文件
+        # 保存到 JSON 文件；save_config 失败时会返回 False，不应继续提示成功。
         try:
-            save_config(self.loaded_config, self.config_file)
-            messagebox.showinfo("提示", f"配置 {new_name} 已保存并持久化到文件")
+            if not save_config(self.loaded_config, self.config_file):
+                messagebox.showerror(
+                    "保存失败",
+                    f"无法写入配置文件：\n{self.config_file}\n\n"
+                    "请确认文件未被占用，并且当前目录具有写入权限。",
+                )
+                return
+            messagebox.showinfo("提示", f"配置 {config_name} 已保存并持久化到文件")
         except Exception as e:
-            messagebox.showerror("错误", f"保存配置文件失败: {str(e)}")
+            messagebox.showerror("错误", f"保存配置文件失败：{e}")
 
     def rename_current_config():
         """重命名当前配置"""
