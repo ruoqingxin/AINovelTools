@@ -7,6 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from config_manager import save_config
+from services.chapter_service import ChapterService
 from services.project_repository import NovelProjectRepository
 
 
@@ -106,6 +107,7 @@ class ProjectManager:
         self.project = None
 
     def _activate(self, repository: NovelProjectRepository, project: dict):
+        ChapterService(repository).load_manifest()
         self.repository = repository
         self.project = project
         path = str(repository.root)

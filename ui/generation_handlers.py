@@ -2,12 +2,10 @@
 # -*- coding: utf-8 -*-
 import os
 import threading
-import tkinter as tk
 from tkinter import messagebox, filedialog
 import customtkinter as ctk
 import traceback
-import glob
-from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
+from utils import read_file, get_word_count
 from novel_generator import (
     Novel_architecture_generate,
     Chapter_blueprint_generate,
@@ -128,6 +126,9 @@ def generate_chapter_draft_ui(self):
     if not filepath:
         messagebox.showwarning("警告", "请先配置保存文件路径。")
         return
+    requested_chapter = self.safe_get_int(self.chapter_num_var, 1)
+    if not self.validate_chapter_generation_target(requested_chapter):
+        return
 
     def task():
         self.disable_button_safe(self.btn_generate_chapter)
@@ -143,7 +144,7 @@ def generate_chapter_draft_ui(self):
             timeout_val = llm_config["timeout"]
 
 
-            chap_num = self.safe_get_int(self.chapter_num_var, 1)
+            chap_num = requested_chapter
             word_number = self.safe_get_int(self.word_number_var, 3000)
             user_guidance = self.user_guide_text.get("0.0", "end").strip()
 
@@ -392,8 +393,7 @@ def finalize_chapter_ui(self):
                 edited_text = enriched
                 self.master.after(0, lambda: self.chapter_result.delete("0.0", "end"))
                 self.master.after(0, lambda t=edited_text: self.chapter_result.insert("0.0", t))
-            clear_file_content(chapter_file)
-            save_string_to_txt(edited_text, chapter_file)
+            self.chapter_service.save_draft(chap_num, edited_text)
 
             finalize_chapter(
                 novel_number=chap_num,
@@ -484,12 +484,7 @@ def generate_batch_ui(self):
         dialog = ctk.CTkToplevel()
         dialog.title("批量生成章节")
         
-        chapter_file = os.path.join(self.filepath_var.get().strip(), "chapters")
-        files = glob.glob(os.path.join(chapter_file, "chapter_*.txt"))
-        if not files:
-            num = 1
-        else:
-            num = max(int(os.path.basename(f).split('_')[1].split('.')[0]) for f in files) + 1
+        num = self.chapter_service.next_appendable()
             
         dialog.geometry("400x200")
         dialog.resizable(False, False)
@@ -567,6 +562,7 @@ def generate_batch_ui(self):
         return result
     
     def generate_chapter_batch(self ,i ,word, min, auto_enrich):
+        self.chapter_service.validate_target(i)
         draft_config = self.get_task_llm_config("prompt_draft_llm", self.prompt_draft_llm_var.get())
         draft_interface_format = draft_config["interface_format"]
         draft_api_key = draft_config["api_key"]
@@ -683,9 +679,6 @@ def generate_batch_ui(self):
         finalize_max_tokens = finalize_config["max_tokens"]
         finalize_timeout = finalize_config["timeout"]
 
-        chapters_dir = os.path.join(self.filepath_var.get().strip(), "chapters")
-        os.makedirs(chapters_dir, exist_ok=True)
-        chapter_path = os.path.join(chapters_dir, f"chapter_{i}.txt")
         if get_word_count(draft_text) < min and auto_enrich:
             self.safe_log(f"第{i}章草稿字数 ({get_word_count(draft_text)}) 低于最低字数({min})，正在扩写...")
             enriched = enrich_chapter_text(
@@ -700,8 +693,7 @@ def generate_batch_ui(self):
                 timeout=draft_timeout
             )
             draft_text = enriched
-        clear_file_content(chapter_path)
-        save_string_to_txt(draft_text, chapter_path)
+        self.chapter_service.save_draft(i, draft_text)
         finalize_chapter(
             novel_number=i,
             word_number=word,
@@ -722,6 +714,8 @@ def generate_batch_ui(self):
 
     result = open_batch_dialog()
     if result["close"]:
+        return
+    if not self.validate_chapter_generation_target(int(result["start"])):
         return
 
     def batch_task():

@@ -114,7 +114,6 @@ def save_current_chapter(self):
     if not filepath:
         messagebox.showwarning("警告", "请先配置保存文件路径")
         return False
-    repository = NovelProjectRepository(filepath)
     view_content = self.chapter_view_text.get("0.0", "end-1c").strip()
     if hasattr(self, "chapter_result"):
         main_content = self.chapter_result.get("0.0", "end-1c").strip()
@@ -122,8 +121,14 @@ def save_current_chapter(self):
         content = main_content if main_content != self._chapter_saved_text.strip() else view_content
     else:
         content = view_content
-    if not repository.write_chapter(int(chapter_number_str), content):
-        self.safe_log(f"保存第 {chapter_number_str} 章失败，保留未保存状态。")
+    try:
+        if hasattr(self, "chapter_service"):
+            self.chapter_service.save_draft(int(chapter_number_str), content)
+        elif not NovelProjectRepository(filepath).write_chapter(int(chapter_number_str), content):
+            self.safe_log(f"保存第 {chapter_number_str} 章失败，保留未保存状态。")
+            return False
+    except RuntimeError as exc:
+        self.safe_log(f"保存第 {chapter_number_str} 章失败：{exc}")
         return False
     self.chapter_view_text.delete("0.0", "end")
     self.chapter_view_text.insert("0.0", content)

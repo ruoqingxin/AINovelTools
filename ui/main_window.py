@@ -38,6 +38,9 @@ from ui.other_settings import build_other_settings_tab
 from services.task_controller import TaskController, TaskAlreadyRunning
 from services.model_config import get_task_llm_config as load_task_llm_config
 from services.project_manager import ProjectManager, ProjectError
+from services.chapter_service import ChapterService
+from services.chapter_context import ChapterContextBuilder
+from domain.chapter_state import ChapterContinuityError
 
 
 class NovelGeneratorGUI:
@@ -277,6 +280,9 @@ class NovelGeneratorGUI:
         return self.project_manager.save_project(self.collect_project_settings())
 
     def apply_project_settings(self, project):
+        if self.project_manager.repository:
+            self.chapter_service = ChapterService(self.project_manager.repository)
+            self.chapter_context_builder = ChapterContextBuilder(self.project_manager.repository)
         self.topic_default = project.get("topic", "")
         self.user_guidance_default = project.get("chapter_guidance", "")
         self.genre_var.set(project.get("genre", "玄幻"))
@@ -310,6 +316,25 @@ class NovelGeneratorGUI:
             self._loaded_chapter_number = None
             self._chapter_saved_text = ""
         self.refresh_recent_projects()
+
+    def validate_chapter_generation_target(self, chapter_number):
+        if not hasattr(self, "chapter_service"):
+            return True
+        try:
+            self.chapter_service.validate_target(chapter_number)
+            return True
+        except ChapterContinuityError as exc:
+            messagebox.showwarning("章节连续性", str(exc))
+            return False
+
+    def build_chapter_context(self, chapter_number):
+        if not hasattr(self, "chapter_context_builder"):
+            raise RuntimeError("尚未打开小说工程")
+        return self.chapter_context_builder.build(
+            self.project_manager.project or {},
+            chapter_number,
+            {"character_names": self.characters_involved_var.get().strip()},
+        )
 
     def refresh_recent_projects(self):
         if not hasattr(self, "recent_project_menu"):
