@@ -11,10 +11,11 @@ from llm_adapters import create_llm_adapter
 import prompt_definitions
 from chapter_directory_parser import get_chapter_info_from_blueprint
 from novel_generator.common import invoke_with_cleaning
-from utils import read_file, clear_file_content, save_string_to_txt
+from utils import read_file
 from novel_generator.vectorstore_utils import (
     get_relevant_context_from_vector_store,
-    load_vector_store  # 添加导入
+    load_vector_store,
+    get_vectorstore_dir,
 )
 logging.basicConfig(
     filename='app.log',      # 日志文件名
@@ -426,6 +427,11 @@ def build_chapter_prompt(
         search_response = invoke_with_cleaning(llm_adapter, search_prompt)
         keyword_groups = parse_search_keywords(search_response)
 
+        # 没有工程向量库时跳过 Embedding 和检索，不要求配置 Embedding。
+        if not os.path.isdir(get_vectorstore_dir(filepath)):
+            filtered_context = "（未配置知识库）"
+            raise StopIteration
+
         # 执行向量检索
         all_contexts = []
         from embedding_adapters import create_embedding_adapter
@@ -488,6 +494,8 @@ def build_chapter_prompt(
             timeout=timeout
         )
         
+    except StopIteration:
+        pass
     except Exception as e:
         logging.error(f"知识处理流程异常：{str(e)}")
         filtered_context = "（知识库处理失败）"
@@ -575,9 +583,6 @@ def generate_chapter_draft(
     else:
         prompt_text = custom_prompt_text
 
-    chapters_dir = os.path.join(filepath, "chapters")
-    os.makedirs(chapters_dir, exist_ok=True)
-
     llm_adapter = create_llm_adapter(
         interface_format=interface_format,
         base_url=base_url,
@@ -592,8 +597,5 @@ def generate_chapter_draft(
     if not chapter_content.strip():
         logging.warning("Generated chapter draft is empty.")
         return ""
-    chapter_file = os.path.join(chapters_dir, f"chapter_{novel_number}.txt")
-    clear_file_content(chapter_file)
-    save_string_to_txt(chapter_content, chapter_file)
-    logging.info(f"[Draft] Chapter {novel_number} generated as a draft.")
+    logging.info(f"[Draft] Chapter {novel_number} generated in memory; awaiting explicit save.")
     return chapter_content

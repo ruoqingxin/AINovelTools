@@ -43,6 +43,7 @@ class NovelGeneratorGUI:
     """
     def __init__(self, master):
         self.master = master
+        self._prompt_cancel_event = threading.Event()
         self.master.title("Novel Generator GUI")
         try:
             if os.path.exists("icon.ico"):
@@ -220,10 +221,19 @@ class NovelGeneratorGUI:
         logging.error(full_message)
         self.safe_log(f"{context}。详情已写入 app.log。")
 
-    def show_chapter_in_textbox(self, text: str):
+    def show_chapter_in_textbox(self, text: str, chapter_number=None, saved=False):
         self.chapter_result.delete("0.0", "end")
         self.chapter_result.insert("0.0", text)
         self.chapter_result.see("end")
+        if chapter_number is not None:
+            if saved or self._loaded_chapter_number != chapter_number:
+                chapter_file = os.path.join(
+                    self.filepath_var.get().strip(),
+                    "chapters",
+                    f"chapter_{chapter_number}.txt",
+                )
+                self._chapter_saved_text = text if saved else read_file(chapter_file)
+            self._loaded_chapter_number = chapter_number
     
     def test_llm_config(self):
         """

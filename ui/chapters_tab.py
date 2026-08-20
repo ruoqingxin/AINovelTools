@@ -4,7 +4,7 @@ import os
 import customtkinter as ctk
 from tkinter import messagebox
 from ui.context_menu import TextWidgetContextMenu
-from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
+from utils import read_file, save_string_to_txt, get_word_count
 
 def build_chapters_tab(self):
     self.chapters_view_tab = self.tabview.add("Chapters Manage")
@@ -52,6 +52,8 @@ def build_chapters_tab(self):
     self.chapter_view_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5, columnspan=6)
 
     self.chapters_list = []
+    self._loaded_chapter_number = None
+    self._chapter_saved_text = ""
     refresh_chapters_list(self)
 
 def refresh_chapters_list(self):
@@ -95,21 +97,48 @@ def load_chapter_content(self, chapter_number_str):
     content = read_file(chapter_file)
     self.chapter_view_text.delete("0.0", "end")
     self.chapter_view_text.insert("0.0", content)
+    self._loaded_chapter_number = int(chapter_number_str)
+    self._chapter_saved_text = content
+    if hasattr(self, "chapter_result"):
+        self.chapter_result.delete("0.0", "end")
+        self.chapter_result.insert("0.0", content)
+
+def is_chapter_dirty(self):
+    """比较当前章节编辑器与最后一次成功保存的正文。"""
+    if self._loaded_chapter_number is None:
+        return False
+    if hasattr(self, "chapter_result"):
+        current = self.chapter_result.get("0.0", "end-1c")
+    else:
+        current = self.chapter_view_text.get("0.0", "end-1c")
+    return current != self._chapter_saved_text
 
 def save_current_chapter(self):
     chapter_number_str = self.chapter_select_var.get()
     if not chapter_number_str:
         messagebox.showwarning("警告", "尚未选择章节，无法保存。")
-        return
+        return False
     filepath = self.filepath_var.get().strip()
     if not filepath:
         messagebox.showwarning("警告", "请先配置保存文件路径")
-        return
+        return False
     chapter_file = os.path.join(filepath, "chapters", f"chapter_{chapter_number_str}.txt")
-    content = self.chapter_view_text.get("0.0", "end").strip()
-    clear_file_content(chapter_file)
-    save_string_to_txt(content, chapter_file)
+    view_content = self.chapter_view_text.get("0.0", "end-1c").strip()
+    if hasattr(self, "chapter_result"):
+        main_content = self.chapter_result.get("0.0", "end-1c").strip()
+        # 主编辑器是统一正文来源；若其未修改，则保留章节管理页的编辑内容。
+        content = main_content if main_content != self._chapter_saved_text.strip() else view_content
+    else:
+        content = view_content
+    if not save_string_to_txt(content, chapter_file):
+        self.safe_log(f"保存第 {chapter_number_str} 章失败，保留未保存状态。")
+        return False
+    self.chapter_view_text.delete("0.0", "end")
+    self.chapter_view_text.insert("0.0", content)
+    self._loaded_chapter_number = int(chapter_number_str)
+    self._chapter_saved_text = content
     self.safe_log(f"已保存对第 {chapter_number_str} 章的修改。")
+    return True
 
 def prev_chapter(self):
     if not self.chapters_list:

@@ -19,6 +19,7 @@ from novel_generator import (
     build_chapter_prompt
 )
 from consistency_checker import check_consistency
+from ui.prompt_wait import wait_for_prompt_result, PromptWaitCancelled
 
 def generate_novel_architecture_ui(self):
     filepath = self.filepath_var.get().strip()
@@ -273,7 +274,7 @@ def generate_chapter_draft_ui(self):
                 dialog.protocol("WM_DELETE_WINDOW", on_cancel)
                 dialog.grab_set()
             self.master.after(0, create_dialog)
-            event.wait()  # 等待用户操作完成
+            wait_for_prompt_result(event, getattr(self, "_prompt_cancel_event", None))
             edited_prompt = result["prompt"]
             if edited_prompt is None:
                 self.safe_log("❌ 用户取消了草稿生成请求。")
@@ -306,9 +307,14 @@ def generate_chapter_draft_ui(self):
             )
             if draft_text:
                 self.safe_log(f"✅ 第{chap_num}章草稿生成完成。请在左侧查看或编辑。")
-                self.master.after(0, lambda: self.show_chapter_in_textbox(draft_text))
+                self.master.after(
+                    0,
+                    lambda t=draft_text, n=chap_num: self.show_chapter_in_textbox(t, n),
+                )
             else:
                 self.safe_log("⚠️ 本章草稿生成失败或无内容。")
+        except PromptWaitCancelled:
+            self.safe_log("❌ 草稿生成已取消。")
         except Exception:
             self.handle_exception("生成章节草稿时出错")
         finally:
@@ -331,10 +337,10 @@ def finalize_chapter_ui(self):
     # 字数不足时在主线程询问用户是否扩写
     should_enrich = False
     edited_word_count = get_word_count(edited_text)
-    if edited_word_count < 0.7 * word_number:
+    if edited_word_count < word_number:
         should_enrich = messagebox.askyesno(
             "字数不足",
-            f"当前章节字数 ({edited_word_count}) 低于目标字数({word_number})的70%，是否要尝试扩写？"
+            f"当前章节字数 ({edited_word_count}) 低于最低字数({word_number})，是否要尝试扩写？"
         )
 
     self.disable_button_safe(self.btn_finalize_chapter)
@@ -404,7 +410,12 @@ def finalize_chapter_ui(self):
             self.safe_log(f"✅ 第{chap_num}章定稿完成（已更新前文摘要、角色状态、向量库）。")
 
             final_text = read_file(chapter_file)
-            self.master.after(0, lambda: self.show_chapter_in_textbox(final_text))
+            self.master.after(
+                0,
+                lambda t=final_text, n=chap_num: self.show_chapter_in_textbox(
+                    t, n, saved=True
+                ),
+            )
         except Exception:
             self.handle_exception("定稿章节时出错")
         finally:
@@ -416,6 +427,9 @@ def do_consistency_check(self):
     if not filepath:
         messagebox.showwarning("警告", "请先配置保存文件路径。")
         return
+
+    chap_num = self.safe_get_int(self.chapter_num_var, 1)
+    chapter_text = self.chapter_result.get("0.0", "end-1c").strip()
 
     def task():
         self.disable_button_safe(self.btn_check_consistency)
@@ -429,9 +443,8 @@ def do_consistency_check(self):
             timeout = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["timeout"]
 
 
-            chap_num = self.safe_get_int(self.chapter_num_var, 1)
             chap_file = os.path.join(filepath, "chapters", f"chapter_{chap_num}.txt")
-            chapter_text = read_file(chap_file)
+            # 正文在主线程捕获，允许审校尚未保存的编辑内容。
 
             if not chapter_text.strip():
                 self.safe_log("⚠️ 当前章节文件为空或不存在，无法审校。")
@@ -666,8 +679,8 @@ def generate_batch_ui(self):
         chapters_dir = os.path.join(self.filepath_var.get().strip(), "chapters")
         os.makedirs(chapters_dir, exist_ok=True)
         chapter_path = os.path.join(chapters_dir, f"chapter_{i}.txt")
-        if get_word_count(draft_text) < 0.7 * min and auto_enrich:
-            self.safe_log(f"第{i}章草稿字数 ({get_word_count(draft_text)}) 低于目标字数({min})的70%，正在扩写...")
+        if get_word_count(draft_text) < min and auto_enrich:
+            self.safe_log(f"第{i}章草稿字数 ({get_word_count(draft_text)}) 低于最低字数({min})，正在扩写...")
             enriched = enrich_chapter_text(
                 chapter_text=draft_text,
                 word_number=word,

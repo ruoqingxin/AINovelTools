@@ -34,13 +34,15 @@ def clear_file_content(filename: str):
     except IOError as e:
         print(f"[clear_file_content] 无法清空文件 '{filename}' 的内容：{e}")
 
-def save_string_to_txt(content: str, filename: str):
-    """将字符串保存为 txt 文件（覆盖写）。"""
+def save_string_to_txt(content: str, filename: str) -> bool:
+    """将字符串保存为 txt 文件（覆盖写），返回是否成功。"""
     try:
         with open(filename, 'w', encoding='utf-8') as file:
             file.write(content)
+        return True
     except Exception as e:
         print(f"[save_string_to_txt] 保存文件时发生错误: {e}")
+        return False
 
 def save_data_to_json(data: dict, file_path: str) -> bool:
     """将数据保存到 JSON 文件。"""
