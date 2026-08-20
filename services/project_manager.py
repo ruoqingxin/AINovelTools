@@ -9,6 +9,7 @@ from pathlib import Path
 from config_manager import save_config
 from services.chapter_service import ChapterService
 from services.blueprint_service import BlueprintService
+from services.outline_service import OutlineService
 from services.project_repository import NovelProjectRepository
 
 
@@ -109,6 +110,7 @@ class ProjectManager:
 
     def _activate(self, repository: NovelProjectRepository, project: dict):
         ChapterService(repository).load_manifest()
+        OutlineService(repository).load_workflow()
         BlueprintService(repository).load_blueprint()
         BlueprintService(repository).load_volume_plan()
         self.repository = repository

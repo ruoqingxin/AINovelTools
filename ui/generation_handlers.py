@@ -68,7 +68,15 @@ def generate_novel_architecture_ui(self):
                 timeout=timeout_val,
                 user_guidance=user_guidance  # 添加内容指导参数
             )
-            self.safe_log("✅ 小说架构生成完成。请在 'Novel Architecture' 标签页查看或编辑。")
+            generated = self.project_manager.repository.read_text("Novel_architecture.txt")
+            if not generated.strip():
+                self.safe_log("⚠️ 小说架构生成未返回可导入内容。")
+                return
+            self.outline_service.import_ai_steps({"ai_quick_generation": generated})
+            # 旧生成器会先写兼容文本；立即按已确认工作流重建，避免草稿覆盖最终架构。
+            self.outline_service.render_architecture()
+            self.master.after(0, self.load_novel_architecture)
+            self.safe_log("✅ AI 架构已导入为草稿。请在 'Novel Architecture' 标签页确认步骤后渲染。")
         except Exception:
             self.handle_exception("生成小说架构时出错")
         finally:

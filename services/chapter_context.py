@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from services.blueprint_service import BlueprintService
+from services.outline_service import OutlineService
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,7 @@ class ChapterContextBuilder:
         names = request.get("character_names") or project.get("characters_involved", "")
         return ChapterContext(
             chapter_number=chapter_number,
-            architecture=self.repository.read_text("Novel_architecture.txt"),
+            architecture=OutlineService(self.repository).render_to_string().strip(),
             current_blueprint=current,
             next_blueprint=next_info if next_info and any(
                 next_info.get(key)

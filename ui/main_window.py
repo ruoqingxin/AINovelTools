@@ -29,7 +29,12 @@ from ui.generation_handlers import (
     show_plot_arcs_ui,
     generate_batch_ui
 )
-from ui.setting_tab import build_setting_tab, load_novel_architecture, save_novel_architecture
+from ui.setting_tab import (
+    build_setting_tab,
+    confirm_novel_architecture,
+    load_novel_architecture,
+    save_novel_architecture,
+)
 from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint
 from ui.character_tab import build_character_tab, load_character_state, save_character_state
 from ui.summary_tab import build_summary_tab, load_global_summary, save_global_summary
@@ -41,6 +46,7 @@ from services.project_manager import ProjectManager, ProjectError
 from services.chapter_service import ChapterService
 from services.chapter_context import ChapterContextBuilder
 from services.blueprint_service import BlueprintService
+from services.outline_service import OutlineService
 from domain.chapter_state import ChapterContinuityError
 
 
@@ -285,6 +291,7 @@ class NovelGeneratorGUI:
             self.chapter_service = ChapterService(self.project_manager.repository)
             self.chapter_context_builder = ChapterContextBuilder(self.project_manager.repository)
             self.blueprint_service = BlueprintService(self.project_manager.repository)
+            self.outline_service = OutlineService(self.project_manager.repository)
         self.topic_default = project.get("topic", "")
         self.user_guidance_default = project.get("chapter_guidance", "")
         self.genre_var.set(project.get("genre", "玄幻"))
@@ -615,6 +622,7 @@ class NovelGeneratorGUI:
     save_config_btn = save_config_btn
     load_novel_architecture = load_novel_architecture
     save_novel_architecture = save_novel_architecture
+    confirm_novel_architecture = confirm_novel_architecture
     load_chapter_blueprint = load_chapter_blueprint
     save_chapter_blueprint = save_chapter_blueprint
     load_character_state = load_character_state
