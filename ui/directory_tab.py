@@ -5,6 +5,7 @@ from tkinter import messagebox
 from utils import get_word_count
 from ui.context_menu import TextWidgetContextMenu
 from services.project_repository import NovelProjectRepository
+from domain.blueprint import BlueprintValidationError
 
 def build_directory_tab(self):
     self.directory_tab = self.tabview.add("Chapter Blueprint")
@@ -49,5 +50,12 @@ def save_chapter_blueprint(self):
         messagebox.showwarning("警告", "请先设置保存文件路径")
         return
     content = self.directory_text.get("0.0", "end").strip()
-    NovelProjectRepository(filepath).write_text("Novel_directory.txt", content)
-    self.log("已保存对 Novel_directory.txt 的修改。")
+    try:
+        self.blueprint_service.save_legacy_text(
+            content,
+            self.safe_get_int(self.num_chapters_var, 10),
+        )
+    except BlueprintValidationError as exc:
+        messagebox.showwarning("蓝图格式错误", str(exc))
+        return
+    self.log("已保存并校验 Novel_directory.txt。")

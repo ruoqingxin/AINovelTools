@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from chapter_directory_parser import get_chapter_info_from_blueprint
+from services.blueprint_service import BlueprintService
 
 
 @dataclass(frozen=True)
@@ -28,9 +28,9 @@ class ChapterContextBuilder:
 
     def build(self, project: dict, chapter_number: int, request: dict | None = None) -> ChapterContext:
         request = request or {}
-        blueprint_text = self.repository.read_text("Novel_directory.txt")
-        current = get_chapter_info_from_blueprint(blueprint_text, chapter_number)
-        next_info = get_chapter_info_from_blueprint(blueprint_text, chapter_number + 1)
+        blueprint_service = BlueprintService(self.repository)
+        current = blueprint_service.get_chapter(chapter_number) or {"chapter_number": chapter_number}
+        next_info = blueprint_service.get_chapter(chapter_number + 1)
         recent = tuple(
             self.repository.read_chapter(number)
             for number in range(max(1, chapter_number - 3), chapter_number)
@@ -41,7 +41,7 @@ class ChapterContextBuilder:
             chapter_number=chapter_number,
             architecture=self.repository.read_text("Novel_architecture.txt"),
             current_blueprint=current,
-            next_blueprint=next_info if any(
+            next_blueprint=next_info if next_info and any(
                 next_info.get(key)
                 for key in ("chapter_summary", "chapter_role", "chapter_purpose")
             ) else None,

@@ -18,6 +18,7 @@ from novel_generator import (
 )
 from consistency_checker import check_consistency
 from ui.prompt_wait import wait_for_prompt_result, PromptWaitCancelled
+from domain.blueprint import BlueprintValidationError
 
 def generate_novel_architecture_ui(self):
     filepath = self.filepath_var.get().strip()
@@ -100,6 +101,7 @@ def generate_chapter_blueprint_ui(self):
 
 
             user_guidance = self.user_guide_text.get("0.0", "end").strip()  # 新增获取用户指导
+            previous_blueprint = self.project_manager.repository.read_text("Novel_directory.txt")
 
             self.safe_log("开始生成章节蓝图...")
             Chapter_blueprint_generate(
@@ -114,6 +116,14 @@ def generate_chapter_blueprint_ui(self):
                 timeout=timeout_val,
                 user_guidance=user_guidance  # 新增参数
             )
+            generated_blueprint = self.project_manager.repository.read_text("Novel_directory.txt")
+            try:
+                self.blueprint_service.import_generated_text(generated_blueprint, number_of_chapters)
+            except BlueprintValidationError as exc:
+                self.project_manager.repository.write_text("debug/blueprint_raw_output.txt", generated_blueprint)
+                self.project_manager.repository.write_text("Novel_directory.txt", previous_blueprint)
+                self.safe_log(f"⚠️ 蓝图校验失败，已恢复原蓝图：{exc}")
+                return
             self.safe_log("✅ 章节蓝图生成完成。请在 'Chapter Blueprint' 标签页查看或编辑。")
         except Exception:
             self.handle_exception("生成章节蓝图时出错")

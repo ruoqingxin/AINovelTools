@@ -40,6 +40,7 @@ from services.model_config import get_task_llm_config as load_task_llm_config
 from services.project_manager import ProjectManager, ProjectError
 from services.chapter_service import ChapterService
 from services.chapter_context import ChapterContextBuilder
+from services.blueprint_service import BlueprintService
 from domain.chapter_state import ChapterContinuityError
 
 
@@ -283,6 +284,7 @@ class NovelGeneratorGUI:
         if self.project_manager.repository:
             self.chapter_service = ChapterService(self.project_manager.repository)
             self.chapter_context_builder = ChapterContextBuilder(self.project_manager.repository)
+            self.blueprint_service = BlueprintService(self.project_manager.repository)
         self.topic_default = project.get("topic", "")
         self.user_guidance_default = project.get("chapter_guidance", "")
         self.genre_var.set(project.get("genre", "玄幻"))
