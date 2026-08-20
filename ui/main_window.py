@@ -33,10 +33,11 @@ from ui.setting_tab import build_setting_tab, load_novel_architecture, save_nove
 from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint
 from ui.character_tab import build_character_tab, load_character_state, save_character_state
 from ui.summary_tab import build_summary_tab, load_global_summary, save_global_summary
-from ui.chapters_tab import build_chapters_tab, refresh_chapters_list, on_chapter_selected, load_chapter_content, save_current_chapter, prev_chapter, next_chapter
+from ui.chapters_tab import build_chapters_tab, refresh_chapters_list, on_chapter_selected, load_chapter_content, save_current_chapter, is_chapter_dirty, prev_chapter, next_chapter
 from ui.other_settings import build_other_settings_tab
 from services.task_controller import TaskController, TaskAlreadyRunning
 from services.model_config import get_task_llm_config as load_task_llm_config
+from services.project_manager import ProjectManager, ProjectError
 
 
 class NovelGeneratorGUI:
@@ -163,6 +164,23 @@ class NovelGeneratorGUI:
             self.time_constraint_var = ctk.StringVar(value="")
             self.user_guidance_default = ""
 
+        legacy_params = self.loaded_config.get("other_params", {})
+        self.project_manager = ProjectManager(
+            self.loaded_config,
+            self.config_file,
+            self.task_controller,
+        )
+        initial_project = (
+            self.loaded_config.get("current_project")
+            or legacy_params.get("filepath", "")
+        )
+        if initial_project and os.path.isdir(initial_project):
+            try:
+                project = self.project_manager.open_project(initial_project, legacy_params)
+                self.apply_project_settings(project)
+            except ProjectError as exc:
+                logging.error("无法恢复最近工程: %s", exc)
+
         # --------------- 整体Tab布局 ---------------
         self.tabview = ctk.CTkTabview(self.master)
         self.tabview.pack(fill="both", expand=True)
@@ -178,6 +196,9 @@ class NovelGeneratorGUI:
         build_summary_tab(self)
         build_chapters_tab(self)
         build_other_settings_tab(self)
+        if self.project_manager.current_path:
+            self.refresh_project_views()
+        self.master.protocol("WM_DELETE_WINDOW", self.on_app_close)
 
         # English Mode Button
         self.english_mode_btn = ctk.CTkButton(
@@ -233,6 +254,118 @@ class NovelGeneratorGUI:
 
     def get_task_llm_config(self, task_key, selected_name=None):
         return load_task_llm_config(self.loaded_config, task_key, selected_name)
+
+    def collect_project_settings(self):
+        return {
+            "version": 1,
+            "name": os.path.basename(self.filepath_var.get().rstrip("/\\")),
+            "topic": self.topic_text.get("0.0", "end-1c").strip(),
+            "genre": self.genre_var.get().strip(),
+            "num_chapters": self.safe_get_int(self.num_chapters_var, 10),
+            "word_number": self.safe_get_int(self.word_number_var, 3000),
+            "current_chapter": self.safe_get_int(self.chapter_num_var, 1),
+            "chapter_guidance": self.user_guide_text.get("0.0", "end-1c").strip(),
+            "characters_involved": self.characters_involved_var.get().strip(),
+            "key_items": self.key_items_var.get().strip(),
+            "scene_location": self.scene_location_var.get().strip(),
+            "time_constraint": self.time_constraint_var.get().strip(),
+        }
+
+    def save_project_settings(self):
+        if not self.project_manager.current_path:
+            return False
+        return self.project_manager.save_project(self.collect_project_settings())
+
+    def apply_project_settings(self, project):
+        self.topic_default = project.get("topic", "")
+        self.user_guidance_default = project.get("chapter_guidance", "")
+        self.genre_var.set(project.get("genre", "玄幻"))
+        self.num_chapters_var.set(str(project.get("num_chapters", 10)))
+        self.word_number_var.set(str(project.get("word_number", 3000)))
+        self.filepath_var.set(self.project_manager.current_path)
+        self.chapter_num_var.set(str(project.get("current_chapter", 1)))
+        self.characters_involved_var.set(project.get("characters_involved", ""))
+        self.key_items_var.set(project.get("key_items", ""))
+        self.scene_location_var.set(project.get("scene_location", ""))
+        self.time_constraint_var.set(project.get("time_constraint", ""))
+        if hasattr(self, "topic_text"):
+            self.topic_text.delete("0.0", "end")
+            self.topic_text.insert("0.0", self.topic_default)
+        if hasattr(self, "user_guide_text"):
+            self.user_guide_text.delete("0.0", "end")
+            self.user_guide_text.insert("0.0", self.user_guidance_default)
+        if hasattr(self, "char_inv_text"):
+            self.char_inv_text.delete("0.0", "end")
+            self.char_inv_text.insert("0.0", project.get("characters_involved", ""))
+
+    def refresh_project_views(self):
+        self.load_novel_architecture()
+        self.load_chapter_blueprint()
+        self.load_character_state()
+        self.load_global_summary()
+        self.refresh_chapters_list()
+        if not self.chapters_list:
+            self.chapter_result.delete("0.0", "end")
+            self.chapter_view_text.delete("0.0", "end")
+            self._loaded_chapter_number = None
+            self._chapter_saved_text = ""
+        self.refresh_recent_projects()
+
+    def refresh_recent_projects(self):
+        if not hasattr(self, "recent_project_menu"):
+            return
+        projects = self.loaded_config.get("recent_projects", [])
+        self.recent_project_menu.configure(values=projects or [""])
+        self.recent_project_var.set(self.project_manager.current_path or "")
+
+    def switch_project(self, project_path):
+        if self.is_chapter_dirty():
+            choice = messagebox.askyesnocancel(
+                "未保存正文",
+                "当前章节有未保存修改。是否保存后切换工程？",
+            )
+            if choice is None:
+                return False
+            if choice and not self.save_current_chapter():
+                return False
+        if self.task_controller.is_running() and not messagebox.askyesno(
+            "后台任务运行中",
+            "切换工程需要取消当前后台任务，是否继续？",
+        ):
+            return False
+        if self.project_manager.current_path:
+            self.save_project_settings()
+        if (hasattr(self, "_role_lib") and self._role_lib.window
+                and self._role_lib.window.winfo_exists()):
+            self._role_lib.window.destroy()
+            del self._role_lib
+        self.selected_roles = []
+        legacy = self.loaded_config.get("other_params", {})
+        try:
+            project = self.project_manager.switch_project(project_path, legacy)
+        except ProjectError as exc:
+            messagebox.showerror("工程切换失败", str(exc))
+            return False
+        self.apply_project_settings(project)
+        self.refresh_project_views()
+        self.safe_log(f"已切换小说工程：{self.project_manager.current_path}")
+        return True
+
+    def on_app_close(self):
+        if self.is_chapter_dirty():
+            choice = messagebox.askyesnocancel("未保存正文", "关闭前是否保存当前章节？")
+            if choice is None:
+                return
+            if choice and not self.save_current_chapter():
+                return
+        if self.task_controller.is_running():
+            self.task_controller.cancel()
+            if not self.task_controller.wait_for_idle(5):
+                messagebox.showwarning("无法关闭", "后台任务尚未结束，请稍后重试。")
+                return
+        if self.project_manager.current_path:
+            self.save_project_settings()
+        self.master.destroy()
 
     def handle_exception(self, context: str):
         full_message = f"{context}\n{traceback.format_exc()}"
@@ -300,7 +433,7 @@ class NovelGeneratorGUI:
     def browse_folder(self):
         selected_dir = filedialog.askdirectory()
         if selected_dir:
-            self.filepath_var.set(selected_dir)
+            self.switch_project(selected_dir)
 
     def show_character_import_window(self):
         """显示角色导入窗口"""
@@ -464,6 +597,7 @@ class NovelGeneratorGUI:
     refresh_chapters_list = refresh_chapters_list
     on_chapter_selected = on_chapter_selected
     save_current_chapter = save_current_chapter
+    is_chapter_dirty = is_chapter_dirty
     prev_chapter = prev_chapter
     next_chapter = next_chapter
     test_llm_config = test_llm_config

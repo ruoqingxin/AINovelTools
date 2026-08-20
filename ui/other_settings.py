@@ -109,6 +109,8 @@ def build_other_settings_tab(self):
 
         def on_success(loaded_config):
             self.loaded_config = loaded_config
+            self.project_manager.global_config = loaded_config
+            self.load_config_btn()
 
         run_webdav_task(worker, "配置恢复成功！", on_success)
 

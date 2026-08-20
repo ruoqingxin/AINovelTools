@@ -20,10 +20,21 @@ class ConfigManagerTest(unittest.TestCase):
         self.assertEqual(llm_configs["OpenAI GPT 5.5"]["model_name"], "gpt-5.5")
         self.assertEqual(config["embedding_configs"]["OpenAI"]["model_name"], "text-embedding-3-small")
         self.assertEqual(config["embedding_configs"]["Gemini"]["model_name"], "gemini-embedding-2")
+        self.assertEqual(config["current_project"], "")
+        self.assertEqual(config["recent_projects"], [])
+        self.assertNotIn("other_params", config)
 
         stale_names = {"DeepSeek V3", "Gemini 2.0 Flash", "Gemini 2.5 Flash", "Gemini 2.5 Pro", "GPT 5"}
         self.assertTrue(stale_names.isdisjoint(llm_configs.keys()))
         self.assertEqual(validate_choose_configs(config), [])
+
+    def test_normalize_preserves_legacy_project_params_for_project_migration(self):
+        legacy = {"topic": "旧工程", "filepath": "D:/Novels/old"}
+        config = normalize_config({"other_params": legacy})
+
+        self.assertEqual(config["other_params"], legacy)
+        self.assertEqual(config["current_project"], "")
+        self.assertEqual(config["recent_projects"], [])
 
     def test_normalize_config_migrates_legacy_task_choices(self):
         config = normalize_config({

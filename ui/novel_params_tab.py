@@ -48,6 +48,16 @@ def build_novel_params_area(self, start_row=1):
     filepath_entry.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
     browse_btn = ctk.CTkButton(self.filepath_frame, text="浏览...", command=self.browse_folder, width=60, font=("Microsoft YaHei", 12))
     browse_btn.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+    self.recent_project_var = ctk.StringVar(value=self.filepath_var.get())
+    self.recent_project_menu = ctk.CTkOptionMenu(
+        self.filepath_frame,
+        values=self.loaded_config.get("recent_projects", []) or [""],
+        variable=self.recent_project_var,
+        command=lambda path: path and self.switch_project(path),
+        width=180,
+        font=("Microsoft YaHei", 12),
+    )
+    self.recent_project_menu.grid(row=1, column=0, columnspan=2, padx=5, pady=(0, 5), sticky="ew")
 
     # 5) 章节号
     row_chap_num = 4

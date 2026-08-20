@@ -33,6 +33,8 @@ DEFAULT_CONFIG = {
     "last_llm_config_name": DEFAULT_LLM_CONFIG_NAME,
     "last_interface_format": "DeepSeek",
     "last_embedding_interface_format": DEFAULT_EMBEDDING_CONFIG_NAME,
+    "current_project": "",
+    "recent_projects": [],
     "llm_configs": {
         "DeepSeek V4 Flash": {
             "api_key": "",
@@ -96,19 +98,6 @@ DEFAULT_CONFIG = {
             "interface_format": "Gemini"
         }
     },
-    "other_params": {
-        "topic": "",
-        "genre": "",
-        "num_chapters": 0,
-        "word_number": 0,
-        "filepath": "",
-        "chapter_num": "120",
-        "user_guidance": "",
-        "characters_involved": "",
-        "key_items": "",
-        "scene_location": "",
-        "time_constraint": ""
-    },
     "choose_configs": {
         "prompt_draft_llm": "DeepSeek V4 Flash",
         "chapter_outline_llm": "Gemini 3.5 Flash",
@@ -160,10 +149,14 @@ def normalize_config(config_data: dict) -> dict:
             config_data[section_name] = {}
         _merge_missing_values(config_data[section_name], defaults[section_name])
 
-    for section_name in ("other_params", "proxy_setting", "webdav_config"):
+    for section_name in ("proxy_setting", "webdav_config"):
         if not isinstance(config_data.get(section_name), dict):
             config_data[section_name] = {}
         _merge_missing_values(config_data[section_name], defaults[section_name])
+
+    if not isinstance(config_data.get("recent_projects"), list):
+        config_data["recent_projects"] = []
+    config_data.setdefault("current_project", "")
 
     llm_configs = config_data["llm_configs"]
     last_llm_config_name = config_data.get("last_llm_config_name")

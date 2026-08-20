@@ -2,6 +2,8 @@
     "last_llm_config_name": "DeepSeek V4 Flash",
     "last_interface_format": "DeepSeek",
     "last_embedding_interface_format": "OpenAI",
+    "current_project": "",
+    "recent_projects": [],
     "llm_configs": {
         "DeepSeek V4 Flash": {
             "api_key": "",
@@ -64,19 +66,6 @@
             "retrieval_k": 4,
             "interface_format": "Gemini"
         }
-    },
-    "other_params": {
-        "topic": "",
-        "genre": "",
-        "num_chapters": 0,
-        "word_number": 0,
-        "filepath": "",
-        "chapter_num": "120",
-        "user_guidance": "",
-        "characters_involved": "",
-        "key_items": "",
-        "scene_location": "",
-        "time_constraint": ""
     },
     "choose_configs": {
         "prompt_draft_llm": "DeepSeek V4 Flash",

@@ -209,27 +209,14 @@ def build_ai_config_tab(self):
         "interface_format": self.embedding_interface_format_var.get().strip()
 
         }
-        other_params = {
-            "topic": self.topic_text.get("0.0", "end").strip(),
-            "genre": self.genre_var.get(),
-            "num_chapters": self.safe_get_int(self.num_chapters_var, 10),
-            "word_number": self.safe_get_int(self.word_number_var, 3000),
-            "filepath": self.filepath_var.get(),
-            "chapter_num": self.chapter_num_var.get(),
-            "user_guidance": self.user_guide_text.get("0.0", "end").strip(),
-            "characters_involved": self.characters_involved_var.get(),
-            "key_items": self.key_items_var.get(),
-            "scene_location": self.scene_location_var.get(),
-            "time_constraint": self.time_constraint_var.get()
-        }
         self.loaded_config["embedding_configs"][self.embedding_interface_format_var.get().strip()] = embedding_config
         self.loaded_config["last_embedding_interface_format"] = self.embedding_interface_format_var.get().strip()
-        self.loaded_config["other_params"] = other_params
 
 
         # 保存到JSON文件
         try:
             save_config(self.loaded_config, self.config_file)
+            self.save_project_settings()
             messagebox.showinfo("提示", f"配置 {new_name} 已保存并持久化到文件")
         except Exception as e:
             messagebox.showerror("错误", f"保存配置文件失败: {str(e)}")
@@ -725,6 +712,8 @@ def build_proxy_setting_tab(self):
 def load_config_btn(self):
     cfg = load_config(self.config_file)
     if cfg:
+        self.loaded_config = cfg
+        self.project_manager.global_config = cfg
         last_llm = cfg.get("last_llm_config_name", "")
         last_embedding = cfg.get("last_embedding_interface_format", "OpenAI")
         self.embedding_interface_format_var.set(last_embedding)
@@ -760,19 +749,9 @@ def load_config_btn(self):
         if choose_configs.get("consistency_review_llm") in llm_configs:
             self.consistency_review_llm_var.set(choose_configs["consistency_review_llm"])
         other_params = cfg.get("other_params", {})
-        self.topic_text.delete("0.0", "end")
-        self.topic_text.insert("0.0", other_params.get("topic", ""))
-        self.genre_var.set(other_params.get("genre", "玄幻"))
-        self.num_chapters_var.set(str(other_params.get("num_chapters", 10)))
-        self.word_number_var.set(str(other_params.get("word_number", 3000)))
-        self.filepath_var.set(other_params.get("filepath", ""))
-        self.chapter_num_var.set(str(other_params.get("chapter_num", "1")))
-        self.user_guide_text.delete("0.0", "end")
-        self.user_guide_text.insert("0.0", other_params.get("user_guidance", ""))
-        self.characters_involved_var.set(other_params.get("characters_involved", ""))
-        self.key_items_var.set(other_params.get("key_items", ""))
-        self.scene_location_var.set(other_params.get("scene_location", ""))
-        self.time_constraint_var.set(other_params.get("time_constraint", ""))
+        project_path = cfg.get("current_project") or other_params.get("filepath", "")
+        if project_path:
+            self.switch_project(project_path)
         self.log("已加载配置。")
     else:
         messagebox.showwarning("提示", "未找到或无法读取配置文件。")
@@ -797,19 +776,6 @@ def save_config_btn(self):
         "interface_format": current_embedding_interface
 
     }
-    other_params = {
-        "topic": self.topic_text.get("0.0", "end").strip(),
-        "genre": self.genre_var.get(),
-        "num_chapters": self.safe_get_int(self.num_chapters_var, 10),
-        "word_number": self.safe_get_int(self.word_number_var, 3000),
-        "filepath": self.filepath_var.get(),
-        "chapter_num": self.chapter_num_var.get(),
-        "user_guidance": self.user_guide_text.get("0.0", "end").strip(),
-        "characters_involved": self.characters_involved_var.get(),
-        "key_items": self.key_items_var.get(),
-        "scene_location": self.scene_location_var.get(),
-        "time_constraint": self.time_constraint_var.get()
-    }
     parsed_url = urlparse(self.base_url_var.get().strip())
     provider_label = parsed_url.netloc or parsed_url.path.strip("/") or current_llm_interface
     model_label = self.model_name_var.get().strip() or "unnamed-model"
@@ -832,10 +798,10 @@ def save_config_btn(self):
         existing_config["embedding_configs"] = {}
     existing_config["embedding_configs"][current_embedding_interface] = embedding_config
 
-    existing_config["other_params"] = other_params
-
     if save_config(existing_config, self.config_file):
         self.loaded_config = existing_config
+        self.project_manager.global_config = self.loaded_config
+        self.save_project_settings()
         self.interface_config_var.set(llm_config_name)
         messagebox.showinfo("提示", "配置已保存至 config.json")
         self.log("配置已保存。")
