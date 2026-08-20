@@ -1,10 +1,10 @@
 # ui/chapters_tab.py
 # -*- coding: utf-8 -*-
-import os
 import customtkinter as ctk
 from tkinter import messagebox
 from ui.context_menu import TextWidgetContextMenu
-from utils import read_file, save_string_to_txt, get_word_count
+from utils import get_word_count
+from services.project_repository import NovelProjectRepository
 
 def build_chapters_tab(self):
     self.chapters_view_tab = self.tabview.add("Chapters Manage")
@@ -58,21 +58,13 @@ def build_chapters_tab(self):
 
 def refresh_chapters_list(self):
     filepath = self.filepath_var.get().strip()
-    chapters_dir = os.path.join(filepath, "chapters")
-    if not os.path.exists(chapters_dir):
+    repository = NovelProjectRepository(filepath) if filepath else None
+    chapter_numbers = repository.list_chapters() if repository else []
+    if not chapter_numbers:
         self.safe_log("尚未找到 chapters 文件夹，请先生成章节或检查保存路径。")
         self.chapter_select_menu.configure(values=[])
         return
-
-    all_files = os.listdir(chapters_dir)
-    chapter_nums = []
-    for f in all_files:
-        if f.startswith("chapter_") and f.endswith(".txt"):
-            number_part = f.replace("chapter_", "").replace(".txt", "")
-            if number_part.isdigit():
-                chapter_nums.append(number_part)
-    chapter_nums.sort(key=lambda x: int(x))
-    self.chapters_list = chapter_nums
+    self.chapters_list = [str(number) for number in chapter_numbers]
     self.chapter_select_menu.configure(values=self.chapters_list)
     current_selected = self.chapter_select_var.get()
     if current_selected not in self.chapters_list:
@@ -90,11 +82,11 @@ def load_chapter_content(self, chapter_number_str):
     if not chapter_number_str:
         return
     filepath = self.filepath_var.get().strip()
-    chapter_file = os.path.join(filepath, "chapters", f"chapter_{chapter_number_str}.txt")
-    if not os.path.exists(chapter_file):
-        self.safe_log(f"章节文件 {chapter_file} 不存在！")
+    repository = NovelProjectRepository(filepath)
+    content = repository.read_chapter(int(chapter_number_str))
+    if not content and not repository.chapter_path(int(chapter_number_str)).exists():
+        self.safe_log(f"章节 {chapter_number_str} 不存在！")
         return
-    content = read_file(chapter_file)
     self.chapter_view_text.delete("0.0", "end")
     self.chapter_view_text.insert("0.0", content)
     self._loaded_chapter_number = int(chapter_number_str)
@@ -122,7 +114,7 @@ def save_current_chapter(self):
     if not filepath:
         messagebox.showwarning("警告", "请先配置保存文件路径")
         return False
-    chapter_file = os.path.join(filepath, "chapters", f"chapter_{chapter_number_str}.txt")
+    repository = NovelProjectRepository(filepath)
     view_content = self.chapter_view_text.get("0.0", "end-1c").strip()
     if hasattr(self, "chapter_result"):
         main_content = self.chapter_result.get("0.0", "end-1c").strip()
@@ -130,7 +122,7 @@ def save_current_chapter(self):
         content = main_content if main_content != self._chapter_saved_text.strip() else view_content
     else:
         content = view_content
-    if not save_string_to_txt(content, chapter_file):
+    if not repository.write_chapter(int(chapter_number_str), content):
         self.safe_log(f"保存第 {chapter_number_str} 章失败，保留未保存状态。")
         return False
     self.chapter_view_text.delete("0.0", "end")

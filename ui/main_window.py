@@ -35,6 +35,8 @@ from ui.character_tab import build_character_tab, load_character_state, save_cha
 from ui.summary_tab import build_summary_tab, load_global_summary, save_global_summary
 from ui.chapters_tab import build_chapters_tab, refresh_chapters_list, on_chapter_selected, load_chapter_content, save_current_chapter, prev_chapter, next_chapter
 from ui.other_settings import build_other_settings_tab
+from services.task_controller import TaskController, TaskAlreadyRunning
+from services.model_config import get_task_llm_config as load_task_llm_config
 
 
 class NovelGeneratorGUI:
@@ -44,6 +46,7 @@ class NovelGeneratorGUI:
     def __init__(self, master):
         self.master = master
         self._prompt_cancel_event = threading.Event()
+        self.task_controller = TaskController(self)
         self.master.title("Novel Generator GUI")
         try:
             if os.path.exists("icon.ico"):
@@ -216,6 +219,21 @@ class NovelGeneratorGUI:
     def enable_button_safe(self, btn):
         self.master.after(0, lambda: btn.configure(state="normal"))
 
+    def run_background_task(self, task_id, worker):
+        """兼容现有无参数 worker，并把控制器取消令牌用于 Prompt 等待。"""
+        def controlled_worker(cancel_event):
+            self._prompt_cancel_event = cancel_event
+            return worker()
+
+        try:
+            return self.task_controller.run(task_id, controlled_worker)
+        except TaskAlreadyRunning:
+            self.safe_log("已有后台任务正在运行，请等待当前任务结束。")
+            return None
+
+    def get_task_llm_config(self, task_key, selected_name=None):
+        return load_task_llm_config(self.loaded_config, task_key, selected_name)
+
     def handle_exception(self, context: str):
         full_message = f"{context}\n{traceback.format_exc()}"
         logging.error(full_message)
@@ -256,7 +274,8 @@ class NovelGeneratorGUI:
             max_tokens=max_tokens,
             timeout=timeout,
             log_func=self.safe_log,
-            handle_exception_func=self.handle_exception
+            handle_exception_func=self.handle_exception,
+            task_runner=self.run_background_task,
         )
 
     def test_embedding_config(self):
@@ -274,7 +293,8 @@ class NovelGeneratorGUI:
             interface_format=interface_format,
             model_name=model_name,
             log_func=self.safe_log,
-            handle_exception_func=self.handle_exception
+            handle_exception_func=self.handle_exception,
+            task_runner=self.run_background_task,
         )
     
     def browse_folder(self):

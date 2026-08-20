@@ -35,13 +35,14 @@ def generate_novel_architecture_ui(self):
         try:
 
 
-            interface_format = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["interface_format"]
-            api_key = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["api_key"]
-            base_url = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["base_url"]
-            model_name = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["model_name"]
-            temperature = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["temperature"]
-            max_tokens = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["max_tokens"]
-            timeout_val = self.loaded_config["llm_configs"][self.architecture_llm_var.get()]["timeout"]
+            llm_config = self.get_task_llm_config("architecture_llm", self.architecture_llm_var.get())
+            interface_format = llm_config["interface_format"]
+            api_key = llm_config["api_key"]
+            base_url = llm_config["base_url"]
+            model_name = llm_config["model_name"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_tokens"]
+            timeout_val = llm_config["timeout"]
 
 
 
@@ -73,7 +74,7 @@ def generate_novel_architecture_ui(self):
             self.handle_exception("生成小说架构时出错")
         finally:
             self.enable_button_safe(self.btn_generate_architecture)
-    threading.Thread(target=task, daemon=True).start()
+    self.run_background_task("generate_architecture", task)
 
 def generate_chapter_blueprint_ui(self):
     filepath = self.filepath_var.get().strip()
@@ -90,13 +91,14 @@ def generate_chapter_blueprint_ui(self):
 
             number_of_chapters = self.safe_get_int(self.num_chapters_var, 10)
 
-            interface_format = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["interface_format"]
-            api_key = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["api_key"]
-            base_url = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["base_url"]
-            model_name = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["model_name"]
-            temperature = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["temperature"]
-            max_tokens = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["max_tokens"]
-            timeout_val = self.loaded_config["llm_configs"][self.chapter_outline_llm_var.get()]["timeout"]
+            llm_config = self.get_task_llm_config("chapter_outline_llm", self.chapter_outline_llm_var.get())
+            interface_format = llm_config["interface_format"]
+            api_key = llm_config["api_key"]
+            base_url = llm_config["base_url"]
+            model_name = llm_config["model_name"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_tokens"]
+            timeout_val = llm_config["timeout"]
 
 
             user_guidance = self.user_guide_text.get("0.0", "end").strip()  # 新增获取用户指导
@@ -119,7 +121,7 @@ def generate_chapter_blueprint_ui(self):
             self.handle_exception("生成章节蓝图时出错")
         finally:
             self.enable_button_safe(self.btn_generate_directory)
-    threading.Thread(target=task, daemon=True).start()
+    self.run_background_task("generate_blueprint", task)
 
 def generate_chapter_draft_ui(self):
     filepath = self.filepath_var.get().strip()
@@ -131,13 +133,14 @@ def generate_chapter_draft_ui(self):
         self.disable_button_safe(self.btn_generate_chapter)
         try:
 
-            interface_format = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["interface_format"]
-            api_key = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["api_key"]
-            base_url = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["base_url"]
-            model_name = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["model_name"]
-            temperature = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["temperature"]
-            max_tokens = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["max_tokens"]
-            timeout_val = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["timeout"]
+            llm_config = self.get_task_llm_config("prompt_draft_llm", self.prompt_draft_llm_var.get())
+            interface_format = llm_config["interface_format"]
+            api_key = llm_config["api_key"]
+            base_url = llm_config["base_url"]
+            model_name = llm_config["model_name"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_tokens"]
+            timeout_val = llm_config["timeout"]
 
 
             chap_num = self.safe_get_int(self.chapter_num_var, 1)
@@ -319,7 +322,7 @@ def generate_chapter_draft_ui(self):
             self.handle_exception("生成章节草稿时出错")
         finally:
             self.enable_button_safe(self.btn_generate_chapter)
-    threading.Thread(target=task, daemon=True).start()
+    self.run_background_task("generate_chapter_draft", task)
 
 def finalize_chapter_ui(self):
     filepath = self.filepath_var.get().strip()
@@ -349,13 +352,14 @@ def finalize_chapter_ui(self):
         nonlocal edited_text
         try:
 
-            interface_format = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["interface_format"]
-            api_key = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["api_key"]
-            base_url = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["base_url"]
-            model_name = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["model_name"]
-            temperature = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["temperature"]
-            max_tokens = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["max_tokens"]
-            timeout_val = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["timeout"]
+            llm_config = self.get_task_llm_config("final_chapter_llm", self.final_chapter_llm_var.get())
+            interface_format = llm_config["interface_format"]
+            api_key = llm_config["api_key"]
+            base_url = llm_config["base_url"]
+            model_name = llm_config["model_name"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_tokens"]
+            timeout_val = llm_config["timeout"]
 
 
             embedding_api_key = self.embedding_api_key_var.get().strip()
@@ -420,7 +424,7 @@ def finalize_chapter_ui(self):
             self.handle_exception("定稿章节时出错")
         finally:
             self.enable_button_safe(self.btn_finalize_chapter)
-    threading.Thread(target=task, daemon=True).start()
+    self.run_background_task("finalize_chapter", task)
 
 def do_consistency_check(self):
     filepath = self.filepath_var.get().strip()
@@ -434,13 +438,14 @@ def do_consistency_check(self):
     def task():
         self.disable_button_safe(self.btn_check_consistency)
         try:
-            interface_format = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["interface_format"]
-            api_key = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["api_key"]
-            base_url = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["base_url"]
-            model_name = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["model_name"]
-            temperature = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["temperature"]
-            max_tokens = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["max_tokens"]
-            timeout = self.loaded_config["llm_configs"][self.consistency_review_llm_var.get()]["timeout"]
+            llm_config = self.get_task_llm_config("consistency_review_llm", self.consistency_review_llm_var.get())
+            interface_format = llm_config["interface_format"]
+            api_key = llm_config["api_key"]
+            base_url = llm_config["base_url"]
+            model_name = llm_config["model_name"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_tokens"]
+            timeout = llm_config["timeout"]
 
 
             chap_file = os.path.join(filepath, "chapters", f"chapter_{chap_num}.txt")
@@ -471,7 +476,7 @@ def do_consistency_check(self):
             self.handle_exception("审校时出错")
         finally:
             self.enable_button_safe(self.btn_check_consistency)
-    threading.Thread(target=task, daemon=True).start()
+    self.run_background_task("consistency_check", task)
 def generate_batch_ui(self):
 
     # PenBo 优化界面，使用customtkinter进行批量生成章节界面
@@ -562,13 +567,14 @@ def generate_batch_ui(self):
         return result
     
     def generate_chapter_batch(self ,i ,word, min, auto_enrich):
-        draft_interface_format = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["interface_format"]
-        draft_api_key = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["api_key"]
-        draft_base_url = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["base_url"]
-        draft_model_name = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["model_name"]
-        draft_temperature = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["temperature"]
-        draft_max_tokens = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["max_tokens"]
-        draft_timeout = self.loaded_config["llm_configs"][self.prompt_draft_llm_var.get()]["timeout"]
+        draft_config = self.get_task_llm_config("prompt_draft_llm", self.prompt_draft_llm_var.get())
+        draft_interface_format = draft_config["interface_format"]
+        draft_api_key = draft_config["api_key"]
+        draft_base_url = draft_config["base_url"]
+        draft_model_name = draft_config["model_name"]
+        draft_temperature = draft_config["temperature"]
+        draft_max_tokens = draft_config["max_tokens"]
+        draft_timeout = draft_config["timeout"]
         user_guidance = self.user_guide_text.get("0.0", "end").strip()  
 
         char_inv = self.characters_involved_var.get().strip()
@@ -668,13 +674,14 @@ def generate_batch_ui(self):
         if not draft_text.strip():
             raise RuntimeError(f"第{i}章草稿生成失败或无内容，已保留原章节文件")
 
-        finalize_interface_format = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["interface_format"]
-        finalize_api_key = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["api_key"]
-        finalize_base_url = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["base_url"]
-        finalize_model_name = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["model_name"]
-        finalize_temperature = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["temperature"]
-        finalize_max_tokens = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["max_tokens"]
-        finalize_timeout = self.loaded_config["llm_configs"][self.final_chapter_llm_var.get()]["timeout"]
+        finalize_config = self.get_task_llm_config("final_chapter_llm", self.final_chapter_llm_var.get())
+        finalize_interface_format = finalize_config["interface_format"]
+        finalize_api_key = finalize_config["api_key"]
+        finalize_base_url = finalize_config["base_url"]
+        finalize_model_name = finalize_config["model_name"]
+        finalize_temperature = finalize_config["temperature"]
+        finalize_max_tokens = finalize_config["max_tokens"]
+        finalize_timeout = finalize_config["timeout"]
 
         chapters_dir = os.path.join(self.filepath_var.get().strip(), "chapters")
         os.makedirs(chapters_dir, exist_ok=True)
@@ -727,7 +734,7 @@ def generate_batch_ui(self):
         except Exception:
             self.handle_exception("批量生成时出错")
 
-    threading.Thread(target=batch_task, daemon=True).start()
+    self.run_background_task("generate_batch", batch_task)
 
 
 def import_knowledge_handler(self):
@@ -792,8 +799,7 @@ def import_knowledge_handler(self):
                 self.enable_button_safe(self.btn_import_knowledge)
 
         try:
-            thread = threading.Thread(target=task, daemon=True)
-            thread.start()
+            self.run_background_task("import_knowledge", task)
         except Exception as e:
             self.enable_button_safe(self.btn_import_knowledge)
             messagebox.showerror("错误", f"线程启动失败: {str(e)}")

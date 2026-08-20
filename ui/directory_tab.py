@@ -1,10 +1,10 @@
 # ui/directory_tab.py
 # -*- coding: utf-8 -*-
-import os
 import customtkinter as ctk
 from tkinter import messagebox
-from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
+from utils import get_word_count
 from ui.context_menu import TextWidgetContextMenu
+from services.project_repository import NovelProjectRepository
 
 def build_directory_tab(self):
     self.directory_tab = self.tabview.add("Chapter Blueprint")
@@ -38,8 +38,7 @@ def load_chapter_blueprint(self):
     if not filepath:
         messagebox.showwarning("警告", "请先设置保存文件路径")
         return
-    filename = os.path.join(filepath, "Novel_directory.txt")
-    content = read_file(filename)
+    content = NovelProjectRepository(filepath).read_text("Novel_directory.txt")
     self.directory_text.delete("0.0", "end")
     self.directory_text.insert("0.0", content)
     self.log("已加载 Novel_directory.txt 内容到编辑区。")
@@ -50,7 +49,5 @@ def save_chapter_blueprint(self):
         messagebox.showwarning("警告", "请先设置保存文件路径")
         return
     content = self.directory_text.get("0.0", "end").strip()
-    filename = os.path.join(filepath, "Novel_directory.txt")
-    clear_file_content(filename)
-    save_string_to_txt(content, filename)
+    NovelProjectRepository(filepath).write_text("Novel_directory.txt", content)
     self.log("已保存对 Novel_directory.txt 的修改。")

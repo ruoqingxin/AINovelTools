@@ -1,10 +1,10 @@
 # ui/summary_tab.py
 # -*- coding: utf-8 -*-
-import os
 import customtkinter as ctk
 from tkinter import messagebox
-from utils import read_file, save_string_to_txt, clear_file_content, get_word_count
+from utils import get_word_count
 from ui.context_menu import TextWidgetContextMenu
+from services.project_repository import NovelProjectRepository
 
 def build_summary_tab(self):
     self.summary_tab = self.tabview.add("Global Summary")
@@ -39,8 +39,7 @@ def load_global_summary(self):
     if not filepath:
         messagebox.showwarning("警告", "请先设置保存文件路径")
         return
-    filename = os.path.join(filepath, "global_summary.txt")
-    content = read_file(filename)
+    content = NovelProjectRepository(filepath).read_text("global_summary.txt")
     self.summary_text.delete("0.0", "end")
     self.summary_text.insert("0.0", content)
     self.log("已加载 global_summary.txt 到编辑区。")
@@ -51,7 +50,5 @@ def save_global_summary(self):
         messagebox.showwarning("警告", "请先设置保存文件路径")
         return
     content = self.summary_text.get("0.0", "end").strip()
-    filename = os.path.join(filepath, "global_summary.txt")
-    clear_file_content(filename)
-    save_string_to_txt(content, filename)
+    NovelProjectRepository(filepath).write_text("global_summary.txt", content)
     self.log("已保存对 global_summary.txt 的修改。")

@@ -259,7 +259,7 @@ def save_config(config_data: dict, config_file: str) -> bool:
         logging.error(f"无法保存配置文件: {e}")
         return False
 
-def test_llm_config(interface_format, api_key, base_url, model_name, temperature, max_tokens, timeout, log_func, handle_exception_func):
+def test_llm_config(interface_format, api_key, base_url, model_name, temperature, max_tokens, timeout, log_func, handle_exception_func, task_runner=None):
     """测试当前的LLM配置是否可用"""
     def task():
         try:
@@ -287,9 +287,11 @@ def test_llm_config(interface_format, api_key, base_url, model_name, temperature
             log_func(f"❌ LLM配置测试出错: {str(e)}")
             handle_exception_func("测试LLM配置时出错")
 
-    threading.Thread(target=task, daemon=True).start()
+    if task_runner is not None:
+        return task_runner("test_llm_config", task)
+    return threading.Thread(target=task, daemon=True).start()
 
-def test_embedding_config(api_key, base_url, interface_format, model_name, log_func, handle_exception_func):
+def test_embedding_config(api_key, base_url, interface_format, model_name, log_func, handle_exception_func, task_runner=None):
     """测试当前的Embedding配置是否可用"""
     def task():
         try:
@@ -314,4 +316,6 @@ def test_embedding_config(api_key, base_url, interface_format, model_name, log_f
             log_func(f"❌ Embedding配置测试出错: {str(e)}")
             handle_exception_func("测试Embedding配置时出错")
 
-    threading.Thread(target=task, daemon=True).start()
+    if task_runner is not None:
+        return task_runner("test_embedding_config", task)
+    return threading.Thread(target=task, daemon=True).start()

@@ -8,7 +8,6 @@ from requests.auth import HTTPBasicAuth
 import os
 import json
 import tempfile
-import threading
 from xml.etree import ElementTree as ET
 import shutil
 import time
@@ -62,7 +61,7 @@ def build_other_settings_tab(self):
                 return
             self.master.after(0, lambda res=result: finish(True, res))
 
-        threading.Thread(target=task, daemon=True).start()
+        self.run_background_task("webdav", task)
 
     def test_webdav_connection():
         webdav_url = self.webdav_url_var.get().strip()
