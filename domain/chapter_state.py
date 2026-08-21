@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from copy import deepcopy
 
 
@@ -116,6 +117,9 @@ def save_draft(manifest: dict, chapter_number: int, content: str) -> dict:
     records = updated["chapters"]
     key = str(chapter_number)
     old_status = records.get(key, {}).get("status", STATUS_MISSING)
+    old_hash = records.get(key, {}).get("content_hash", "")
+    if old_status in FINAL_STATUSES and old_hash == content_hash(content):
+        return updated
     status = STATUS_DRAFT_MODIFIED if old_status in FINAL_STATUSES else STATUS_DRAFT
     record = default_record(status, content)
     record.update(records.get(key, {}))
@@ -128,4 +132,22 @@ def save_draft(manifest: dict, chapter_number: int, content: str) -> dict:
             if int(number) > chapter_number and downstream.get("status") in FINAL_STATUSES:
                 downstream["status"] = STATUS_STALE
                 downstream["downstream_stale"] = True
+    return updated
+
+
+def finalize_record(manifest: dict, chapter_number: int, content: str, snapshot_path: str) -> dict:
+    updated = deepcopy(normalize_manifest(manifest))
+    record = updated["chapters"].setdefault(str(chapter_number), default_record())
+    record.update({
+        "status": STATUS_FINALIZED,
+        "content_hash": content_hash(content),
+        "finalized_at": datetime.now(timezone.utc).isoformat(),
+        "state_snapshot": snapshot_path,
+        "indexed": False,
+        "downstream_stale": False,
+    })
+    for number, downstream in updated["chapters"].items():
+        if int(number) > chapter_number and downstream.get("status") in FINAL_STATUSES:
+            downstream["status"] = STATUS_STALE
+            downstream["downstream_stale"] = True
     return updated

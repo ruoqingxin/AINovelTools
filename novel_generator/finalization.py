@@ -5,13 +5,14 @@
 """
 import os
 import logging
-import tempfile
 from llm_adapters import create_llm_adapter
 from embedding_adapters import create_embedding_adapter
 import prompt_definitions
 from novel_generator.common import invoke_with_cleaning
 from utils import read_file
 from novel_generator.vectorstore_utils import update_vector_store
+from services.finalization_service import ChapterFinalizationService
+from services.project_repository import NovelProjectRepository
 logging.basicConfig(
     filename='app.log',      # 日志文件名
     filemode='a',            # 追加模式（'w' 会覆盖）
@@ -19,20 +20,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-
-def _write_text_atomic(path: str, content: str):
-    """先写临时文件，再原子替换目标文件。"""
-    dir_name = os.path.dirname(os.path.abspath(path))
-    os.makedirs(dir_name, exist_ok=True)
-    fd, temp_path = tempfile.mkstemp(suffix=".tmp", dir=dir_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        os.replace(temp_path, path)
-    except Exception:
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
-        raise
 
 def finalize_chapter(
     novel_number: int,
@@ -65,6 +52,15 @@ def finalize_chapter(
     old_global_summary = read_file(global_summary_file)
     character_state_file = os.path.join(filepath, "character_state.txt")
     old_character_state = read_file(character_state_file)
+    old_plot_arcs = read_file(os.path.join(filepath, "plot_arcs.txt"))
+    repository = NovelProjectRepository(filepath)
+    manifest = repository.read_json("chapter_manifest.json", {"chapters": {}})
+    status = manifest.get("chapters", {}).get(str(novel_number), {}).get("status")
+    if status in {"draft_modified", "stale"}:
+        previous = repository.read_json(f"chapter_states/chapter_{novel_number - 1}.json", {}) if novel_number > 1 else {}
+        old_global_summary = previous.get("global_summary", "")
+        old_character_state = previous.get("character_state", "")
+        old_plot_arcs = previous.get("plot_arcs", "")
 
     llm_adapter = create_llm_adapter(
         interface_format=interface_format,
@@ -92,25 +88,29 @@ def finalize_chapter(
     if not new_char_state.strip():
         new_char_state = old_character_state
 
-    _write_text_atomic(global_summary_file, new_global_summary)
-    _write_text_atomic(character_state_file, new_char_state)
-
-    try:
+    def update_index(text):
         embedding_adapter = create_embedding_adapter(
             embedding_interface_format,
             embedding_api_key,
             embedding_url,
             embedding_model_name
         )
-        update_vector_store(
+        return update_vector_store(
             embedding_adapter=embedding_adapter,
             new_chapter=chapter_text,
             filepath=filepath
         )
-    except Exception as e:
-        logging.warning(f"Vector store update skipped after finalizing chapter {novel_number}: {e}")
+    result = ChapterFinalizationService(repository).finalize(
+        novel_number,
+        chapter_text,
+        new_global_summary,
+        new_char_state,
+        old_plot_arcs,
+        update_index,
+    )
 
     logging.info(f"Chapter {novel_number} has been finalized.")
+    return result
 
 def enrich_chapter_text(
     chapter_text: str,

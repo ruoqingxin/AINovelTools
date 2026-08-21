@@ -183,7 +183,7 @@ def update_vector_store(embedding_adapter, new_chapter: str, filepath: str):
     splitted_texts = split_text_for_vectorstore(new_chapter)
     if not splitted_texts:
         logging.warning("No valid text to insert into vector store. Skipping.")
-        return
+        return False
 
     store = load_vector_store(embedding_adapter, filepath)
     if not store:
@@ -191,17 +191,20 @@ def update_vector_store(embedding_adapter, new_chapter: str, filepath: str):
         store = init_vector_store(embedding_adapter, splitted_texts, filepath)
         if not store:
             logging.warning("Init vector store failed, skip embedding.")
+            return False
         else:
             logging.info("New vector store created successfully.")
-        return
+            return True
 
     try:
         docs = [Document(page_content=str(t)) for t in splitted_texts]
         store.add_documents(docs)
         logging.info("Vector store updated with the new chapter splitted segments.")
+        return True
     except Exception as e:
         logging.warning(f"Failed to update vector store: {e}")
         traceback.print_exc()
+        return False
 
 def get_relevant_context_from_vector_store(embedding_adapter, query: str, filepath: str, k: int = 2) -> str:
     """

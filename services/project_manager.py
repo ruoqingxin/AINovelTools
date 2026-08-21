@@ -109,6 +109,7 @@ class ProjectManager:
         self.project = None
 
     def _activate(self, repository: NovelProjectRepository, project: dict):
+        repository.recover_transactions()
         ChapterService(repository).load_manifest()
         OutlineService(repository).load_workflow()
         BlueprintService(repository).load_blueprint()

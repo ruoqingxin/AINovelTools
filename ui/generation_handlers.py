@@ -413,7 +413,7 @@ def finalize_chapter_ui(self):
                 self.master.after(0, lambda t=edited_text: self.chapter_result.insert("0.0", t))
             self.chapter_service.save_draft(chap_num, edited_text)
 
-            finalize_chapter(
+            finalization_result = finalize_chapter(
                 novel_number=chap_num,
                 word_number=word_number,
                 api_key=api_key,
@@ -429,7 +429,12 @@ def finalize_chapter_ui(self):
                 max_tokens=max_tokens,
                 timeout=timeout_val
             )
-            self.safe_log(f"✅ 第{chap_num}章定稿完成（已更新前文摘要、角色状态、向量库）。")
+            if finalization_result and finalization_result.get("status") == "index_pending":
+                self.safe_log(f"⚠️ 第{chap_num}章已原子定稿，向量索引待重建。")
+            elif finalization_result and not finalization_result.get("changed", True):
+                self.safe_log(f"第{chap_num}章内容未变化，已跳过重复定稿。")
+            else:
+                self.safe_log(f"✅ 第{chap_num}章已原子定稿并更新状态快照。")
 
             final_text = read_file(chapter_file)
             self.master.after(
