@@ -4,7 +4,6 @@
 章节草稿生成及获取历史章节文本、当前章节摘要等
 """
 import os
-import json
 import logging
 import re  # 添加re模块导入
 from llm_adapters import create_llm_adapter

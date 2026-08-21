@@ -6,7 +6,6 @@
 import os
 import logging
 import traceback
-import numpy as np
 import ssl
 import warnings
 from langchain_chroma import Chroma
@@ -179,7 +178,6 @@ def update_vector_store(embedding_adapter, new_chapter: str, filepath: str):
     将最新章节文本插入到向量库中。
     若库不存在则初始化；若初始化/更新失败，则跳过。
     """
-    from utils import read_file, clear_file_content, save_string_to_txt
     splitted_texts = split_text_for_vectorstore(new_chapter)
     if not splitted_texts:
         logging.warning("No valid text to insert into vector store. Skipping.")

@@ -5,17 +5,14 @@ import threading
 import logging
 import traceback
 import customtkinter as ctk
-import tkinter as tk
 from tkinter import filedialog, messagebox
-from .role_library import RoleLibrary
-from llm_adapters import create_llm_adapter
 
-from config_manager import load_config, save_config, test_llm_config, test_embedding_config
-from utils import read_file, save_string_to_txt, clear_file_content
+from config_manager import load_config, test_llm_config, test_embedding_config
+from utils import read_file
 from tooltips import tooltips
 
-from ui.context_menu import TextWidgetContextMenu
-from ui.main_tab import build_main_tab, build_left_layout, build_right_layout
+from ui.library_dialogs import show_role_library, show_skill_selector
+from ui.main_tab import build_main_tab
 from ui.config_tab import build_config_tabview, load_config_btn, save_config_btn
 from ui.novel_params_tab import build_novel_params_area, build_optional_buttons_area
 from ui.generation_handlers import (
@@ -38,7 +35,7 @@ from ui.setting_tab import (
 from ui.directory_tab import build_directory_tab, load_chapter_blueprint, save_chapter_blueprint
 from ui.character_tab import build_character_tab, load_character_state, save_character_state
 from ui.summary_tab import build_summary_tab, load_global_summary, save_global_summary
-from ui.chapters_tab import build_chapters_tab, refresh_chapters_list, on_chapter_selected, load_chapter_content, save_current_chapter, is_chapter_dirty, prev_chapter, next_chapter
+from ui.chapters_tab import build_chapters_tab, refresh_chapters_list, on_chapter_selected, save_current_chapter, is_chapter_dirty, prev_chapter, next_chapter
 from ui.other_settings import build_other_settings_tab
 from services.task_controller import TaskController, TaskAlreadyRunning
 from services.model_config import get_task_llm_config as load_task_llm_config
@@ -47,7 +44,6 @@ from services.chapter_service import ChapterService
 from services.chapter_context import ChapterContextBuilder
 from services.blueprint_service import BlueprintService
 from services.outline_service import OutlineService
-from services.skill_service import SkillService
 from domain.chapter_state import ChapterContinuityError
 
 
@@ -276,7 +272,7 @@ class NovelGeneratorGUI:
             "word_number": self.safe_get_int(self.word_number_var, 3000),
             "current_chapter": self.safe_get_int(self.chapter_num_var, 1),
             "chapter_guidance": self.user_guide_text.get("0.0", "end-1c").strip(),
-            "characters_involved": self.characters_involved_var.get().strip(),
+            "characters_involved": self.char_inv_text.get("0.0", "end-1c").strip(),
             "key_items": self.key_items_var.get().strip(),
             "scene_location": self.scene_location_var.get().strip(),
             "time_constraint": self.time_constraint_var.get().strip(),
@@ -348,7 +344,7 @@ class NovelGeneratorGUI:
         return self.chapter_context_builder.build(
             self.project_manager.project or {},
             chapter_number,
-            {"character_names": self.characters_involved_var.get().strip()},
+            {"character_names": self.char_inv_text.get("0.0", "end-1c").strip()},
         )
 
     def refresh_recent_projects(self):
@@ -566,54 +562,10 @@ class NovelGeneratorGUI:
         btn_cancel.pack(side="right", padx=20)
 
     def show_role_library(self):
-        save_path = self.filepath_var.get().strip()
-        if not save_path:
-            messagebox.showwarning("警告", "请先设置保存路径")
-            return
-        
-        # 初始化LLM适配器
-        llm_adapter = create_llm_adapter(
-            interface_format=self.interface_format_var.get(),
-            base_url=self.base_url_var.get(),
-            model_name=self.model_name_var.get(),
-            api_key=self.api_key_var.get(),
-            temperature=self.temperature_var.get(),
-            max_tokens=self.max_tokens_var.get(),
-            timeout=self.timeout_var.get()
-        )
-        
-        # 传递LLM适配器实例到角色库
-        if hasattr(self, '_role_lib'):
-            if self._role_lib.window and self._role_lib.window.winfo_exists():
-                self._role_lib.window.destroy()
-        
-        self._role_lib = RoleLibrary(self.master, save_path, llm_adapter)  # 新增参数
+        return show_role_library(self)
 
     def show_skill_selector(self):
-        skills = SkillService(self.loaded_config).load()
-        if not skills:
-            messagebox.showinfo("写作技能", "当前技能库中没有可用的 JSON 技能。")
-            return
-        dialog = ctk.CTkToplevel(self.master)
-        dialog.title("工程写作技能")
-        dialog.geometry("460x520")
-        frame = ctk.CTkScrollableFrame(dialog)
-        frame.pack(fill="both", expand=True, padx=10, pady=10)
-        variables = {}
-        selected = set(getattr(self, "selected_skill_ids", []))
-        for skill_id, skill in skills.items():
-            variable = tk.BooleanVar(value=skill_id in selected)
-            variables[skill_id] = variable
-            ctk.CTkCheckBox(frame, text=str(skill["name"]), variable=variable).pack(anchor="w", pady=4)
-
-        def confirm():
-            self.selected_skill_ids = [item for item, variable in variables.items() if variable.get()]
-            self.save_project_settings()
-            dialog.destroy()
-
-        ctk.CTkButton(dialog, text="确认", command=confirm).pack(pady=(0, 10))
-        dialog.transient(self.master)
-        dialog.grab_set()
+        return show_skill_selector(self)
 
     def toggle_english_mode(self):
         import config_manager

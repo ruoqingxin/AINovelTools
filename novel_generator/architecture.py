@@ -6,7 +6,6 @@
 import os
 import json
 import logging
-import traceback
 from novel_generator.common import invoke_with_cleaning
 from llm_adapters import create_llm_adapter
 import prompt_definitions

@@ -1,7 +1,7 @@
 # ui/novel_params_tab.py
 # -*- coding: utf-8 -*-
 import customtkinter as ctk
-from tkinter import filedialog, messagebox
+from tkinter import messagebox
 from ui.context_menu import TextWidgetContextMenu
 from tooltips import tooltips
 

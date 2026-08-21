@@ -9,7 +9,6 @@ from azure.ai.inference import ChatCompletionsClient
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.inference.models import SystemMessage, UserMessage
 from openai import OpenAI
-import requests
 
 
 def check_base_url(url: str) -> str:

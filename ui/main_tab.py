@@ -1,7 +1,6 @@
 # ui/main_tab.py
 # -*- coding: utf-8 -*-
 import customtkinter as ctk
-from tkinter import messagebox
 from ui.context_menu import TextWidgetContextMenu
 
 def build_main_tab(self):

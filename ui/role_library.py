@@ -6,7 +6,6 @@ import shutil
 import re
 import customtkinter as ctk
 from tkinter import messagebox, BooleanVar
-from customtkinter import CTkScrollableFrame, CTkTextbox, END
 from utils import read_file
 from novel_generator.common import invoke_with_cleaning  # 新增导入
 import prompt_definitions

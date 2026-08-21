@@ -1,6 +1,5 @@
 # utils.py
 # -*- coding: utf-8 -*-
-import os
 import json
 
 def read_file(filename: str) -> str:
