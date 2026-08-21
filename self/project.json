@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "self",
+  "topic": "",
+  "genre": "玄幻",
+  "num_chapters": 1000,
+  "word_number": 3000,
+  "current_chapter": 1,
+  "planning_guidance": "",
+  "chapter_guidance": "",
+  "blueprint_mode": "range",
+  "volume_mode": "none",
+  "volume_count": 0,
+  "current_volume": 1,
+  "selected_skill_ids": [],
+  "characters_involved": "",
+  "key_items": "",
+  "scene_location": "",
+  "time_constraint": ""
+}
