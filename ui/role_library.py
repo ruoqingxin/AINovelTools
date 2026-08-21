@@ -7,9 +7,10 @@ import re
 import customtkinter as ctk
 from tkinter import messagebox, BooleanVar
 from customtkinter import CTkScrollableFrame, CTkTextbox, END
-from utils import read_file, save_string_to_txt  # 导入 utils 中的函数
+from utils import read_file
 from novel_generator.common import invoke_with_cleaning  # 新增导入
 import prompt_definitions
+from services.role_library_service import RoleLibraryService
 
 DEFAULT_FONT = ("Microsoft YaHei", 12)
 INVALID_NAME_CHARS = set('<>:"/\\|?*')
@@ -23,6 +24,7 @@ class RoleLibrary:
     def __init__(self, master, save_path, llm_adapter):  # 新增llm_adapter参数
         self.master = master
         self.save_path = os.path.join(save_path, "角色库")
+        self.role_service = RoleLibraryService(save_path)
         self.selected_category = None
         self.current_roles = []
         self.selected_del = []
@@ -47,9 +49,7 @@ class RoleLibrary:
 
     def create_library_structure(self):
         """创建必要的目录结构"""
-        os.makedirs(self.save_path, exist_ok=True)
-        all_dir = os.path.join(self.save_path, "全部")
-        os.makedirs(all_dir, exist_ok=True)
+        self.role_service.initialize()
 
     def _validate_library_name(self, name, label):
         """校验角色名/分类名，避免路径穿越或非法文件名。"""
@@ -75,6 +75,8 @@ class RoleLibrary:
 
     def _category_dir_path(self, category):
         category = self._validate_library_name(category, "分类名称")
+        if category == "全部":
+            category = "未分类"
         return self._safe_join_under_library(category)
 
     def _role_file_path(self, category, role_name):
@@ -85,23 +87,8 @@ class RoleLibrary:
     def _find_role_actual_category(self, role_name):
         """查找角色文件实际所在分类。"""
         role_name = self._validate_library_name(role_name, "角色名称")
-        if self.selected_category and self.selected_category != "全部":
-            current_path = self._role_file_path(self.selected_category, role_name)
-            if os.path.exists(current_path):
-                return self.selected_category
-
-        all_path = self._role_file_path("全部", role_name)
-        if os.path.exists(all_path):
-            return "全部"
-
-        for category in os.listdir(self.save_path):
-            if category == "全部":
-                continue
-            role_path = self._role_file_path(category, role_name)
-            if os.path.exists(role_path):
-                return category
-
-        raise FileNotFoundError(f"找不到角色 {role_name} 的实际存储位置")
+        preferred = self.selected_category if self.selected_category != "全部" else None
+        return self.role_service.actual_category(role_name, preferred)
 
     def create_ui(self):
         """创建主界面"""
@@ -205,7 +192,7 @@ class RoleLibrary:
             name_frame,
             text="新增",
             width=60,
-            command=lambda: self._create_new_role("全部"),
+            command=lambda: self._create_new_role("未分类"),
             font=DEFAULT_FONT
         ).pack(side="left", padx=0)
 
@@ -227,11 +214,7 @@ class RoleLibrary:
 
     def _get_all_categories(self):
         """获取所有有效分类（包括动态更新）"""
-        categories = ["全部"]
-        for d in os.listdir(self.save_path):
-            if os.path.isdir(os.path.join(self.save_path, d)) and d != "全部":
-                categories.append(d)
-        return categories
+        return self.role_service.categories()
 
     def _move_to_category(self):
         """分类转移功能"""
@@ -260,13 +243,11 @@ class RoleLibrary:
 
             old_path = self._role_file_path(actual_category, current_role)
         else:
+            actual_category = self.selected_category
             old_path = self._role_file_path(self.selected_category, current_role)
 
-        # 如果目标分类是"全部"，则实际移动到"全部"分类
-        if new_category == "全部":
-            new_path = self._role_file_path("全部", current_role)
-        else:
-            new_path = self._role_file_path(new_category, current_role)
+        stored_category = "未分类" if new_category == "全部" else new_category
+        new_path = self._role_file_path(stored_category, current_role)
 
         # 检查是否已经在目标分类
         if os.path.exists(new_path):
@@ -286,8 +267,8 @@ class RoleLibrary:
             os.makedirs(os.path.dirname(new_path), exist_ok=True)
             
             try:
-                # 执行移动操作
-                shutil.move(old_path, new_path)
+                # “全部”是虚拟视图，移入“全部”实际保存到“未分类”。
+                self.role_service.move(current_role, actual_category, new_category)
                 
                 # 更新显示
                 self.selected_category = new_category if new_category != "全部" else "全部"
@@ -752,8 +733,6 @@ class RoleLibrary:
             # 从内存数据直接保存角色
             for role in selected_roles:
                 role_name = self._validate_library_name(role['name'], "角色名称")
-                dest_path = self._role_file_path("临时角色库", role_name)
-                
                 # 构建角色内容
                 content_lines = [f"{role_name}："]
                 for attr, items in role['attributes'].items():
@@ -762,9 +741,7 @@ class RoleLibrary:
                         prefix = "├──" if i < len(items)-1 else "└──"
                         content_lines.append(f"│  {prefix}{item}")
                 
-                # 直接写入文件，覆盖已存在的文件
-                with open(dest_path, 'w', encoding='utf-8') as f:
-                    f.write('\n'.join(content_lines))
+                self.role_service.save("临时角色库", role_name, '\n'.join(content_lines))
 
             # 刷新分类显示
             self.load_categories()
@@ -830,29 +807,22 @@ class RoleLibrary:
 
     def _save_role_file(self, content, save_path):
         """保存角色文件"""
-        with open(save_path, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(content))
+        relative = os.path.relpath(save_path, self.save_path)
+        category = os.path.dirname(relative)
+        role_name = os.path.splitext(os.path.basename(relative))[0]
+        self.role_service.save(category, role_name, '\n'.join(content))
 
     def _check_role_name_conflict(self, new_name):
         """检查角色名是否重复，遍历整个角色文件夹"""
         new_name = self._validate_library_name(new_name, "角色名称")
         conflicts = []
         # 遍历所有分类目录
-        for category in os.listdir(self.save_path):
+        for category in self.role_service.categories()[1:]:
             if os.path.isdir(os.path.join(self.save_path, category)):
                 # 检查该分类下是否有同名角色
                 role_path = self._role_file_path(category, new_name)
                 if os.path.exists(role_path):
-                    # 如果是"全部"分类，需要进一步检查是否是实际文件
-                    if category == "全部":
-                        # 检查"全部"目录下的文件是否是实际文件
-                        all_path = self._role_file_path("全部", new_name)
-                        if os.path.isfile(all_path):
-                            # 如果是实际文件，则认为是冲突
-                            conflicts.append(category)
-                    else:
-                        # 普通分类直接记录冲突
-                        conflicts.append(category)
+                    conflicts.append(category)
         return conflicts
 
     def save_current_role(self):
@@ -888,12 +858,9 @@ class RoleLibrary:
 
         try:
             actual_category = self._find_role_actual_category(current_role)
-            save_path = self._role_file_path(actual_category, new_name)
-            # 如果修改了角色名，更新文件名
-            if new_name != current_role:
-                old_path = self._role_file_path(actual_category, current_role)
-                os.rename(old_path, save_path)
-            self._save_role_file(content, save_path)
+            self.role_service.rename(
+                actual_category, current_role, new_name, '\n'.join(content)
+            )
 
             # 更新显示
             self.current_role = new_name
@@ -905,122 +872,29 @@ class RoleLibrary:
 
     def _rename_role_file(self):
         """修改角色名称"""
-        old_name = self.current_role
+        old_name = getattr(self, "current_role", "")
         new_name = self.role_name_var.get().strip()
-
-        if not old_name or not new_name:
-            return
-
-        # 处理中英文冒号
-        for colon in [":", "："]:
-            old_name = old_name.split(colon)[0]
-            new_name = new_name.split(colon)[0]
-
         try:
             old_name = self._validate_library_name(old_name, "角色名称")
             new_name = self._validate_library_name(new_name, "角色名称")
-        except ValueError as e:
-            messagebox.showerror("错误", str(e), parent=self.window)
-            return
-
-        # 如果角色名没有改变，直接返回
-        if new_name == old_name:
-            return
-
-        # 检查角色名是否重复
-        conflicts = self._check_role_name_conflict(new_name)
-        if conflicts:
-            messagebox.showerror("错误",
-                                f"角色名称 '{new_name}' 已存在于以下分类中：\n" +
-                                "\n".join(conflicts) +
-                                "\n请使用不同的角色名称", parent=self.window)
-            return
-
-        try:
-            # 如果是"全部"分类，需要找到实际存储的分类
-            if self.selected_category == "全部":
-                # 首先检查"全部"目录下是否有该角色文件
-                all_path = self._role_file_path("全部", old_name)
-                if os.path.exists(all_path):
-                    # 如果"全部"目录下有文件，则直接操作
-                    actual_category = "全部"
-                else:
-                    # 遍历所有分类查找实际存储位置
-                    actual_category = None
-                    for category in os.listdir(self.save_path):
-                        if category == "全部":
-                            continue
-                        test_path = self._role_file_path(category, old_name)
-                        if os.path.exists(test_path):
-                            actual_category = category
-                            break
-
-                    if not actual_category:
-                        raise FileNotFoundError(
-                            f"找不到角色 {old_name} 的实际存储位置")
-            else:
-                actual_category = self.selected_category
-
-            # 读取旧文件内容并更新角色名
+            if new_name == old_name:
+                return
+            conflicts = self._check_role_name_conflict(new_name)
+            if conflicts:
+                raise FileExistsError(f"角色名称 '{new_name}' 已存在于：{', '.join(conflicts)}")
+            actual_category = self._find_role_actual_category(old_name)
             old_path = self._role_file_path(actual_category, old_name)
-            with open(old_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            # 获取第一行内容
-            first_line = content.split('\n')[0].strip()
-            # 提取内容中的角色名
+            content = read_file(str(old_path))
+            first_line = content.split('\n', 1)[0].strip()
             content_role_name = first_line.split('：')[0].split(':')[0].strip()
-            # 如果内容中的角色名与旧文件名不同，更新内容
-            if content_role_name != old_name:
-                content = content.replace(
-                    f"{content_role_name}：", f"{new_name}：", 1)
-            else:
-                content = content.replace(f"{old_name}：", f"{new_name}：", 1)
-
-            # 写入新文件
-            new_path = self._role_file_path(actual_category, new_name)
-            with open(new_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-
-            # 删除旧文件
-            os.remove(old_path)
-
-            # 处理"全部"目录
-            all_old_path = self._role_file_path("全部", old_name)
-            all_new_path = self._role_file_path("全部", new_name)
-
-            # 如果"全部"目录存在旧文件
-            if os.path.exists(all_old_path):
-                try:
-                    # 更新"全部"目录中的文件内容
-                    with open(all_old_path, 'r', encoding='utf-8') as f:
-                        all_content = f.read()
-                    updated_all_content = all_content.replace(
-                        f"{old_name}：", f"{new_name}：", 1)
-
-                    # 写入新文件
-                    with open(all_new_path, 'w', encoding='utf-8') as f:
-                        f.write(updated_all_content)
-
-                    # 删除旧文件
-                    os.remove(all_old_path)
-                except Exception as e:
-                    messagebox.showerror("错误", f"更新全部目录失败: {str(e)}", parent=self.window)
-                    # 回滚重命名操作
-                    os.rename(new_path, old_path)
-                    return
-
-            # 刷新显示
+            content = content.replace(f"{content_role_name}：", f"{new_name}：", 1)
+            self.role_service.rename(actual_category, old_name, new_name, content)
             self.current_role = new_name
             self.show_category(self.selected_category)
             self.role_name_var.set(new_name)
-            self.show_role(new_name)  # 刷新角色显示区域
-
+            self.show_role(new_name)
         except Exception as e:
-            msg = messagebox.showerror("错误", f"重命名失败：{str(e)}", parent=self.window)
-            self.window.attributes('-topmost', 1)
-            msg.attributes('-topmost', 1)
-            self.window.after(200, lambda: [self.window.attributes('-topmost', 0), msg.attributes('-topmost', 0)])
+            messagebox.showerror("错误", f"重命名失败：{str(e)}", parent=self.window)
 
     def _create_new_role(self, category):
         """在指定分类创建新角色"""
@@ -1051,8 +925,7 @@ class RoleLibrary:
             "│  └──待补充"
         ])
 
-        with open(self._role_file_path(category, base_name), "w", encoding="utf-8") as f:
-            f.write(content)
+        self.role_service.save(category, base_name, content)
 
         # 刷新显示
         self.show_category(category)
@@ -1107,7 +980,8 @@ class RoleLibrary:
             widget.destroy()
 
         categories = [d for d in os.listdir(self.save_path)
-                      if os.path.isdir(os.path.join(self.save_path, d)) and d != "全部"]
+                      if os.path.isdir(os.path.join(self.save_path, d))
+                      and d not in {"全部", "未分类"}]
 
         for category in categories:
             btn = ctk.CTkButton(self.scroll_frame, text=category, width=80, font=DEFAULT_FONT)
@@ -1202,7 +1076,8 @@ class RoleLibrary:
         btn_frame.pack(pady=10)
 
         def perform_delete(mode):
-            all_dir = os.path.join(self.save_path, "全部")
+            all_dir = self._category_dir_path("未分类")
+            os.makedirs(all_dir, exist_ok=True)
             for cat in selected:
                 cat_path = self._category_dir_path(cat)
                 if mode == "move":
@@ -1520,6 +1395,9 @@ class RoleLibrary:
             raise ValueError(f"无法识别的文件编码：{file_path}")
 
     def rename_category(self, old_name):
+        if old_name in {"全部", "未分类"}:
+            messagebox.showwarning("提示", f"{old_name} 是系统分类，不能重命名", parent=self.window)
+            return
         """分类重命名（带居中功能）"""
         new_name = None  # 初始化变量
 

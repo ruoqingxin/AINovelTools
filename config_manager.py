@@ -35,6 +35,7 @@ DEFAULT_CONFIG = {
     "last_embedding_interface_format": DEFAULT_EMBEDDING_CONFIG_NAME,
     "current_project": "",
     "recent_projects": [],
+    "skill_library_path": "写作技能库",
     "llm_configs": {
         "DeepSeek V4 Flash": {
             "api_key": "",
@@ -157,6 +158,7 @@ def normalize_config(config_data: dict) -> dict:
     if not isinstance(config_data.get("recent_projects"), list):
         config_data["recent_projects"] = []
     config_data.setdefault("current_project", "")
+    config_data.setdefault("skill_library_path", "写作技能库")
 
     llm_configs = config_data["llm_configs"]
     last_llm_config_name = config_data.get("last_llm_config_name")

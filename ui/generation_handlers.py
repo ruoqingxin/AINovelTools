@@ -165,6 +165,9 @@ def generate_chapter_draft_ui(self):
             chap_num = requested_chapter
             word_number = self.safe_get_int(self.word_number_var, 3000)
             user_guidance = self.user_guide_text.get("0.0", "end").strip()
+            writing_skills = self.build_chapter_context(chap_num).writing_skills
+            if writing_skills:
+                user_guidance = f"{user_guidance}\n\n写作技能要求：\n{writing_skills}".strip()
 
             char_inv = self.characters_involved_var.get().strip()
             key_items = self.key_items_var.get().strip()
@@ -595,6 +598,9 @@ def generate_batch_ui(self):
         draft_max_tokens = draft_config["max_tokens"]
         draft_timeout = draft_config["timeout"]
         user_guidance = self.user_guide_text.get("0.0", "end").strip()  
+        writing_skills = self.build_chapter_context(i).writing_skills
+        if writing_skills:
+            user_guidance = f"{user_guidance}\n\n写作技能要求：\n{writing_skills}".strip()
 
         char_inv = self.characters_involved_var.get().strip()
         key_items = self.key_items_var.get().strip()

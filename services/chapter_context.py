@@ -24,8 +24,9 @@ class ChapterContext:
 
 
 class ChapterContextBuilder:
-    def __init__(self, repository):
+    def __init__(self, repository, skill_service=None):
         self.repository = repository
+        self.skill_service = skill_service
 
     def build(self, project: dict, chapter_number: int, request: dict | None = None) -> ChapterContext:
         request = request or {}
@@ -51,7 +52,10 @@ class ChapterContextBuilder:
             plot_arcs=self.repository.read_text("plot_arcs.txt"),
             recent_chapters=recent,
             role_profiles=self._load_roles(names),
-            writing_skills=request.get("writing_skills", ""),
+            writing_skills=request.get("writing_skills") or (
+                self.skill_service.resolve(project.get("selected_skill_ids", []))
+                if self.skill_service else ""
+            ),
             knowledge_context=request.get("knowledge_context", ""),
         )
 

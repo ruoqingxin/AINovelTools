@@ -47,6 +47,7 @@ from services.chapter_service import ChapterService
 from services.chapter_context import ChapterContextBuilder
 from services.blueprint_service import BlueprintService
 from services.outline_service import OutlineService
+from services.skill_service import SkillService
 from domain.chapter_state import ChapterContinuityError
 
 
@@ -279,6 +280,7 @@ class NovelGeneratorGUI:
             "key_items": self.key_items_var.get().strip(),
             "scene_location": self.scene_location_var.get().strip(),
             "time_constraint": self.time_constraint_var.get().strip(),
+            "selected_skill_ids": list(getattr(self, "selected_skill_ids", [])),
         }
 
     def save_project_settings(self):
@@ -289,7 +291,10 @@ class NovelGeneratorGUI:
     def apply_project_settings(self, project):
         if self.project_manager.repository:
             self.chapter_service = ChapterService(self.project_manager.repository)
-            self.chapter_context_builder = ChapterContextBuilder(self.project_manager.repository)
+            self.chapter_context_builder = ChapterContextBuilder(
+                self.project_manager.repository,
+                SkillService(self.loaded_config),
+            )
             self.blueprint_service = BlueprintService(self.project_manager.repository)
             self.outline_service = OutlineService(self.project_manager.repository)
         self.topic_default = project.get("topic", "")
@@ -303,6 +308,7 @@ class NovelGeneratorGUI:
         self.key_items_var.set(project.get("key_items", ""))
         self.scene_location_var.set(project.get("scene_location", ""))
         self.time_constraint_var.set(project.get("time_constraint", ""))
+        self.selected_skill_ids = list(project.get("selected_skill_ids", []))
         if hasattr(self, "topic_text"):
             self.topic_text.delete("0.0", "end")
             self.topic_text.insert("0.0", self.topic_default)
@@ -582,6 +588,32 @@ class NovelGeneratorGUI:
                 self._role_lib.window.destroy()
         
         self._role_lib = RoleLibrary(self.master, save_path, llm_adapter)  # 新增参数
+
+    def show_skill_selector(self):
+        skills = SkillService(self.loaded_config).load()
+        if not skills:
+            messagebox.showinfo("写作技能", "当前技能库中没有可用的 JSON 技能。")
+            return
+        dialog = ctk.CTkToplevel(self.master)
+        dialog.title("工程写作技能")
+        dialog.geometry("460x520")
+        frame = ctk.CTkScrollableFrame(dialog)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        variables = {}
+        selected = set(getattr(self, "selected_skill_ids", []))
+        for skill_id, skill in skills.items():
+            variable = tk.BooleanVar(value=skill_id in selected)
+            variables[skill_id] = variable
+            ctk.CTkCheckBox(frame, text=str(skill["name"]), variable=variable).pack(anchor="w", pady=4)
+
+        def confirm():
+            self.selected_skill_ids = [item for item, variable in variables.items() if variable.get()]
+            self.save_project_settings()
+            dialog.destroy()
+
+        ctk.CTkButton(dialog, text="确认", command=confirm).pack(pady=(0, 10))
+        dialog.transient(self.master)
+        dialog.grab_set()
 
     def toggle_english_mode(self):
         import config_manager

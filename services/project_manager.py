@@ -10,6 +10,7 @@ from config_manager import save_config
 from services.chapter_service import ChapterService
 from services.blueprint_service import BlueprintService
 from services.outline_service import OutlineService
+from services.role_library_service import RoleLibraryService
 from services.project_repository import NovelProjectRepository
 
 
@@ -110,6 +111,7 @@ class ProjectManager:
 
     def _activate(self, repository: NovelProjectRepository, project: dict):
         repository.recover_transactions()
+        RoleLibraryService(repository.root).initialize()
         ChapterService(repository).load_manifest()
         OutlineService(repository).load_workflow()
         BlueprintService(repository).load_blueprint()

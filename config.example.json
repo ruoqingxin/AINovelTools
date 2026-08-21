@@ -4,6 +4,7 @@
     "last_embedding_interface_format": "OpenAI",
     "current_project": "",
     "recent_projects": [],
+    "skill_library_path": "写作技能库",
     "llm_configs": {
         "DeepSeek V4 Flash": {
             "api_key": "",

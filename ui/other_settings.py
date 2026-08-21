@@ -88,8 +88,17 @@ def build_other_settings_tab(self):
             if not client.ensure_directory_exists(target_dir):
                 if not client.create_directory(target_dir):
                     raise RuntimeError("创建远程备份目录失败")
-            if not client.upload_file(config_file, f"{target_dir}/config.json"):
-                raise RuntimeError("上传配置文件失败")
+            config_payload = load_config(config_file)
+            config_payload.pop("other_params", None)
+            fd, backup_path = tempfile.mkstemp(suffix=".json")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    json.dump(config_payload, stream, ensure_ascii=False, indent=2)
+                if not client.upload_file(backup_path, f"{target_dir}/config.json"):
+                    raise RuntimeError("上传配置文件失败")
+            finally:
+                if os.path.exists(backup_path):
+                    os.unlink(backup_path)
             return True
 
         run_webdav_task(worker, "配置备份成功！")
@@ -111,6 +120,24 @@ def build_other_settings_tab(self):
             self.loaded_config = loaded_config
             self.project_manager.global_config = loaded_config
             self.load_config_btn()
+            restored_webdav = loaded_config.get("webdav_config", {})
+            self.webdav_url_var.set(restored_webdav.get("webdav_url", ""))
+            self.webdav_username_var.set(restored_webdav.get("webdav_username", ""))
+            self.webdav_password_var.set(restored_webdav.get("webdav_password", ""))
+
+            def refresh_restored_state():
+                project_path = loaded_config.get("current_project", "")
+                if project_path and os.path.isdir(project_path):
+                    if os.path.normcase(project_path) != os.path.normcase(self.project_manager.current_path):
+                        self.switch_project(project_path)
+                    else:
+                        project = self.project_manager.open_project(project_path)
+                        self.apply_project_settings(project)
+                        self.refresh_project_views()
+                else:
+                    self.refresh_recent_projects()
+
+            self.master.after(100, refresh_restored_state)
 
         run_webdav_task(worker, "配置恢复成功！", on_success)
 
@@ -309,9 +336,10 @@ class WebDAVClient:
 
             with open(temp_path, 'r', encoding='utf-8') as f:
                 downloaded_config = json.load(f)
-            required_keys = {"llm_configs", "embedding_configs", "other_params", "choose_configs"}
+            required_keys = {"llm_configs", "embedding_configs", "choose_configs", "webdav_config"}
             if not isinstance(downloaded_config, dict) or not required_keys.issubset(downloaded_config):
                 raise ValueError("下载的配置文件格式不完整")
+            downloaded_config.pop("other_params", None)
 
             os.replace(temp_path, local_path)
             temp_path = None
