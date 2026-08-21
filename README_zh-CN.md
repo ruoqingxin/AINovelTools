@@ -107,9 +107,24 @@ novel-generator/
 ├── config_manager.py            # 管理配置 (API Key, Base URL)
 ├── config.json                  # 用户配置文件 (可选)
 ├── novel_generator/             # 章节生成核心逻辑
+├── domain/                      # 大纲、蓝图和章节状态规则
+├── services/                    # 工程、事务、定稿及资源服务
 ├── ui/                          # 图形界面
-└── vectorstore/                 # (可选) 本地向量数据库存储
+└── tests/                       # 自动化回归与端到端验收
 ```
+
+小说数据按工程目录隔离。`project.json` 保存工程参数，`outline_workflow.json`、`blueprint.json` 和 `chapter_manifest.json` 分别是大纲、章节蓝图和章节生命周期的结构化状态源。`Novel_architecture.txt` 与 `Novel_directory.txt` 是兼容旧流程的渲染文件。
+
+## 重构版验收
+
+在项目根目录执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m compileall -q main.py ui services domain novel_generator tests
+```
+
+最小手工回归路径：创建两个小说工程并切换；确认部分大纲可重新渲染；保存六卷规划和章节蓝图；连续生成并定稿前三章；修改第二章后确认后续章节失效且禁止跳章；分别验证无知识库生成、知识库检索、Prompt 取消、重复定稿和 WebDAV 全局配置恢复。
 
 ---
 
