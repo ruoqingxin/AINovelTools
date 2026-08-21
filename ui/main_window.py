@@ -44,6 +44,7 @@ from services.chapter_service import ChapterService
 from services.chapter_context import ChapterContextBuilder
 from services.blueprint_service import BlueprintService
 from services.outline_service import OutlineService
+from services.skill_service import SkillService
 from domain.chapter_state import ChapterContinuityError
 
 
@@ -136,9 +137,10 @@ class NovelGeneratorGUI:
         self.consistency_review_llm_var = ctk.StringVar(value=choose_llm_config("consistency_review_llm"))
         self.prompt_draft_llm_var = ctk.StringVar(value=choose_llm_config("prompt_draft_llm"))
 
-
-
-
+        webdav_config = self.loaded_config.get("webdav_config", {})
+        self.webdav_url_var = ctk.StringVar(value=webdav_config.get("webdav_url", ""))
+        self.webdav_username_var = ctk.StringVar(value=webdav_config.get("webdav_username", ""))
+        self.webdav_password_var = ctk.StringVar(value=webdav_config.get("webdav_password", ""))
 
         # -- 小说参数相关 --
         if self.loaded_config and "other_params" in self.loaded_config:
@@ -154,10 +156,6 @@ class NovelGeneratorGUI:
             self.scene_location_var = ctk.StringVar(value=op.get("scene_location", ""))
             self.time_constraint_var = ctk.StringVar(value=op.get("time_constraint", ""))
             self.user_guidance_default = op.get("user_guidance", "")
-            self.webdav_url_var = ctk.StringVar(value=op.get("webdav_url", ""))
-            self.webdav_username_var = ctk.StringVar(value=op.get("webdav_username", ""))
-            self.webdav_password_var = ctk.StringVar(value=op.get("webdav_password", ""))
-
         else:
             self.topic_default = ""
             self.genre_var = ctk.StringVar(value="玄幻")
