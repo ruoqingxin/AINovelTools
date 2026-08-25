@@ -1,0 +1,2820 @@
+GPT-5.6 Sol
+4 分钟前
+AI 辅助长篇小说创作系统
+完整产品与技术设计文档
+文档属性	内容
+文档名称	AI 辅助长篇小说创作系统——完整产品与技术设计文档
+文档版本	v1.0.0
+文档状态	设计基线
+编制日期	2026 年 8 月 25 日
+产品定位	本机运行、个人自用、本地优先
+当前阶段	完整架构设计完成，准备进入工程骨架搭建
+实现状态	尚未声明已完成任何业务实现
+目标规模	支持 1,000 章以上长篇小说工程
+发布范围	当前不考虑公开发布、商业化及云端服务
+适用对象	产品设计、架构设计、开发实施、测试验收及长期维护
+设计原则	架构覆盖完整，功能分阶段实现；功能可以暂缺，但必须预留正式实现位置
+目录
+文档说明
+产品定位与目标
+设计状态和范围标识
+核心设计原则
+系统范围与非目标
+统一业务主线
+产品功能地图
+七个领域上下文
+总体逻辑架构
+领域间的数据所有权与协作
+核心领域模型
+规划领域设计
+文稿与编辑器设计
+故事知识系统
+AI、Agent 与上下文系统
+搜索与检索系统
+治理、审核与冲突处理
+章节定稿与知识提交
+工作流与后台任务
+应用 API、命令、查询和事件
+数据库与持久化
+项目目录、Blob 与备份恢复
+前端 UI 和桌面工作台
+复杂可视化
+安全、隐私与密钥管理
+日志、审计、诊断与崩溃恢复
+扩展性与功能预留框架
+大规模长篇性能设计
+测试与质量保证
+当前本机自用部署方案
+工程仓库与模块骨架
+MVP 与分阶段实施路线
+M1 验收标准
+风险与应对策略
+待确认事项
+架构决策摘要
+术语表
+文档维护和变更记录
+1. 文档说明
+1.1 文档目的
+本文档用于固化 AI 辅助长篇小说创作系统的完整产品和技术设计基线，作为后续工作的统一依据，包括：
+
+工程骨架搭建；
+领域模型设计；
+数据库设计；
+前后端契约设计；
+AI 模型接入；
+正文编辑器实现；
+审核和定稿机制实现；
+工作流及后台任务建设；
+测试、验收与后续维护。
+本文档同时覆盖：
+
+*.txt
+Plaintext
+完整目标架构
++
+当前本机自用范围
++
+MVP实施范围
++
+未来能力预留
+1.2 文档解释原则
+本文档中的能力必须按状态理解，不能把目标设计误认为已经实现。
+
+状态	含义
+已确认基线	已确定应采用的设计方向
+MVP 必做	当前 M0/M1 阶段需要实现
+后续规划	M2/M3 或更后阶段实现
+架构预留	暂不实现，但骨架必须有正式位置
+待确认	需要在实施前进一步确定
+已实现	仅在代码和验收完成后才能标记
+当前项目状态为：
+
+设计基线已形成，工程尚待正式搭建。
+
+2. 产品定位与目标
+2.1 当前定位
+*.txt
+Plaintext
+产品类型：本机桌面应用
+目标用户：个人创作者
+使用模式：单用户、单机、本地优先
+核心用途：AI辅助长篇小说规划、写作、治理和长期维护
+数据位置：本地项目目录
+模型来源：用户自己的云模型API或本地Ollama
+后端服务：不建设官方云端后端
+账户体系：当前不需要
+公开发布：当前不考虑
+商业收费：当前不考虑
+多人协作：当前不考虑
+2.2 核心目标
+系统应解决长篇小说创作中的以下问题：
+
+作品规划和实际正文容易混淆；
+小说篇幅增长后，设定、事件和人物状态难以维护；
+AI 缺乏可靠上下文，容易遗忘或产生幻觉；
+AI 生成结果容易直接污染正文和正式设定；
+章节修改后，后续情节影响难以识别；
+人物所知、世界事实和作者规划容易混在一起；
+长篇项目中的伏笔、时间线、关系和事件难以追踪；
+正文误覆盖、程序崩溃或数据损坏可能造成不可恢复损失；
+数千章节、数万实体和大量事实可能导致界面和检索性能下降；
+多个 AI 功能各自调用模型会造成密钥、重试、隐私和费用管理混乱。
+2.3 产品愿景
+系统最终应成为：
+
+一个本地优先、以人工创作者为最终决策者，能够管理规划、正文、故事知识、AI 协作、审核治理、版本历史和长篇连续性的综合小说创作工作台。
+
+3. 设计状态和范围标识
+3.1 架构范围与实现范围分离
+本项目同时维护两条范围线。
+
+架构覆盖范围
+从第一版骨架开始覆盖：
+
+项目与工作区；
+创作规划；
+正文与修订；
+故事知识；
+AI 与上下文；
+搜索和检索；
+治理与审核；
+章节定稿；
+任务运行时；
+工作流；
+备份恢复；
+扩展与模板；
+可视化；
+安全与隐私；
+可观测性。
+功能实现范围
+功能按阶段激活：
+
+*.txt
+Plaintext
+IMPLEMENTED     已实现
+PARTIAL         部分实现
+STUBBED         存在受控占位实现
+DECLARED        已声明契约但尚未实现
+DISABLED        当前禁用
+EXPERIMENTAL    实验能力
+3.2 预留不等于空目录
+每个暂未实现模块至少应提供：
+
+模块职责；
+Port 接口；
+输入输出 DTO；
+错误类型；
+Feature Descriptor；
+配置入口；
+Capability 声明；
+测试位置；
+Disabled Adapter 或 Stub Handler；
+后续实施说明。
+调用未实现能力时必须返回：
+
+*.txt
+Plaintext
+FEATURE_NOT_AVAILABLE
+不得以空数组、空字符串或虚假成功掩盖功能尚未实现。
+
+4. 核心设计原则
+4.1 本地优先
+项目数据默认保存在用户本机；
+不要求登录和联网；
+不依赖官方云端服务；
+本地 Ollama 可作为模型来源；
+云模型由桌面应用直接调用供应商 API；
+云模型调用前必须执行隐私评估。
+4.2 人工最终决策
+AI 可以：
+
+生成草稿；
+改写正文；
+提取事实；
+分析关系；
+检查一致性；
+生成候选变更；
+提供审核建议。
+AI 不可以：
+
+静默覆盖正式正文；
+直接提交正式事实；
+自行完成高风险定稿；
+绕过审核修改知识状态；
+直接执行不受控系统能力。
+4.3 三条核心隔离原则
+*.txt
+Plaintext
+规划不等于事实
+草稿不等于事实
+AI推断不等于正式事实
+进一步要求：
+
+*.txt
+Plaintext
+计划状态 ≠ 正文状态
+作者全局知识 ≠ 角色认知
+固定设定 ≠ 动态世界状态
+搜索索引 ≠ 正式数据
+编辑恢复状态 ≠ 正式正文修订
+画布坐标 ≠ 领域语义
+4.4 不可变版本优先
+以下对象应使用不可变修订或版本：
+
+正文修订；
+规划修订；
+实体设定修订；
+工作流修订；
+Prompt 模板版本；
+输出契约版本；
+知识状态版本；
+定稿记录；
+备份快照。
+4.5 命令、事件和投影
+系统使用：
+
+*.txt
+Plaintext
+Command
+→ Aggregate / Domain Service
+→ Domain Event
+→ Projection
+目的：
+
+手动操作和工作流共用同一业务用例；
+支持审计和影响分析；
+支持状态重建；
+支持任务异步执行；
+避免 UI 或 AI 绕过领域规则。
+4.6 全面骨架，分阶段实现
+MVP 不能使用破坏长期架构的临时捷径，例如：
+
+把正文存成一个可覆盖文本字段；
+页面直接请求模型 API；
+规划和正文共用同一条记录；
+AI 提取结果直接成为正式事实；
+所有状态塞入前端全局 Store；
+任务只存在内存；
+搜索索引成为唯一数据源。
+5. 系统范围与非目标
+5.1 完整目标范围
+系统目标覆盖：
+
+小说项目管理；
+作品设计和总体规划；
+分卷、剧情单元、章节和场景规划；
+正文写作和修订历史；
+AI 续写、改写、润色和分析；
+Story Bible 和故事实体；
+事实、关系、事件和世界状态；
+角色认知；
+时间线、因果和伏笔；
+搜索与混合检索；
+变更候选和人工审核；
+章节定稿和知识提交；
+后台任务和工作流；
+快照、回滚、备份和恢复；
+日志、审计和诊断；
+可视化分析；
+模板和受控扩展。
+5.2 当前不考虑
+现阶段不建设：
+
+用户注册和登录；
+组织、团队及多人权限；
+多人实时协作；
+云端项目托管；
+官方 API 中转；
+模型代付费；
+SaaS 服务；
+商业订阅；
+应用商店发布；
+自动更新服务；
+发布渠道和灰度系统；
+公网遥测；
+面向公众的第三方代码插件市场。
+这些属于“当前不做”，不是永久禁止。
+
+6. 统一业务主线
+系统唯一核心业务主线为：
+
+*.txt
+Plaintext
+1. 创建或打开小说工程
+2. 建立作品设计与规划
+3. 创建章节和场景计划
+4. 创建实际章节和场景
+5. 组装当前写作上下文
+6. 人工写作或调用AI产生草稿
+7. 检查、修改和保存正文修订
+8. 形成章节定稿候选
+9. AI分析并提取候选事实、关系、事件和状态变化
+10. 形成ChapterChangeSet
+11. 人工审核候选变更
+12. 原子提交定稿包
+13. 更新正式知识版本、世界状态与索引
+14. 评估后续影响
+15. 准备下一章节
+所有 UI 按钮、AI 功能、工作流节点和后台任务都应能够归入这条主线，或者明确属于辅助能力。
+
+7. 产品功能地图
+7.1 一级工作区
+*.txt
+Plaintext
+项目总览
+创作规划
+正文写作
+故事知识
+时间线与伏笔
+搜索
+审核治理
+章节定稿
+自动化
+后台任务
+模型配置
+备份恢复
+诊断与设置
+7.2 桌面工作台结构
+*.txt
+Plaintext
+AppShell
+├─ TitleBar
+├─ ActivityBar
+├─ PrimarySidebar
+├─ MainWorkspace
+│  ├─ TabBar
+│  ├─ ContextBar
+│  └─ ActiveView
+├─ InspectorPanel
+├─ BottomPanel
+└─ StatusBar
+7.3 多标签对象工作区
+支持同时打开：
+
+章节；
+场景；
+规划节点；
+实体；
+事实；
+事件；
+伏笔；
+审核案件；
+工作流；
+搜索结果。
+*.txt
+Plaintext
+Route
+= 当前窗口的主要导航身份
+WorkspaceTab
+= 当前打开的业务对象实例
+8. 七个领域上下文
+8.1 项目与工作区上下文
+负责：
+
+Project；
+ProjectManifest；
+ProjectSettings；
+Workspace；
+最近项目；
+项目打开和关闭；
+项目健康；
+备份与恢复；
+项目格式版本。
+8.2 创作规划上下文
+负责：
+
+PlanNode；
+PlanRevision；
+作品设计；
+总纲；
+分卷；
+StoryArc；
+ChapterPlan；
+ScenePlan；
+规划关联和覆盖关系。
+8.3 文稿写作上下文
+负责：
+
+Chapter；
+Scene；
+NovelDocument；
+ContentBlock；
+ManuscriptRevision；
+草稿头指针；
+EditRecoverySession；
+正文 Diff；
+EvidenceAnchor。
+8.4 故事知识上下文
+负责：
+
+Story Bible；
+Entity；
+EntityRevision；
+Relation；
+Fact；
+Event；
+Timeline；
+WorldState；
+Belief；
+Foreshadowing；
+知识版本和投影。
+8.5 AI 创作上下文
+负责：
+
+ModelGateway；
+ProviderAdapter；
+ContextAssembler；
+PromptTemplate；
+OutputContract；
+AiProposal；
+TokenBudget；
+ToolGateway；
+EvaluationSuite。
+8.6 自动化上下文
+负责：
+
+Task Runtime；
+Workflow Runtime；
+WorkflowDefinition；
+WorkflowRevision；
+NodeRun；
+TaskAttempt；
+Checkpoint；
+ResourceGovernor；
+Worker 边界。
+8.7 治理与可观测上下文
+负责：
+
+ChangeSet；
+ReviewCase；
+ReviewItem；
+Conflict；
+ImpactAssessment；
+FinalizationRecord；
+AuditRecord；
+DiagnosticLog；
+CrashReport；
+PrivacyEvaluation。
+9. 总体逻辑架构
+9.1 分层结构
+*.txt
+Plaintext
+表现层
+├─ React UI
+├─ Tiptap编辑器
+├─ 可视化组件
+└─ Tauri IPC客户端
+应用层
+├─ Command Bus
+├─ Query Bus
+├─ Use Cases
+├─ Workflow协调
+├─ Task提交
+└─ DTO映射
+领域层
+├─ 聚合
+├─ 实体
+├─ 值对象
+├─ 领域服务
+├─ 领域事件
+└─ 不变量
+基础设施层
+├─ SQLite
+├─ Blob Store
+├─ Tantivy
+├─ Model Provider
+├─ Secret Store
+├─ 文件系统
+├─ 备份恢复
+└─ 日志诊断
+9.2 依赖方向
+*.txt
+Plaintext
+Domain
+    不依赖Application、Infrastructure和UI
+Application
+    依赖Domain和Port
+Infrastructure
+    实现Application定义的Port
+API
+    调用Application
+Desktop UI
+    只通过API契约访问核心
+Worker
+    只通过任务和IPC契约交互
+9.3 模块化单体
+当前采用：
+
+本地模块化单体。
+
+优势：
+
+适合个人本机使用；
+部署简单；
+不引入服务器和分布式组件；
+仍保持领域边界；
+未来高风险任务可拆 Worker。
+10. 领域间的数据所有权与协作
+10.1 数据所有权规则
+项目上下文拥有项目身份和格式；
+规划上下文拥有计划；
+文稿上下文拥有章节正文和修订；
+知识上下文拥有正式故事事实和状态；
+AI 上下文拥有模型调用记录与 Proposal；
+自动化上下文拥有任务和工作流运行状态；
+治理上下文拥有审核、定稿、审计和冲突记录。
+10.2 跨领域规则
+一个上下文不能直接修改另一个上下文的内部表；
+跨上下文写入必须通过 Command；
+已提交结果通过 Domain Event 通知其他上下文；
+查询可以使用专用投影，不得通过跨域表连接形成隐式所有权；
+AI 适配器、搜索适配器和 Worker 不能直接写正式业务状态。
+10.3 FinalizationRecord 归属
+FinalizationRecord 归治理/定稿边界，负责绑定：
+
+目标章节；
+目标正文修订；
+目标规划版本；
+审核结果；
+事实变化；
+世界状态变化；
+旧知识版本；
+新知识版本；
+索引更新；
+快照和审计记录。
+11. 核心领域模型
+11.1 核心模型清单
+*.txt
+Plaintext
+Project
+ProjectManifest
+ProjectSettings
+Workspace
+PlanNode
+PlanRevision
+StoryArc
+ChapterPlan
+ScenePlan
+Chapter
+Scene
+NovelDocument
+ContentBlock
+ManuscriptRevision
+EditRecoverySession
+Entity
+EntityType
+EntityRevision
+Relation
+Fact
+Event
+Timeline
+WorldState
+Belief
+Foreshadowing
+EvidenceAnchor
+AiProposal
+ChapterChangeSet
+ReviewCase
+ReviewItem
+Conflict
+ImpactAssessment
+FinalizationRecord
+KnowledgeVersion
+TaskRecord
+TaskAttempt
+TaskCheckpoint
+WorkflowDefinition
+WorkflowRevision
+WorkflowRun
+NodeRun
+11.2 通用元数据
+建议实体采用：
+
+*.txt
+Plaintext
+id
+projectId
+version
+createdAt
+updatedAt
+createdBy
+updatedBy
+lifecycleStatus
+metadata
+是否每种实体都需要全部字段，应在数据库实施阶段细化。
+
+11.3 ID 策略
+建议使用稳定 UUID 类型或受控领域 ID 包装：
+
+*.txt
+Plaintext
+ProjectId
+ChapterId
+EntityId
+FactId
+WorkflowId
+禁止在领域层大量传递裸字符串。
+
+12. 规划领域设计
+12.1 PlanNode 统一模型
+规划统一抽象为：
+
+*.txt
+Plaintext
+PlanNode
+├─ planNodeId
+├─ projectId
+├─ parentId?
+├─ nodeType
+├─ title
+├─ orderKey
+├─ status
+├─ currentRevisionId
+└─ version
+规划内容放入不可变：
+
+*.txt
+Plaintext
+PlanRevision
+├─ planRevisionId
+├─ planNodeId
+├─ summary
+├─ content
+├─ structuredPayload
+├─ baseRevisionId?
+└─ createdAt
+12.2 节点类型
+完整目标类型：
+
+WORK_DESIGN；
+OUTLINE；
+VOLUME；
+STORY_ARC；
+PLOT_UNIT；
+CHAPTER；
+SCENE；
+自定义声明式类型。
+M1 首先开放：
+
+作品设计；
+总纲；
+分卷；
+章节规划；
+场景规划。
+12.3 规划与实际内容分离
+*.txt
+Plaintext
+ChapterPlan ≠ Chapter
+ScenePlan ≠ Scene
+规划可以：
+
+尚未写作；
+被多个实际章节覆盖；
+在写作中调整；
+与实际内容偏离；
+保留原始创作意图。
+实际章节不应因为规划调整而被自动覆盖。
+
+12.4 剧情单元与章节
+采用多对多：
+
+*.txt
+Plaintext
+StoryArc / PlotUnit
+↔
+Chapter
+每个章节可指定一个主要剧情单元，并关联多个次要剧情单元。
+
+13. 文稿与编辑器设计
+13.1 技术方案
+*.txt
+Plaintext
+Tiptap
+→ ProseMirror
+→ 受控Tiptap JSON
+→ EditorDocumentCodec
+→ NovelDocument
+→ ContentBlock
+13.2 正文数据模型
+*.txt
+Plaintext
+NovelDocument
+├─ schemaVersion
+├─ rootBlocks
+├─ metadata
+└─ documentHash
+*.txt
+Plaintext
+ContentBlock
+├─ blockId
+├─ blockType
+├─ content
+├─ marks
+├─ attributes
+└─ childBlocks?
+第一版就必须使用稳定 blockId。
+
+13.3 首版编辑能力
+段落；
+标题；
+粗体；
+斜体；
+删除线；
+引用；
+分隔线；
+场景分隔；
+撤销和重做；
+查找替换；
+基础粘贴清洗。
+首版不开放任意 HTML、脚本节点和不受控扩展节点。
+
+13.4 编辑状态与正式版本分离
+*.txt
+Plaintext
+编辑器瞬时状态
+→ 前端恢复缓存
+→ Rust EditRecoveryLog
+→ 用户保存
+→ ManuscriptRevision
+EditRecoverySession
+用于：
+
+崩溃恢复；
+自动保存；
+短期编辑恢复；
+输入日志；
+多窗口冲突检测。
+ManuscriptRevision
+用于：
+
+正式草稿版本；
+修订历史；
+Diff；
+AI Proposal 的基础版本；
+章节定稿候选。
+13.5 不可变修订
+已保存修订不可覆盖。
+
+修改历史版本时：
+
+*.txt
+Plaintext
+选择历史修订
+→ 创建新草稿分支
+→ 编辑
+→ 保存为新ManuscriptRevision
+13.6 三方合并
+并发编辑时：
+
+*.txt
+Plaintext
+Base Revision
+Current Revision
+Local Draft
+→ Three-way Merge
+支持：
+
+自动合并无冲突块；
+显示冲突块；
+用户选择；
+保留全部来源；
+创建新修订。
+13.7 EvidenceAnchor
+证据锚点建议包含：
+
+*.txt
+Plaintext
+EvidenceAnchor
+├─ documentRevisionId
+├─ blockId
+├─ startOffset?
+├─ endOffset?
+├─ textQuoteHash
+├─ contextBeforeHash?
+├─ contextAfterHash?
+└─ anchorVersion
+定位策略：
+
+精确修订和 Block；
+Block 内偏移；
+文本哈希；
+前后文辅助重定位；
+无法可靠定位时标记失效，不猜测。
+14. 故事知识系统
+14.1 设定和状态分离
+*.txt
+Plaintext
+EntityRevision
+= 相对固定的设定
+Fact / Event
+= 发生过的事实
+WorldState
+= 当前状态投影
+Belief
+= 某角色的认知
+14.2 Entity
+*.txt
+Plaintext
+Entity
+├─ entityId
+├─ entityType
+├─ lifecycleStatus
+├─ currentRevisionId
+└─ version
+*.txt
+Plaintext
+EntityRevision
+├─ name
+├─ aliases
+├─ description
+├─ fixedAttributes
+├─ tags
+└─ baseRevisionId?
+M1 开放：
+
+CHARACTER；
+LOCATION；
+FACTION；
+ITEM；
+CONCEPT。
+14.3 Relation
+关系默认有向：
+
+*.txt
+Plaintext
+Relation
+├─ sourceEntityId
+├─ targetEntityId
+├─ relationType
+├─ direction
+├─ validityRange?
+├─ status
+├─ evidenceRefs
+└─ version
+对称关系通过关系类型声明对称语义，而不是默认所有关系双向。
+
+14.4 Fact
+事实是正式知识基础：
+
+*.txt
+Plaintext
+Fact
+├─ subjectRef
+├─ predicate
+├─ objectValueOrRef
+├─ validityRange?
+├─ status
+├─ authority
+├─ evidenceRefs
+├─ sourceFinalizationId
+└─ version
+14.5 Event
+一个事件可以产生多个事实变化：
+
+*.txt
+Plaintext
+Event
+├─ eventId
+├─ eventType
+├─ participants
+├─ storyTime
+├─ locationRef?
+├─ causes
+├─ effects
+├─ evidenceRefs
+└─ factChangeRefs
+14.6 WorldState
+WorldState 是由事实和事件投影出的当前状态，不能代替事实本身。
+
+*.txt
+Plaintext
+Facts + Events
+→ State Projection
+→ WorldState
+14.7 Belief
+*.txt
+Plaintext
+Belief
+├─ believerEntityId
+├─ proposition
+├─ beliefStatus
+├─ acquiredAt
+├─ sourceEventId?
+├─ evidenceRefs
+└─ confidence?
+角色 Belief 不等于全局事实。
+
+14.8 Foreshadowing
+*.txt
+Plaintext
+Foreshadowing
+├─ foreshadowingId
+├─ title
+├─ setupBeats
+├─ reinforcementBeats
+├─ payoffBeats
+├─ status
+├─ plannedRefs
+├─ actualRefs
+└─ evidenceRefs
+15. AI、Agent 与上下文系统
+15.1 调用边界
+底层直接调用大模型 API，但业务模块不能直接调用供应商。
+
+*.txt
+Plaintext
+业务功能
+→ ModelGateway
+→ ProviderAdapter
+→ OpenAI / DeepSeek / Ollama / Compatible API
+ModelGateway 运行于本地 Rust 核心，不是远程中转服务器。
+
+15.2 首版模型来源
+M1 建议：
+
+Ollama Native；
+DeepSeek Chat 或其他一个云 Provider；
+OpenAI Responses 紧随其后；
+通用 OpenAI-compatible 作为扩展能力。
+15.3 ModelRequestSpec
+*.txt
+Plaintext
+ModelRequestSpec
+├─ requestId
+├─ purpose
+├─ modelProfileId
+├─ systemInstructions
+├─ messages
+├─ contextPackageRef
+├─ outputContract?
+├─ toolPolicy?
+├─ samplingPolicy
+├─ tokenBudget
+├─ streamPolicy
+├─ privacyDecisionRef
+├─ idempotencyKey
+└─ deadline
+15.4 ModelProfile
+*.txt
+Plaintext
+ModelProfile
+├─ providerId
+├─ modelId
+├─ pinnedModelVersion?
+├─ capabilities
+├─ contextLimit
+├─ outputLimit
+├─ defaultSampling
+├─ structuredOutputMode
+├─ toolCallingMode
+├─ privacyClass
+└─ timeoutPolicy
+业务任务引用 Profile，不直接写供应商模型名称。
+
+15.5 能力矩阵
+能力状态：
+
+*.txt
+Plaintext
+SUPPORTED
+PARTIAL
+EMULATED
+UNSUPPORTED
+UNKNOWN
+能力包括：
+
+流式；
+严格结构化输出；
+JSON；
+工具调用；
+推理内容；
+Token Usage；
+Token 计数；
+图像输入；
+缓存；
+最大上下文。
+15.6 内部流事件
+*.txt
+Plaintext
+ModelStreamEvent
+├─ RequestStarted
+├─ ProviderAccepted
+├─ OutputTextDelta
+├─ ReasoningDelta
+├─ ToolCallStarted
+├─ ToolArgumentsDelta
+├─ ToolCallCompleted
+├─ UsageUpdated
+├─ Warning
+├─ ResponseCompleted
+├─ ResponseIncomplete
+├─ ResponseCancelled
+└─ ResponseFailed
+前端不解析供应商原始 SSE 或 NDJSON。
+
+15.7 首版 AI 功能
+M1：
+
+CONTINUE_WRITING；
+REWRITE_SELECTION；
+POLISH_SELECTION；
+SUMMARIZE_CHAPTER。
+流程：
+
+*.txt
+Plaintext
+构造上下文
+→ 调用模型
+→ 流式预览
+→ 形成AiProposal
+→ 用户接受、部分接受或拒绝
+→ 通过编辑器事务应用
+→ 保存新修订
+15.8 结构化输出
+*.txt
+Plaintext
+OutputContract
+├─ contractId
+├─ contractVersion
+├─ jsonSchema
+├─ semanticRules
+├─ maximumBytes
+├─ unknownFieldPolicy
+├─ repairPolicy
+└─ riskLevel
+验证管线：
+
+*.txt
+Plaintext
+停止原因检查
+→ JSON提取
+→ 大小和深度检查
+→ Schema验证
+→ DTO反序列化
+→ 领域引用验证
+→ 语义验证
+→ 证据验证
+→ 形成ValidatedModelOutput
+15.9 上下文组装
+*.txt
+Plaintext
+ContextAssembler
+├─ 当前用户指令
+├─ 当前正文范围
+├─ 章节与场景计划
+├─ 相关实体
+├─ 当前世界状态
+├─ 角色认知
+├─ 相关历史事件
+├─ 伏笔
+├─ 写作约束
+├─ 检索结果
+└─ 输出契约
+上下文必须记录来源：
+
+*.txt
+Plaintext
+ContextItem
+├─ sourceRef
+├─ sourceVersion
+├─ authority
+├─ scope
+├─ relevance
+├─ tokenEstimate
+└─ includedReason
+15.10 Token 预算
+*.txt
+Plaintext
+maximumInput
+= contextLimit
+- reservedOutput
+- reservedTools
+- safetyMargin
+保留优先级：
+
+用户当前指令；
+当前写作目标；
+必要世界状态；
+角色认知边界；
+硬性约束；
+输出契约；
+高相关历史；
+可压缩背景。
+禁止依赖供应商静默截断。
+
+15.11 ToolGateway
+所有工具调用必须经过：
+
+*.txt
+Plaintext
+参数Schema验证
+→ Capability检查
+→ 隐私检查
+→ 风险检查
+→ 用户确认或策略许可
+→ 执行
+→ ToolResult
+禁止模型直接使用：
+
+SQL；
+Shell；
+任意文件系统；
+任意 HTTP；
+Secret；
+正式 Fact 提交；
+章节定稿。
+16. 搜索与检索系统
+16.1 完整检索架构
+*.txt
+Plaintext
+Structured Query
+Full-text Search
+Vector Search
+Graph Expansion
+Temporal Filter
+→ Candidate Fusion
+→ RRF
+→ Optional Reranker
+→ SearchResult
+16.2 M1 搜索范围
+M1 实现：
+
+SQLite 结构化查询；
+Tantivy 全文检索；
+中文分词；
+章节、规划和实体搜索；
+搜索结果定位正文块。
+16.3 后续语义检索
+M3 实现：
+
+EmbeddingPort；
+BGE-M3 或可替换模型；
+ONNX Runtime；
+Qdrant Edge 或等价本地向量索引；
+混合检索；
+RRF；
+可选 Cross-Encoder。
+16.4 正式数据与索引
+索引属于可重建投影：
+
+*.txt
+Plaintext
+正式数据
+→ Outbox / Index Event
+→ 索引更新
+索引失败不能回滚正式正文或定稿事务，但必须：
+
+标记索引过期；
+创建重建任务；
+显示健康状态；
+支持完全重建。
+16.5 语义分块
+分块依据：
+
+章节；
+场景；
+ContentBlock；
+段落；
+语义边界；
+最大 Token；
+重叠窗口。
+每个 Chunk 保存来源版本和锚点，不得脱离正文来源。
+
+17. 治理、审核与冲突处理
+17.1 候选变更
+AI 分析结果形成：
+
+*.txt
+Plaintext
+ChapterChangeSet
+├─ targetChapterId
+├─ manuscriptRevisionId
+├─ analysisProfileId
+├─ sourceKnowledgeVersion
+├─ entityCandidates
+├─ relationCandidates
+├─ factCandidates
+├─ eventCandidates
+├─ beliefCandidates
+├─ foreshadowingChanges
+├─ stateDeltas
+├─ conflicts
+└─ evidenceRefs
+不得直接写入正式知识。
+
+17.2 ReviewCase
+*.txt
+Plaintext
+ReviewCase
+├─ reviewCaseId
+├─ changeSetId
+├─ riskLevel
+├─ state
+├─ assignedActor
+├─ itemCount
+├─ conflictCount
+├─ createdAt
+└─ completedAt?
+17.3 审核动作
+支持：
+
+整批接受；
+逐项接受；
+修改后接受；
+拒绝；
+映射现有实体；
+创建实体；
+合并候选实体；
+标记需后续处理；
+查看证据；
+查看影响分析。
+17.4 风险等级
+建议：
+
+*.txt
+Plaintext
+LOW
+MEDIUM
+HIGH
+CRITICAL
+高风险操作包括：
+
+删除或覆盖正式事实；
+实体合并；
+修改定稿章节；
+大范围时间线变化；
+世界状态回退；
+Schema 迁移；
+批量操作。
+17.5 冲突类型
+正文版本冲突；
+事实冲突；
+时间冲突；
+因果冲突；
+角色认知冲突；
+实体身份冲突；
+关系方向冲突；
+规划与实际偏差；
+定稿后修改影响；
+索引和知识版本不一致。
+18. 章节定稿与知识提交
+18.1 定稿原则
+M1 不提供伪定稿。正式定稿必须在 M2 建成知识和审核闭环后启用。
+
+18.2 定稿前置条件
+目标正文修订存在；
+修订未被覆盖；
+目标规划版本明确；
+必要分析已完成；
+ChangeSet 已生成；
+必要审核已完成；
+高风险冲突已处理；
+基础知识版本未过期；
+项目处于可写状态。
+18.3 完整定稿包
+章节定稿应包含：
+
+*.txt
+Plaintext
+FinalizationPackage
+├─ finalizedManuscriptRevision
+├─ chapterSummary
+├─ acceptedEntityChanges
+├─ acceptedRelationChanges
+├─ acceptedFactChanges
+├─ acceptedEvents
+├─ acceptedBeliefChanges
+├─ acceptedForeshadowingChanges
+├─ worldStateDelta
+├─ previousKnowledgeVersion
+├─ newKnowledgeVersion
+├─ indexUpdateRequests
+├─ snapshotRef
+├─ impactAssessment
+└─ auditRecord
+18.4 原子提交
+事务中提交：
+
+定稿记录；
+正文状态；
+正式知识变化；
+新知识版本；
+状态投影必要元数据；
+Outbox；
+AuditRecord；
+CommitMarker。
+索引和部分重型投影在事务后异步更新。
+
+18.5 已定稿章节修改
+不可直接覆盖：
+
+*.txt
+Plaintext
+创建新ManuscriptRevision
+→ 重新分析
+→ 生成新ChangeSet
+→ 评估后续影响
+→ 审核
+→ 创建替代FinalizationRecord
+19. 工作流与后台任务
+19.1 Task Runtime 与 Workflow Runtime
+*.txt
+Plaintext
+Task Runtime
+= 可靠执行单个任务
+Workflow Runtime
+= 编排多个节点
+工作流节点仍提交给统一 TaskScheduler。
+
+19.2 技术基线
+Tokio；
+CancellationToken；
+Semaphore；
+SQLite 持久化队列；
+Rayon CPU 线程池；
+spawn_blocking；
+版本化 Checkpoint；
+petgraph 运行时验证；
+受限 AST 表达式；
+首版进程内运行；
+独立 Worker 预留。
+19.3 TaskRecord
+*.txt
+Plaintext
+TaskRecord
+├─ taskId
+├─ projectId?
+├─ taskType
+├─ taskVersion
+├─ payloadRef
+├─ priority
+├─ state
+├─ resourceProfile
+├─ retryPolicy
+├─ timeoutPolicy
+├─ progress
+├─ checkpointRef?
+├─ leaseOwner?
+├─ leaseToken?
+├─ generation
+├─ nextRunAt?
+├─ idempotencyKey
+└─ timestamps
+19.4 任务状态
+*.txt
+Plaintext
+CREATED
+QUEUED
+LEASED
+RUNNING
+PAUSE_REQUESTED
+PAUSED
+CANCEL_REQUESTED
+CANCELLED
+RETRY_WAIT
+SUCCEEDED
+FAILED
+INTERRUPTED
+BLOCKED
+ORPHANED
+EXPIRED
+19.5 优先级
+*.txt
+Plaintext
+P0_CRITICAL
+P1_INTERACTIVE
+P2_FOREGROUND
+P3_BACKGROUND
+P4_MAINTENANCE
+19.6 资源治理
+*.txt
+Plaintext
+ResourceGovernor
+├─ projectSemaphore
+├─ providerSemaphore
+├─ modelSemaphore
+├─ cpuSemaphore
+├─ diskIoSemaphore
+├─ indexWriteSemaphore
+├─ embeddingSemaphore
+└─ memoryBudget
+19.7 工作流节点
+完整目标节点包括：
+
+Command；
+Query；
+AI Model；
+Tool；
+Condition；
+Parallel；
+Merge；
+ForEach；
+RepeatUntil；
+Human Review；
+Subworkflow；
+Delay；
+Compensation；
+Output。
+19.8 人工审核节点
+等待审核时：
+
+NodeRun 进入 WAITING_REVIEW；
+释放线程和 Lease；
+用户完成审核后重新激活；
+不长期占用 Worker。
+19.9 Worker 预留
+首版默认内嵌。下列任务保留拆分能力：
+
+ONNX 推理；
+大型索引；
+大型导入导出；
+PDF/DOCX 解析；
+全书一致性扫描；
+大批量嵌入。
+Worker 只能产生暂存结果，由 Application Core 正式提交。
+
+20. 应用 API、命令、查询和事件
+20.1 Command Envelope
+*.txt
+Plaintext
+CommandEnvelope
+├─ commandId
+├─ commandType
+├─ commandVersion
+├─ projectId?
+├─ actor
+├─ payload
+├─ expectedVersion?
+├─ idempotencyKey?
+├─ correlationId
+├─ causationId?
+├─ issuedAt
+└─ metadata
+20.2 Command Result
+*.txt
+Plaintext
+CommandResult
+├─ commandId
+├─ status
+├─ affectedObjects
+├─ newVersions
+├─ emittedEvents
+├─ taskRefs
+├─ projectionHints
+├─ eventCursor?
+└─ warnings
+20.3 Query Envelope
+*.txt
+Plaintext
+QueryEnvelope
+├─ queryId
+├─ queryType
+├─ queryVersion
+├─ projectId?
+├─ payload
+├─ consistencyRequirement
+└─ issuedAt
+20.4 ErrorEnvelope
+*.txt
+Plaintext
+ErrorEnvelope
+├─ errorCode
+├─ category
+├─ messageKey
+├─ userMessageParams
+├─ fieldErrors?
+├─ retryable
+├─ severity
+├─ diagnosticId
+├─ conflictInfo?
+├─ recoveryActions
+└─ technicalDetailsRef?
+20.5 事件结构
+*.txt
+Plaintext
+DomainEventEnvelope
+├─ eventId
+├─ eventType
+├─ eventVersion
+├─ aggregateType
+├─ aggregateId
+├─ aggregateVersion
+├─ projectId
+├─ payload
+├─ correlationId
+├─ causationId
+└─ occurredAt
+20.6 注册表
+从骨架阶段建立：
+
+CommandRegistry；
+QueryRegistry；
+DomainEventRegistry；
+ProjectionRegistry；
+TaskHandlerRegistry；
+WorkflowNodeRegistry；
+ProviderRegistry；
+ToolRegistry；
+FeatureRegistry。
+21. 数据库与持久化
+21.1 技术基线
+*.txt
+Plaintext
+SQLite
++ SQLx
++ WAL
++ 短事务
++ 单项目数据库
++ 内容Blob分离
+21.2 写入模型
+Application Core 统一写入；
+UI 不接触数据库；
+Worker 不直接写正式业务表；
+命令处理器执行事务；
+使用 expectedVersion 乐观并发；
+Outbox 与业务变化同事务；
+SQLite 事务保持短小。
+21.3 数据分区
+*.txt
+Plaintext
+Project Database
+├─ 正式领域数据
+├─ 修订元数据
+├─ 知识版本
+├─ 任务状态
+├─ 审核状态
+├─ 审计记录
+└─ Outbox
+Blob Store
+├─ 正文内容
+├─ 大型AI响应
+├─ 快照
+├─ 检查点
+└─ 导入中间物
+Rebuildable Index
+├─ Tantivy
+└─ Vector Index
+21.4 M1 首批表
+*.txt
+Plaintext
+project_metadata
+feature_state
+configuration_entries
+plan_nodes
+plan_revisions
+chapters
+scenes
+content_blobs
+manuscript_revisions
+chapter_draft_heads
+edit_recovery_sessions
+edit_recovery_entries
+entities
+entity_revisions
+entity_aliases
+model_providers
+model_profiles
+model_requests
+model_responses
+ai_proposals
+task_records
+task_attempts
+outbox_events
+audit_records
+schema_migrations
+具体表名和拆分粒度在数据库详细设计阶段可调整。
+
+21.5 M2 后续表
+*.txt
+Plaintext
+relations
+facts
+events
+beliefs
+foreshadowings
+evidence_anchors
+chapter_change_sets
+review_cases
+review_items
+conflicts
+finalization_records
+knowledge_versions
+world_state_snapshots
+21.6 迁移
+*.txt
+Plaintext
+migrations/
+├─ core/
+├─ planning/
+├─ manuscript/
+├─ knowledge/
+├─ ai/
+├─ search/
+├─ governance/
+├─ runtime/
+└─ workflow/
+各模块迁移最终形成全局确定顺序。
+
+22. 项目目录、Blob 与备份恢复
+22.1 建议项目目录
+*.txt
+Plaintext
+NovelProject/
+├─ project.json
+├─ project.sqlite
+├─ blobs/
+├─ indexes/
+│  ├─ fulltext/
+│  └─ vector/
+├─ recovery/
+├─ snapshots/
+├─ exports/
+├─ temp/
+└─ logs/
+是否把日志放在项目目录或应用数据目录，可在实施时根据隐私和多项目管理进一步确定。
+
+22.2 Blob 写入
+*.txt
+Plaintext
+写入临时文件
+→ 刷新
+→ 计算哈希
+→ 验证
+→ 原子rename
+→ 数据库事务登记引用
+Blob 使用内容寻址或稳定哈希，支持：
+
+去重；
+完整性检查；
+孤儿扫描；
+隔离；
+引用追踪。
+22.3 备份
+本机自用版 M1 必须支持手动完整备份。
+
+*.txt
+Plaintext
+刷新恢复状态
+→ 建立一致性点
+→ 备份SQLite
+→ 收集被引用Blob
+→ 写Manifest
+→ 计算校验和
+→ 生成备份包
+22.4 恢复
+*.txt
+Plaintext
+选择备份
+→ 验证Manifest
+→ 验证校验和
+→ 恢复到新目录
+→ 打开数据库
+→ 执行快速健康检查
+→ 验证关键正文和修订哈希
+默认禁止直接覆盖当前项目。
+
+22.5 快照与回滚
+快照记录：
+
+项目格式版本；
+数据库一致性点；
+Blob 引用集合；
+知识版本；
+正文修订引用；
+审计位置。
+回滚优先创建新的恢复结果或分支，不静默删除后续历史。
+
+23. 前端 UI 和桌面工作台
+23.1 技术基线
+React；
+TypeScript；
+Tauri；
+Radix Primitives；
+Tailwind CSS 4；
+CSS Custom Properties；
+Lucide React；
+TanStack Query；
+Zustand；
+TanStack Router；
+React Hook Form；
+Zod；
+TanStack Virtual；
+TanStack Table；
+dnd-kit。
+23.2 状态分类
+状态	所属技术
+Rust 正式查询状态	TanStack Query
+工作区和面板状态	Zustand
+正文编辑状态	Tiptap/ProseMirror
+表单状态	React Hook Form
+导航状态	TanStack Router
+局部临时状态	useState/useReducer
+23.3 Command 与 Query
+*.txt
+Plaintext
+读取
+→ QueryClient
+→ Tauri Query API
+→ Rust Query Handler
+写入
+→ CommandClient
+→ Tauri Command API
+→ Rust Command Handler
+→ 精确失效相关Query
+23.4 乐观更新
+只用于低风险 UI 操作，不用于：
+
+定稿；
+正式事实；
+实体合并；
+项目恢复；
+高风险审核；
+Schema 迁移。
+23.5 UI 组件库
+*.txt
+Plaintext
+packages/ui/
+├─ primitives/
+├─ components/
+├─ patterns/
+├─ tokens/
+├─ icons/
+└─ accessibility/
+领域复合组件：
+
+EntityBadge；
+EvidenceAnchorView；
+VersionPicker；
+ConflictBanner；
+ReviewDecisionBar；
+TaskProgressCard；
+KnowledgeVersionIndicator；
+PrivacyIndicator；
+ModelProfileSelector。
+23.6 无障碍
+首版要求：
+
+键盘导航；
+可见焦点；
+正确 ARIA；
+Dialog 焦点恢复；
+状态不只依赖颜色；
+拖拽替代操作；
+200% 缩放；
+高对比；
+降低动画；
+图形替代列表；
+中文输入法兼容。
+24. 复杂可视化
+24.1 技术选型
+场景	技术
+工作流画布	React Flow
+工作流布局	ELK.js
+规划树主编辑	虚拟化树
+规划概览	D3 Hierarchy
+时间线	自研 StoryTime 虚拟时间轴
+标准日期辅助时间线	vis-timeline
+中大型关系图	Sigma.js + Graphology
+小型关系图	React Flow / SVG
+分析图表	Apache ECharts
+超大自定义二维视图	后续按需 PixiJS
+24.2 统一边界
+*.txt
+Plaintext
+Rust Query Projection
+→ Visualization ViewModel
+→ 布局
+→ 渲染
+→ 用户Intent
+→ Rust Command
+24.3 StoryTime
+正式时间模型不能只使用 JavaScript Date，需支持：
+
+架空历法；
+模糊时间；
+相对时间；
+时间范围；
+仅有先后关系；
+时间旅行；
+并行叙事。
+24.4 可视化性能
+工作流常规 200 节点，压力测试 1,000；
+规划树支持 5,000+ 节点；
+关系图默认 100～500 节点；
+时间线按窗口显示；
+禁止默认加载完整世界图；
+布局运行于 Web Worker；
+Rust 负责数据裁剪和聚合。
+25. 安全、隐私与密钥管理
+25.1 密钥处理
+*.txt
+Plaintext
+用户输入API Key
+→ Tauri安全命令
+→ 操作系统Secret Store
+→ 数据库只保存SecretRef
+→ Provider调用时按需读取
+前端无法取回完整密钥。
+
+25.2 Secret 类型
+*.txt
+Plaintext
+SecretString
+SecretBytes
+SecretRef
+要求：
+
+Debug 隐藏；
+不进行普通序列化；
+生命周期短；
+不进入日志；
+不进入诊断包；
+不进入错误上下文。
+25.3 数据分类
+*.txt
+Plaintext
+PUBLIC
+INTERNAL
+PROJECT_METADATA
+PROJECT_CONTENT
+PERSONAL
+SECRET
+SECURITY_SENSITIVE
+未分类字段按严格等级处理。
+
+25.4 云模型隐私
+发送前形成：
+
+*.txt
+Plaintext
+PrivacyEvaluation
+├─ provider
+├─ dataClasses
+├─ contentScope
+├─ retentionPolicyVersion
+├─ userPolicy
+├─ allowOrDeny
+└─ evaluatedAt
+高敏内容不允许静默切换到云模型。
+
+25.5 本地通信
+Tauri IPC 使用白名单命令；
+不暴露任意文件路径能力；
+Worker 使用 Named Pipe 或 Unix Domain Socket；
+IPC 使用短期令牌、协议版本和消息大小上限；
+Ollama 本地端口不能视为权限边界。
+26. 日志、审计、诊断与崩溃恢复
+26.1 五类记录
+*.txt
+Plaintext
+Diagnostic Log
+Trace
+Metric
+Audit Record
+Crash Report
+必须分离。
+
+26.2 技术基线
+tracing；
+tracing-subscriber；
+tracing-appender；
+JSON Lines；
+本地 Metric Registry；
+SQLite 指标摘要；
+可选 OpenTelemetry Port；
+远程遥测默认关闭。
+26.3 审计
+*.txt
+Plaintext
+AuditRecord
+├─ auditId
+├─ actor
+├─ actionType
+├─ targetRefs
+├─ commandId?
+├─ correlationId
+├─ beforeVersionRefs
+├─ afterVersionRefs
+├─ decisionRef?
+├─ reasonCode?
+├─ summary
+├─ occurredAt
+├─ previousRecordHash
+└─ recordHash
+26.4 审计完整性
+使用哈希链和分段 Seal 提供本地篡改检测，不宣称第三方公证。
+
+26.5 CrashMarker
+异常时只写最小标记：
+
+*.txt
+Plaintext
+CrashMarker
+├─ processType
+├─ sessionId
+├─ occurredAt
+├─ lastTraceId?
+├─ activeProjectIds
+├─ activeTaskIds
+├─ buildId
+└─ crashPhase
+26.6 启动恢复
+*.txt
+Plaintext
+检查CrashMarker
+→ RecoveryLog
+→ TaskLease
+→ CommitMarker
+→ WAL
+→ 临时Blob
+→ 迁移状态
+→ RecoveryAssessment
+26.7 诊断包
+默认不包含：
+
+数据库；
+正文；
+Prompt；
+完整模型响应；
+API Key；
+附件；
+完整用户路径。
+生成与上传分离；当前本机自用阶段只需本地生成。
+
+27. 扩展性与功能预留框架
+27.1 Feature Registry
+*.txt
+Plaintext
+FeatureDescriptor
+├─ featureId
+├─ displayName
+├─ domain
+├─ status
+├─ maturity
+├─ requiredCapabilities
+├─ dependencies
+├─ routes
+├─ commandTypes
+├─ queryTypes
+├─ configurationSchema?
+└─ implementationNotes?
+27.2 Port 和 Adapter
+持久化
+ProjectRepository；
+PlanRepository；
+ManuscriptRepository；
+KnowledgeRepository；
+ReviewRepository；
+TaskRepository；
+AuditRepository；
+BlobStore；
+BackupPort。
+AI
+ModelGateway；
+ModelProviderPort；
+EmbeddingPort；
+RerankerPort；
+ToolExecutionPort；
+TokenCounterPort。
+搜索
+FullTextSearchPort；
+VectorSearchPort；
+SearchProjectionPort；
+IndexLifecyclePort。
+运行时
+TaskSchedulerPort；
+CheckpointPort；
+ResourceGovernorPort；
+WorkerHostPort。
+系统
+Clock；
+IdGenerator；
+SecretStore；
+FileSystem；
+EventPublisher；
+ObservabilityPort；
+PrivacyPolicyPort。
+27.3 Disabled Adapter
+暂未实现能力使用显式禁用适配器，例如：
+
+DisabledVectorSearchAdapter；
+DisabledWorkerHost；
+DisabledReranker；
+DisabledCloudSyncPort；
+DisabledExtensionRuntime。
+27.4 扩展类型
+当前只预留受控、声明式扩展：
+
+Prompt 模板；
+工作流定义；
+Entity Schema；
+模型配置；
+输出契约；
+导入导出模板；
+UI 声明式入口。
+首版不允许运行任意第三方前端或 Rust 代码。
+
+28. 大规模长篇性能设计
+28.1 目标容量
+系统需支持：
+
+1,000～3,000+ 章节；
+数千场景；
+数万实体；
+十万至百万级事实和事件投影；
+大量正文修订；
+长期 AI 调用和任务记录。
+28.2 禁止全量加载
+以下对象必须分页、窗口化或虚拟化：
+
+章节；
+场景；
+实体；
+事实；
+事件；
+审核项；
+任务；
+搜索结果；
+时间线；
+关系图；
+工作流运行记录。
+28.3 查询策略
+Cursor Pagination；
+稳定排序键；
+ID 定位；
+可见范围查询；
+邻域查询；
+聚合级别；
+Rust 侧筛选排序；
+前端预取有限窗口。
+28.4 前端性能
+*.txt
+Plaintext
+只加载当前需要的数据
+只渲染可见项
+只订阅必要状态
+只失效受影响查询
+只在激活时创建重型组件
+28.5 数据库性能
+WAL；
+短事务；
+合理索引；
+批量写入；
+读取投影；
+避免大型 JSON 全表扫描；
+索引异步重建；
+后台任务限流；
+定期分析和健康检查。
+28.6 性能建议目标
+以下为建议验收起点，需以目标设备实测修订：
+
+*.txt
+Plaintext
+应用冷启动：约3秒内
+打开中型项目：约2秒内进入可交互
+章节首屏：约300ms内
+章节切换：约500ms内
+普通全文查询P95：约300ms内
+局部关系查询P95：约500ms内
+普通命令事务P95：约100ms内
+这些不是当前已验证性能。
+
+29. 测试与质量保证
+29.1 技术基线
+Cargo Test；
+Tokio Test；
+proptest；
+cargo-fuzz；
+Fake 优先；
+真实临时 SQLite；
+Vitest；
+Testing Library；
+user-event；
+Playwright；
+WebdriverIO + Tauri；
+axe-core；
+Criterion；
+cargo-llvm-cov。
+29.2 测试层次
+*.txt
+Plaintext
+静态验证
+单元测试
+属性和状态机测试
+集成测试
+契约测试
+浏览器E2E
+桌面E2E
+性能与恢复专项
+29.3 重点领域不变量
+定稿修订不能直接覆盖；
+Proposal 不能直接成为事实；
+Belief 不能替代全局事实；
+旧 Worker 不能提交新一代任务；
+Outbox 与业务提交原子；
+审计记录与高风险变更同事务；
+规划和实际章节保持分离；
+恢复日志和正式修订保持分离；
+搜索索引可完全重建；
+密钥不能进入日志。
+29.4 数据库专项测试
+WAL；
+锁和重试；
+并发版本冲突；
+事务中途故障；
+定稿故障注入；
+Blob 成功但数据库失败；
+数据库成功但索引失败；
+迁移中断；
+备份完整恢复。
+29.5 AI 测试
+工程测试
+使用 Fake Model：
+
+Prompt；
+Token 预算；
+隐私；
+流式；
+Schema；
+Tool；
+取消；
+重试；
+Proposal。
+质量评估
+使用版本化 EvaluationSuite：
+
+事实提取；
+关系提取；
+认知泄漏；
+一致性；
+检索；
+改写；
+幻觉；
+越权。
+29.6 架构完整性测试
+*.txt
+Plaintext
+所有Command有Handler或Stub
+所有Query有Handler或Stub
+所有Feature有Descriptor
+所有公开DTO有Schema
+所有Event有版本
+所有Port有Adapter或DisabledAdapter
+所有Route有Feature状态
+依赖方向合法
+数据库模块有迁移命名空间
+30. 当前本机自用部署方案
+30.1 运行拓扑
+*.txt
+Plaintext
+Desktop Process
+├─ React UI
+├─ Tauri IPC
+├─ Rust Application Core
+├─ TaskScheduler
+├─ Workflow Runtime（初期可禁用）
+├─ SQLite
+├─ Blob Store
+├─ Tantivy
+├─ ModelGateway
+└─ Local Diagnostics
+30.2 模型调用
+*.txt
+Plaintext
+桌面应用
+├─ 直接调用云模型API
+└─ 调用localhost Ollama API
+不建设自有 AI 中转服务器。
+
+30.3 当前简化
+暂不实施：
+
+自动更新；
+代码签名；
+多平台正式发行；
+安装器渠道；
+Sentry；
+远程 OpenTelemetry；
+企业部署；
+公网服务；
+多人协作。
+30.4 仍必须保留
+项目格式版本；
+数据迁移；
+Secret Store；
+备份恢复；
+崩溃恢复；
+不可变修订；
+审计；
+ModelGateway；
+后台任务；
+架构边界；
+测试。
+31. 工程仓库与模块骨架
+31.1 推荐仓库结构
+*.txt
+Plaintext
+novel-workspace/
+├─ apps/
+│  ├─ desktop/
+│  │  ├─ src/
+│  │  └─ src-tauri/
+│  └─ worker/
+│
+├─ crates/
+│  ├─ novel-domain/
+│  │  ├─ project/
+│  │  ├─ planning/
+│  │  ├─ manuscript/
+│  │  ├─ knowledge/
+│  │  ├─ governance/
+│  │  ├─ finalization/
+│  │  ├─ automation/
+│  │  └─ shared/
+│  │
+│  ├─ novel-application/
+│  │  ├─ commands/
+│  │  ├─ queries/
+│  │  ├─ use_cases/
+│  │  ├─ events/
+│  │  ├─ projections/
+│  │  └─ ports/
+│  │
+│  ├─ novel-storage/
+│  │  ├─ sqlite/
+│  │  ├─ blobs/
+│  │  ├─ migrations/
+│  │  ├─ backup/
+│  │  └─ recovery/
+│  │
+│  ├─ novel-ai/
+│  │  ├─ gateway/
+│  │  ├─ providers/
+│  │  ├─ context/
+│  │  ├─ prompts/
+│  │  ├─ structured_output/
+│  │  ├─ tools/
+│  │  └─ evaluation/
+│  │
+│  ├─ novel-search/
+│  │  ├─ fulltext/
+│  │  ├─ vector/
+│  │  ├─ fusion/
+│  │  ├─ indexing/
+│  │  └─ query/
+│  │
+│  ├─ novel-runtime/
+│  │  ├─ tasks/
+│  │  ├─ scheduling/
+│  │  ├─ checkpoints/
+│  │  ├─ resources/
+│  │  └─ workers/
+│  │
+│  ├─ novel-workflow/
+│  │  ├─ definitions/
+│  │  ├─ validation/
+│  │  ├─ execution/
+│  │  ├─ expressions/
+│  │  └─ compensation/
+│  │
+│  ├─ novel-extension/
+│  │  ├─ manifests/
+│  │  ├─ capabilities/
+│  │  ├─ templates/
+│  │  └─ registry/
+│  │
+│  ├─ novel-observability/
+│  ├─ novel-security/
+│  ├─ novel-api/
+│  ├─ novel-contracts/
+│  └─ novel-test-support/
+│
+├─ packages/
+│  ├─ ui/
+│  ├─ contracts/
+│  └─ test-fixtures/
+│
+├─ tests/
+│  ├─ contracts/
+│  ├─ migrations/
+│  ├─ recovery/
+│  ├─ backup/
+│  ├─ scenarios/
+│  └─ performance/
+│
+├─ docs/
+│  ├─ architecture/
+│  ├─ decisions/
+│  ├─ domains/
+│  ├─ contracts/
+│  └─ roadmap/
+│
+└─ tools/
+   ├─ codegen/
+   ├─ project-inspector/
+   └─ novel-bench/
+31.2 前端结构
+*.txt
+Plaintext
+apps/desktop/src/
+├─ app/
+│  ├─ router/
+│  ├─ shell/
+│  ├─ providers/
+│  ├─ commands/
+│  ├─ shortcuts/
+│  └─ error-boundaries/
+├─ features/
+│  ├─ dashboard/
+│  ├─ project/
+│  ├─ planning/
+│  ├─ manuscript/
+│  ├─ story-knowledge/
+│  ├─ timeline/
+│  ├─ foreshadowing/
+│  ├─ search/
+│  ├─ governance/
+│  ├─ finalization/
+│  ├─ automation/
+│  ├─ tasks/
+│  ├─ models/
+│  ├─ extensions/
+│  ├─ backup-recovery/
+│  ├─ diagnostics/
+│  └─ settings/
+├─ visualizations/
+├─ entities/
+├─ shared/
+└─ generated/
+31.3 物理拆分原则
+骨架可先建立完整逻辑目录，但不必第一天创建过多空 crate。
+
+可先合并实现，后续按条件拆分：
+
+代码规模增长；
+编译边界价值明确；
+依赖方向稳定；
+测试隔离需要；
+Worker 进程需要共享协议。
+32. MVP 与分阶段实施路线
+32.1 M0：完整工程骨架
+目标：
+
+完整模块地图落位；
+建立核心 Port 和注册表；
+建立 Feature Registry；
+未实现能力有 Disabled Adapter；
+应用可启动；
+Rust 和前端 IPC 可用；
+SQLite 可初始化；
+本地日志可用；
+架构完整性测试可运行。
+M0 不是只建立几个临时模块，而是建立完整架构位置。
+
+32.2 M1：最小创作闭环
+实现：
+
+项目创建和打开；
+PlanNode 基础规划；
+章节和场景；
+Tiptap 正文；
+ContentBlock 和稳定 blockId；
+EditRecoveryLog；
+不可变 ManuscriptRevision；
+AI ModelGateway；
+Ollama + 一个云 Provider；
+续写、改写、润色、摘要；
+AiProposal；
+基础 Entity Story Bible；
+Tantivy 关键词搜索；
+手动备份恢复。
+M1 不实现正式章节定稿。
+
+32.3 M2：知识和定稿闭环
+实现：
+
+Relation；
+Fact；
+Event；
+Belief；
+WorldState；
+Foreshadowing；
+AI 结构化提取；
+ChapterChangeSet；
+ReviewCase；
+Conflict；
+ImpactAssessment；
+FinalizationRecord；
+KnowledgeVersion；
+章节原子定稿。
+32.4 M3：高级长篇能力
+实现：
+
+向量检索；
+混合检索和精排；
+高级上下文召回；
+可视化工作流；
+独立 Worker；
+高级时间线；
+关系图；
+节奏和伏笔图；
+全书一致性扫描；
+批量分析；
+更完整扩展系统。
+33. M1 验收标准
+M1 必须完整走通以下主线：
+
+*.txt
+Plaintext
+1. 创建小说项目
+2. 创建作品设计
+3. 创建总纲
+4. 创建第一卷
+5. 创建章节规划
+6. 从规划创建章节
+7. 创建场景
+8. 编写正文
+9. 自动记录恢复状态
+10. 保存ManuscriptRevision
+11. 查看历史修订
+12. 配置Ollama或云模型
+13. 发起续写或润色
+14. 流式查看模型输出
+15. 形成AiProposal
+16. 接受、部分接受或拒绝Proposal
+17. 保存新正文修订
+18. 创建和查询基础实体
+19. 搜索正文、规划和实体
+20. 关闭并重新打开项目
+21. 恢复工作区
+22. 模拟异常退出并恢复正文
+23. 创建完整备份
+24. 从备份恢复到新目录
+25. 比较正文和修订哈希
+同时必须满足：
+
+AI 不直接覆盖正文；
+API Key 不进入项目数据库；
+历史修订不可覆盖；
+搜索索引可重建；
+未实现功能明确显示状态；
+项目重启后数据完整；
+备份恢复通过实际验证。
+34. 风险与应对策略
+34.1 过度设计风险
+风险：骨架过大导致第一版无法落地。
+
+应对：
+
+逻辑边界完整；
+物理 crate 适量；
+Stub 必须轻量；
+M1 只激活核心路径；
+不提前创建全部数据库表；
+不实现无实际使用者的复杂框架内部细节。
+34.2 模型供应商变化
+风险：API、模型名称和能力快速变化。
+
+应对：
+
+ModelGateway；
+Provider Adapter；
+Capability Matrix；
+ModelProfile；
+协议契约测试；
+不在领域层依赖供应商 SDK。
+34.3 AI 幻觉污染知识
+应对：
+
+Proposal；
+OutputContract；
+Schema 验证；
+Evidence；
+人工审核；
+ChangeSet；
+定稿原子提交。
+34.4 长篇性能下降
+应对：
+
+禁止全量加载；
+分页和窗口；
+前端虚拟化；
+Rust 聚合；
+索引投影；
+ResourceGovernor；
+固定 LARGE 测试数据集。
+34.5 正文数据丢失
+应对：
+
+前端短期恢复；
+Rust RecoveryLog；
+不可变修订；
+Blob 哈希；
+WAL；
+备份恢复；
+CrashMarker；
+项目健康检查。
+34.6 领域边界被绕过
+应对：
+
+Command Bus；
+架构 Fitness Test；
+UI 只用 API；
+Worker 无正式写权限；
+AI 和搜索只产生候选或投影；
+crate 依赖规则。
+34.7 架构预留变成空壳负担
+应对：
+
+每个 Stub 必须有明确 Feature 状态；
+必须有测试；
+不建立无契约空目录；
+定期生成 Architecture Manifest；
+未进入路线图的能力不需要无限细化。
+35. 待确认事项
+以下内容应在正式编码或相应阶段前继续细化。
+
+35.1 工程层
+最终目标操作系统；
+Rust 工具链版本；
+Node.js 和包管理器；
+Tauri 具体版本；
+Cargo Workspace 的初始物理 crate 数量；
+是否采用 monorepo 工具；
+SQLx 离线模式和迁移工具流程。
+35.2 数据层
+UUID 具体版本；
+SQLite PRAGMA 精确值；
+Blob 压缩算法及阈值；
+项目日志是否放在项目内；
+Event Store 的保留范围；
+规划修订和实体修订的完整字段；
+大型 JSON 字段和规范化表的边界。
+35.3 编辑器
+NovelDocument v1 完整 Schema；
+ContentBlock 类型集合；
+中文字符偏移使用 Unicode Scalar、UTF-16 还是其他规范；
+场景边界在文档中的表示；
+自动保存时间参数；
+修订创建策略；
+Diff 算法具体实现。
+35.4 AI
+M1 第一家云 Provider；
+Prompt 模板格式；
+结构化输出 JSON Schema 子集；
+本地 Token 估算方案；
+模型费用是否只显示 Usage；
+云模型数据发送提示粒度；
+Ollama 模型管理 UI 范围。
+35.5 搜索
+中文分词具体词典维护；
+Tantivy 字段和权重；
+搜索索引目录策略；
+M3 向量模型和维度；
+Qdrant Edge 是否最终采用。
+35.6 UI
+产品名称；
+默认主题；
+默认布局；
+编辑器字体；
+工作区恢复策略；
+单窗口还是允许多窗口作为 M1 能力；
+UI 语言国际化实现库。
+35.7 性能
+基准设备；
+章节平均字数；
+LARGE 数据集正式规模；
+内存预算；
+本地 Ollama 并发；
+后台任务默认并发数。
+36. 架构决策摘要
+编号	决策
+ADR-001	采用本机自用、本地优先桌面应用
+ADR-002	采用模块化单体而非微服务
+ADR-003	采用七个领域上下文
+ADR-004	采用统一 Command、Event、Projection 主干
+ADR-005	规划与实际正文严格分离
+ADR-006	正文采用不可变 ManuscriptRevision
+ADR-007	AI 输出先形成 Proposal
+ADR-008	正式知识通过审核和定稿提交
+ADR-009	Fact 是基础，WorldState 是投影
+ADR-010	Belief 与全局事实分离
+ADR-011	FinalizationRecord 绑定正文、知识、审核和版本
+ADR-012	SQLite 是正式数据源，索引可重建
+ADR-013	ModelGateway 统一模型调用
+ADR-014	Task Runtime 和 Workflow Runtime 分离
+ADR-015	UI 状态、查询状态、编辑状态和表单状态分离
+ADR-016	可视化只产生 Intent，Rust Command 正式提交
+ADR-017	日志、指标、审计和崩溃记录分离
+ADR-018	完整架构骨架先建立，功能分 M0～M3 激活
+ADR-019	未实现能力使用 Feature Registry 和 Disabled Adapter
+ADR-020	当前不建设发布、云服务、账号和多人协作能力
+37. 术语表
+术语	含义
+Project	一部小说的本地工程
+PlanNode	统一规划节点
+ChapterPlan	章节计划，不是实际章节
+Chapter	实际章节业务对象
+NovelDocument	正文领域文档
+ContentBlock	具有稳定 ID 的正文块
+ManuscriptRevision	不可变正文修订
+RecoveryLog	编辑崩溃恢复记录
+Entity	故事实体身份
+EntityRevision	实体固定设定版本
+Fact	已审核的正式事实
+Event	故事中发生的事件
+WorldState	由事实和事件形成的当前状态投影
+Belief	某角色所相信或知道的内容
+EvidenceAnchor	指向正文来源的证据锚点
+AiProposal	AI 生成的候选内容或变更
+ChapterChangeSet	某章节分析产生的候选知识变化集合
+ReviewCase	人工审核任务
+FinalizationRecord	章节正式定稿记录
+KnowledgeVersion	正式故事知识状态版本
+ModelGateway	统一模型调用网关
+ContextPackage	一次模型调用使用的版本化上下文集合
+TaskRecord	一个持久化后台任务
+TaskAttempt	一次物理任务执行
+WorkflowRevision	不可变工作流定义版本
+Projection	从正式数据构造的查询视图
+Outbox	与事务一起保存的待发布事件
+Feature Registry	功能状态与能力目录
+Disabled Adapter	明确返回功能不可用的占位实现
+Architecture Manifest	系统模块和扩展点的机器可读清单
+38. 文档维护和变更记录
+38.1 文档维护规则
+所有重大架构变化必须增加 ADR；
+领域模型变化需同步更新 Schema 和契约；
+MVP 范围变化需同步更新路线图；
+不得把“规划”直接改写为“已实现”；
+性能指标只有实际测量后才能标记为已达到；
+技术库版本应在工程初始化后锁定；
+每次完成阶段验收后更新功能状态；
+architecture-manifest 应由代码或配置生成，不由人工长期维护。
+38.2 初始变更记录
+版本	日期	变更
+v1.0.0	2026-08-25	汇总并固化产品定位、完整目标架构、领域模型、AI、检索、工作流、治理、持久化、UI、可视化、测试和 MVP 路线
+附录 A：首批建议 Command
+*.txt
+Plaintext
+CreateProject
+OpenProject
+CloseProject
+RenameProject
+CreatePlanNode
+UpdatePlanNode
+MovePlanNode
+DeletePlanNode
+CreateChapterFromPlan
+CreateChapter
+UpdateChapter
+CreateScene
+MoveScene
+SaveManuscriptRevision
+RestoreRevisionAsDraft
+ResolveManuscriptConflict
+ConfigureModelProvider
+CreateModelProfile
+StartAiWritingRequest
+AcceptAiProposal
+PartiallyAcceptAiProposal
+RejectAiProposal
+CreateEntity
+UpdateEntityRevision
+CreateBackup
+RestoreBackup
+RunProjectHealthCheck
+M2 增加：
+
+*.txt
+Plaintext
+AnalyzeChapter
+CreateChapterChangeSet
+OpenReviewCase
+AcceptReviewItem
+ModifyAndAcceptReviewItem
+RejectReviewItem
+MergeEntityCandidate
+FinalizeChapter
+CreateReplacementFinalization
+附录 B：首批建议 Query
+*.txt
+Plaintext
+GetRecentProjects
+GetProjectSummary
+GetFeatureStates
+GetPlanTreeWindow
+GetChapterList
+GetChapter
+GetCurrentDraft
+GetRevisionHistory
+GetRecoveryStatus
+GetEntities
+GetEntity
+SearchProject
+GetModelProviders
+GetModelProfiles
+GetAiProposal
+GetTaskStatus
+GetTaskList
+GetBackupHistory
+GetProjectHealth
+M2 增加：
+
+*.txt
+Plaintext
+GetChapterChangeSet
+GetReviewQueue
+GetReviewCase
+GetKnowledgeVersion
+GetWorldState
+GetTimelineWindow
+GetRelationNeighborhood
+GetForeshadowingList
+GetImpactAssessment
+GetFinalizationHistory
+附录 C：首批建议领域事件
+*.txt
+Plaintext
+ProjectCreated
+ProjectOpened
+ProjectRenamed
+PlanNodeCreated
+PlanNodeUpdated
+PlanNodeMoved
+ChapterCreated
+SceneCreated
+ChapterDraftHeadChanged
+ManuscriptRevisionSaved
+RecoverySessionUpdated
+ManuscriptConflictDetected
+ModelRequestStarted
+ModelRequestCompleted
+ModelRequestFailed
+AiProposalCreated
+AiProposalAccepted
+AiProposalRejected
+EntityCreated
+EntityRevisionCreated
+TaskQueued
+TaskStarted
+TaskProgressed
+TaskSucceeded
+TaskFailed
+TaskCancelled
+BackupCreated
+ProjectRestored
+ProjectHealthChecked
+M2 增加：
+
+*.txt
+Plaintext
+ChapterAnalyzed
+ChapterChangeSetCreated
+ReviewCaseOpened
+ReviewItemAccepted
+ReviewCompleted
+KnowledgeVersionCreated
+ChapterFinalized
+WorldStateUpdated
+IndexUpdateRequested
+ImpactAssessmentCreated
+附录 D：严禁跨越的边界
+*.txt
+Plaintext
+React页面不得直接写SQLite
+React页面不得直接调用模型API
+Tauri Command不得包含散乱SQL业务逻辑
+领域层不得依赖SQLx、reqwest或Tauri
+Provider Adapter不得修改正文和事实
+Worker不得写正式业务表
+搜索索引不得成为正式数据源
+AI结果不得直接成为Fact
+普通保存不得冒充章节定稿
+规划节点不得冒充实际章节
+RecoveryLog不得冒充ManuscriptRevision
+画布节点和坐标不得冒充领域数据
+日志不得冒充AuditRecord
+附录 E：正式实施的下一步
+下一阶段不再继续扩展宏观蓝图，而应开始建立可运行工程骨架，建议顺序：
+
+*.txt
+Plaintext
+1. 创建Cargo Workspace和前端Workspace
+2. 建立完整逻辑模块目录
+3. 建立依赖方向规则
+4. 建立Feature Registry
+5. 建立Command、Query、Event注册表
+6. 建立核心Port和Disabled Adapter
+7. 建立architecture-manifest生成器
+8. 建立Tauri最小应用
+9. 建立SQLite与Migration基线
+10. 打通Health Query
+11. 建立AppShell和FeaturePlaceholder
+12. 建立架构完整性测试
+13. 验收M0骨架
+14. 开始M1项目创建纵向切片
+文档结论
+本系统正式采用以下总体路线：
+
+以本机自用、本地优先为当前产品边界；以七个领域上下文和统一业务主线为业务核心；以模块化单体、命令事件投影、不可变修订、AI Proposal、人工审核和原子定稿为架构主干；以完整骨架、阶段激活为实施原则；先完成 M0 全面工程骨架和 M1 最小创作闭环，再逐步激活知识治理、定稿、语义检索、工作流及高级可视化能力。
