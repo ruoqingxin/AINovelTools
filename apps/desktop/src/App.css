@@ -1,0 +1,409 @@
+:root {
+  font-family:
+    Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  color: #202522;
+  background: #f4f5f3;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --line: #dfe3df;
+  --line-strong: #cdd3ce;
+  --muted: #69716b;
+  --surface: #ffffff;
+  --surface-subtle: #f7f8f6;
+  --accent: #167d72;
+  --accent-strong: #0f675e;
+  --amber: #b67b19;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 320px;
+  height: 100%;
+  margin: 0;
+}
+
+button {
+  font: inherit;
+}
+
+button:focus-visible {
+  outline: 2px solid #168f82;
+  outline-offset: 2px;
+}
+
+.app-shell {
+  display: grid;
+  grid-template:
+    "title title title" 40px
+    "activity sidebar workspace" minmax(0, 1fr)
+    "status status status" 25px
+    / 52px 236px minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+  background: var(--surface-subtle);
+}
+
+.title-bar {
+  grid-area: title;
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr);
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  background: #f9faf8;
+  user-select: none;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-left: 12px;
+  color: #242a26;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.app-mark {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 5px;
+  color: white;
+  background: var(--accent);
+  font-family: Georgia, "Microsoft YaHei", serif;
+  font-size: 13px;
+}
+
+.project-context {
+  overflow: hidden;
+  padding: 0 18px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-bar {
+  grid-area: activity;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-right: 1px solid var(--line-strong);
+  background: #eef0ed;
+}
+
+.activity-bar nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding-top: 8px;
+}
+
+.activity-button {
+  position: relative;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: #717973;
+  background: transparent;
+}
+
+.activity-button[data-active] {
+  color: var(--accent-strong);
+  background: #dce8e4;
+}
+
+.activity-button[data-active]::before {
+  position: absolute;
+  left: -7px;
+  width: 3px;
+  height: 20px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  content: "";
+}
+
+.activity-button:disabled {
+  cursor: default;
+  opacity: 0.54;
+}
+
+.activity-settings {
+  margin-top: auto;
+  margin-bottom: 7px;
+}
+
+.primary-sidebar {
+  grid-area: sidebar;
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  background: #f5f6f4;
+}
+
+.sidebar-heading {
+  display: flex;
+  height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 13px 0 15px;
+  border-bottom: 1px solid var(--line);
+  color: #343a36;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sidebar-count {
+  color: #858c87;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sidebar-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 11px;
+  padding: 10px;
+  color: #7b837d;
+  font-size: 12px;
+}
+
+.workspace {
+  grid-area: workspace;
+  min-width: 0;
+  overflow: auto;
+  background: var(--surface);
+}
+
+.empty-project-view {
+  width: min(820px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: 58px 0 80px;
+}
+
+.workspace-heading .eyebrow {
+  margin: 0 0 7px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workspace-heading h1 {
+  margin: 0;
+  color: #1f2521;
+  font-family: Georgia, "Microsoft YaHei", serif;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.project-actions {
+  display: flex;
+  gap: 9px;
+  margin-top: 25px;
+}
+
+.project-actions button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 13px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.primary-action {
+  border: 1px solid var(--accent);
+  color: white;
+  background: var(--accent);
+}
+
+.secondary-action {
+  border: 1px solid var(--line-strong);
+  color: #3f4742;
+  background: var(--surface);
+}
+
+.project-actions button:disabled {
+  cursor: default;
+  filter: grayscale(0.35);
+  opacity: 0.55;
+}
+
+.recent-projects {
+  margin-top: 54px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.section-heading h2 {
+  margin: 0;
+  color: #343a36;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.section-heading span {
+  color: #858c87;
+  font-size: 11px;
+}
+
+.empty-list {
+  display: flex;
+  min-height: 178px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #7a827c;
+}
+
+.empty-list-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--accent);
+  background: var(--surface-subtle);
+}
+
+.empty-list p {
+  margin: 11px 0 0;
+  font-size: 12px;
+}
+
+.status-bar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 9px 0 11px;
+  border-top: 1px solid var(--line-strong);
+  color: #68706a;
+  background: #eceeeb;
+  font-size: 11px;
+  user-select: none;
+}
+
+.status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+.status-dot[data-state="success"] {
+  background: var(--accent);
+}
+
+.status-dot[data-state="error"] {
+  background: #b64a3c;
+}
+
+.fatal-error {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  text-align: center;
+}
+
+.fatal-error h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.fatal-error p {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 780px) {
+  .app-shell {
+    grid-template:
+      "title title" 40px
+      "activity workspace" minmax(0, 1fr)
+      "status status" 25px
+      / 52px minmax(0, 1fr);
+  }
+
+  .title-bar {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .primary-sidebar {
+    display: none;
+  }
+
+  .empty-project-view {
+    width: min(100% - 36px, 680px);
+    padding-top: 38px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #e5e9e5;
+    background: #202421;
+    --line: #383e39;
+    --line-strong: #454c47;
+    --muted: #9ba39d;
+    --surface: #242925;
+    --surface-subtle: #202421;
+    --accent: #3aa99d;
+    --accent-strong: #69c3ba;
+  }
+
+  .title-bar,
+  .primary-sidebar {
+    background: #282d29;
+  }
+
+  .activity-bar,
+  .status-bar {
+    background: #1d211e;
+  }
+
+  .brand-lockup,
+  .workspace-heading h1,
+  .section-heading h2,
+  .sidebar-heading {
+    color: #edf0ed;
+  }
+
+  .activity-button[data-active] {
+    background: #263f3b;
+  }
+
+  .secondary-action {
+    color: #dce1dc;
+  }
+}

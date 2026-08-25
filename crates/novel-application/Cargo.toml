@@ -1,0 +1,12 @@
+[package]
+name = "novel-application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+novel-domain.workspace = true
+
+[lints]
+workspace = true

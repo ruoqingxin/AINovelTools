@@ -1,0 +1,22 @@
+# JavaScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Rust
+target/
+
+# IDE and OS
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime project data
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
