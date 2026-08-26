@@ -11,7 +11,7 @@ import {
   Settings,
   ShieldCheck,
 } from "lucide-react";
-import { getBootstrapStatus, getHealth } from "../lib/tauri-client";
+import { getBootstrapStatus, getCurrentProject, getHealth } from "../lib/tauri-client";
 
 const navigation = [
   { label: "项目", icon: LibraryBig, active: true },
@@ -31,6 +31,10 @@ export function AppShell() {
     queryKey: ["health"],
     queryFn: getHealth,
   });
+  const currentProject = useQuery({
+    queryKey: ["current-project"],
+    queryFn: getCurrentProject,
+  });
 
   const serviceLabel = health.isSuccess
     ? `SQLite ${health.data.sqliteVersion} · Schema ${health.data.schemaVersion}`
@@ -45,7 +49,9 @@ export function AppShell() {
           <AppMark className="app-mark" />
           <span>AI Novel Tools</span>
         </div>
-        <div className="project-context">未打开项目</div>
+        <div className="project-context">
+          {currentProject.data?.name ?? "未打开项目"}
+        </div>
       </header>
 
       <aside className="activity-bar" aria-label="主要导航">
@@ -82,7 +88,7 @@ export function AppShell() {
         </div>
         <div className="sidebar-empty">
           <LibraryBig size={18} strokeWidth={1.6} />
-          <span>没有打开的小说工程</span>
+          <span>{currentProject.data ? currentProject.data.name : "没有打开的小说工程"}</span>
         </div>
       </aside>
 

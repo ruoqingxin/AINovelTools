@@ -246,6 +246,18 @@ button:focus-visible {
   opacity: 0.55;
 }
 
+.project-error {
+  max-width: 620px;
+  margin: 14px 0 0;
+  padding: 9px 11px;
+  border: 1px solid #e6b9b1;
+  border-radius: 6px;
+  color: #8f392e;
+  background: #fff4f1;
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .recent-projects {
   margin-top: 54px;
 }

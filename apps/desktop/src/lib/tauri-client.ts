@@ -42,3 +42,10 @@ export function openProject(root: string) {
 export function closeProject() {
   return invoke<ProjectManifest | null>("close_project");
 }
+
+export function invalidateProjectQueries(queryClient: { invalidateQueries: (options: { queryKey: string[] }) => Promise<unknown> }) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["current-project"] }),
+    queryClient.invalidateQueries({ queryKey: ["health"] }),
+  ]);
+}

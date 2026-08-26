@@ -24,6 +24,7 @@ novel-domain.workspace = true
 novel-infrastructure.workspace = true
 serde.workspace = true
 tauri = { workspace = true, features = [] }
+tauri-plugin-dialog = "2"
 
 [lints]
 workspace = true

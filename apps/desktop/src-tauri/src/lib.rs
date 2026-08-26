@@ -103,6 +103,7 @@ fn current_project(
 /// Panics when Tauri cannot initialize or the application event loop fails.
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(ProjectState {
             manager: Mutex::new(novel_infrastructure::ProjectManager::new()),
         })
