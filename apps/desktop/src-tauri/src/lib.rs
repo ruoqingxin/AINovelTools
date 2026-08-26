@@ -171,6 +171,20 @@ fn save_manuscript(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn list_manuscript_revisions(
+    state: tauri::State<'_, ProjectState>,
+    chapter_id: uuid::Uuid,
+) -> Result<Vec<novel_infrastructure::ManuscriptRevision>, String> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| "project mutex poisoned".to_owned())?;
+    manager
+        .list_manuscript_revisions(chapter_id)
+        .map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Starts the desktop application runtime.
 ///
@@ -194,6 +208,7 @@ pub fn run() {
             create_plan_node,
             update_plan_node,
             current_manuscript,
+            list_manuscript_revisions,
             save_manuscript
         ])
         .run(tauri::generate_context!())

@@ -84,6 +84,10 @@ export function currentManuscript(chapterId: string) {
   return invoke<ManuscriptRevision | null>("current_manuscript", { chapterId });
 }
 
+export function listManuscriptRevisions(chapterId: string) {
+  return invoke<ManuscriptRevision[]>("list_manuscript_revisions", { chapterId });
+}
+
 export function saveManuscript(input: { chapterId: string; documentJson: string; creationReason: string }) {
   return invoke<ManuscriptRevision>("save_manuscript", input);
 }

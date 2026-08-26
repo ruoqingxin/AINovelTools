@@ -299,6 +299,14 @@ impl ProjectManager {
         Ok(session.database.current_manuscript(chapter_id)?)
     }
 
+    pub fn list_manuscript_revisions(
+        &self,
+        chapter_id: Uuid,
+    ) -> Result<Vec<ManuscriptRevision>, ManuscriptError> {
+        let session = self.current.as_ref().ok_or(ManuscriptError::NoProject)?;
+        Ok(session.database.list_manuscript_revisions(chapter_id)?)
+    }
+
     pub fn save_manuscript(
         &mut self,
         chapter_id: Uuid,
@@ -621,6 +629,45 @@ impl Database {
                 },
             )
             .optional()
+            .map_err(DatabaseError::from)
+    }
+
+    fn list_manuscript_revisions(
+        &self,
+        chapter_id: Uuid,
+    ) -> Result<Vec<ManuscriptRevision>, DatabaseError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, parent_revision_id, document_json, content_hash, creation_reason
+             FROM manuscript_revisions WHERE chapter_id = ?1 ORDER BY created_at DESC",
+        )?;
+        let rows = statement.query_map([chapter_id.to_string()], |row| {
+            Ok(ManuscriptRevision {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?,
+                chapter_id,
+                parent_revision_id: row
+                    .get::<_, Option<String>>(1)?
+                    .map(|value| {
+                        Uuid::parse_str(&value).map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                1,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })
+                    })
+                    .transpose()?,
+                document_json: row.get(2)?,
+                content_hash: row.get(3)?,
+                creation_reason: row.get(4)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
             .map_err(DatabaseError::from)
     }
 

@@ -335,6 +335,38 @@ button:focus-visible {
   font-weight: 600;
 }
 
+.revision-history {
+  margin-top: 22px;
+}
+
+.revision-row {
+  display: grid;
+  grid-template-columns: 66px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.revision-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.revision-row button {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: inherit;
+  background: var(--surface);
+  font-size: 10px;
+}
+
 .inspector-actions button {
   display: inline-flex;
   min-height: 34px;

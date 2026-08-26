@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, BookOpen, Check, Plus, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { createPlanNode, currentManuscript, listPlanNodes, saveManuscript, updatePlanNode, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
+import { createPlanNode, currentManuscript, listManuscriptRevisions, listPlanNodes, saveManuscript, updatePlanNode, type ManuscriptRevision, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
 
 const kindLabels: Record<PlanNodeKind, string> = {
   WORK_DESIGN: "作品设计",
@@ -42,6 +42,11 @@ export function ProjectWorkspaceView() {
     queryFn: () => currentManuscript(selected!.id),
     enabled: selected?.kind === "CHAPTER",
   });
+  const history = useQuery({
+    queryKey: ["manuscript-history", selected?.id],
+    queryFn: () => listManuscriptRevisions(selected!.id),
+    enabled: selected?.kind === "CHAPTER",
+  });
 
   useEffect(() => {
     if (selected?.kind === "CHAPTER") setDraft(manuscript.data?.documentJson ?? "");
@@ -79,6 +84,19 @@ export function ProjectWorkspaceView() {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSavingDraft(false);
+    }
+  }
+
+  async function restoreRevision(revision: ManuscriptRevision) {
+    if (!selected || selected.kind !== "CHAPTER") return;
+    setDraft(revision.documentJson);
+    setError(null);
+    try {
+      await saveManuscript({ chapterId: selected.id, documentJson: revision.documentJson, creationReason: "RESTORE_REVISION" });
+      await client.invalidateQueries({ queryKey: ["manuscript", selected.id] });
+      await client.invalidateQueries({ queryKey: ["manuscript-history", selected.id] });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
@@ -141,6 +159,7 @@ export function ProjectWorkspaceView() {
           <div className="section-heading"><h2>正文草稿</h2><span>{manuscript.data ? "已有修订" : "尚未保存"}</span></div>
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="从这里开始写这一章……" aria-label="正文草稿" />
           <button type="button" className="primary-action" onClick={() => void saveDraft()} disabled={savingDraft || !draft.trim()}>{savingDraft ? "保存中…" : "保存为新修订"}</button>
+          {history.data && history.data.length > 0 ? <div className="revision-history"><div className="section-heading"><h2>修订历史</h2><span>{history.data.length} 条</span></div>{history.data.map((revision, index) => <div className="revision-row" key={revision.id}><span>修订 {history.data.length - index}</span><code>{revision.contentHash}</code><button type="button" className="secondary-action" onClick={() => void restoreRevision(revision)}>恢复为新草稿</button></div>)}</div> : null}
         </div> : null}
       </aside> : null}
     </section>
