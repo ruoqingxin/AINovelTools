@@ -5,6 +5,8 @@ dist/
 
 # Rust
 target/
+.target/
+.tmp/
 
 # IDE and OS
 .idea/

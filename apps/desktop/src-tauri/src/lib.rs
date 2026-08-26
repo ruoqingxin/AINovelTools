@@ -95,6 +95,35 @@ fn current_project(
     Ok(manager.current().cloned())
 }
 
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn list_plan_nodes(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Vec<novel_infrastructure::PlanNode>, String> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| "project mutex poisoned".to_owned())?;
+    manager.list_plan_nodes().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn create_plan_node(
+    state: tauri::State<'_, ProjectState>,
+    parent_id: Option<uuid::Uuid>,
+    kind: novel_infrastructure::PlanNodeKind,
+    title: String,
+) -> Result<novel_infrastructure::PlanNode, String> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| "project mutex poisoned".to_owned())?;
+    manager
+        .create_plan_node(parent_id, kind, title)
+        .map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Starts the desktop application runtime.
 ///
@@ -113,7 +142,9 @@ pub fn run() {
             create_project,
             open_project,
             close_project,
-            current_project
+            current_project,
+            list_plan_nodes,
+            create_plan_node
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

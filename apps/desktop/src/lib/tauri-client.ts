@@ -19,6 +19,18 @@ export type ProjectManifest = {
   createdAt: string;
 };
 
+export type PlanNodeKind = "WORK_DESIGN" | "OUTLINE" | "VOLUME" | "CHAPTER" | "SCENE";
+
+export type PlanNode = {
+  id: string;
+  parentId: string | null;
+  kind: PlanNodeKind;
+  title: string;
+  sortOrder: number;
+  archived: boolean;
+  revision: number;
+};
+
 export function getBootstrapStatus() {
   return invoke<BootstrapStatus>("bootstrap_status");
 }
@@ -41,6 +53,18 @@ export function openProject(root: string) {
 
 export function closeProject() {
   return invoke<ProjectManifest | null>("close_project");
+}
+
+export function listPlanNodes() {
+  return invoke<PlanNode[]>("list_plan_nodes");
+}
+
+export function createPlanNode(input: {
+  parentId?: string;
+  kind: PlanNodeKind;
+  title: string;
+}) {
+  return invoke<PlanNode>("create_plan_node", input);
 }
 
 export function invalidateProjectQueries(queryClient: { invalidateQueries: (options: { queryKey: string[] }) => Promise<unknown> }) {

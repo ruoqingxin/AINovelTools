@@ -195,6 +195,74 @@ button:focus-visible {
   padding: 58px 0 80px;
 }
 
+.project-workspace {
+  width: min(980px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: 48px 0 72px;
+}
+
+.workspace-lede {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.plan-create-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 28px;
+}
+
+.plan-create-row select,
+.plan-create-row input {
+  min-height: 36px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: inherit;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.plan-create-row select { padding: 0 9px; }
+.plan-create-row input { min-width: 240px; flex: 1; padding: 0 10px; }
+
+.plan-tree {
+  margin-top: 42px;
+}
+
+.plan-empty {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.plan-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.plan-kind {
+  min-width: 52px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.route-loading {
+  padding: 48px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .workspace-heading .eyebrow {
   margin: 0 0 7px;
   color: var(--accent-strong);
@@ -379,6 +447,10 @@ button:focus-visible {
     width: min(100% - 36px, 680px);
     padding-top: 38px;
   }
+
+  .project-workspace { width: min(100% - 36px, 680px); padding-top: 38px; }
+  .plan-create-row { flex-wrap: wrap; }
+  .plan-create-row input { min-width: 180px; }
 }
 
 @media (prefers-color-scheme: dark) {

@@ -59,6 +59,49 @@ pub struct ProjectSession {
     pub database: Database,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PlanNodeKind {
+    WorkDesign,
+    Outline,
+    Volume,
+    Chapter,
+    Scene,
+}
+impl PlanNodeKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::WorkDesign => "WORK_DESIGN",
+            Self::Outline => "OUTLINE",
+            Self::Volume => "VOLUME",
+            Self::Chapter => "CHAPTER",
+            Self::Scene => "SCENE",
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanNode {
+    pub id: Uuid,
+    pub parent_id: Option<Uuid>,
+    pub kind: PlanNodeKind,
+    pub title: String,
+    pub sort_order: i64,
+    pub archived: bool,
+    pub revision: i64,
+}
+#[derive(Debug, Error)]
+pub enum PlanError {
+    #[error("no project is open")]
+    NoProject,
+    #[error("plan title cannot be empty")]
+    EmptyTitle,
+    #[error("parent plan node does not exist: {0}")]
+    MissingParent(Uuid),
+    #[error("plan database operation failed: {0}")]
+    Database(#[from] DatabaseError),
+}
+
 pub struct ProjectManager {
     current: Option<ProjectSession>,
 }
@@ -189,6 +232,24 @@ impl ProjectManager {
             .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
         Ok(session.database.health()?)
     }
+
+    pub fn list_plan_nodes(&self) -> Result<Vec<PlanNode>, PlanError> {
+        let session = self.current.as_ref().ok_or(PlanError::NoProject)?;
+        Ok(session.database.list_plan_nodes()?)
+    }
+
+    pub fn create_plan_node(
+        &mut self,
+        parent_id: Option<Uuid>,
+        kind: PlanNodeKind,
+        title: String,
+    ) -> Result<PlanNode, PlanError> {
+        if title.trim().is_empty() {
+            return Err(PlanError::EmptyTitle);
+        }
+        let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
+        session.database.create_plan_node(parent_id, kind, title)
+    }
 }
 
 fn now_timestamp() -> String {
@@ -259,7 +320,123 @@ impl Database {
                 [],
             )?;
         }
+        if applied.unwrap_or(0) < 2 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS plan_nodes (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    parent_id TEXT REFERENCES plan_nodes(id),
+                    kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    revision INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_plan_nodes_parent_order
+                    ON plan_nodes(parent_id, sort_order, created_at);
+                INSERT INTO schema_migrations (version, name) VALUES (2, 'plan_nodes');",
+            )?;
+        }
         Ok(())
+    }
+
+    fn list_plan_nodes(&self) -> Result<Vec<PlanNode>, DatabaseError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, parent_id, kind, title, sort_order, archived, revision
+             FROM plan_nodes ORDER BY sort_order, created_at",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let kind = match row.get::<_, String>(2)?.as_str() {
+                "WORK_DESIGN" => PlanNodeKind::WorkDesign,
+                "OUTLINE" => PlanNodeKind::Outline,
+                "VOLUME" => PlanNodeKind::Volume,
+                "CHAPTER" => PlanNodeKind::Chapter,
+                "SCENE" => PlanNodeKind::Scene,
+                _ => PlanNodeKind::Outline,
+            };
+            let id = Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            let parent_id = row
+                .get::<_, Option<String>>(1)?
+                .map(|value| {
+                    Uuid::parse_str(&value).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })
+                })
+                .transpose()?;
+            Ok(PlanNode {
+                id,
+                parent_id,
+                kind,
+                title: row.get(3)?,
+                sort_order: row.get(4)?,
+                archived: row.get::<_, i64>(5)? == 1,
+                revision: row.get(6)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
+    }
+
+    fn create_plan_node(
+        &mut self,
+        parent_id: Option<Uuid>,
+        kind: PlanNodeKind,
+        title: String,
+    ) -> Result<PlanNode, PlanError> {
+        if let Some(parent) = parent_id {
+            let exists: bool = self
+                .connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM plan_nodes WHERE id = ?1 AND archived = 0)",
+                    [parent.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(DatabaseError::from)?;
+            if !exists {
+                return Err(PlanError::MissingParent(parent));
+            }
+        }
+        let sort_order: i64 = self
+            .connection
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM plan_nodes WHERE parent_id IS ?1",
+                rusqlite::params![parent_id.map(|id| id.to_string())],
+                |row| row.get(0),
+            )
+            .map_err(DatabaseError::from)?;
+        let node = PlanNode {
+            id: Uuid::new_v4(),
+            parent_id,
+            kind,
+            title,
+            sort_order,
+            archived: false,
+            revision: 1,
+        };
+        self.connection
+            .execute(
+                "INSERT INTO plan_nodes (id, parent_id, kind, title, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    node.id.to_string(),
+                    node.parent_id.map(|id| id.to_string()),
+                    node.kind.as_str(),
+                    node.title,
+                    node.sort_order
+                ],
+            )
+            .map_err(DatabaseError::from)?;
+        Ok(node)
     }
 
     /// Reads the SQLite and migration state used by the desktop health query.
@@ -315,7 +492,7 @@ mod tests {
     fn sqlite_applies_pragmas_and_initial_migration() {
         let database = Database::in_memory().expect("in-memory database");
         let health = database.health().expect("database health");
-        assert_eq!(health.schema_version, 1);
+        assert_eq!(health.schema_version, 2);
         assert_eq!(health.journal_mode, "memory");
         assert!(health.foreign_keys_enabled);
         assert!(!health.sqlite_version.is_empty());
@@ -348,6 +525,29 @@ mod tests {
             manager.create(&root, "重复作品"),
             Err(super::ProjectError::AlreadyExists(path)) if path == root
         ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn plan_nodes_can_be_created_and_listed() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-plan-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "测试作品").expect("create project");
+        let outline = manager
+            .create_plan_node(None, super::PlanNodeKind::Outline, "故事总纲".to_owned())
+            .expect("create outline");
+        let chapter = manager
+            .create_plan_node(
+                Some(outline.id),
+                super::PlanNodeKind::Chapter,
+                "第一章".to_owned(),
+            )
+            .expect("create chapter");
+        let nodes = manager.list_plan_nodes().expect("list plan nodes");
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes.iter().any(|node| node.parent_id == Some(outline.id)));
+        assert_eq!(chapter.revision, 1);
         let _ = std::fs::remove_dir_all(root);
     }
 }
