@@ -11,7 +11,7 @@ import {
   Settings,
   ShieldCheck,
 } from "lucide-react";
-import { getBootstrapStatus } from "../lib/tauri-client";
+import { getBootstrapStatus, getHealth } from "../lib/tauri-client";
 
 const navigation = [
   { label: "项目", icon: LibraryBig, active: true },
@@ -23,15 +23,19 @@ const navigation = [
 ];
 
 export function AppShell() {
-  const bootstrap = useQuery({
+  useQuery({
     queryKey: ["bootstrap-status"],
     queryFn: getBootstrapStatus,
   });
+  const health = useQuery({
+    queryKey: ["health"],
+    queryFn: getHealth,
+  });
 
-  const serviceLabel = bootstrap.isSuccess
-    ? `核心服务 ${bootstrap.data.appVersion}`
-    : bootstrap.isError
-      ? "核心服务不可用"
+  const serviceLabel = health.isSuccess
+    ? `SQLite ${health.data.sqliteVersion} · Schema ${health.data.schemaVersion}`
+    : health.isError
+      ? "数据库不可用"
       : "正在连接核心服务";
 
   return (
@@ -90,7 +94,7 @@ export function AppShell() {
         <span className="status-item">
           <span
             className="status-dot"
-            data-state={bootstrap.status}
+            data-state={health.status}
             aria-hidden="true"
           />
           {serviceLabel}
