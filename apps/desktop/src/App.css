@@ -411,6 +411,12 @@ button:focus-visible {
   border-top: 1px solid var(--line);
 }
 
+.revision-hint {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .compare-selects {
   display: flex;
   align-items: center;

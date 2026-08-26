@@ -107,7 +107,7 @@ export function ProjectWorkspaceView() {
   }, [editor, manuscript.data, selected?.kind, selected?.id]);
 
   useEffect(() => {
-    if (history.data && history.data.length >= 2 && (!compareLeftId || !compareRightId)) {
+    if (history.data && history.data!.length >= 2 && (!compareLeftId || !compareRightId)) {
       setCompareLeftId(history.data[1].id);
       setCompareRightId(history.data[0].id);
     }
@@ -141,6 +141,7 @@ export function ProjectWorkspaceView() {
     try {
       await saveManuscript({ chapterId: selected.id, documentJson: draft, creationReason: "MANUAL_SAVE" });
       await client.invalidateQueries({ queryKey: ["manuscript", selected.id] });
+      await client.invalidateQueries({ queryKey: ["manuscript-history", selected.id] });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -227,7 +228,7 @@ export function ProjectWorkspaceView() {
             <EditorContent editor={editor} />
           </> : <p className="plan-empty">正在加载编辑器…</p>}
           <button type="button" className="primary-action" onClick={() => void saveDraft()} disabled={savingDraft || !draft.trim()}>{savingDraft ? "保存中…" : "保存为新修订"}</button>
-          {history.data && history.data.length > 0 ? <div className="revision-history"><div className="section-heading"><h2>修订历史</h2><span>{history.data.length} 条</span></div>{history.data.map((revision, index) => <div className="revision-row" key={revision.id}><span>修订 {history.data.length - index}</span><code>{revision.contentHash}</code><button type="button" className="secondary-action" onClick={() => void restoreRevision(revision)}>恢复为新草稿</button></div>)}{history.data.length >= 2 ? <div className="revision-compare"><div className="compare-selects"><select value={compareLeftId ?? ""} onChange={(event) => setCompareLeftId(event.target.value)} aria-label="较早修订"><option value="">选择较早修订</option>{history.data.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data.length - index}</option>)}</select><span>对比</span><select value={compareRightId ?? ""} onChange={(event) => setCompareRightId(event.target.value)} aria-label="较新修订"><option value="">选择较新修订</option>{history.data.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data.length - index}</option>)}</select></div>{compareLeftId && compareRightId ? <div className="diff-view">{diffLines(documentToText(history.data.find((revision) => revision.id === compareLeftId)?.documentJson ?? ""), documentToText(history.data.find((revision) => revision.id === compareRightId)?.documentJson ?? "")).map((row, index) => <div className={`diff-line diff-${row.kind}`} key={`${index}-${row.kind}`}><span>{row.kind === "added" ? "+" : row.kind === "removed" ? "−" : " "}</span><code>{row.text || " "}</code></div>)}</div> : null}</div> : null}</div> : null}
+          {selected.kind === "CHAPTER" ? <div className="revision-history"><div className="section-heading"><h2>修订历史</h2><span>{history.data?.length ?? 0} 条</span></div>{history.data?.map((revision, index) => <div className="revision-row" key={revision.id}><span>修订 {history.data!.length - index}</span><code>{revision.contentHash}</code><button type="button" className="secondary-action" onClick={() => void restoreRevision(revision)}>恢复为新草稿</button></div>)}{(history.data?.length ?? 0) < 2 ? <p className="revision-hint">保存两次正文后，可以在这里选择两个版本进行差异对比。</p> : <div className="revision-compare"><div className="compare-selects"><select value={compareLeftId ?? ""} onChange={(event) => setCompareLeftId(event.target.value)} aria-label="较早修订"><option value="">选择较早修订</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data!.length - index}</option>)}</select><span>对比</span><select value={compareRightId ?? ""} onChange={(event) => setCompareRightId(event.target.value)} aria-label="较新修订"><option value="">选择较新修订</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data!.length - index}</option>)}</select></div>{compareLeftId && compareRightId ? <div className="diff-view">{diffLines(documentToText(history.data!.find((revision) => revision.id === compareLeftId)?.documentJson ?? ""), documentToText(history.data!.find((revision) => revision.id === compareRightId)?.documentJson ?? "")).map((row, index) => <div className={`diff-line diff-${row.kind}`} key={`${index}-${row.kind}`}><span>{row.kind === "added" ? "+" : row.kind === "removed" ? "−" : " "}</span><code>{row.text || " "}</code></div>)}</div> : null}</div>}</div> : null}
         </div> : null}
       </aside> : null}
     </section>
