@@ -2,8 +2,8 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
-struct DatabaseState {
-    database: Mutex<novel_infrastructure::Database>,
+struct ProjectState {
+    manager: Mutex<novel_infrastructure::ProjectManager>,
 }
 
 #[derive(Serialize)]
@@ -32,18 +32,67 @@ fn bootstrap_status() -> BootstrapStatus {
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn health_query(state: tauri::State<'_, DatabaseState>) -> Result<DatabaseHealthResponse, String> {
-    let database = state
-        .database
+fn health_query(state: tauri::State<'_, ProjectState>) -> Result<DatabaseHealthResponse, String> {
+    let manager = state
+        .manager
         .lock()
         .map_err(|_| "database mutex poisoned".to_owned())?;
-    let health = database.health().map_err(|error| error.to_string())?;
+    let health = manager.health().map_err(|error| error.to_string())?;
     Ok(DatabaseHealthResponse {
         sqlite_version: health.sqlite_version,
         schema_version: health.schema_version,
         journal_mode: health.journal_mode,
         foreign_keys_enabled: health.foreign_keys_enabled,
     })
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn create_project(
+    state: tauri::State<'_, ProjectState>,
+    root: String,
+    name: String,
+) -> Result<novel_infrastructure::ProjectManifest, String> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| "project mutex poisoned".to_owned())?;
+    manager
+        .create(root, name)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn open_project(
+    state: tauri::State<'_, ProjectState>,
+    root: String,
+) -> Result<novel_infrastructure::ProjectManifest, String> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| "project mutex poisoned".to_owned())?;
+    manager.open(root).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn close_project(
+    state: tauri::State<'_, ProjectState>,
+) -> Option<novel_infrastructure::ProjectManifest> {
+    state.manager.lock().ok()?.close()
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn current_project(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Option<novel_infrastructure::ProjectManifest>, String> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| "project mutex poisoned".to_owned())?;
+    Ok(manager.current().cloned())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -53,13 +102,18 @@ fn health_query(state: tauri::State<'_, DatabaseState>) -> Result<DatabaseHealth
 ///
 /// Panics when Tauri cannot initialize or the application event loop fails.
 pub fn run() {
-    let database = novel_infrastructure::Database::in_memory()
-        .expect("in-memory SQLite database should initialize");
     tauri::Builder::default()
-        .manage(DatabaseState {
-            database: Mutex::new(database),
+        .manage(ProjectState {
+            manager: Mutex::new(novel_infrastructure::ProjectManager::new()),
         })
-        .invoke_handler(tauri::generate_handler![bootstrap_status, health_query])
+        .invoke_handler(tauri::generate_handler![
+            bootstrap_status,
+            health_query,
+            create_project,
+            open_project,
+            close_project,
+            current_project
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,9 +1,12 @@
 //! Adapters for persistence, files, model providers, and operating-system APIs.
 
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Debug, Error)]
 pub enum DatabaseError {
@@ -23,6 +26,176 @@ pub struct DatabaseHealth {
 
 pub struct Database {
     connection: Connection,
+}
+
+#[derive(Debug, Error)]
+pub enum ProjectError {
+    #[error("project path is invalid: {0}")]
+    InvalidPath(PathBuf),
+    #[error("project already exists: {0}")]
+    AlreadyExists(PathBuf),
+    #[error("project is not initialized: {0}")]
+    NotInitialized(PathBuf),
+    #[error("project file operation failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("project manifest is invalid: {0}")]
+    Manifest(#[from] serde_json::Error),
+    #[error("project database failed: {0}")]
+    Database(#[from] DatabaseError),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectManifest {
+    pub project_id: Uuid,
+    pub format_version: u32,
+    pub name: String,
+    pub created_at: String,
+}
+
+pub struct ProjectSession {
+    pub root: PathBuf,
+    pub manifest: ProjectManifest,
+    pub database: Database,
+}
+
+pub struct ProjectManager {
+    current: Option<ProjectSession>,
+}
+
+impl Default for ProjectManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProjectManager {
+    /// Creates a manager without an opened project.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { current: None }
+    }
+
+    /// Creates a project using a temporary directory and atomically completes it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError`] if the path is invalid, already exists, or any
+    /// manifest/database operation fails. Failed creation removes its temporary
+    /// directory and leaves no valid project at the requested path.
+    pub fn create(
+        &mut self,
+        root: impl AsRef<Path>,
+        name: impl Into<String>,
+    ) -> Result<ProjectManifest, ProjectError> {
+        let root = root.as_ref().to_path_buf();
+        let parent = root
+            .parent()
+            .ok_or_else(|| ProjectError::InvalidPath(root.clone()))?;
+        let file_name = root
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| ProjectError::InvalidPath(root.clone()))?;
+        if root.as_os_str().is_empty() {
+            return Err(ProjectError::InvalidPath(root));
+        }
+        if root.exists() {
+            return Err(ProjectError::AlreadyExists(root));
+        }
+        std::fs::create_dir_all(parent)?;
+        let temp_root = parent.join(format!(".{file_name}.creating-{}", Uuid::new_v4()));
+        if temp_root.exists() {
+            return Err(ProjectError::AlreadyExists(temp_root));
+        }
+        let result = (|| {
+            std::fs::create_dir(&temp_root)?;
+            for directory in ["attachments", "snapshots", "recovery", "exports", "temp"] {
+                std::fs::create_dir(temp_root.join(directory))?;
+            }
+            let manifest = ProjectManifest {
+                project_id: Uuid::new_v4(),
+                format_version: 1,
+                name: name.into(),
+                created_at: now_timestamp(),
+            };
+            std::fs::write(
+                temp_root.join("project.json"),
+                serde_json::to_vec_pretty(&manifest)?,
+            )?;
+            {
+                let _database = Database::open(temp_root.join("project.sqlite"))?;
+            }
+            std::fs::rename(&temp_root, &root)?;
+            let database = Database::open(root.join("project.sqlite"))?;
+            let session = ProjectSession {
+                root: root.clone(),
+                manifest: manifest.clone(),
+                database,
+            };
+            self.current = Some(session);
+            Ok(manifest)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_dir_all(&temp_root);
+        }
+        result
+    }
+
+    /// Opens an existing project after validating its manifest and database.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError`] if the project is missing, malformed, or its
+    /// database cannot be opened.
+    pub fn open(&mut self, root: impl AsRef<Path>) -> Result<ProjectManifest, ProjectError> {
+        let root = root.as_ref().to_path_buf();
+        let manifest_path = root.join("project.json");
+        if !manifest_path.is_file() {
+            return Err(ProjectError::NotInitialized(root));
+        }
+        let manifest: ProjectManifest = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
+        let database = Database::open(root.join("project.sqlite"))?;
+        let result = manifest.clone();
+        self.current = Some(ProjectSession {
+            root,
+            manifest,
+            database,
+        });
+        Ok(result)
+    }
+
+    /// Closes the current project and returns its manifest, if any.
+    pub fn close(&mut self) -> Option<ProjectManifest> {
+        self.current.take().map(|session| session.manifest)
+    }
+
+    /// Returns the currently opened project manifest.
+    #[must_use]
+    pub fn current(&self) -> Option<&ProjectManifest> {
+        self.current.as_ref().map(|session| &session.manifest)
+    }
+
+    /// Returns health for the current project database.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::NotInitialized`] when no project is open or
+    /// [`ProjectError::Database`] when SQLite health cannot be queried.
+    pub fn health(&self) -> Result<DatabaseHealth, ProjectError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        Ok(session.database.health()?)
+    }
+}
+
+fn now_timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    seconds.to_string()
 }
 
 impl Database {
@@ -146,5 +319,35 @@ mod tests {
         assert_eq!(health.journal_mode, "memory");
         assert!(health.foreign_keys_enabled);
         assert!(!health.sqlite_version.is_empty());
+    }
+
+    #[test]
+    fn project_creation_is_complete_and_reopenable() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-project-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        let manifest = manager.create(&root, "测试作品").expect("create project");
+        assert_eq!(manifest.name, "测试作品");
+        assert!(root.join("project.json").is_file());
+        assert!(root.join("project.sqlite").is_file());
+        assert!(root.join("attachments").is_dir());
+        assert!(manager.health().is_ok());
+        assert_eq!(manager.close(), Some(manifest.clone()));
+        let reopened = manager.open(&root).expect("reopen project");
+        assert_eq!(reopened, manifest);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_creation_does_not_leave_project_directory() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-project-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        let _ = manager.create(&root, "测试作品").expect("first create");
+        assert!(matches!(
+            manager.create(&root, "重复作品"),
+            Err(super::ProjectError::AlreadyExists(path)) if path == root
+        ));
+        let _ = std::fs::remove_dir_all(root);
     }
 }
