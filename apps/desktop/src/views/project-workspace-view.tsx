@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, BookOpen, Check, Plus, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
 import { createPlanNode, currentManuscript, listManuscriptRevisions, listPlanNodes, saveManuscript, updatePlanNode, type ManuscriptRevision, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
 
 const kindLabels: Record<PlanNodeKind, string> = {
@@ -11,6 +13,22 @@ const kindLabels: Record<PlanNodeKind, string> = {
   CHAPTER: "章节",
   SCENE: "场景",
 };
+
+function documentToJson(value: string) {
+  try {
+    const parsed = JSON.parse(value) as { type?: string };
+    if (parsed && parsed.type === "doc") return parsed;
+  } catch {
+    // Existing revisions may contain plain text from the first editor.
+  }
+  return {
+    type: "doc",
+    content: value.split(/\r?\n/).map((text) => ({
+      type: "paragraph",
+      content: text ? [{ type: "text", text }] : undefined,
+    })),
+  };
+}
 
 export function ProjectWorkspaceView() {
   const client = useQueryClient();
@@ -23,6 +41,12 @@ export function ProjectWorkspaceView() {
   const [draft, setDraft] = useState("");
   const [savingDraft, setSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const editor = useEditor({
+    extensions: [StarterKit],
+    content: documentToJson(""),
+    editorProps: { attributes: { class: "tiptap-editor" } },
+    onUpdate: ({ editor: currentEditor }) => setDraft(JSON.stringify(currentEditor.getJSON())),
+  });
 
   async function addNode() {
     if (!title.trim()) return;
@@ -49,8 +73,12 @@ export function ProjectWorkspaceView() {
   });
 
   useEffect(() => {
-    if (selected?.kind === "CHAPTER") setDraft(manuscript.data?.documentJson ?? "");
-  }, [manuscript.data, selected?.kind, selected?.id]);
+    if (selected?.kind === "CHAPTER") {
+      const next = manuscript.data?.documentJson ?? "";
+      setDraft(next);
+      if (editor && next !== JSON.stringify(editor.getJSON())) editor.commands.setContent(documentToJson(next), { emitUpdate: false });
+    }
+  }, [editor, manuscript.data, selected?.kind, selected?.id]);
 
   async function saveSelected() {
     if (!selected || !editTitle.trim()) return;
@@ -157,7 +185,14 @@ export function ProjectWorkspaceView() {
         </div>
         {selected.kind === "CHAPTER" ? <div className="chapter-editor">
           <div className="section-heading"><h2>正文草稿</h2><span>{manuscript.data ? "已有修订" : "尚未保存"}</span></div>
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="从这里开始写这一章……" aria-label="正文草稿" />
+          {editor ? <>
+            <div className="editor-toolbar" aria-label="编辑器工具栏">
+              <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} data-active={editor.isActive("bold") || undefined} aria-label="粗体">B</button>
+              <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} data-active={editor.isActive("italic") || undefined} aria-label="斜体"><em>I</em></button>
+              <button type="button" onClick={() => editor.chain().focus().toggleBulletList().run()} data-active={editor.isActive("bulletList") || undefined} aria-label="项目列表">•</button>
+            </div>
+            <EditorContent editor={editor} />
+          </> : <p className="plan-empty">正在加载编辑器…</p>}
           <button type="button" className="primary-action" onClick={() => void saveDraft()} disabled={savingDraft || !draft.trim()}>{savingDraft ? "保存中…" : "保存为新修订"}</button>
           {history.data && history.data.length > 0 ? <div className="revision-history"><div className="section-heading"><h2>修订历史</h2><span>{history.data.length} 条</span></div>{history.data.map((revision, index) => <div className="revision-row" key={revision.id}><span>修订 {history.data.length - index}</span><code>{revision.contentHash}</code><button type="button" className="secondary-action" onClick={() => void restoreRevision(revision)}>恢复为新草稿</button></div>)}</div> : null}
         </div> : null}

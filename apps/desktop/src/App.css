@@ -311,20 +311,58 @@ button:focus-visible {
   margin-top: 24px;
 }
 
-.chapter-editor textarea {
+.editor-toolbar {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  background: var(--surface-subtle);
+}
+
+.editor-toolbar button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.editor-toolbar button[data-active] {
+  color: var(--accent-strong);
+  background: #dce8e4;
+}
+
+.tiptap-editor {
   display: block;
   width: 100%;
   min-height: 220px;
-  margin: 12px 0 10px;
+  margin: 0 0 10px;
   padding: 12px;
-  resize: vertical;
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: 0 0 6px 6px;
   color: inherit;
   background: var(--surface);
   font: inherit;
   font-size: 13px;
   line-height: 1.7;
+  outline: none;
+}
+
+.tiptap-editor p {
+  margin: 0 0 10px;
+}
+
+.tiptap-editor ul {
+  margin: 0 0 10px;
+  padding-left: 22px;
 }
 
 .chapter-editor > button {
