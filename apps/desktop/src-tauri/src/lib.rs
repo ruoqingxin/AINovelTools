@@ -124,6 +124,53 @@ fn create_plan_node(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn update_plan_node(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    title: String,
+    archived: bool,
+) -> Result<novel_infrastructure::PlanNode, String> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| "project mutex poisoned".to_owned())?;
+    manager
+        .update_plan_node(id, title, archived)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn current_manuscript(
+    state: tauri::State<'_, ProjectState>,
+    chapter_id: uuid::Uuid,
+) -> Result<Option<novel_infrastructure::ManuscriptRevision>, String> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| "project mutex poisoned".to_owned())?;
+    manager
+        .current_manuscript(chapter_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_manuscript(
+    state: tauri::State<'_, ProjectState>,
+    chapter_id: uuid::Uuid,
+    document_json: String,
+    creation_reason: String,
+) -> Result<novel_infrastructure::ManuscriptRevision, String> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| "project mutex poisoned".to_owned())?;
+    manager
+        .save_manuscript(chapter_id, document_json, creation_reason)
+        .map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Starts the desktop application runtime.
 ///
@@ -144,7 +191,10 @@ pub fn run() {
             close_project,
             current_project,
             list_plan_nodes,
-            create_plan_node
+            create_plan_node,
+            update_plan_node,
+            current_manuscript,
+            save_manuscript
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

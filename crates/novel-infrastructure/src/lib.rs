@@ -1,9 +1,11 @@
 //! Adapters for persistence, files, model providers, and operating-system APIs.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -98,7 +100,32 @@ pub enum PlanError {
     EmptyTitle,
     #[error("parent plan node does not exist: {0}")]
     MissingParent(Uuid),
+    #[error("plan node does not exist: {0}")]
+    MissingNode(Uuid),
     #[error("plan database operation failed: {0}")]
+    Database(#[from] DatabaseError),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptRevision {
+    pub id: Uuid,
+    pub chapter_id: Uuid,
+    pub parent_revision_id: Option<Uuid>,
+    pub document_json: String,
+    pub content_hash: String,
+    pub creation_reason: String,
+}
+
+#[derive(Debug, Error)]
+pub enum ManuscriptError {
+    #[error("no project is open")]
+    NoProject,
+    #[error("chapter does not exist: {0}")]
+    MissingChapter(Uuid),
+    #[error("document cannot be empty")]
+    EmptyDocument,
+    #[error("manuscript database operation failed: {0}")]
     Database(#[from] DatabaseError),
 }
 
@@ -250,6 +277,42 @@ impl ProjectManager {
         let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
         session.database.create_plan_node(parent_id, kind, title)
     }
+
+    pub fn update_plan_node(
+        &mut self,
+        id: Uuid,
+        title: String,
+        archived: bool,
+    ) -> Result<PlanNode, PlanError> {
+        if title.trim().is_empty() {
+            return Err(PlanError::EmptyTitle);
+        }
+        let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
+        session.database.update_plan_node(id, title, archived)
+    }
+
+    pub fn current_manuscript(
+        &self,
+        chapter_id: Uuid,
+    ) -> Result<Option<ManuscriptRevision>, ManuscriptError> {
+        let session = self.current.as_ref().ok_or(ManuscriptError::NoProject)?;
+        Ok(session.database.current_manuscript(chapter_id)?)
+    }
+
+    pub fn save_manuscript(
+        &mut self,
+        chapter_id: Uuid,
+        document_json: String,
+        creation_reason: String,
+    ) -> Result<ManuscriptRevision, ManuscriptError> {
+        if document_json.trim().is_empty() {
+            return Err(ManuscriptError::EmptyDocument);
+        }
+        let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
+        session
+            .database
+            .save_manuscript(chapter_id, document_json, creation_reason)
+    }
 }
 
 fn now_timestamp() -> String {
@@ -298,8 +361,9 @@ impl Database {
     }
 
     fn migrate(&self) -> Result<(), DatabaseError> {
-        self.connection.execute_batch(
-            "CREATE TABLE IF NOT EXISTS schema_migrations (
+        self.connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY NOT NULL,
                 name TEXT NOT NULL,
                 applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -308,7 +372,8 @@ impl Database {
                 key TEXT PRIMARY KEY NOT NULL,
                 value TEXT NOT NULL
             );",
-        )?;
+            )
+            .map_err(DatabaseError::from)?;
         let applied: Option<i64> =
             self.connection
                 .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
@@ -337,14 +402,47 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (2, 'plan_nodes');",
             )?;
         }
+        if applied.unwrap_or(0) < 3 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS plan_node_revisions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    node_id TEXT NOT NULL REFERENCES plan_nodes(id),
+                    revision INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    archived INTEGER NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(node_id, revision)
+                );
+                INSERT INTO schema_migrations (version, name) VALUES (3, 'plan_node_revisions');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 4 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS manuscript_revisions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    chapter_id TEXT NOT NULL REFERENCES plan_nodes(id),
+                    parent_revision_id TEXT REFERENCES manuscript_revisions(id),
+                    document_json TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    creation_reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_manuscript_revisions_chapter
+                    ON manuscript_revisions(chapter_id, created_at);
+                INSERT INTO schema_migrations (version, name) VALUES (4, 'manuscript_revisions');",
+            )?;
+        }
         Ok(())
     }
 
     fn list_plan_nodes(&self) -> Result<Vec<PlanNode>, DatabaseError> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, parent_id, kind, title, sort_order, archived, revision
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, parent_id, kind, title, sort_order, archived, revision
              FROM plan_nodes ORDER BY sort_order, created_at",
-        )?;
+            )
+            .map_err(DatabaseError::from)?;
         let rows = statement.query_map([], |row| {
             let kind = match row.get::<_, String>(2)?.as_str() {
                 "WORK_DESIGN" => PlanNodeKind::WorkDesign,
@@ -436,7 +534,131 @@ impl Database {
                 ],
             )
             .map_err(DatabaseError::from)?;
+        self.connection
+            .execute(
+                "INSERT INTO plan_node_revisions (id, node_id, revision, title, archived)
+             VALUES (?1, ?2, 1, ?3, 0)",
+                rusqlite::params![Uuid::new_v4().to_string(), node.id.to_string(), node.title],
+            )
+            .map_err(DatabaseError::from)?;
         Ok(node)
+    }
+
+    fn update_plan_node(
+        &mut self,
+        id: Uuid,
+        title: String,
+        archived: bool,
+    ) -> Result<PlanNode, PlanError> {
+        let current = self
+            .list_plan_nodes()?
+            .into_iter()
+            .find(|node| node.id == id)
+            .ok_or(PlanError::MissingNode(id))?;
+        let revision = current.revision + 1;
+        self.connection
+            .execute(
+                "UPDATE plan_nodes SET title = ?1, archived = ?2, revision = ?3 WHERE id = ?4",
+                rusqlite::params![title, i64::from(archived), revision, id.to_string()],
+            )
+            .map_err(DatabaseError::from)?;
+        self.connection
+            .execute(
+                "INSERT INTO plan_node_revisions (id, node_id, revision, title, archived)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    Uuid::new_v4().to_string(),
+                    id.to_string(),
+                    revision,
+                    title,
+                    i64::from(archived)
+                ],
+            )
+            .map_err(DatabaseError::from)?;
+        Ok(PlanNode {
+            title,
+            archived,
+            revision,
+            ..current
+        })
+    }
+
+    fn current_manuscript(
+        &self,
+        chapter_id: Uuid,
+    ) -> Result<Option<ManuscriptRevision>, DatabaseError> {
+        self.connection
+            .query_row(
+                "SELECT id, parent_revision_id, document_json, content_hash, creation_reason
+                 FROM manuscript_revisions WHERE chapter_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                [chapter_id.to_string()],
+                |row| {
+                    Ok(ManuscriptRevision {
+                        id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })?,
+                        chapter_id,
+                        parent_revision_id: row
+                            .get::<_, Option<String>>(1)?
+                            .map(|value| {
+                                Uuid::parse_str(&value).map_err(|error| {
+                                    rusqlite::Error::FromSqlConversionFailure(
+                                        1,
+                                        rusqlite::types::Type::Text,
+                                        Box::new(error),
+                                    )
+                                })
+                            })
+                            .transpose()?,
+                        document_json: row.get(2)?,
+                        content_hash: row.get(3)?,
+                        creation_reason: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(DatabaseError::from)
+    }
+
+    fn save_manuscript(
+        &mut self,
+        chapter_id: Uuid,
+        document_json: String,
+        creation_reason: String,
+    ) -> Result<ManuscriptRevision, ManuscriptError> {
+        let exists: bool = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM plan_nodes WHERE id = ?1 AND kind = 'CHAPTER')",
+                [chapter_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(DatabaseError::from)?;
+        if !exists {
+            return Err(ManuscriptError::MissingChapter(chapter_id));
+        }
+        let parent_revision_id = self
+            .current_manuscript(chapter_id)?
+            .map(|revision| revision.id);
+        let mut hasher = DefaultHasher::new();
+        document_json.hash(&mut hasher);
+        let revision = ManuscriptRevision {
+            id: Uuid::new_v4(),
+            chapter_id,
+            parent_revision_id,
+            content_hash: format!("{:016x}", hasher.finish()),
+            document_json,
+            creation_reason,
+        };
+        self.connection.execute(
+            "INSERT INTO manuscript_revisions (id, chapter_id, parent_revision_id, document_json, content_hash, creation_reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![revision.id.to_string(), revision.chapter_id.to_string(), revision.parent_revision_id.map(|id| id.to_string()), revision.document_json, revision.content_hash, revision.creation_reason],
+        ).map_err(DatabaseError::from)?;
+        Ok(revision)
     }
 
     /// Reads the SQLite and migration state used by the desktop health query.
@@ -492,7 +714,7 @@ mod tests {
     fn sqlite_applies_pragmas_and_initial_migration() {
         let database = Database::in_memory().expect("in-memory database");
         let health = database.health().expect("database health");
-        assert_eq!(health.schema_version, 2);
+        assert_eq!(health.schema_version, 4);
         assert_eq!(health.journal_mode, "memory");
         assert!(health.foreign_keys_enabled);
         assert!(!health.sqlite_version.is_empty());
@@ -548,6 +770,11 @@ mod tests {
         assert_eq!(nodes.len(), 2);
         assert!(nodes.iter().any(|node| node.parent_id == Some(outline.id)));
         assert_eq!(chapter.revision, 1);
+        let updated = manager
+            .update_plan_node(chapter.id, "第一章（修订）".to_owned(), true)
+            .expect("archive chapter");
+        assert_eq!(updated.revision, 2);
+        assert!(updated.archived);
         let _ = std::fs::remove_dir_all(root);
     }
 }

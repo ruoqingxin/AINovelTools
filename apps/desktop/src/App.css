@@ -223,6 +223,10 @@ button:focus-visible {
   font-size: 13px;
 }
 
+.plan-create-row select {
+  max-width: 170px;
+}
+
 .plan-create-row select { padding: 0 9px; }
 .plan-create-row input { min-width: 240px; flex: 1; padding: 0 10px; }
 
@@ -248,6 +252,21 @@ button:focus-visible {
   padding: 0 10px;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
+  width: 100%;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  text-align: left;
+  background: transparent;
+}
+
+.plan-row[data-selected] {
+  background: #e8f1ee;
+}
+
+.plan-row[data-archived] {
+  color: var(--muted);
+  opacity: 0.72;
 }
 
 .plan-kind {
@@ -255,6 +274,76 @@ button:focus-visible {
   color: var(--accent-strong);
   font-size: 11px;
   font-weight: 700;
+}
+
+.plan-inspector {
+  max-width: 620px;
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.inspector-kind {
+  margin: 15px 0 8px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.plan-inspector input {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: inherit;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.inspector-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.chapter-editor {
+  margin-top: 24px;
+}
+
+.chapter-editor textarea {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  margin: 12px 0 10px;
+  padding: 12px;
+  resize: vertical;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: inherit;
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.chapter-editor > button {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inspector-actions button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .route-loading {

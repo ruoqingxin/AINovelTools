@@ -31,6 +31,15 @@ export type PlanNode = {
   revision: number;
 };
 
+export type ManuscriptRevision = {
+  id: string;
+  chapterId: string;
+  parentRevisionId: string | null;
+  documentJson: string;
+  contentHash: string;
+  creationReason: string;
+};
+
 export function getBootstrapStatus() {
   return invoke<BootstrapStatus>("bootstrap_status");
 }
@@ -65,6 +74,18 @@ export function createPlanNode(input: {
   title: string;
 }) {
   return invoke<PlanNode>("create_plan_node", input);
+}
+
+export function updatePlanNode(input: { id: string; title: string; archived: boolean }) {
+  return invoke<PlanNode>("update_plan_node", input);
+}
+
+export function currentManuscript(chapterId: string) {
+  return invoke<ManuscriptRevision | null>("current_manuscript", { chapterId });
+}
+
+export function saveManuscript(input: { chapterId: string; documentJson: string; creationReason: string }) {
+  return invoke<ManuscriptRevision>("save_manuscript", input);
 }
 
 export function invalidateProjectQueries(queryClient: { invalidateQueries: (options: { queryKey: string[] }) => Promise<unknown> }) {
