@@ -527,18 +527,7 @@ async fn test_model_profile(
     let detail = match profile.capability {
         novel_infrastructure::ModelCapability::Chat => {
             profile.max_output_tokens = profile.max_output_tokens.min(16);
-            let context = novel_application::ContextPackage {
-                chapter_id: uuid::Uuid::nil(),
-                target_revision_id: None,
-                action: novel_infrastructure::AiAction::Summarize,
-                context_version: "connection-test-v1".to_owned(),
-                prompt_version: "connection-test-v1".to_owned(),
-                system_prompt: "你是 API 连接测试服务。".to_owned(),
-                user_prompt: "只回复 OK。".to_owned(),
-                estimated_input_tokens: 16,
-                truncated: false,
-                entity_source_status: "NOT_USED".to_owned(),
-            };
+            let context = novel_application::ContextPackage::connection_test();
             state
                 .gateway
                 .generate(

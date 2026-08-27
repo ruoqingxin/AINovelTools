@@ -75,6 +75,76 @@ pub enum AiAction {
     Summarize,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RetrievalMethod {
+    Structured,
+    Keyword,
+    Semantic,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ContextAuthority {
+    AuthoritativeFact,
+    TaskMaterial,
+    Reference,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingIdentity {
+    pub profile_id: Uuid,
+    pub model_id: String,
+    pub dimensions: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeChunk {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub source_revision: String,
+    pub source_hash: String,
+    pub chunk_index: u32,
+    pub chunking_version: String,
+    pub content: String,
+    pub embedding: Option<EmbeddingIdentity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RetrievalEvidence {
+    pub chunk: KnowledgeChunk,
+    pub method: RetrievalMethod,
+    pub authority: ContextAuthority,
+    /// Normalized relevance in the inclusive range `0..=10_000`.
+    pub relevance: u16,
+}
+
+impl RetrievalEvidence {
+    /// Validates source identity and embedding compatibility metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AiContractError::InvalidRetrievalEvidence`] when the source
+    /// cannot be audited or the normalized relevance is outside its contract.
+    pub fn validate(&self) -> Result<(), AiContractError> {
+        let chunk = &self.chunk;
+        let invalid_source = chunk.source_revision.trim().is_empty()
+            || chunk.source_hash.trim().is_empty()
+            || chunk.chunking_version.trim().is_empty()
+            || chunk.content.trim().is_empty();
+        let invalid_embedding = chunk.embedding.as_ref().is_some_and(|embedding| {
+            embedding.model_id.trim().is_empty() || embedding.dimensions == 0
+        });
+        if invalid_source || invalid_embedding || self.relevance > 10_000 {
+            return Err(AiContractError::InvalidRetrievalEvidence);
+        }
+        Ok(())
+    }
+}
+
 impl AiAction {
     #[must_use]
     pub const fn requires_selection(self) -> bool {
@@ -139,6 +209,8 @@ pub enum AiContractError {
     EmptyAcceptedText,
     #[error("proposal status transition is invalid")]
     InvalidProposalTransition,
+    #[error("retrieval evidence metadata is invalid")]
+    InvalidRetrievalEvidence,
 }
 
 impl ModelProfileInput {
@@ -221,5 +293,39 @@ mod tests {
         );
         assert!(super::AiAction::Rewrite.requires_selection());
         assert!(!super::AiAction::Continue.requires_selection());
+    }
+
+    #[test]
+    fn retrieval_evidence_round_trips_with_source_identity() {
+        let evidence = super::RetrievalEvidence {
+            chunk: super::KnowledgeChunk {
+                id: uuid::Uuid::new_v4(),
+                source_id: uuid::Uuid::new_v4(),
+                source_revision: "entity-revision-3".into(),
+                source_hash: "sha256:abc".into(),
+                chunk_index: 2,
+                chunking_version: "knowledge-chunk-v1".into(),
+                content: "林澈不饮酒。".into(),
+                embedding: Some(super::EmbeddingIdentity {
+                    profile_id: uuid::Uuid::new_v4(),
+                    model_id: "BAAI/bge-m3".into(),
+                    dimensions: 1024,
+                }),
+            },
+            method: super::RetrievalMethod::Semantic,
+            authority: super::ContextAuthority::AuthoritativeFact,
+            relevance: 8_700,
+        };
+        let encoded = serde_json::to_string(&evidence).expect("serialize evidence");
+        let decoded = serde_json::from_str(&encoded).expect("deserialize evidence");
+        assert_eq!(evidence, decoded);
+        assert_eq!(evidence.validate(), Ok(()));
+
+        let mut invalid = evidence;
+        invalid.relevance = 10_001;
+        assert_eq!(
+            invalid.validate(),
+            Err(super::AiContractError::InvalidRetrievalEvidence)
+        );
     }
 }

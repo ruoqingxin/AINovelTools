@@ -50,6 +50,8 @@ pub enum AiError {
     ProviderUnavailable,
     #[error("AI provider network request failed")]
     Network,
+    #[error("AI context metadata serialization failed")]
+    ContextSerialization,
     #[error("AI database operation failed: {0}")]
     Database(#[from] DatabaseError),
 }
@@ -71,6 +73,7 @@ impl AiError {
             Self::InvalidResponse => "PROVIDER_INVALID_RESPONSE",
             Self::ProviderUnavailable => "PROVIDER_UNAVAILABLE",
             Self::Network => "PROVIDER_NETWORK",
+            Self::ContextSerialization => "CONTEXT_SERIALIZATION",
             Self::Database(_) => "DATABASE_ERROR",
         }
     }
@@ -449,9 +452,13 @@ impl ProjectManager {
             Some(_) => return Err(AiContractError::InvalidProviderCapability.into()),
         }
         let task_id = Uuid::new_v4();
+        let task_contract_json = serde_json::to_string(&context.task_contract)
+            .map_err(|_| AiError::ContextSerialization)?;
+        let context_section_audit_json = serde_json::to_string(&context.section_audit)
+            .map_err(|_| AiError::ContextSerialization)?;
         session.database.connection.execute(
-            "INSERT INTO ai_tasks (id, profile_id, chapter_id, action, target_revision_id, context_version, prompt_version, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![task_id.to_string(), profile_id.to_string(), context.chapter_id.to_string(), action_str(context.action), context.target_revision_id.map(|id| id.to_string()), context.context_version, context.prompt_version, task_status_str(AiTaskStatus::Running)],
+            "INSERT INTO ai_tasks (id, profile_id, chapter_id, action, target_revision_id, context_version, prompt_version, task_contract_json, context_section_audit_json, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![task_id.to_string(), profile_id.to_string(), context.chapter_id.to_string(), action_str(context.action), context.target_revision_id.map(|id| id.to_string()), context.context_version, context.prompt_version, task_contract_json, context_section_audit_json, task_status_str(AiTaskStatus::Running)],
         ).map_err(DatabaseError::from)?;
         Ok(task_id)
     }
@@ -724,18 +731,7 @@ mod tests {
     }
 
     fn context() -> novel_application::ContextPackage {
-        novel_application::ContextPackage {
-            chapter_id: uuid::Uuid::new_v4(),
-            target_revision_id: None,
-            action: novel_domain::AiAction::Continue,
-            context_version: "context-v1".into(),
-            prompt_version: "prompt-v1".into(),
-            system_prompt: "system".into(),
-            user_prompt: "user".into(),
-            estimated_input_tokens: 2,
-            truncated: false,
-            entity_source_status: "R4_NOT_AVAILABLE".into(),
-        }
+        novel_application::ContextPackage::connection_test()
     }
 
     #[test]

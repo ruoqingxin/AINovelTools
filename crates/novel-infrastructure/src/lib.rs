@@ -902,6 +902,13 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (8, 'model_capabilities');",
             )?;
         }
+        if applied.unwrap_or(0) < 9 {
+            self.connection.execute_batch(
+                "ALTER TABLE ai_tasks ADD COLUMN task_contract_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(task_contract_json));
+                ALTER TABLE ai_tasks ADD COLUMN context_section_audit_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(context_section_audit_json));
+                INSERT INTO schema_migrations (version, name) VALUES (9, 'ai_task_contract_audit');",
+            )?;
+        }
         Ok(())
     }
 
@@ -1455,7 +1462,7 @@ mod tests {
     fn sqlite_applies_pragmas_and_initial_migration() {
         let database = Database::in_memory().expect("in-memory database");
         let health = database.health().expect("database health");
-        assert_eq!(health.schema_version, 8);
+        assert_eq!(health.schema_version, 9);
         assert_eq!(health.journal_mode, "memory");
         assert!(health.foreign_keys_enabled);
         assert!(!health.sqlite_version.is_empty());
@@ -1669,6 +1676,20 @@ mod tests {
         )
         .expect("context");
         let task_id = manager.create_ai_task(profile.id, &context).expect("task");
+        let session = manager.current.as_ref().expect("session");
+        let (task_contract_json, context_section_audit_json): (String, String) = session
+            .database
+            .connection
+            .query_row(
+                "SELECT task_contract_json, context_section_audit_json FROM ai_tasks WHERE id=?1",
+                [task_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("task audit metadata");
+        assert!(task_contract_json.contains("DRAFT_WRITER"));
+        assert!(context_section_audit_json.contains("CURRENT_DRAFT"));
+        assert!(!task_contract_json.contains("继续推进冲突"));
+        assert!(!context_section_audit_json.contains("继续推进冲突"));
         let proposal = manager
             .complete_ai_task(task_id, &context, "新的段落。".into())
             .expect("proposal");
