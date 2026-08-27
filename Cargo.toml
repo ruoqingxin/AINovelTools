@@ -26,6 +26,10 @@ tauri-plugin-opener = "2"
 thiserror = "2"
 uuid = { version = "1.25.0", features = ["v4", "serde"] }
 sha2 = "0.10"
+futures-util = "0.3"
+keyring = "3.6"
+reqwest = { version = "0.13", features = ["json", "stream"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

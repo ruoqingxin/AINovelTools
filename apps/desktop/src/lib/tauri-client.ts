@@ -55,6 +55,22 @@ export type FeatureDescriptor = { id: string; displayName: string; stage: string
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
 export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
 export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
+export type ModelProvider = "SILICON_FLOW" | "OPEN_AI_COMPATIBLE";
+export type PrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
+export type AiAction = "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE";
+export type AiProposalStatus = "PENDING" | "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED";
+export type ModelProfile = {
+  id: string; name: string; provider: ModelProvider; baseUrl: string; modelId: string;
+  contextWindow: number; maxOutputTokens: number; privacyLevel: PrivacyLevel;
+  timeoutSeconds: number; retryLimit: number; secretRef: string | null; hasSecret: boolean;
+  createdAt: string; updatedAt: string;
+};
+export type ModelProfileInput = Omit<ModelProfile, "id" | "secretRef" | "hasSecret" | "createdAt" | "updatedAt"> & { id?: string };
+export type AiProposal = {
+  id: string; taskId: string; chapterId: string; action: AiAction; targetRevisionId: string | null;
+  contextVersion: string; promptVersion: string; outputText: string; acceptedText: string | null;
+  status: AiProposalStatus; createdAt: string; decidedAt: string | null;
+};
 
 export function getBootstrapStatus() {
   return invoke<BootstrapStatus>("bootstrap_status");
@@ -142,6 +158,41 @@ export function saveManuscriptChecked(input: { chapterId: string; baseRevisionId
 
 export function mergeManuscript(input: { base: string; current: string; draft: string }) {
   return invoke<MergeResult>("merge_manuscript", input);
+}
+
+export function listModelProfiles() {
+  return invoke<ModelProfile[]>("list_model_profiles");
+}
+
+export function upsertModelProfile(input: ModelProfileInput) {
+  return invoke<ModelProfile>("upsert_model_profile", { input });
+}
+
+export function saveModelSecret(profileId: string, secret: string) {
+  return invoke<ModelProfile>("save_model_secret", { profileId, secret });
+}
+
+export function deleteModelSecret(profileId: string) {
+  return invoke<ModelProfile>("delete_model_secret", { profileId });
+}
+
+export function listAiProposals(chapterId: string) {
+  return invoke<AiProposal[]>("list_ai_proposals", { chapterId });
+}
+
+export function generateAiProposal(input: {
+  profileId: string; chapterId: string; action: AiAction; chapterTitle: string; chapterPlan: string;
+  documentJson: string; selection?: string; instruction?: string; stream: boolean;
+}) {
+  return invoke<AiProposal>("generate_ai_proposal", input);
+}
+
+export function cancelAiTask(taskId: string) {
+  return invoke<void>("cancel_ai_task", { taskId });
+}
+
+export function decideAiProposal(input: { id: string; status: Exclude<AiProposalStatus, "PENDING">; acceptedText?: string }) {
+  return invoke<AiProposal>("decide_ai_proposal", input);
 }
 
 export function invalidateProjectQueries(queryClient: { invalidateQueries: (options: { queryKey: string[] }) => Promise<unknown> }) {

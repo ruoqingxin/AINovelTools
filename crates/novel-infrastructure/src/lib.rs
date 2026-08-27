@@ -1,6 +1,14 @@
 //! Adapters for persistence, files, model providers, and operating-system APIs.
 
-#![allow(clippy::missing_errors_doc, clippy::items_after_statements, clippy::match_same_arms, clippy::needless_pass_by_value, clippy::too_many_lines, clippy::collapsible_if, clippy::if_same_then_else)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::items_after_statements,
+    clippy::match_same_arms,
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines,
+    clippy::collapsible_if,
+    clippy::if_same_then_else
+)]
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,6 +18,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
+
+mod ai;
+pub use ai::{AiError, ModelGateway, SecretStore};
+pub use novel_domain::{
+    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, ModelProfile, ModelProfileInput,
+    ModelProvider, PrivacyLevel,
+};
 
 #[derive(Debug, Error)]
 pub enum DatabaseError {
@@ -29,19 +44,73 @@ pub struct DatabaseHealth {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum FeatureStatus { Implemented, Partial, Declared, Disabled }
+pub enum FeatureStatus {
+    Implemented,
+    Partial,
+    Declared,
+    Disabled,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct FeatureDescriptor { pub id: &'static str, pub display_name: &'static str, pub stage: &'static str, pub status: FeatureStatus, pub unavailable_reason: Option<&'static str> }
+pub struct FeatureDescriptor {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub stage: &'static str,
+    pub status: FeatureStatus,
+    pub unavailable_reason: Option<&'static str>,
+}
 
 pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
-    FeatureDescriptor { id: "project_management", display_name: "项目管理", stage: "R0", status: FeatureStatus::Implemented, unavailable_reason: None },
-    FeatureDescriptor { id: "plan_revisions", display_name: "规划不可变修订", stage: "R1", status: FeatureStatus::Implemented, unavailable_reason: None },
-    FeatureDescriptor { id: "manuscript_revisions", display_name: "正文不可变修订", stage: "R2", status: FeatureStatus::Implemented, unavailable_reason: None },
-    FeatureDescriptor { id: "recovery_log", display_name: "编辑恢复", stage: "R2", status: FeatureStatus::Implemented, unavailable_reason: None },
-    FeatureDescriptor { id: "conflict_merge", display_name: "正文冲突合并", stage: "R2", status: FeatureStatus::Partial, unavailable_reason: Some("逐块选择工具延后实现") },
-    FeatureDescriptor { id: "ai_writing", display_name: "AI 创作闭环", stage: "R3", status: FeatureStatus::Declared, unavailable_reason: Some("R3 尚未实现") },
+    FeatureDescriptor {
+        id: "project_management",
+        display_name: "项目管理",
+        stage: "R0",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "plan_revisions",
+        display_name: "规划不可变修订",
+        stage: "R1",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "manuscript_revisions",
+        display_name: "正文不可变修订",
+        stage: "R2",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "recovery_log",
+        display_name: "编辑恢复",
+        stage: "R2",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "conflict_merge",
+        display_name: "正文冲突合并",
+        stage: "R2",
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some("逐块选择工具延后实现"),
+    },
+    FeatureDescriptor {
+        id: "ai_model_profiles",
+        display_name: "AI 模型配置与系统密钥",
+        stage: "R3",
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some("等待桌面闭环验收"),
+    },
+    FeatureDescriptor {
+        id: "ai_writing",
+        display_name: "AI 创作闭环",
+        stage: "R3",
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some("正在实现 Proposal 交互"),
+    },
 ];
 
 pub struct Database {
@@ -132,19 +201,40 @@ pub enum PlanError {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ErrorCode { NoProjectOpen, InvalidInput, NotFound, VersionConflict, InvalidDocument, Database, FeatureNotAvailable }
+pub enum ErrorCode {
+    NoProjectOpen,
+    InvalidInput,
+    NotFound,
+    VersionConflict,
+    InvalidDocument,
+    Database,
+    FeatureNotAvailable,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct RecoveryLog { pub id: Uuid, pub chapter_id: Uuid, pub document_json: String, pub created_at: String }
+pub struct RecoveryLog {
+    pub id: Uuid,
+    pub chapter_id: Uuid,
+    pub document_json: String,
+    pub created_at: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct MergeConflict { pub block_id: String, pub base: Option<String>, pub current: Option<String>, pub draft: Option<String> }
+pub struct MergeConflict {
+    pub block_id: String,
+    pub base: Option<String>,
+    pub current: Option<String>,
+    pub draft: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct MergeResult { pub document_json: String, pub conflicts: Vec<MergeConflict> }
+pub struct MergeResult {
+    pub document_json: String,
+    pub conflicts: Vec<MergeConflict>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -162,7 +252,11 @@ pub struct ManuscriptRevision {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct Chapter { pub id: Uuid, pub plan_node_id: Uuid, pub title: String }
+pub struct Chapter {
+    pub id: Uuid,
+    pub plan_node_id: Uuid,
+    pub title: String,
+}
 
 #[derive(Debug, Error)]
 pub enum ManuscriptError {
@@ -175,7 +269,10 @@ pub enum ManuscriptError {
     #[error("document schema is invalid: {0}")]
     InvalidDocument(String),
     #[error("manuscript base revision conflict: expected {expected:?}, actual {actual:?}")]
-    Conflict { expected: Option<Uuid>, actual: Option<Uuid> },
+    Conflict {
+        expected: Option<Uuid>,
+        actual: Option<Uuid>,
+    },
     #[error("manuscript database operation failed: {0}")]
     Database(#[from] DatabaseError),
 }
@@ -342,15 +439,32 @@ impl ProjectManager {
         session.database.update_plan_node(id, title, archived)
     }
 
-    pub fn update_plan_node_checked(&mut self, id: Uuid, title: String, archived: bool, expected_version: i64) -> Result<PlanNode, PlanError> {
-        if title.trim().is_empty() { return Err(PlanError::EmptyTitle); }
+    pub fn update_plan_node_checked(
+        &mut self,
+        id: Uuid,
+        title: String,
+        archived: bool,
+        expected_version: i64,
+    ) -> Result<PlanNode, PlanError> {
+        if title.trim().is_empty() {
+            return Err(PlanError::EmptyTitle);
+        }
         let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
-        session.database.update_plan_node_checked(id, title, archived, expected_version)
+        session
+            .database
+            .update_plan_node_checked(id, title, archived, expected_version)
     }
 
-    pub fn move_plan_node(&mut self, id: Uuid, parent_id: Option<Uuid>, expected_version: i64) -> Result<PlanNode, PlanError> {
+    pub fn move_plan_node(
+        &mut self,
+        id: Uuid,
+        parent_id: Option<Uuid>,
+        expected_version: i64,
+    ) -> Result<PlanNode, PlanError> {
         let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
-        session.database.move_plan_node(id, parent_id, expected_version)
+        session
+            .database
+            .move_plan_node(id, parent_id, expected_version)
     }
 
     pub fn current_manuscript(
@@ -384,33 +498,70 @@ impl ProjectManager {
             .save_manuscript_checked(chapter_id, None, document_json, creation_reason)
     }
 
-    pub fn save_manuscript_checked(&mut self, chapter_id: Uuid, base_revision_id: Option<Uuid>, document_json: String, creation_reason: String) -> Result<ManuscriptRevision, ManuscriptError> {
-        if document_json.trim().is_empty() { return Err(ManuscriptError::EmptyDocument); }
+    pub fn save_manuscript_checked(
+        &mut self,
+        chapter_id: Uuid,
+        base_revision_id: Option<Uuid>,
+        document_json: String,
+        creation_reason: String,
+    ) -> Result<ManuscriptRevision, ManuscriptError> {
+        if document_json.trim().is_empty() {
+            return Err(ManuscriptError::EmptyDocument);
+        }
         let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
-        session.database.save_manuscript_checked(chapter_id, base_revision_id, document_json, creation_reason)
+        session.database.save_manuscript_checked(
+            chapter_id,
+            base_revision_id,
+            document_json,
+            creation_reason,
+        )
     }
 
-    pub fn save_recovery_log(&mut self, chapter_id: Uuid, document_json: String) -> Result<(), ManuscriptError> {
+    pub fn save_recovery_log(
+        &mut self,
+        chapter_id: Uuid,
+        document_json: String,
+    ) -> Result<(), ManuscriptError> {
         let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
-        session.database.save_recovery_log(chapter_id, document_json).map_err(ManuscriptError::Database)
+        session
+            .database
+            .save_recovery_log(chapter_id, document_json)
+            .map_err(ManuscriptError::Database)
     }
 
-    pub fn list_recovery_logs(&self, chapter_id: Uuid) -> Result<Vec<RecoveryLog>, ManuscriptError> {
+    pub fn list_recovery_logs(
+        &self,
+        chapter_id: Uuid,
+    ) -> Result<Vec<RecoveryLog>, ManuscriptError> {
         let session = self.current.as_ref().ok_or(ManuscriptError::NoProject)?;
-        session.database.list_recovery_logs(chapter_id).map_err(ManuscriptError::Database)
+        session
+            .database
+            .list_recovery_logs(chapter_id)
+            .map_err(ManuscriptError::Database)
     }
 
     pub fn list_all_recovery_logs(&self) -> Result<Vec<RecoveryLog>, ManuscriptError> {
         let session = self.current.as_ref().ok_or(ManuscriptError::NoProject)?;
-        session.database.list_all_recovery_logs().map_err(ManuscriptError::Database)
+        session
+            .database
+            .list_all_recovery_logs()
+            .map_err(ManuscriptError::Database)
     }
 
     pub fn clear_recovery_logs(&mut self, chapter_id: Uuid) -> Result<(), ManuscriptError> {
         let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
-        session.database.clear_recovery_logs(chapter_id).map_err(ManuscriptError::Database)
+        session
+            .database
+            .clear_recovery_logs(chapter_id)
+            .map_err(ManuscriptError::Database)
     }
 
-    pub fn merge_manuscript(&self, base: &str, current: &str, draft: &str) -> Result<MergeResult, ManuscriptError> {
+    pub fn merge_manuscript(
+        &self,
+        base: &str,
+        current: &str,
+        draft: &str,
+    ) -> Result<MergeResult, ManuscriptError> {
         merge_documents(base, current, draft)
     }
 }
@@ -426,13 +577,17 @@ fn normalize_document(document_json: &str) -> Result<String, ManuscriptError> {
     let mut value: serde_json::Value = serde_json::from_str(document_json)
         .map_err(|error| ManuscriptError::InvalidDocument(error.to_string()))?;
     if value.get("type").and_then(serde_json::Value::as_str) != Some("doc") {
-        return Err(ManuscriptError::InvalidDocument("root type must be doc".to_owned()));
+        return Err(ManuscriptError::InvalidDocument(
+            "root type must be doc".to_owned(),
+        ));
     }
     let mut counter = 0_u64;
     fn visit(node: &mut serde_json::Value, counter: &mut u64) {
         if let Some(object) = node.as_object_mut() {
             if object.get("type").and_then(serde_json::Value::as_str) != Some("doc") {
-                let attrs = object.entry("attrs").or_insert_with(|| serde_json::json!({}));
+                let attrs = object
+                    .entry("attrs")
+                    .or_insert_with(|| serde_json::json!({}));
                 if let Some(attrs) = attrs.as_object_mut() {
                     attrs.entry("blockId").or_insert_with(|| {
                         *counter += 1;
@@ -440,13 +595,19 @@ fn normalize_document(document_json: &str) -> Result<String, ManuscriptError> {
                     });
                 }
             }
-            if let Some(children) = object.get_mut("content").and_then(serde_json::Value::as_array_mut) {
-                for child in children { visit(child, counter); }
+            if let Some(children) = object
+                .get_mut("content")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for child in children {
+                    visit(child, counter);
+                }
             }
         }
     }
     visit(&mut value, &mut counter);
-    serde_json::to_string(&value).map_err(|error| ManuscriptError::InvalidDocument(error.to_string()))
+    serde_json::to_string(&value)
+        .map_err(|error| ManuscriptError::InvalidDocument(error.to_string()))
 }
 
 fn validate_document(document_json: &str) -> Result<(), ManuscriptError> {
@@ -455,28 +616,76 @@ fn validate_document(document_json: &str) -> Result<(), ManuscriptError> {
 }
 
 fn merge_documents(base: &str, current: &str, draft: &str) -> Result<MergeResult, ManuscriptError> {
-    let mut base_v: serde_json::Value = serde_json::from_str(base).map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?;
-    let current_v: serde_json::Value = serde_json::from_str(current).map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?;
-    let draft_v: serde_json::Value = serde_json::from_str(draft).map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?;
-    let b = base_v.get("content").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let c = current_v.get("content").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let d = draft_v.get("content").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let key = |v: &serde_json::Value| v.get("attrs").and_then(|a| a.get("blockId")).and_then(|x| x.as_str()).unwrap_or("").to_owned();
+    let mut base_v: serde_json::Value =
+        serde_json::from_str(base).map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?;
+    let current_v: serde_json::Value = serde_json::from_str(current)
+        .map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?;
+    let draft_v: serde_json::Value =
+        serde_json::from_str(draft).map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?;
+    let b = base_v
+        .get("content")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let c = current_v
+        .get("content")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let d = draft_v
+        .get("content")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let key = |v: &serde_json::Value| {
+        v.get("attrs")
+            .and_then(|a| a.get("blockId"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_owned()
+    };
     let mut conflicts = Vec::new();
     let mut merged = Vec::new();
     for block in d.iter().chain(c.iter()) {
         let id = key(block);
-        if merged.iter().any(|x: &serde_json::Value| key(x) == id) { continue; }
+        if merged.iter().any(|x: &serde_json::Value| key(x) == id) {
+            continue;
+        }
         let bv = b.iter().find(|x| key(x) == id);
         let cv = c.iter().find(|x| key(x) == id);
         let dv = d.iter().find(|x| key(x) == id);
-        if cv == bv { if let Some(x) = dv { merged.push(x.clone()); } }
-        else if dv == bv { if let Some(x) = cv { merged.push(x.clone()); } }
-        else if cv == dv { if let Some(x) = cv { merged.push(x.clone()); } }
-        else { conflicts.push(MergeConflict { block_id: id, base: bv.map(ToString::to_string), current: cv.map(ToString::to_string), draft: dv.map(ToString::to_string) }); if let Some(x) = cv { merged.push(x.clone()); } }
+        if cv == bv {
+            if let Some(x) = dv {
+                merged.push(x.clone());
+            }
+        } else if dv == bv {
+            if let Some(x) = cv {
+                merged.push(x.clone());
+            }
+        } else if cv == dv {
+            if let Some(x) = cv {
+                merged.push(x.clone());
+            }
+        } else {
+            conflicts.push(MergeConflict {
+                block_id: id,
+                base: bv.map(ToString::to_string),
+                current: cv.map(ToString::to_string),
+                draft: dv.map(ToString::to_string),
+            });
+            if let Some(x) = cv {
+                merged.push(x.clone());
+            }
+        }
     }
-    if let Some(obj) = base_v.as_object_mut() { obj.insert("content".to_owned(), serde_json::Value::Array(merged)); }
-    Ok(MergeResult { document_json: serde_json::to_string(&base_v).map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?, conflicts })
+    if let Some(obj) = base_v.as_object_mut() {
+        obj.insert("content".to_owned(), serde_json::Value::Array(merged));
+    }
+    Ok(MergeResult {
+        document_json: serde_json::to_string(&base_v)
+            .map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?,
+        conflicts,
+    })
 }
 
 impl Database {
@@ -632,6 +841,60 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (6, 'separate_chapter_entities');",
             )?;
         }
+        if applied.unwrap_or(0) < 7 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS model_profiles (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    context_window INTEGER NOT NULL,
+                    max_output_tokens INTEGER NOT NULL,
+                    privacy_level TEXT NOT NULL,
+                    timeout_seconds INTEGER NOT NULL,
+                    retry_limit INTEGER NOT NULL,
+                    secret_ref TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE TABLE IF NOT EXISTS ai_tasks (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    profile_id TEXT NOT NULL REFERENCES model_profiles(id),
+                    chapter_id TEXT NOT NULL REFERENCES chapters(id),
+                    action TEXT NOT NULL,
+                    target_revision_id TEXT REFERENCES manuscript_revisions(id),
+                    context_version TEXT NOT NULL,
+                    prompt_version TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error_code TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    finished_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS ai_proposals (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    task_id TEXT NOT NULL UNIQUE REFERENCES ai_tasks(id),
+                    chapter_id TEXT NOT NULL REFERENCES chapters(id),
+                    action TEXT NOT NULL,
+                    target_revision_id TEXT REFERENCES manuscript_revisions(id),
+                    context_version TEXT NOT NULL,
+                    prompt_version TEXT NOT NULL,
+                    output_text TEXT NOT NULL,
+                    accepted_text TEXT,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    decided_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_ai_proposals_chapter_created
+                    ON ai_proposals(chapter_id, created_at DESC);
+                CREATE TRIGGER IF NOT EXISTS prevent_ai_proposal_identity_update
+                    BEFORE UPDATE OF task_id, chapter_id, action, target_revision_id, context_version, prompt_version, output_text, created_at
+                    ON ai_proposals BEGIN SELECT RAISE(ABORT, 'immutable ai proposal identity'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_ai_proposal_delete
+                    BEFORE DELETE ON ai_proposals BEGIN SELECT RAISE(ABORT, 'immutable ai proposal'); END;
+                INSERT INTO schema_migrations (version, name) VALUES (7, 'r3_ai_creation_loop');",
+            )?;
+        }
         Ok(())
     }
 
@@ -699,14 +962,19 @@ impl Database {
                     [parent.to_string()],
                     |row| row.get(0),
                 )
-                .optional().map_err(DatabaseError::from)?;
+                .optional()
+                .map_err(DatabaseError::from)?;
             let parent_kind = parent_kind.ok_or(PlanError::MissingParent(parent))?;
-            let valid = matches!((parent_kind.as_str(), kind),
-                ("WORK_DESIGN", PlanNodeKind::Outline) |
-                ("OUTLINE", PlanNodeKind::Volume | PlanNodeKind::Chapter) |
-                ("VOLUME", PlanNodeKind::Chapter) |
-                ("CHAPTER", PlanNodeKind::Scene));
-            if !valid { return Err(PlanError::InvalidParentKind); }
+            let valid = matches!(
+                (parent_kind.as_str(), kind),
+                ("WORK_DESIGN", PlanNodeKind::Outline)
+                    | ("OUTLINE", PlanNodeKind::Volume | PlanNodeKind::Chapter)
+                    | ("VOLUME", PlanNodeKind::Chapter)
+                    | ("CHAPTER", PlanNodeKind::Scene)
+            );
+            if !valid {
+                return Err(PlanError::InvalidParentKind);
+            }
         }
         let sort_order: i64 = self
             .connection
@@ -739,7 +1007,12 @@ impl Database {
             )
             .map_err(DatabaseError::from)?;
         if node.kind == PlanNodeKind::Chapter {
-            self.connection.execute("INSERT INTO chapters (id, plan_node_id, title) VALUES (?1, ?1, ?2)", rusqlite::params![node.id.to_string(), node.title]).map_err(DatabaseError::from)?;
+            self.connection
+                .execute(
+                    "INSERT INTO chapters (id, plan_node_id, title) VALUES (?1, ?1, ?2)",
+                    rusqlite::params![node.id.to_string(), node.title],
+                )
+                .map_err(DatabaseError::from)?;
         }
         self.connection.execute(
             "INSERT INTO plan_revisions (id, node_id, revision, title, archived) VALUES (?1, ?2, 1, ?3, 0)",
@@ -774,7 +1047,12 @@ impl Database {
             )
             .map_err(DatabaseError::from)?;
         if archived {
-            self.connection.execute("UPDATE plan_nodes SET archived = 1 WHERE parent_id = ?1", [id.to_string()]).map_err(DatabaseError::from)?;
+            self.connection
+                .execute(
+                    "UPDATE plan_nodes SET archived = 1 WHERE parent_id = ?1",
+                    [id.to_string()],
+                )
+                .map_err(DatabaseError::from)?;
         }
         self.connection
             .execute(
@@ -801,29 +1079,91 @@ impl Database {
         })
     }
 
-    fn update_plan_node_checked(&mut self, id: Uuid, title: String, archived: bool, expected_version: i64) -> Result<PlanNode, PlanError> {
-        let current = self.list_plan_nodes()?.into_iter().find(|node| node.id == id).ok_or(PlanError::MissingNode(id))?;
-        if current.revision != expected_version { return Err(PlanError::Conflict { expected: expected_version, actual: current.revision }); }
+    fn update_plan_node_checked(
+        &mut self,
+        id: Uuid,
+        title: String,
+        archived: bool,
+        expected_version: i64,
+    ) -> Result<PlanNode, PlanError> {
+        let current = self
+            .list_plan_nodes()?
+            .into_iter()
+            .find(|node| node.id == id)
+            .ok_or(PlanError::MissingNode(id))?;
+        if current.revision != expected_version {
+            return Err(PlanError::Conflict {
+                expected: expected_version,
+                actual: current.revision,
+            });
+        }
         self.update_plan_node(id, title, archived)
     }
 
-    fn move_plan_node(&mut self, id: Uuid, parent_id: Option<Uuid>, expected_version: i64) -> Result<PlanNode, PlanError> {
-        let current = self.list_plan_nodes()?.into_iter().find(|node| node.id == id).ok_or(PlanError::MissingNode(id))?;
-        if current.revision != expected_version { return Err(PlanError::Conflict { expected: expected_version, actual: current.revision }); }
-        if parent_id == Some(id) { return Err(PlanError::Cycle); }
+    fn move_plan_node(
+        &mut self,
+        id: Uuid,
+        parent_id: Option<Uuid>,
+        expected_version: i64,
+    ) -> Result<PlanNode, PlanError> {
+        let current = self
+            .list_plan_nodes()?
+            .into_iter()
+            .find(|node| node.id == id)
+            .ok_or(PlanError::MissingNode(id))?;
+        if current.revision != expected_version {
+            return Err(PlanError::Conflict {
+                expected: expected_version,
+                actual: current.revision,
+            });
+        }
+        if parent_id == Some(id) {
+            return Err(PlanError::Cycle);
+        }
         if let Some(parent) = parent_id {
-            let parent_node = self.list_plan_nodes()?.into_iter().find(|node| node.id == parent).ok_or(PlanError::MissingParent(parent))?;
-            let valid = matches!((parent_node.kind, current.kind), (PlanNodeKind::WorkDesign, PlanNodeKind::Outline) | (PlanNodeKind::Outline, PlanNodeKind::Volume | PlanNodeKind::Chapter) | (PlanNodeKind::Volume, PlanNodeKind::Chapter) | (PlanNodeKind::Chapter, PlanNodeKind::Scene));
-            if !valid { return Err(PlanError::InvalidParentKind); }
+            let parent_node = self
+                .list_plan_nodes()?
+                .into_iter()
+                .find(|node| node.id == parent)
+                .ok_or(PlanError::MissingParent(parent))?;
+            let valid = matches!(
+                (parent_node.kind, current.kind),
+                (PlanNodeKind::WorkDesign, PlanNodeKind::Outline)
+                    | (
+                        PlanNodeKind::Outline,
+                        PlanNodeKind::Volume | PlanNodeKind::Chapter
+                    )
+                    | (PlanNodeKind::Volume, PlanNodeKind::Chapter)
+                    | (PlanNodeKind::Chapter, PlanNodeKind::Scene)
+            );
+            if !valid {
+                return Err(PlanError::InvalidParentKind);
+            }
             let mut cursor = Some(parent);
             while let Some(candidate) = cursor {
-                if candidate == id { return Err(PlanError::Cycle); }
-                cursor = self.list_plan_nodes()?.into_iter().find(|node| node.id == candidate).and_then(|node| node.parent_id);
+                if candidate == id {
+                    return Err(PlanError::Cycle);
+                }
+                cursor = self
+                    .list_plan_nodes()?
+                    .into_iter()
+                    .find(|node| node.id == candidate)
+                    .and_then(|node| node.parent_id);
             }
         }
-        let sort_order: i64 = self.connection.query_row("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM plan_nodes WHERE parent_id IS ?1", rusqlite::params![parent_id.map(|id| id.to_string())], |row| row.get(0)).map_err(DatabaseError::from)?;
+        let sort_order: i64 = self
+            .connection
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM plan_nodes WHERE parent_id IS ?1",
+                rusqlite::params![parent_id.map(|id| id.to_string())],
+                |row| row.get(0),
+            )
+            .map_err(DatabaseError::from)?;
         self.connection.execute("UPDATE plan_nodes SET parent_id = ?1, sort_order = ?2, revision = revision + 1 WHERE id = ?3", rusqlite::params![parent_id.map(|id| id.to_string()), sort_order, id.to_string()]).map_err(DatabaseError::from)?;
-        self.list_plan_nodes()?.into_iter().find(|node| node.id == id).ok_or(PlanError::MissingNode(id))
+        self.list_plan_nodes()?
+            .into_iter()
+            .find(|node| node.id == id)
+            .ok_or(PlanError::MissingNode(id))
     }
 
     fn current_manuscript(
@@ -905,7 +1245,15 @@ impl Database {
                     .transpose()?,
                 base_revision_id: row
                     .get::<_, Option<String>>(1)?
-                    .map(|value| Uuid::parse_str(&value).map_err(|error| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))))
+                    .map(|value| {
+                        Uuid::parse_str(&value).map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                1,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })
+                    })
                     .transpose()?,
                 document_json: row.get(2)?,
                 content_hash: row.get(3)?,
@@ -941,7 +1289,12 @@ impl Database {
             .current_manuscript(chapter_id)?
             .map(|revision| revision.id);
         if let Some(expected) = base_revision_id {
-            if Some(expected) != parent_revision_id { return Err(ManuscriptError::Conflict { expected: Some(expected), actual: parent_revision_id }); }
+            if Some(expected) != parent_revision_id {
+                return Err(ManuscriptError::Conflict {
+                    expected: Some(expected),
+                    actual: parent_revision_id,
+                });
+            }
         }
         let mut hasher = Sha256::new();
         hasher.update(document_json.as_bytes());
@@ -963,34 +1316,82 @@ impl Database {
         Ok(revision)
     }
 
-    fn save_recovery_log(&mut self, chapter_id: Uuid, document_json: String) -> Result<(), DatabaseError> {
-        validate_document(&document_json).map_err(|e| DatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(e.to_string())))?;
-        self.connection.execute("INSERT INTO recovery_logs (id, chapter_id, document_json) VALUES (?1, ?2, ?3)", rusqlite::params![Uuid::new_v4().to_string(), chapter_id.to_string(), document_json])?;
+    fn save_recovery_log(
+        &mut self,
+        chapter_id: Uuid,
+        document_json: String,
+    ) -> Result<(), DatabaseError> {
+        validate_document(&document_json).map_err(|e| {
+            DatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+        self.connection.execute(
+            "INSERT INTO recovery_logs (id, chapter_id, document_json) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                chapter_id.to_string(),
+                document_json
+            ],
+        )?;
         Ok(())
     }
 
     fn list_recovery_logs(&self, chapter_id: Uuid) -> Result<Vec<RecoveryLog>, DatabaseError> {
         let mut statement = self.connection.prepare("SELECT id, chapter_id, document_json, created_at FROM recovery_logs WHERE chapter_id = ?1 ORDER BY created_at DESC, rowid DESC")?;
-        let rows = statement.query_map([chapter_id.to_string()], |row| Ok(RecoveryLog {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?,
-            chapter_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e)))?,
-            document_json: row.get(2)?, created_at: row.get(3)?,
-        }))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
+        let rows = statement.query_map([chapter_id.to_string()], |row| {
+            Ok(RecoveryLog {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                chapter_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                document_json: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
     }
 
     fn list_all_recovery_logs(&self) -> Result<Vec<RecoveryLog>, DatabaseError> {
         let mut statement = self.connection.prepare("SELECT id, chapter_id, document_json, created_at FROM recovery_logs ORDER BY created_at DESC, rowid DESC")?;
-        let rows = statement.query_map([], |row| Ok(RecoveryLog {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?,
-            chapter_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e)))?,
-            document_json: row.get(2)?, created_at: row.get(3)?,
-        }))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
+        let rows = statement.query_map([], |row| {
+            Ok(RecoveryLog {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                chapter_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                document_json: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
     }
 
     fn clear_recovery_logs(&mut self, chapter_id: Uuid) -> Result<(), DatabaseError> {
-        self.connection.execute("DELETE FROM recovery_logs WHERE chapter_id = ?1", [chapter_id.to_string()])?;
+        self.connection.execute(
+            "DELETE FROM recovery_logs WHERE chapter_id = ?1",
+            [chapter_id.to_string()],
+        )?;
         Ok(())
     }
 
@@ -1047,7 +1448,7 @@ mod tests {
     fn sqlite_applies_pragmas_and_initial_migration() {
         let database = Database::in_memory().expect("in-memory database");
         let health = database.health().expect("database health");
-        assert_eq!(health.schema_version, 6);
+        assert_eq!(health.schema_version, 7);
         assert_eq!(health.journal_mode, "memory");
         assert!(health.foreign_keys_enabled);
         assert!(!health.sqlite_version.is_empty());
@@ -1072,15 +1473,22 @@ mod tests {
 
     #[test]
     fn manuscript_documents_are_validated_normalized_and_hashed() {
-        let root = std::path::PathBuf::from("target").join(format!("ainovel-manuscript-{}", uuid::Uuid::new_v4()));
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-manuscript-{}", uuid::Uuid::new_v4()));
         let mut manager = super::ProjectManager::new();
         manager.create(&root, "测试作品").expect("create project");
-        let chapter = manager.create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into()).expect("chapter");
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
         let revision = manager.save_manuscript(chapter.id, r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"你好"}]}]}"#.into(), "test".into()).expect("save");
         assert_eq!(revision.document_schema_version, 1);
         assert!(revision.document_json.contains("blockId"));
         assert_eq!(revision.content_hash.len(), 64);
-        assert!(manager.save_manuscript(chapter.id, "not-json".into(), "test".into()).is_err());
+        assert!(
+            manager
+                .save_manuscript(chapter.id, "not-json".into(), "test".into())
+                .is_err()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1127,40 +1535,87 @@ mod tests {
 
     #[test]
     fn invalid_plan_hierarchy_and_stale_updates_are_rejected() {
-        let root = std::path::PathBuf::from("target").join(format!("ainovel-rules-{}", uuid::Uuid::new_v4()));
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-rules-{}", uuid::Uuid::new_v4()));
         let mut manager = super::ProjectManager::new();
         manager.create(&root, "规则测试").expect("create");
-        let chapter = manager.create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into()).expect("chapter");
-        assert!(matches!(manager.create_plan_node(Some(chapter.id), super::PlanNodeKind::Volume, "非法分卷".into()), Err(super::PlanError::InvalidParentKind)));
-        manager.update_plan_node_checked(chapter.id, "第一章修订".into(), false, 1).expect("checked update");
-        assert!(matches!(manager.update_plan_node_checked(chapter.id, "过期修改".into(), false, 1), Err(super::PlanError::Conflict { .. })));
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
+        assert!(matches!(
+            manager.create_plan_node(
+                Some(chapter.id),
+                super::PlanNodeKind::Volume,
+                "非法分卷".into()
+            ),
+            Err(super::PlanError::InvalidParentKind)
+        ));
+        manager
+            .update_plan_node_checked(chapter.id, "第一章修订".into(), false, 1)
+            .expect("checked update");
+        assert!(matches!(
+            manager.update_plan_node_checked(chapter.id, "过期修改".into(), false, 1),
+            Err(super::PlanError::Conflict { .. })
+        ));
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn manuscript_history_is_immutable_and_conflicts_are_detected() {
-        let root = std::path::PathBuf::from("target").join(format!("ainovel-immutable-{}", uuid::Uuid::new_v4()));
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-immutable-{}", uuid::Uuid::new_v4()));
         let mut manager = super::ProjectManager::new();
         manager.create(&root, "正文测试").expect("create");
-        let chapter = manager.create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into()).expect("chapter");
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
         let doc = r#"{"type":"doc","content":[{"type":"paragraph","attrs":{"blockId":"p1"},"content":[{"type":"text","text":"正文"}]}]}"#;
-        let first = manager.save_manuscript_checked(chapter.id, None, doc.into(), "FIRST".into()).expect("first");
-        let second = manager.save_manuscript_checked(chapter.id, Some(first.id), doc.into(), "SECOND".into()).expect("second");
-        assert!(matches!(manager.save_manuscript_checked(chapter.id, Some(first.id), doc.into(), "STALE".into()), Err(super::ManuscriptError::Conflict { actual: Some(actual), .. }) if actual == second.id));
+        let first = manager
+            .save_manuscript_checked(chapter.id, None, doc.into(), "FIRST".into())
+            .expect("first");
+        let second = manager
+            .save_manuscript_checked(chapter.id, Some(first.id), doc.into(), "SECOND".into())
+            .expect("second");
+        assert!(
+            matches!(manager.save_manuscript_checked(chapter.id, Some(first.id), doc.into(), "STALE".into()), Err(super::ManuscriptError::Conflict { actual: Some(actual), .. }) if actual == second.id)
+        );
         let session = manager.current.as_ref().expect("session");
-        assert!(session.database.connection.execute("UPDATE manuscript_revisions SET creation_reason = 'BAD' WHERE id = ?1", [first.id.to_string()]).is_err());
-        assert!(session.database.connection.execute("DELETE FROM manuscript_revisions WHERE id = ?1", [first.id.to_string()]).is_err());
+        assert!(
+            session
+                .database
+                .connection
+                .execute(
+                    "UPDATE manuscript_revisions SET creation_reason = 'BAD' WHERE id = ?1",
+                    [first.id.to_string()]
+                )
+                .is_err()
+        );
+        assert!(
+            session
+                .database
+                .connection
+                .execute(
+                    "DELETE FROM manuscript_revisions WHERE id = ?1",
+                    [first.id.to_string()]
+                )
+                .is_err()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn recovery_logs_survive_project_reopen() {
-        let root = std::path::PathBuf::from("target").join(format!("ainovel-recovery-{}", uuid::Uuid::new_v4()));
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-recovery-{}", uuid::Uuid::new_v4()));
         let mut manager = super::ProjectManager::new();
         manager.create(&root, "恢复测试").expect("create");
-        let chapter = manager.create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into()).expect("chapter");
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
         let doc = r#"{"type":"doc","content":[]}"#;
-        manager.save_recovery_log(chapter.id, doc.into()).expect("save recovery");
+        manager
+            .save_recovery_log(chapter.id, doc.into())
+            .expect("save recovery");
         manager.close();
         manager.open(&root).expect("reopen");
         assert_eq!(manager.list_all_recovery_logs().expect("logs").len(), 1);
@@ -1168,15 +1623,148 @@ mod tests {
     }
 
     #[test]
+    fn ai_proposals_are_audited_without_changing_manuscript_history() {
+        let root =
+            std::path::PathBuf::from("target").join(format!("ainovel-ai-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "AI 测试").expect("create");
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
+        let profile = manager
+            .upsert_model_profile(super::ModelProfileInput {
+                id: None,
+                name: "硅基流动".into(),
+                provider: super::ModelProvider::SiliconFlow,
+                base_url: "https://api.siliconflow.cn/v1".into(),
+                model_id: "test/model".into(),
+                context_window: 8_192,
+                max_output_tokens: 1_024,
+                privacy_level: super::PrivacyLevel::AllowCloud,
+                timeout_seconds: 30,
+                retry_limit: 1,
+            })
+            .expect("profile");
+        assert!(!profile.has_secret);
+        let context = novel_application::ContextAssembler::assemble(
+            &novel_application::AssembleContextInput {
+                chapter_id: chapter.id,
+                target_revision_id: None,
+                action: super::AiAction::Continue,
+                chapter_title: chapter.title,
+                chapter_plan: "继续推进冲突".into(),
+                document_json: r#"{"type":"doc","content":[]}"#.into(),
+                selection: None,
+                instruction: None,
+                input_token_budget: 4_096,
+            },
+        )
+        .expect("context");
+        let task_id = manager.create_ai_task(profile.id, &context).expect("task");
+        let proposal = manager
+            .complete_ai_task(task_id, &context, "新的段落。".into())
+            .expect("proposal");
+        assert_eq!(proposal.status, super::AiProposalStatus::Pending);
+        manager
+            .decide_ai_proposal(proposal.id, super::AiProposalStatus::Accepted, None)
+            .expect("accept");
+        assert!(
+            manager
+                .current_manuscript(chapter.id)
+                .expect("manuscript")
+                .is_none()
+        );
+        let session = manager.current.as_ref().expect("session");
+        assert!(
+            session
+                .database
+                .connection
+                .execute(
+                    "UPDATE ai_proposals SET output_text='tampered' WHERE id=?1",
+                    [proposal.id.to_string()],
+                )
+                .is_err()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_ai_tasks_do_not_create_proposals() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-ai-fail-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "AI 失败测试").expect("create");
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
+        let profile = manager
+            .upsert_model_profile(super::ModelProfileInput {
+                id: None,
+                name: "云端".into(),
+                provider: super::ModelProvider::OpenAiCompatible,
+                base_url: "https://api.example.com/v1".into(),
+                model_id: "model".into(),
+                context_window: 4096,
+                max_output_tokens: 512,
+                privacy_level: super::PrivacyLevel::AllowCloud,
+                timeout_seconds: 30,
+                retry_limit: 0,
+            })
+            .expect("profile");
+        let context = novel_application::ContextAssembler::assemble(
+            &novel_application::AssembleContextInput {
+                chapter_id: chapter.id,
+                target_revision_id: None,
+                action: super::AiAction::Summarize,
+                chapter_title: "第一章".into(),
+                chapter_plan: String::new(),
+                document_json: r#"{"type":"doc","content":[]}"#.into(),
+                selection: None,
+                instruction: None,
+                input_token_budget: 2048,
+            },
+        )
+        .expect("context");
+        let task_id = manager.create_ai_task(profile.id, &context).expect("task");
+        manager
+            .fail_ai_task(task_id, &super::AiError::Timeout)
+            .expect("fail");
+        assert!(
+            manager
+                .list_ai_proposals(chapter.id)
+                .expect("proposals")
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn malformed_manifest_and_database_are_rejected() {
-        let root = std::path::PathBuf::from("target").join(format!("ainovel-corrupt-{}", uuid::Uuid::new_v4()));
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-corrupt-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("dir");
         std::fs::write(root.join("project.json"), b"not-json").expect("manifest");
         let mut manager = super::ProjectManager::new();
-        assert!(matches!(manager.open(&root), Err(super::ProjectError::Manifest(_))));
-        std::fs::write(root.join("project.json"), serde_json::to_vec(&super::ProjectManifest { project_id: uuid::Uuid::new_v4(), format_version: 1, name: "损坏项目".into(), created_at: "0".into() }).expect("json")).expect("manifest");
+        assert!(matches!(
+            manager.open(&root),
+            Err(super::ProjectError::Manifest(_))
+        ));
+        std::fs::write(
+            root.join("project.json"),
+            serde_json::to_vec(&super::ProjectManifest {
+                project_id: uuid::Uuid::new_v4(),
+                format_version: 1,
+                name: "损坏项目".into(),
+                created_at: "0".into(),
+            })
+            .expect("json"),
+        )
+        .expect("manifest");
         std::fs::write(root.join("project.sqlite"), b"not-sqlite").expect("database");
-        assert!(matches!(manager.open(&root), Err(super::ProjectError::Database(_))));
+        assert!(matches!(
+            manager.open(&root),
+            Err(super::ProjectError::Database(_))
+        ));
         let _ = std::fs::remove_dir_all(root);
     }
 }

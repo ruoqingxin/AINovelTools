@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { clearRecoveryLogs, createPlanNode, currentManuscript, errorMessage, listManuscriptRevisions, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
+import { AiWritingPanel } from "./ai-writing-panel";
 
 const kindLabels: Record<PlanNodeKind, string> = {
   WORK_DESIGN: "作品设计",
@@ -285,6 +286,7 @@ export function ProjectWorkspaceView() {
             </div>
             <EditorContent editor={editor} />
           </> : <p className="plan-empty">正在加载编辑器…</p>}
+          <AiWritingPanel chapterId={selected.id} chapterTitle={selected.title} chapterPlan={selected.title} draft={draft} editor={editor} />
           <button type="button" className="primary-action" onClick={() => void saveDraft()} disabled={savingDraft || !draft.trim()}>{savingDraft ? "保存中…" : "保存正文修订"}</button>
           <button type="button" className="secondary-action" onClick={() => void mergeDraft()} disabled={!manuscript.data || !draft.trim()}>检查并合并冲突</button>
           {mergeResult ? <div className="merge-panel"><div className="section-heading"><h3>{mergeResult.conflicts.length ? `发现 ${mergeResult.conflicts.length} 个冲突块` : "没有发现冲突"}</h3>{!mergeResult.conflicts.length ? <button type="button" className="secondary-action" onClick={() => { setDraft(mergeResult.documentJson); if (editor) editor.commands.setContent(documentToJson(mergeResult.documentJson), { emitUpdate: false }); }}>应用合并结果</button> : null}</div>{mergeResult.conflicts.map((conflict) => <div className="merge-conflict" key={conflict.blockId}><code>{conflict.blockId}</code><span>当前版本与草稿都修改了该段，请在编辑器中手工选择后再保存。</span></div>)}</div> : null}
