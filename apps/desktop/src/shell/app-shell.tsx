@@ -50,8 +50,17 @@ export function AppShell() {
           <AppMark className="app-mark" />
           <span>AI Novel Tools</span>
         </div>
-        <div className="project-context">
-          {currentProject.data?.name ?? "未打开项目"}
+        <nav className="top-nav" aria-label="工作区导航">
+          {navigation.map(({ label, icon: Icon, active }) => (
+            <button key={label} type="button" className="top-nav-button" data-active={active || undefined} disabled={!active}>
+              <Icon size={15} strokeWidth={1.8} />{label}
+            </button>
+          ))}
+        </nav>
+        <div className="title-actions">
+          <span className="project-context">{currentProject.data?.name ?? "未打开项目"}</span>
+          <button type="button" className="title-action">＋ 新建小说</button>
+          <button type="button" className="title-icon" aria-label="设置"><Settings size={16} /></button>
         </div>
       </header>
 
