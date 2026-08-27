@@ -84,6 +84,7 @@ export function ProjectWorkspaceView() {
   const [compareLeftId, setCompareLeftId] = useState<string | null>(null);
   const [compareRightId, setCompareRightId] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
+  const [chapterTab, setChapterTab] = useState<"editor" | "ai" | "revisions" | "recovery">("editor");
   const editor = useEditor({
     extensions: [StarterKit],
     content: documentToJson(""),
@@ -217,6 +218,7 @@ export function ProjectWorkspaceView() {
     setSelectedId(node.id);
     setEditTitle(node.title);
     setMoveParentId(node.parentId ?? "");
+    setChapterTab("editor");
   }
 
   async function moveSelected() {
@@ -277,21 +279,41 @@ export function ProjectWorkspaceView() {
         </div>
         <div className="inspector-actions"><select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="">移动到顶层</option>{(nodes.data ?? []).filter((node) => node.id !== selected.id && !node.archived).map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select><button type="button" className="secondary-action" onClick={() => void moveSelected()}>移动节点</button></div>
         {selected.kind === "CHAPTER" ? <div className="chapter-editor">
-          <div className="section-heading"><h2>正文草稿</h2><span>{manuscript.data ? "已有修订" : "尚未保存"}</span></div>
-          {editor ? <>
-            <div className="editor-toolbar" aria-label="编辑器工具栏">
-              <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} data-active={editor.isActive("bold") || undefined} aria-label="粗体">B</button>
-              <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} data-active={editor.isActive("italic") || undefined} aria-label="斜体"><em>I</em></button>
-              <button type="button" onClick={() => editor.chain().focus().toggleBulletList().run()} data-active={editor.isActive("bulletList") || undefined} aria-label="项目列表">•</button>
+          <div className="section-heading"><h2>章节工作区</h2><span>{manuscript.data ? "已有修订" : "尚未保存"}</span></div>
+          <div className="chapter-tabs" role="tablist" aria-label="章节工作区页签">
+            {([['editor', '正文编辑'], ['ai', 'AI 创作'], ['revisions', '修订与冲突'], ['recovery', '恢复草稿']] as const).map(([value, label]) => <button type="button" role="tab" aria-selected={chapterTab === value} data-active={chapterTab === value || undefined} key={value} onClick={() => setChapterTab(value)}>{label}</button>)}
+          </div>
+          {chapterTab === "editor" ? <div className="chapter-tab-panel">
+            {editor ? <>
+              <div className="editor-toolbar" aria-label="编辑器工具栏">
+                <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} data-active={editor.isActive("bold") || undefined} aria-label="粗体">B</button>
+                <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} data-active={editor.isActive("italic") || undefined} aria-label="斜体"><em>I</em></button>
+                <button type="button" onClick={() => editor.chain().focus().toggleBulletList().run()} data-active={editor.isActive("bulletList") || undefined} aria-label="项目列表">•</button>
+              </div>
+              <EditorContent editor={editor} />
+            </> : <p className="plan-empty">正在加载编辑器…</p>}
+            <button type="button" className="primary-action" onClick={() => void saveDraft()} disabled={savingDraft || !draft.trim()}>{savingDraft ? "保存中…" : "保存正文修订"}</button>
+          </div> : null}
+          {chapterTab === "ai" ? <AiWritingPanel chapterId={selected.id} chapterTitle={selected.title} chapterPlan={selected.title} draft={draft} editor={editor} /> : null}
+          {chapterTab === "revisions" ? <div className="chapter-tab-panel">
+            <button type="button" className="secondary-action" onClick={() => void mergeDraft()} disabled={!manuscript.data || !draft.trim()}>检查并合并冲突</button>
+            {mergeResult ? <div className="merge-panel"><div className="section-heading"><h3>{mergeResult.conflicts.length ? `发现 ${mergeResult.conflicts.length} 个冲突块` : "没有发现冲突"}</h3>{!mergeResult.conflicts.length ? <button type="button" className="secondary-action" onClick={() => { setDraft(mergeResult.documentJson); if (editor) editor.commands.setContent(documentToJson(mergeResult.documentJson), { emitUpdate: false }); }}>应用合并结果</button> : null}</div>{mergeResult.conflicts.map((conflict) => <div className="merge-conflict" key={conflict.blockId}><code>{conflict.blockId}</code><span>当前版本与草稿都修改了该段，请在编辑器中手工选择后再保存。</span></div>)}</div> : null}
+            <div className="revision-history">
+              <div className="section-heading"><h2>修订历史</h2><span>{history.data?.length ?? 0} 条</span></div>
+              {history.data?.map((revision, index) => <div className="revision-row" key={revision.id}><span>修订 {history.data!.length - index}</span><code>{revision.contentHash}</code><button type="button" className="secondary-action" onClick={() => void restoreRevision(revision)}>恢复为新正文</button></div>)}
+              {(history.data?.length ?? 0) < 2 ? <p className="revision-hint">保存两次正文后，可以在这里选择两个版本进行差异对比。</p> : (
+                <div className="revision-compare">
+                  <div className="compare-selects">
+                    <select value={compareLeftId ?? ""} onChange={(event) => setCompareLeftId(event.target.value)} aria-label="较早修订"><option value="">选择较早修订</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data!.length - index}</option>)}</select>
+                    <span>对比</span>
+                    <select value={compareRightId ?? ""} onChange={(event) => setCompareRightId(event.target.value)} aria-label="较新修订"><option value="">选择较新修订</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data!.length - index}</option>)}</select>
+                  </div>
+                  {compareLeftId && compareRightId ? <div className="diff-view">{diffLines(documentToText(history.data!.find((revision) => revision.id === compareLeftId)?.documentJson ?? ""), documentToText(history.data!.find((revision) => revision.id === compareRightId)?.documentJson ?? "")).map((row, index) => <div className={`diff-line diff-${row.kind}`} key={`${index}-${row.kind}`}><span>{row.kind === "added" ? "+" : row.kind === "removed" ? "−" : " "}</span><code>{row.text || " "}</code></div>)}</div> : null}
+                </div>
+              )}
             </div>
-            <EditorContent editor={editor} />
-          </> : <p className="plan-empty">正在加载编辑器…</p>}
-          <AiWritingPanel chapterId={selected.id} chapterTitle={selected.title} chapterPlan={selected.title} draft={draft} editor={editor} />
-          <button type="button" className="primary-action" onClick={() => void saveDraft()} disabled={savingDraft || !draft.trim()}>{savingDraft ? "保存中…" : "保存正文修订"}</button>
-          <button type="button" className="secondary-action" onClick={() => void mergeDraft()} disabled={!manuscript.data || !draft.trim()}>检查并合并冲突</button>
-          {mergeResult ? <div className="merge-panel"><div className="section-heading"><h3>{mergeResult.conflicts.length ? `发现 ${mergeResult.conflicts.length} 个冲突块` : "没有发现冲突"}</h3>{!mergeResult.conflicts.length ? <button type="button" className="secondary-action" onClick={() => { setDraft(mergeResult.documentJson); if (editor) editor.commands.setContent(documentToJson(mergeResult.documentJson), { emitUpdate: false }); }}>应用合并结果</button> : null}</div>{mergeResult.conflicts.map((conflict) => <div className="merge-conflict" key={conflict.blockId}><code>{conflict.blockId}</code><span>当前版本与草稿都修改了该段，请在编辑器中手工选择后再保存。</span></div>)}</div> : null}
-          {recovery.data?.length ? <div className="recovery-banner"><span>发现 {recovery.data.length} 条可恢复草稿</span><button type="button" className="secondary-action" onClick={() => void recoverLatest()}>恢复最近草稿</button></div> : null}
-          {selected.kind === "CHAPTER" ? <div className="revision-history"><div className="section-heading"><h2>修订历史</h2><span>{history.data?.length ?? 0} 条</span></div>{history.data?.map((revision, index) => <div className="revision-row" key={revision.id}><span>修订 {history.data!.length - index}</span><code>{revision.contentHash}</code><button type="button" className="secondary-action" onClick={() => void restoreRevision(revision)}>恢复为新正文</button></div>)}{(history.data?.length ?? 0) < 2 ? <p className="revision-hint">保存两次正文后，可以在这里选择两个版本进行差异对比。</p> : <div className="revision-compare"><div className="compare-selects"><select value={compareLeftId ?? ""} onChange={(event) => setCompareLeftId(event.target.value)} aria-label="较早修订"><option value="">选择较早修订</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data!.length - index}</option>)}</select><span>对比</span><select value={compareRightId ?? ""} onChange={(event) => setCompareRightId(event.target.value)} aria-label="较新修订"><option value="">选择较新修订</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data!.length - index}</option>)}</select></div>{compareLeftId && compareRightId ? <div className="diff-view">{diffLines(documentToText(history.data!.find((revision) => revision.id === compareLeftId)?.documentJson ?? ""), documentToText(history.data!.find((revision) => revision.id === compareRightId)?.documentJson ?? "")).map((row, index) => <div className={`diff-line diff-${row.kind}`} key={`${index}-${row.kind}`}><span>{row.kind === "added" ? "+" : row.kind === "removed" ? "−" : " "}</span><code>{row.text || " "}</code></div>)}</div> : null}</div>}</div> : null}
+          </div> : null}
+          {chapterTab === "recovery" ? <div className="chapter-tab-panel">{recovery.data?.length ? <div className="recovery-banner"><span>发现 {recovery.data.length} 条可恢复草稿</span><button type="button" className="secondary-action" onClick={() => void recoverLatest()}>恢复最近草稿</button></div> : <div className="plan-empty">当前没有可恢复的草稿。</div>}</div> : null}
         </div> : null}
       </aside> : null}
     </section>

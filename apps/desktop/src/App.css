@@ -311,6 +311,34 @@ button:focus-visible {
   margin-top: 24px;
 }
 
+.chapter-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 14px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.chapter-tabs button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.chapter-tabs button[data-active] {
+  border-bottom-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.chapter-tab-panel {
+  min-height: 240px;
+  padding-top: 14px;
+}
+
 .editor-toolbar {
   display: flex;
   gap: 4px;
@@ -442,6 +470,13 @@ button:focus-visible {
 
 .ai-instruction {
   margin-top: 16px;
+}
+
+.ai-request-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .ai-actions,

@@ -194,7 +194,8 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
       <div className="ai-actions"><button type="button" className="primary-action" onClick={() => void saveProfile()} disabled={!form.name.trim() || !form.modelId.trim()}><Save size={14} />保存配置</button>{selectedProfile?.hasSecret ? <button type="button" className="secondary-action" onClick={() => void removeSecret()}><Trash2 size={14} />删除 Key</button> : null}<span className="secret-state"><KeyRound size={13} />{selectedProfile?.hasSecret ? "Key 已就绪" : "尚未设置 Key"}</span></div>
     </details>
 
-    <label className="ai-instruction">本次要求<input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="可选：节奏、语气或长度要求" /></label>
+    <label className="ai-instruction">自然语言创作要求<input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让这一段更紧张，控制在 300 字内" /></label>
+    <p className="ai-request-hint">系统会把这句话与任务合同、章节规划和正文上下文编译成模型消息，再发送给已选云端 API。</p>
     <div className="ai-action-grid">{(Object.keys(actionLabels) as AiAction[]).map((action) => <button type="button" className="secondary-action" key={action} onClick={() => void runAction(action)} disabled={busy || !profileId || !selectedProfile?.hasSecret}><Play size={14} />{actionLabels[action]}</button>)}</div>
     {busy ? <div className="ai-running"><LoaderCircle size={15} className="spin" /><span>模型正在生成候选…</span><button type="button" className="secondary-action" onClick={() => void cancel()} disabled={!activeTaskId}><Ban size={14} />取消</button></div> : null}
     {preview ? <pre className="ai-preview">{preview}</pre> : null}

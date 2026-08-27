@@ -50,7 +50,11 @@ pub enum ContextError {
 pub struct ContextAssembler;
 
 impl ContextAssembler {
-    /// Builds the smallest sufficient, versioned prompt package for an AI task.
+    /// Compiles a natural-language writing request into versioned model messages.
+    ///
+    /// The returned package is the adapter-neutral contract sent to a cloud
+    /// provider. The provider adapter is responsible only for translating this
+    /// contract into its HTTP request shape; it must not invent story context.
     ///
     /// # Errors
     ///
