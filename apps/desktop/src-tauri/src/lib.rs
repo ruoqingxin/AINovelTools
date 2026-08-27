@@ -1,3 +1,5 @@
+#![allow(clippy::needless_pass_by_value)]
+
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -16,6 +18,7 @@ struct BootstrapStatus {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DatabaseHealthResponse {
+    status: &'static str,
     sqlite_version: String,
     schema_version: i64,
     journal_mode: String,
@@ -37,13 +40,25 @@ fn health_query(state: tauri::State<'_, ProjectState>) -> Result<DatabaseHealthR
         .manager
         .lock()
         .map_err(|_| "database mutex poisoned".to_owned())?;
-    let health = manager.health().map_err(|error| error.to_string())?;
+    let health = match manager.health() {
+        Ok(health) => health,
+        Err(novel_infrastructure::ProjectError::NotInitialized(_)) => {
+            return Ok(DatabaseHealthResponse { status: "NO_PROJECT_OPEN", sqlite_version: String::new(), schema_version: 0, journal_mode: String::new(), foreign_keys_enabled: false });
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     Ok(DatabaseHealthResponse {
+        status: "PROJECT_HEALTHY",
         sqlite_version: health.sqlite_version,
         schema_version: health.schema_version,
         journal_mode: health.journal_mode,
         foreign_keys_enabled: health.foreign_keys_enabled,
     })
+}
+
+#[tauri::command]
+fn feature_catalog() -> &'static [novel_infrastructure::FeatureDescriptor] {
+    novel_infrastructure::FEATURE_CATALOG
 }
 
 #[tauri::command]
@@ -142,6 +157,14 @@ fn update_plan_node(
 }
 
 #[tauri::command]
+fn update_plan_node_checked(
+    state: tauri::State<'_, ProjectState>, id: uuid::Uuid, title: String, archived: bool, expected_version: i64,
+) -> Result<novel_infrastructure::PlanNode, String> {
+    let mut manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
+    manager.update_plan_node_checked(id, title, archived, expected_version).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn current_manuscript(
     state: tauri::State<'_, ProjectState>,
     chapter_id: uuid::Uuid,
@@ -199,6 +222,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             bootstrap_status,
+            feature_catalog,
             health_query,
             create_project,
             open_project,
@@ -207,6 +231,7 @@ pub fn run() {
             list_plan_nodes,
             create_plan_node,
             update_plan_node,
+            update_plan_node_checked,
             current_manuscript,
             list_manuscript_revisions,
             save_manuscript

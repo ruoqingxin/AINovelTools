@@ -1,12 +1,13 @@
 //! Adapters for persistence, files, model providers, and operating-system APIs.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+#![allow(clippy::missing_errors_doc, clippy::items_after_statements, clippy::match_same_arms, clippy::needless_pass_by_value)]
+
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -25,6 +26,22 @@ pub struct DatabaseHealth {
     pub journal_mode: String,
     pub foreign_keys_enabled: bool,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FeatureStatus { Implemented, Partial, Declared, Disabled }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureDescriptor { pub id: &'static str, pub status: FeatureStatus }
+
+pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
+    FeatureDescriptor { id: "project_management", status: FeatureStatus::Implemented },
+    FeatureDescriptor { id: "plan_revisions", status: FeatureStatus::Partial },
+    FeatureDescriptor { id: "manuscript_revisions", status: FeatureStatus::Partial },
+    FeatureDescriptor { id: "recovery_log", status: FeatureStatus::Partial },
+    FeatureDescriptor { id: "conflict_merge", status: FeatureStatus::Declared },
+];
 
 pub struct Database {
     connection: Connection,
@@ -102,6 +119,8 @@ pub enum PlanError {
     MissingParent(Uuid),
     #[error("plan node does not exist: {0}")]
     MissingNode(Uuid),
+    #[error("plan revision conflict: expected {expected}, actual {actual}")]
+    Conflict { expected: i64, actual: i64 },
     #[error("plan database operation failed: {0}")]
     Database(#[from] DatabaseError),
 }
@@ -112,9 +131,12 @@ pub struct ManuscriptRevision {
     pub id: Uuid,
     pub chapter_id: Uuid,
     pub parent_revision_id: Option<Uuid>,
+    pub base_revision_id: Option<Uuid>,
     pub document_json: String,
     pub content_hash: String,
     pub creation_reason: String,
+    pub document_schema_version: i64,
+    pub created_at: String,
 }
 
 #[derive(Debug, Error)]
@@ -125,6 +147,10 @@ pub enum ManuscriptError {
     MissingChapter(Uuid),
     #[error("document cannot be empty")]
     EmptyDocument,
+    #[error("document schema is invalid: {0}")]
+    InvalidDocument(String),
+    #[error("manuscript base revision conflict: expected {expected:?}, actual {actual:?}")]
+    Conflict { expected: Option<Uuid>, actual: Option<Uuid> },
     #[error("manuscript database operation failed: {0}")]
     Database(#[from] DatabaseError),
 }
@@ -291,6 +317,12 @@ impl ProjectManager {
         session.database.update_plan_node(id, title, archived)
     }
 
+    pub fn update_plan_node_checked(&mut self, id: Uuid, title: String, archived: bool, expected_version: i64) -> Result<PlanNode, PlanError> {
+        if title.trim().is_empty() { return Err(PlanError::EmptyTitle); }
+        let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
+        session.database.update_plan_node_checked(id, title, archived, expected_version)
+    }
+
     pub fn current_manuscript(
         &self,
         chapter_id: Uuid,
@@ -321,6 +353,11 @@ impl ProjectManager {
             .database
             .save_manuscript(chapter_id, document_json, creation_reason)
     }
+
+    pub fn save_recovery_log(&mut self, chapter_id: Uuid, document_json: String) -> Result<(), ManuscriptError> {
+        let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
+        session.database.save_recovery_log(chapter_id, document_json).map_err(ManuscriptError::Database)
+    }
 }
 
 fn now_timestamp() -> String {
@@ -328,6 +365,38 @@ fn now_timestamp() -> String {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
     seconds.to_string()
+}
+
+fn normalize_document(document_json: &str) -> Result<String, ManuscriptError> {
+    let mut value: serde_json::Value = serde_json::from_str(document_json)
+        .map_err(|error| ManuscriptError::InvalidDocument(error.to_string()))?;
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("doc") {
+        return Err(ManuscriptError::InvalidDocument("root type must be doc".to_owned()));
+    }
+    let mut counter = 0_u64;
+    fn visit(node: &mut serde_json::Value, counter: &mut u64) {
+        if let Some(object) = node.as_object_mut() {
+            if object.get("type").and_then(serde_json::Value::as_str) != Some("doc") {
+                let attrs = object.entry("attrs").or_insert_with(|| serde_json::json!({}));
+                if let Some(attrs) = attrs.as_object_mut() {
+                    attrs.entry("blockId").or_insert_with(|| {
+                        *counter += 1;
+                        serde_json::Value::String(format!("block-{counter}"))
+                    });
+                }
+            }
+            if let Some(children) = object.get_mut("content").and_then(serde_json::Value::as_array_mut) {
+                for child in children { visit(child, counter); }
+            }
+        }
+    }
+    visit(&mut value, &mut counter);
+    serde_json::to_string(&value).map_err(|error| ManuscriptError::InvalidDocument(error.to_string()))
+}
+
+fn validate_document(document_json: &str) -> Result<(), ManuscriptError> {
+    let _ = normalize_document(document_json)?;
+    Ok(())
 }
 
 impl Database {
@@ -433,11 +502,33 @@ impl Database {
                     document_json TEXT NOT NULL,
                     content_hash TEXT NOT NULL,
                     creation_reason TEXT NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    document_schema_version INTEGER NOT NULL DEFAULT 1
                 );
                 CREATE INDEX IF NOT EXISTS idx_manuscript_revisions_chapter
                     ON manuscript_revisions(chapter_id, created_at);
                 INSERT INTO schema_migrations (version, name) VALUES (4, 'manuscript_revisions');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 5 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS plan_revisions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    node_id TEXT NOT NULL REFERENCES plan_nodes(id),
+                    revision INTEGER NOT NULL,
+                    parent_revision_id TEXT REFERENCES plan_revisions(id),
+                    title TEXT NOT NULL,
+                    archived INTEGER NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    UNIQUE(node_id, revision)
+                );
+                CREATE TABLE IF NOT EXISTS recovery_logs (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    chapter_id TEXT NOT NULL REFERENCES plan_nodes(id),
+                    document_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT INTO schema_migrations (version, name) VALUES (5, 'immutable_revisions_and_recovery');",
             )?;
         }
         Ok(())
@@ -591,14 +682,20 @@ impl Database {
         })
     }
 
+    fn update_plan_node_checked(&mut self, id: Uuid, title: String, archived: bool, expected_version: i64) -> Result<PlanNode, PlanError> {
+        let current = self.list_plan_nodes()?.into_iter().find(|node| node.id == id).ok_or(PlanError::MissingNode(id))?;
+        if current.revision != expected_version { return Err(PlanError::Conflict { expected: expected_version, actual: current.revision }); }
+        self.update_plan_node(id, title, archived)
+    }
+
     fn current_manuscript(
         &self,
         chapter_id: Uuid,
     ) -> Result<Option<ManuscriptRevision>, DatabaseError> {
         self.connection
             .query_row(
-                "SELECT id, parent_revision_id, document_json, content_hash, creation_reason
-                 FROM manuscript_revisions WHERE chapter_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                "SELECT id, parent_revision_id, document_json, content_hash, creation_reason, document_schema_version, created_at
+                 FROM manuscript_revisions WHERE chapter_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 [chapter_id.to_string()],
                 |row| {
                     Ok(ManuscriptRevision {
@@ -622,9 +719,15 @@ impl Database {
                                 })
                             })
                             .transpose()?,
+                        base_revision_id: row
+                            .get::<_, Option<String>>(1)?
+                            .map(|value| Uuid::parse_str(&value).map_err(|error| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))))
+                            .transpose()?,
                         document_json: row.get(2)?,
                         content_hash: row.get(3)?,
                         creation_reason: row.get(4)?,
+                        document_schema_version: row.get(5)?,
+                        created_at: row.get(6)?,
                     })
                 },
             )
@@ -637,8 +740,8 @@ impl Database {
         chapter_id: Uuid,
     ) -> Result<Vec<ManuscriptRevision>, DatabaseError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, parent_revision_id, document_json, content_hash, creation_reason
-             FROM manuscript_revisions WHERE chapter_id = ?1 ORDER BY created_at DESC",
+            "SELECT id, parent_revision_id, document_json, content_hash, creation_reason, document_schema_version, created_at
+             FROM manuscript_revisions WHERE chapter_id = ?1 ORDER BY created_at DESC, rowid DESC",
         )?;
         let rows = statement.query_map([chapter_id.to_string()], |row| {
             Ok(ManuscriptRevision {
@@ -662,9 +765,15 @@ impl Database {
                         })
                     })
                     .transpose()?,
+                base_revision_id: row
+                    .get::<_, Option<String>>(1)?
+                    .map(|value| Uuid::parse_str(&value).map_err(|error| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))))
+                    .transpose()?,
                 document_json: row.get(2)?,
                 content_hash: row.get(3)?,
                 creation_reason: row.get(4)?,
+                document_schema_version: row.get(5)?,
+                created_at: row.get(6)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()
@@ -674,9 +783,10 @@ impl Database {
     fn save_manuscript(
         &mut self,
         chapter_id: Uuid,
-        document_json: String,
+        mut document_json: String,
         creation_reason: String,
     ) -> Result<ManuscriptRevision, ManuscriptError> {
+        document_json = normalize_document(&document_json)?;
         let exists: bool = self
             .connection
             .query_row(
@@ -691,21 +801,30 @@ impl Database {
         let parent_revision_id = self
             .current_manuscript(chapter_id)?
             .map(|revision| revision.id);
-        let mut hasher = DefaultHasher::new();
-        document_json.hash(&mut hasher);
+        let mut hasher = Sha256::new();
+        hasher.update(document_json.as_bytes());
         let revision = ManuscriptRevision {
             id: Uuid::new_v4(),
             chapter_id,
             parent_revision_id,
-            content_hash: format!("{:016x}", hasher.finish()),
+            base_revision_id: parent_revision_id,
+            content_hash: format!("{:x}", hasher.finalize()),
             document_json,
             creation_reason,
+            document_schema_version: 1,
+            created_at: now_timestamp(),
         };
         self.connection.execute(
-            "INSERT INTO manuscript_revisions (id, chapter_id, parent_revision_id, document_json, content_hash, creation_reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![revision.id.to_string(), revision.chapter_id.to_string(), revision.parent_revision_id.map(|id| id.to_string()), revision.document_json, revision.content_hash, revision.creation_reason],
+            "INSERT INTO manuscript_revisions (id, chapter_id, parent_revision_id, document_json, content_hash, creation_reason, document_schema_version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![revision.id.to_string(), revision.chapter_id.to_string(), revision.parent_revision_id.map(|id| id.to_string()), revision.document_json, revision.content_hash, revision.creation_reason, revision.document_schema_version],
         ).map_err(DatabaseError::from)?;
         Ok(revision)
+    }
+
+    fn save_recovery_log(&mut self, chapter_id: Uuid, document_json: String) -> Result<(), DatabaseError> {
+        validate_document(&document_json).map_err(|e| DatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(e.to_string())))?;
+        self.connection.execute("INSERT INTO recovery_logs (id, chapter_id, document_json) VALUES (?1, ?2, ?3)", rusqlite::params![Uuid::new_v4().to_string(), chapter_id.to_string(), document_json])?;
+        Ok(())
     }
 
     /// Reads the SQLite and migration state used by the desktop health query.
@@ -761,7 +880,7 @@ mod tests {
     fn sqlite_applies_pragmas_and_initial_migration() {
         let database = Database::in_memory().expect("in-memory database");
         let health = database.health().expect("database health");
-        assert_eq!(health.schema_version, 4);
+        assert_eq!(health.schema_version, 5);
         assert_eq!(health.journal_mode, "memory");
         assert!(health.foreign_keys_enabled);
         assert!(!health.sqlite_version.is_empty());
@@ -781,6 +900,20 @@ mod tests {
         assert_eq!(manager.close(), Some(manifest.clone()));
         let reopened = manager.open(&root).expect("reopen project");
         assert_eq!(reopened, manifest);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manuscript_documents_are_validated_normalized_and_hashed() {
+        let root = std::path::PathBuf::from("target").join(format!("ainovel-manuscript-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "测试作品").expect("create project");
+        let chapter = manager.create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into()).expect("chapter");
+        let revision = manager.save_manuscript(chapter.id, r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"你好"}]}]}"#.into(), "test".into()).expect("save");
+        assert_eq!(revision.document_schema_version, 1);
+        assert!(revision.document_json.contains("blockId"));
+        assert_eq!(revision.content_hash.len(), 64);
+        assert!(manager.save_manuscript(chapter.id, "not-json".into(), "test".into()).is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 

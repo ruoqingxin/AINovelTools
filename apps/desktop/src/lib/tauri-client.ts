@@ -6,6 +6,7 @@ export type BootstrapStatus = {
 };
 
 export type DatabaseHealth = {
+  status: "PROJECT_HEALTHY" | "NO_PROJECT_OPEN";
   sqliteVersion: string;
   schemaVersion: number;
   journalMode: string;
@@ -35,13 +36,22 @@ export type ManuscriptRevision = {
   id: string;
   chapterId: string;
   parentRevisionId: string | null;
+  baseRevisionId: string | null;
   documentJson: string;
   contentHash: string;
   creationReason: string;
+  documentSchemaVersion: number;
+  createdAt: string;
 };
+
+export type FeatureDescriptor = { id: string; status: "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED" };
 
 export function getBootstrapStatus() {
   return invoke<BootstrapStatus>("bootstrap_status");
+}
+
+export function getFeatureCatalog() {
+  return invoke<FeatureDescriptor[]>("feature_catalog");
 }
 
 export function getHealth() {
@@ -78,6 +88,10 @@ export function createPlanNode(input: {
 
 export function updatePlanNode(input: { id: string; title: string; archived: boolean }) {
   return invoke<PlanNode>("update_plan_node", input);
+}
+
+export function updatePlanNodeChecked(input: { id: string; title: string; archived: boolean; expectedVersion: number }) {
+  return invoke<PlanNode>("update_plan_node_checked", input);
 }
 
 export function currentManuscript(chapterId: string) {
