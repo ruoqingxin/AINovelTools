@@ -91,17 +91,6 @@ export function AppShell() {
         </button>
       </aside>
 
-      <aside className="primary-sidebar">
-        <div className="sidebar-heading">
-          <span>项目</span>
-          <span className="sidebar-count">0</span>
-        </div>
-        <div className="sidebar-empty">
-          <LibraryBig size={18} strokeWidth={1.6} />
-          <span>{currentProject.data ? currentProject.data.name : "没有打开的小说工程"}</span>
-        </div>
-      </aside>
-
       <main className="workspace">
         {recovery.data?.length ? <div className="global-recovery-banner" role="status">发现 {recovery.data.length} 条可恢复草稿，请进入对应章节处理。</div> : null}
         <Outlet />

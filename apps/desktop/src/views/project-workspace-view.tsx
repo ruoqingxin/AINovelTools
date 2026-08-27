@@ -6,6 +6,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { clearRecoveryLogs, createPlanNode, currentManuscript, errorMessage, listManuscriptRevisions, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
+import { ChapterWorkspaceTabs, type ChapterWorkspaceTab } from "./chapter-workspace-tabs";
 
 const kindLabels: Record<PlanNodeKind, string> = {
   WORK_DESIGN: "作品设计",
@@ -84,7 +85,7 @@ export function ProjectWorkspaceView() {
   const [compareLeftId, setCompareLeftId] = useState<string | null>(null);
   const [compareRightId, setCompareRightId] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
-  const [chapterTab, setChapterTab] = useState<"editor" | "ai" | "revisions" | "recovery">("editor");
+  const [chapterTab, setChapterTab] = useState<ChapterWorkspaceTab>("editor");
   const editor = useEditor({
     extensions: [StarterKit],
     content: documentToJson(""),
@@ -281,9 +282,7 @@ export function ProjectWorkspaceView() {
         <div className="inspector-actions"><select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="">移动到顶层</option>{(nodes.data ?? []).filter((node) => node.id !== selected.id && !node.archived).map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select><button type="button" className="secondary-action" onClick={() => void moveSelected()}>移动节点</button></div>
         {selected.kind === "CHAPTER" ? <div className="chapter-editor">
           <div className="section-heading"><h2>章节工作区</h2><span>{manuscript.data ? "已有修订" : "尚未保存"}</span></div>
-          <div className="chapter-tabs" role="tablist" aria-label="章节工作区页签">
-            {([['editor', '正文编辑'], ['ai', 'AI 创作'], ['revisions', '修订与冲突'], ['recovery', '恢复草稿']] as const).map(([value, label]) => <button type="button" role="tab" aria-selected={chapterTab === value} data-active={chapterTab === value || undefined} key={value} onClick={() => setChapterTab(value)}>{label}</button>)}
-          </div>
+          <ChapterWorkspaceTabs value={chapterTab} onChange={setChapterTab} recoveryCount={recovery.data?.length ?? 0} />
           {chapterTab === "editor" ? <div className="chapter-tab-panel">
             {editor ? <>
               <div className="editor-toolbar" aria-label="编辑器工具栏">

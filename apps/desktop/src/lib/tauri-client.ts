@@ -55,12 +55,13 @@ export type FeatureDescriptor = { id: string; displayName: string; stage: string
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
 export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
 export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
-export type ModelProvider = "SILICON_FLOW" | "OPEN_AI_COMPATIBLE";
+export type ModelProvider = "SILICON_FLOW" | "DEEPSEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
+export type ModelCapability = "CHAT" | "EMBEDDING";
 export type PrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
 export type AiAction = "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE";
 export type AiProposalStatus = "PENDING" | "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED";
 export type ModelProfile = {
-  id: string; name: string; provider: ModelProvider; baseUrl: string; modelId: string;
+  id: string; name: string; provider: ModelProvider; capability: ModelCapability; baseUrl: string; modelId: string;
   contextWindow: number; maxOutputTokens: number; privacyLevel: PrivacyLevel;
   timeoutSeconds: number; retryLimit: number; secretRef: string | null; hasSecret: boolean;
   createdAt: string; updatedAt: string;
@@ -71,6 +72,7 @@ export type AiProposal = {
   contextVersion: string; promptVersion: string; outputText: string; acceptedText: string | null;
   status: AiProposalStatus; createdAt: string; decidedAt: string | null;
 };
+export type ModelConnectionResponse = { capability: ModelCapability; provider: ModelProvider; modelId: string; detail: string };
 
 export function getBootstrapStatus() {
   return invoke<BootstrapStatus>("bootstrap_status");
@@ -174,6 +176,10 @@ export function saveModelSecret(profileId: string, secret: string) {
 
 export function deleteModelSecret(profileId: string) {
   return invoke<ModelProfile>("delete_model_secret", { profileId });
+}
+
+export function testModelProfile(profileId: string) {
+  return invoke<ModelConnectionResponse>("test_model_profile", { profileId });
 }
 
 export function listAiProposals(chapterId: string) {

@@ -90,6 +90,7 @@ impl From<novel_infrastructure::AiError> for ApiError {
 struct ProjectState {
     manager: Mutex<novel_infrastructure::ProjectManager>,
     gateway: novel_infrastructure::ModelGateway,
+    embedding_gateway: novel_infrastructure::EmbeddingGateway,
     ai_cancellations: Mutex<HashMap<uuid::Uuid, Arc<AtomicBool>>>,
 }
 
@@ -104,6 +105,15 @@ struct AiStreamChunk {
 #[serde(rename_all = "camelCase")]
 struct AiTaskStarted {
     task_id: uuid::Uuid,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelConnectionResponse {
+    capability: novel_infrastructure::ModelCapability,
+    provider: novel_infrastructure::ModelProvider,
+    model_id: String,
+    detail: String,
 }
 
 #[derive(Serialize)]
@@ -494,6 +504,73 @@ fn delete_model_secret(
 }
 
 #[tauri::command]
+async fn test_model_profile(
+    state: tauri::State<'_, ProjectState>,
+    profile_id: uuid::Uuid,
+) -> Result<ModelConnectionResponse, ApiError> {
+    let (mut profile, secret) = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        let profile = manager
+            .get_model_profile(profile_id)
+            .map_err(ApiError::from)?;
+        let secret_ref = profile
+            .secret_ref
+            .as_deref()
+            .ok_or(novel_infrastructure::AiError::MissingSecret)
+            .map_err(ApiError::from)?;
+        let secret = novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?;
+        (profile, secret)
+    };
+    let detail = match profile.capability {
+        novel_infrastructure::ModelCapability::Chat => {
+            profile.max_output_tokens = profile.max_output_tokens.min(16);
+            let context = novel_application::ContextPackage {
+                chapter_id: uuid::Uuid::nil(),
+                target_revision_id: None,
+                action: novel_infrastructure::AiAction::Summarize,
+                context_version: "connection-test-v1".to_owned(),
+                prompt_version: "connection-test-v1".to_owned(),
+                system_prompt: "你是 API 连接测试服务。".to_owned(),
+                user_prompt: "只回复 OK。".to_owned(),
+                estimated_input_tokens: 16,
+                truncated: false,
+                entity_source_status: "NOT_USED".to_owned(),
+            };
+            state
+                .gateway
+                .generate(
+                    &profile,
+                    Some(&secret),
+                    &context,
+                    false,
+                    Arc::new(AtomicBool::new(false)),
+                    |_| {},
+                )
+                .await
+                .map_err(ApiError::from)?;
+            "聊天请求成功".to_owned()
+        }
+        novel_infrastructure::ModelCapability::Embedding => {
+            let vector = state
+                .embedding_gateway
+                .embed(&profile, &secret, "连接测试")
+                .await
+                .map_err(ApiError::from)?;
+            format!("Embedding 请求成功，返回 {} 维向量", vector.len())
+        }
+    };
+    Ok(ModelConnectionResponse {
+        capability: profile.capability,
+        provider: profile.provider,
+        model_id: profile.model_id,
+        detail,
+    })
+}
+
+#[tauri::command]
 fn list_ai_proposals(
     state: tauri::State<'_, ProjectState>,
     chapter_id: uuid::Uuid,
@@ -665,6 +742,7 @@ pub fn run() {
         .manage(ProjectState {
             manager: Mutex::new(novel_infrastructure::ProjectManager::new()),
             gateway: novel_infrastructure::ModelGateway::default(),
+            embedding_gateway: novel_infrastructure::EmbeddingGateway::default(),
             ai_cancellations: Mutex::new(HashMap::new()),
         })
         .invoke_handler(tauri::generate_handler![
@@ -693,6 +771,7 @@ pub fn run() {
             upsert_model_profile,
             save_model_secret,
             delete_model_secret,
+            test_model_profile,
             list_ai_proposals,
             decide_ai_proposal,
             generate_ai_proposal,

@@ -11,7 +11,16 @@ use uuid::Uuid;
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ModelProvider {
     SiliconFlow,
+    DeepSeek,
+    OpenAi,
     OpenAiCompatible,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ModelCapability {
+    Chat,
+    Embedding,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,6 +36,7 @@ pub struct ModelProfile {
     pub id: Uuid,
     pub name: String,
     pub provider: ModelProvider,
+    pub capability: ModelCapability,
     pub base_url: String,
     pub model_id: String,
     pub context_window: u32,
@@ -46,6 +56,7 @@ pub struct ModelProfileInput {
     pub id: Option<Uuid>,
     pub name: String,
     pub provider: ModelProvider,
+    pub capability: ModelCapability,
     pub base_url: String,
     pub model_id: String,
     pub context_window: u32,
@@ -120,6 +131,8 @@ pub enum AiContractError {
     InvalidTimeout,
     #[error("retry limit cannot exceed 3")]
     InvalidRetryLimit,
+    #[error("the selected provider does not support this model capability")]
+    InvalidProviderCapability,
     #[error("this action requires a non-empty selection")]
     SelectionRequired,
     #[error("accepted proposal text cannot be empty")]
@@ -154,6 +167,19 @@ impl ModelProfileInput {
         if self.retry_limit > 3 {
             return Err(AiContractError::InvalidRetryLimit);
         }
+        let valid_capability = matches!(
+            (self.provider, self.capability),
+            (ModelProvider::SiliconFlow, ModelCapability::Embedding)
+                | (
+                    ModelProvider::DeepSeek
+                        | ModelProvider::OpenAi
+                        | ModelProvider::OpenAiCompatible,
+                    ModelCapability::Chat
+                )
+        );
+        if !valid_capability {
+            return Err(AiContractError::InvalidProviderCapability);
+        }
         Ok(())
     }
 }
@@ -177,6 +203,7 @@ mod tests {
             id: None,
             name: "Local".into(),
             provider: super::ModelProvider::OpenAiCompatible,
+            capability: super::ModelCapability::Chat,
             base_url: "https://api.example.com/v1".into(),
             model_id: "writer-model".into(),
             context_window: 32_768,
@@ -186,6 +213,12 @@ mod tests {
             retry_limit: 1,
         };
         assert_eq!(input.validate(), Ok(()));
+        let mut invalid = input.clone();
+        invalid.provider = super::ModelProvider::SiliconFlow;
+        assert_eq!(
+            invalid.validate(),
+            Err(super::AiContractError::InvalidProviderCapability)
+        );
         assert!(super::AiAction::Rewrite.requires_selection());
         assert!(!super::AiAction::Continue.requires_selection());
     }

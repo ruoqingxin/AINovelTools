@@ -8,8 +8,8 @@ use futures_util::StreamExt;
 use keyring::Entry;
 use novel_application::ContextPackage;
 use novel_domain::{
-    AiAction, AiContractError, AiProposal, AiProposalStatus, AiTaskStatus, ModelProfile,
-    ModelProfileInput, ModelProvider, PrivacyLevel,
+    AiAction, AiContractError, AiProposal, AiProposalStatus, AiTaskStatus, ModelCapability,
+    ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel,
 };
 use reqwest::StatusCode;
 use rusqlite::OptionalExtension;
@@ -135,19 +135,27 @@ impl ModelGateway {
     where
         F: FnMut(&str) + Send,
     {
+        if profile.capability != ModelCapability::Chat {
+            return Err(AiContractError::InvalidProviderCapability.into());
+        }
         let endpoint = format!(
             "{}/chat/completions",
             profile.base_url.trim_end_matches('/')
         );
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": profile.model_id,
             "messages": [
                 {"role": "system", "content": context.system_prompt},
                 {"role": "user", "content": context.user_prompt}
             ],
-            "max_tokens": profile.max_output_tokens,
             "stream": stream
         });
+        let token_field = if profile.provider == ModelProvider::OpenAi {
+            "max_completion_tokens"
+        } else {
+            "max_tokens"
+        };
+        body[token_field] = serde_json::json!(profile.max_output_tokens);
         let attempts = usize::from(profile.retry_limit) + 1;
         for attempt in 0..attempts {
             if cancelled.load(Ordering::Relaxed) {
@@ -198,6 +206,97 @@ impl ModelGateway {
                     if attempt + 1 < attempts
                         && matches!(mapped, AiError::Network | AiError::Timeout)
                     {
+                        tokio::time::sleep(Duration::from_millis(250 * (attempt as u64 + 1))).await;
+                        continue;
+                    }
+                    return Err(mapped);
+                }
+            }
+        }
+        Err(AiError::ProviderUnavailable)
+    }
+}
+
+pub struct EmbeddingGateway {
+    client: reqwest::Client,
+}
+
+impl Default for EmbeddingGateway {
+    fn default() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+impl EmbeddingGateway {
+    pub async fn embed(
+        &self,
+        profile: &ModelProfile,
+        secret: &str,
+        input: &str,
+    ) -> Result<Vec<f32>, AiError> {
+        if profile.capability != ModelCapability::Embedding {
+            return Err(AiContractError::InvalidProviderCapability.into());
+        }
+        if secret.trim().is_empty() {
+            return Err(AiError::MissingSecret);
+        }
+        if input.trim().is_empty() {
+            return Err(AiContractError::EmptyAcceptedText.into());
+        }
+        let endpoint = format!("{}/embeddings", profile.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({ "model": profile.model_id, "input": input });
+        let attempts = usize::from(profile.retry_limit) + 1;
+        for attempt in 0..attempts {
+            match self
+                .client
+                .post(&endpoint)
+                .timeout(Duration::from_secs(u64::from(profile.timeout_seconds)))
+                .bearer_auth(secret)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        let error = map_status(response.status());
+                        if attempt + 1 < attempts
+                            && matches!(error, AiError::RateLimited | AiError::ProviderUnavailable)
+                        {
+                            tokio::time::sleep(Duration::from_millis(250 * (attempt as u64 + 1)))
+                                .await;
+                            continue;
+                        }
+                        return Err(error);
+                    }
+                    let value: serde_json::Value = response
+                        .json()
+                        .await
+                        .map_err(|_| AiError::InvalidResponse)?;
+                    let vector = value
+                        .pointer("/data/0/embedding")
+                        .and_then(serde_json::Value::as_array)
+                        .ok_or(AiError::InvalidResponse)?
+                        .iter()
+                        .map(|item| {
+                            item.as_f64()
+                                .map(embedding_component)
+                                .ok_or(AiError::InvalidResponse)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if vector.is_empty() {
+                        return Err(AiError::InvalidResponse);
+                    }
+                    return Ok(vector);
+                }
+                Err(error) => {
+                    let mapped = if error.is_timeout() {
+                        AiError::Timeout
+                    } else {
+                        AiError::Network
+                    };
+                    if attempt + 1 < attempts {
                         tokio::time::sleep(Duration::from_millis(250 * (attempt as u64 + 1))).await;
                         continue;
                     }
@@ -269,11 +368,16 @@ fn map_status(status: StatusCode) -> AiError {
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
+fn embedding_component(number: f64) -> f32 {
+    number as f32
+}
+
 impl ProjectManager {
     pub fn list_model_profiles(&self) -> Result<Vec<ModelProfile>, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
         let mut statement = session.database.connection.prepare(
-            "SELECT id, name, provider, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles ORDER BY updated_at DESC"
+            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles ORDER BY updated_at DESC"
         ).map_err(DatabaseError::from)?;
         let rows = statement
             .query_map([], read_profile)
@@ -286,7 +390,7 @@ impl ProjectManager {
     pub fn get_model_profile(&self, id: Uuid) -> Result<ModelProfile, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
         session.database.connection.query_row(
-            "SELECT id, name, provider, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles WHERE id = ?1",
+            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles WHERE id = ?1",
             [id.to_string()], read_profile,
         ).optional().map_err(DatabaseError::from)?.ok_or(AiError::MissingProfile(id))
     }
@@ -299,10 +403,10 @@ impl ProjectManager {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
         let id = input.id.unwrap_or_else(Uuid::new_v4);
         session.database.connection.execute(
-            "INSERT INTO model_profiles (id, name, provider, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-             ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, base_url=excluded.base_url, model_id=excluded.model_id, context_window=excluded.context_window, max_output_tokens=excluded.max_output_tokens, privacy_level=excluded.privacy_level, timeout_seconds=excluded.timeout_seconds, retry_limit=excluded.retry_limit, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-            rusqlite::params![id.to_string(), input.name.trim(), provider_str(input.provider), input.base_url.trim_end_matches('/'), input.model_id.trim(), input.context_window, input.max_output_tokens, privacy_str(input.privacy_level), input.timeout_seconds, input.retry_limit],
+            "INSERT INTO model_profiles (id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, capability=excluded.capability, base_url=excluded.base_url, model_id=excluded.model_id, context_window=excluded.context_window, max_output_tokens=excluded.max_output_tokens, privacy_level=excluded.privacy_level, timeout_seconds=excluded.timeout_seconds, retry_limit=excluded.retry_limit, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            rusqlite::params![id.to_string(), input.name.trim(), provider_str(input.provider), capability_str(input.capability), input.base_url.trim_end_matches('/'), input.model_id.trim(), input.context_window, input.max_output_tokens, privacy_str(input.privacy_level), input.timeout_seconds, input.retry_limit],
         ).map_err(DatabaseError::from)?;
         self.get_model_profile(id)
     }
@@ -329,6 +433,21 @@ impl ProjectManager {
         context: &ContextPackage,
     ) -> Result<Uuid, AiError> {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        let capability: Option<String> = session
+            .database
+            .connection
+            .query_row(
+                "SELECT capability FROM model_profiles WHERE id = ?1",
+                [profile_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(DatabaseError::from)?;
+        match capability.as_deref() {
+            None => return Err(AiError::MissingProfile(profile_id)),
+            Some("CHAT") => {}
+            Some(_) => return Err(AiContractError::InvalidProviderCapability.into()),
+        }
         let task_id = Uuid::new_v4();
         session.database.connection.execute(
             "INSERT INTO ai_tasks (id, profile_id, chapter_id, action, target_revision_id, context_version, prompt_version, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -428,22 +547,23 @@ impl ProjectManager {
 }
 
 fn read_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelProfile> {
-    let secret_ref: Option<String> = row.get(10)?;
+    let secret_ref: Option<String> = row.get(11)?;
     Ok(ModelProfile {
         id: parse_uuid(row.get::<_, String>(0)?, 0)?,
         name: row.get(1)?,
         provider: parse_provider(&row.get::<_, String>(2)?),
-        base_url: row.get(3)?,
-        model_id: row.get(4)?,
-        context_window: row.get(5)?,
-        max_output_tokens: row.get(6)?,
-        privacy_level: parse_privacy(&row.get::<_, String>(7)?),
-        timeout_seconds: row.get(8)?,
-        retry_limit: row.get(9)?,
+        capability: parse_capability(&row.get::<_, String>(3)?),
+        base_url: row.get(4)?,
+        model_id: row.get(5)?,
+        context_window: row.get(6)?,
+        max_output_tokens: row.get(7)?,
+        privacy_level: parse_privacy(&row.get::<_, String>(8)?),
+        timeout_seconds: row.get(9)?,
+        retry_limit: row.get(10)?,
         has_secret: secret_ref.is_some(),
         secret_ref,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
     })
 }
 
@@ -479,14 +599,30 @@ fn parse_uuid(value: String, column: usize) -> rusqlite::Result<Uuid> {
 fn provider_str(value: ModelProvider) -> &'static str {
     match value {
         ModelProvider::SiliconFlow => "SILICON_FLOW",
+        ModelProvider::DeepSeek => "DEEPSEEK",
+        ModelProvider::OpenAi => "OPEN_AI",
         ModelProvider::OpenAiCompatible => "OPEN_AI_COMPATIBLE",
     }
 }
 fn parse_provider(value: &str) -> ModelProvider {
-    if value == "SILICON_FLOW" {
-        ModelProvider::SiliconFlow
+    match value {
+        "SILICON_FLOW" => ModelProvider::SiliconFlow,
+        "DEEPSEEK" => ModelProvider::DeepSeek,
+        "OPEN_AI" => ModelProvider::OpenAi,
+        _ => ModelProvider::OpenAiCompatible,
+    }
+}
+fn capability_str(value: ModelCapability) -> &'static str {
+    match value {
+        ModelCapability::Chat => "CHAT",
+        ModelCapability::Embedding => "EMBEDDING",
+    }
+}
+fn parse_capability(value: &str) -> ModelCapability {
+    if value == "EMBEDDING" {
+        ModelCapability::Embedding
     } else {
-        ModelProvider::OpenAiCompatible
+        ModelCapability::Chat
     }
 }
 fn privacy_str(value: PrivacyLevel) -> &'static str {
@@ -572,6 +708,7 @@ mod tests {
             id: uuid::Uuid::new_v4(),
             name: "mock".into(),
             provider: novel_domain::ModelProvider::OpenAiCompatible,
+            capability: novel_domain::ModelCapability::Chat,
             base_url,
             model_id: "mock-model".into(),
             context_window: 4_096,
@@ -691,5 +828,36 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(super::AiError::Timeout)));
+    }
+
+    #[tokio::test]
+    async fn embedding_gateway_reads_vectors_and_rejects_chat_profiles() {
+        let gateway = super::EmbeddingGateway::default();
+        let embedding_url = serve(
+            r#"{"data":[{"embedding":[0.25,-0.5,0.75]}]}"#,
+            "application/json",
+            Duration::ZERO,
+        );
+        let mut embedding_profile = profile(embedding_url, 3);
+        embedding_profile.provider = novel_domain::ModelProvider::SiliconFlow;
+        embedding_profile.capability = novel_domain::ModelCapability::Embedding;
+        let vector = gateway
+            .embed(&embedding_profile, "test-key", "测试文本")
+            .await
+            .expect("embedding");
+        assert_eq!(vector, vec![0.25, -0.5, 0.75]);
+
+        assert!(matches!(
+            gateway
+                .embed(
+                    &profile("https://example.invalid/v1".into(), 3),
+                    "test-key",
+                    "text"
+                )
+                .await,
+            Err(super::AiError::Contract(
+                novel_domain::AiContractError::InvalidProviderCapability
+            ))
+        ));
     }
 }

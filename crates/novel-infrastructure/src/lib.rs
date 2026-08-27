@@ -20,10 +20,10 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod ai;
-pub use ai::{AiError, ModelGateway, SecretStore};
+pub use ai::{AiError, EmbeddingGateway, ModelGateway, SecretStore};
 pub use novel_domain::{
-    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, ModelProfile, ModelProfileInput,
-    ModelProvider, PrivacyLevel,
+    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, ModelCapability, ModelProfile,
+    ModelProfileInput, ModelProvider, PrivacyLevel,
 };
 
 #[derive(Debug, Error)]
@@ -895,6 +895,13 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (7, 'r3_ai_creation_loop');",
             )?;
         }
+        if applied.unwrap_or(0) < 8 {
+            self.connection.execute_batch(
+                "ALTER TABLE model_profiles ADD COLUMN capability TEXT NOT NULL DEFAULT 'CHAT';
+                UPDATE model_profiles SET capability = 'EMBEDDING' WHERE provider = 'SILICON_FLOW';
+                INSERT INTO schema_migrations (version, name) VALUES (8, 'model_capabilities');",
+            )?;
+        }
         Ok(())
     }
 
@@ -1448,7 +1455,7 @@ mod tests {
     fn sqlite_applies_pragmas_and_initial_migration() {
         let database = Database::in_memory().expect("in-memory database");
         let health = database.health().expect("database health");
-        assert_eq!(health.schema_version, 7);
+        assert_eq!(health.schema_version, 8);
         assert_eq!(health.journal_mode, "memory");
         assert!(health.foreign_keys_enabled);
         assert!(!health.sqlite_version.is_empty());
@@ -1634,10 +1641,11 @@ mod tests {
         let profile = manager
             .upsert_model_profile(super::ModelProfileInput {
                 id: None,
-                name: "硅基流动".into(),
-                provider: super::ModelProvider::SiliconFlow,
-                base_url: "https://api.siliconflow.cn/v1".into(),
-                model_id: "test/model".into(),
+                name: "DeepSeek".into(),
+                provider: super::ModelProvider::DeepSeek,
+                capability: super::ModelCapability::Chat,
+                base_url: "https://api.deepseek.com".into(),
+                model_id: "deepseek-chat".into(),
                 context_window: 8_192,
                 max_output_tokens: 1_024,
                 privacy_level: super::PrivacyLevel::AllowCloud,
@@ -1702,6 +1710,7 @@ mod tests {
                 id: None,
                 name: "云端".into(),
                 provider: super::ModelProvider::OpenAiCompatible,
+                capability: super::ModelCapability::Chat,
                 base_url: "https://api.example.com/v1".into(),
                 model_id: "model".into(),
                 context_window: 4096,
@@ -1735,6 +1744,53 @@ mod tests {
                 .expect("proposals")
                 .is_empty()
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn embedding_profiles_cannot_create_writing_tasks() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-embedding-role-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "Embedding 角色测试").expect("create");
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
+        let profile = manager
+            .upsert_model_profile(super::ModelProfileInput {
+                id: None,
+                name: "硅基流动 Embedding".into(),
+                provider: super::ModelProvider::SiliconFlow,
+                capability: super::ModelCapability::Embedding,
+                base_url: "https://api.siliconflow.cn/v1".into(),
+                model_id: "embedding-model".into(),
+                context_window: 4096,
+                max_output_tokens: 512,
+                privacy_level: super::PrivacyLevel::AllowCloud,
+                timeout_seconds: 30,
+                retry_limit: 0,
+            })
+            .expect("profile");
+        let context = novel_application::ContextAssembler::assemble(
+            &novel_application::AssembleContextInput {
+                chapter_id: chapter.id,
+                target_revision_id: None,
+                action: super::AiAction::Continue,
+                chapter_title: "第一章".into(),
+                chapter_plan: String::new(),
+                document_json: r#"{"type":"doc","content":[]}"#.into(),
+                selection: None,
+                instruction: None,
+                input_token_budget: 2048,
+            },
+        )
+        .expect("context");
+        assert!(matches!(
+            manager.create_ai_task(profile.id, &context),
+            Err(super::AiError::Contract(
+                novel_domain::AiContractError::InvalidProviderCapability
+            ))
+        ));
         let _ = std::fs::remove_dir_all(root);
     }
 

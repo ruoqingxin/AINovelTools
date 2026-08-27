@@ -41,10 +41,10 @@ button:focus-visible {
 .app-shell {
   display: grid;
   grid-template:
-    "title title title" 40px
-    "activity sidebar workspace" minmax(0, 1fr)
-    "status status status" 25px
-    / 52px 236px minmax(0, 1fr);
+    "title title" 44px
+    "activity workspace" minmax(0, 1fr)
+    "status status" 26px
+    / 54px minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
   background: var(--surface-subtle);
@@ -53,7 +53,7 @@ button:focus-visible {
 .title-bar {
   grid-area: title;
   display: grid;
-  grid-template-columns: 288px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   align-items: center;
   border-bottom: 1px solid var(--line);
   background: #f9faf8;
@@ -145,41 +145,6 @@ button:focus-visible {
 .activity-settings {
   margin-top: auto;
   margin-bottom: 7px;
-}
-
-.primary-sidebar {
-  grid-area: sidebar;
-  min-width: 0;
-  border-right: 1px solid var(--line);
-  background: #f5f6f4;
-}
-
-.sidebar-heading {
-  display: flex;
-  height: 42px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 13px 0 15px;
-  border-bottom: 1px solid var(--line);
-  color: #343a36;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.sidebar-count {
-  color: #858c87;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.sidebar-empty {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 14px 11px;
-  padding: 10px;
-  color: #7b837d;
-  font-size: 12px;
 }
 
 .workspace {
@@ -360,6 +325,9 @@ button:focus-visible {
 }
 
 .chapter-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-height: 34px;
   padding: 0 11px;
   border: 0;
@@ -368,6 +336,18 @@ button:focus-visible {
   background: transparent;
   font-size: 12px;
   font-weight: 650;
+}
+
+.tab-count {
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  place-items: center;
+  border-radius: 9px;
+  color: #734d0f;
+  background: #f4dfb8;
+  font-size: 10px;
 }
 
 .chapter-tabs button[data-active] {
@@ -476,6 +456,33 @@ button:focus-visible {
   margin-top: 12px;
 }
 
+.model-profile-switcher {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.model-profile-switcher select {
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: inherit;
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.icon-command {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  place-items: center;
+  border-radius: 5px;
+}
+
 .model-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -494,7 +501,8 @@ button:focus-visible {
 .model-grid input,
 .model-grid select,
 .model-settings > select,
-.ai-instruction input {
+.ai-instruction input,
+.ai-instruction select {
   min-width: 0;
   min-height: 34px;
   padding: 0 9px;
@@ -503,6 +511,12 @@ button:focus-visible {
   color: inherit;
   background: var(--surface);
   font-size: 12px;
+}
+
+.connection-status {
+  margin: 9px 0 0;
+  color: var(--accent-strong);
+  font-size: 11px;
 }
 
 .model-wide {
@@ -917,11 +931,7 @@ button:focus-visible {
   }
 
   .title-bar {
-    grid-template-columns: 220px minmax(0, 1fr);
-  }
-
-  .primary-sidebar {
-    display: none;
+    grid-template-columns: 190px minmax(0, 1fr);
   }
 
   .empty-project-view {
@@ -939,6 +949,8 @@ button:focus-visible {
   .ai-action-grid { grid-template-columns: 1fr; }
   .model-wide { grid-column: auto; }
   .ai-actions { flex-wrap: wrap; }
+  .chapter-tabs { overflow-x: auto; }
+  .chapter-tabs button { flex: 0 0 auto; }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -954,8 +966,7 @@ button:focus-visible {
     --accent-strong: #69c3ba;
   }
 
-  .title-bar,
-  .primary-sidebar {
+  .title-bar {
     background: #282d29;
   }
 
