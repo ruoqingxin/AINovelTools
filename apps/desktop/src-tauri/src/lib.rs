@@ -195,6 +195,22 @@ fn save_manuscript(
 }
 
 #[tauri::command]
+fn save_manuscript_checked(
+    state: tauri::State<'_, ProjectState>, chapter_id: uuid::Uuid, base_revision_id: Option<uuid::Uuid>, document_json: String, creation_reason: String,
+) -> Result<novel_infrastructure::ManuscriptRevision, String> {
+    let mut manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
+    manager.save_manuscript_checked(chapter_id, base_revision_id, document_json, creation_reason).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_recovery_log(
+    state: tauri::State<'_, ProjectState>, chapter_id: uuid::Uuid, document_json: String,
+) -> Result<(), String> {
+    let mut manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
+    manager.save_recovery_log(chapter_id, document_json).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn list_manuscript_revisions(
     state: tauri::State<'_, ProjectState>,
     chapter_id: uuid::Uuid,
@@ -206,6 +222,14 @@ fn list_manuscript_revisions(
     manager
         .list_manuscript_revisions(chapter_id)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_recovery_logs(
+    state: tauri::State<'_, ProjectState>, chapter_id: uuid::Uuid,
+) -> Result<Vec<novel_infrastructure::RecoveryLog>, String> {
+    let manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
+    manager.list_recovery_logs(chapter_id).map_err(|error| error.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -234,7 +258,10 @@ pub fn run() {
             update_plan_node_checked,
             current_manuscript,
             list_manuscript_revisions,
-            save_manuscript
+            list_recovery_logs,
+            save_manuscript,
+            save_manuscript_checked,
+            save_recovery_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

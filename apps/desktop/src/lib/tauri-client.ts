@@ -45,6 +45,7 @@ export type ManuscriptRevision = {
 };
 
 export type FeatureDescriptor = { id: string; status: "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED" };
+export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
 
 export function getBootstrapStatus() {
   return invoke<BootstrapStatus>("bootstrap_status");
@@ -102,8 +103,20 @@ export function listManuscriptRevisions(chapterId: string) {
   return invoke<ManuscriptRevision[]>("list_manuscript_revisions", { chapterId });
 }
 
+export function saveRecoveryLog(input: { chapterId: string; documentJson: string }) {
+  return invoke<void>("save_recovery_log", input);
+}
+
+export function listRecoveryLogs(chapterId: string) {
+  return invoke<RecoveryLog[]>("list_recovery_logs", { chapterId });
+}
+
 export function saveManuscript(input: { chapterId: string; documentJson: string; creationReason: string }) {
   return invoke<ManuscriptRevision>("save_manuscript", input);
+}
+
+export function saveManuscriptChecked(input: { chapterId: string; baseRevisionId?: string; documentJson: string; creationReason: string }) {
+  return invoke<ManuscriptRevision>("save_manuscript_checked", input);
 }
 
 export function invalidateProjectQueries(queryClient: { invalidateQueries: (options: { queryKey: string[] }) => Promise<unknown> }) {

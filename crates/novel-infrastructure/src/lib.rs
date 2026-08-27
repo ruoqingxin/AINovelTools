@@ -1,6 +1,6 @@
 //! Adapters for persistence, files, model providers, and operating-system APIs.
 
-#![allow(clippy::missing_errors_doc, clippy::items_after_statements, clippy::match_same_arms, clippy::needless_pass_by_value)]
+#![allow(clippy::missing_errors_doc, clippy::items_after_statements, clippy::match_same_arms, clippy::needless_pass_by_value, clippy::too_many_lines, clippy::collapsible_if)]
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -121,9 +121,19 @@ pub enum PlanError {
     MissingNode(Uuid),
     #[error("plan revision conflict: expected {expected}, actual {actual}")]
     Conflict { expected: i64, actual: i64 },
+    #[error("invalid parent kind for plan node")]
+    InvalidParentKind,
     #[error("plan database operation failed: {0}")]
     Database(#[from] DatabaseError),
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ErrorCode { NoProjectOpen, InvalidInput, NotFound, VersionConflict, InvalidDocument, Database, FeatureNotAvailable }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryLog { pub id: Uuid, pub chapter_id: Uuid, pub document_json: String, pub created_at: String }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -351,12 +361,23 @@ impl ProjectManager {
         let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
         session
             .database
-            .save_manuscript(chapter_id, document_json, creation_reason)
+            .save_manuscript_checked(chapter_id, None, document_json, creation_reason)
+    }
+
+    pub fn save_manuscript_checked(&mut self, chapter_id: Uuid, base_revision_id: Option<Uuid>, document_json: String, creation_reason: String) -> Result<ManuscriptRevision, ManuscriptError> {
+        if document_json.trim().is_empty() { return Err(ManuscriptError::EmptyDocument); }
+        let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
+        session.database.save_manuscript_checked(chapter_id, base_revision_id, document_json, creation_reason)
     }
 
     pub fn save_recovery_log(&mut self, chapter_id: Uuid, document_json: String) -> Result<(), ManuscriptError> {
         let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
         session.database.save_recovery_log(chapter_id, document_json).map_err(ManuscriptError::Database)
+    }
+
+    pub fn list_recovery_logs(&self, chapter_id: Uuid) -> Result<Vec<RecoveryLog>, ManuscriptError> {
+        let session = self.current.as_ref().ok_or(ManuscriptError::NoProject)?;
+        session.database.list_recovery_logs(chapter_id).map_err(ManuscriptError::Database)
     }
 }
 
@@ -528,6 +549,14 @@ impl Database {
                     document_json TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
                 );
+                CREATE TRIGGER IF NOT EXISTS prevent_manuscript_revision_update
+                    BEFORE UPDATE ON manuscript_revisions BEGIN SELECT RAISE(ABORT, 'immutable manuscript revision'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_manuscript_revision_delete
+                    BEFORE DELETE ON manuscript_revisions BEGIN SELECT RAISE(ABORT, 'immutable manuscript revision'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_plan_revision_update
+                    BEFORE UPDATE ON plan_revisions BEGIN SELECT RAISE(ABORT, 'immutable plan revision'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_plan_revision_delete
+                    BEFORE DELETE ON plan_revisions BEGIN SELECT RAISE(ABORT, 'immutable plan revision'); END;
                 INSERT INTO schema_migrations (version, name) VALUES (5, 'immutable_revisions_and_recovery');",
             )?;
         }
@@ -591,17 +620,21 @@ impl Database {
         title: String,
     ) -> Result<PlanNode, PlanError> {
         if let Some(parent) = parent_id {
-            let exists: bool = self
+            let parent_kind: Option<String> = self
                 .connection
                 .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM plan_nodes WHERE id = ?1 AND archived = 0)",
+                    "SELECT kind FROM plan_nodes WHERE id = ?1 AND archived = 0",
                     [parent.to_string()],
                     |row| row.get(0),
                 )
-                .map_err(DatabaseError::from)?;
-            if !exists {
-                return Err(PlanError::MissingParent(parent));
-            }
+                .optional().map_err(DatabaseError::from)?;
+            let parent_kind = parent_kind.ok_or(PlanError::MissingParent(parent))?;
+            let valid = matches!((parent_kind.as_str(), kind),
+                ("WORK_DESIGN", PlanNodeKind::Outline) |
+                ("OUTLINE", PlanNodeKind::Volume | PlanNodeKind::Chapter) |
+                ("VOLUME", PlanNodeKind::Chapter) |
+                ("CHAPTER", PlanNodeKind::Scene));
+            if !valid { return Err(PlanError::InvalidParentKind); }
         }
         let sort_order: i64 = self
             .connection
@@ -633,6 +666,10 @@ impl Database {
                 ],
             )
             .map_err(DatabaseError::from)?;
+        self.connection.execute(
+            "INSERT INTO plan_revisions (id, node_id, revision, title, archived) VALUES (?1, ?2, 1, ?3, 0)",
+            rusqlite::params![Uuid::new_v4().to_string(), node.id.to_string(), node.title],
+        ).map_err(DatabaseError::from)?;
         self.connection
             .execute(
                 "INSERT INTO plan_node_revisions (id, node_id, revision, title, archived)
@@ -674,6 +711,10 @@ impl Database {
                 ],
             )
             .map_err(DatabaseError::from)?;
+        self.connection.execute(
+            "INSERT INTO plan_revisions (id, node_id, revision, parent_revision_id, title, archived) SELECT ?1, ?2, ?3, id, ?4, ?5 FROM plan_revisions WHERE node_id = ?2 ORDER BY revision DESC LIMIT 1",
+            rusqlite::params![Uuid::new_v4().to_string(), id.to_string(), revision, title, i64::from(archived)],
+        ).map_err(DatabaseError::from)?;
         Ok(PlanNode {
             title,
             archived,
@@ -780,9 +821,10 @@ impl Database {
             .map_err(DatabaseError::from)
     }
 
-    fn save_manuscript(
+    fn save_manuscript_checked(
         &mut self,
         chapter_id: Uuid,
+        base_revision_id: Option<Uuid>,
         mut document_json: String,
         creation_reason: String,
     ) -> Result<ManuscriptRevision, ManuscriptError> {
@@ -801,6 +843,9 @@ impl Database {
         let parent_revision_id = self
             .current_manuscript(chapter_id)?
             .map(|revision| revision.id);
+        if let Some(expected) = base_revision_id {
+            if Some(expected) != parent_revision_id { return Err(ManuscriptError::Conflict { expected: Some(expected), actual: parent_revision_id }); }
+        }
         let mut hasher = Sha256::new();
         hasher.update(document_json.as_bytes());
         let revision = ManuscriptRevision {
@@ -825,6 +870,16 @@ impl Database {
         validate_document(&document_json).map_err(|e| DatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(e.to_string())))?;
         self.connection.execute("INSERT INTO recovery_logs (id, chapter_id, document_json) VALUES (?1, ?2, ?3)", rusqlite::params![Uuid::new_v4().to_string(), chapter_id.to_string(), document_json])?;
         Ok(())
+    }
+
+    fn list_recovery_logs(&self, chapter_id: Uuid) -> Result<Vec<RecoveryLog>, DatabaseError> {
+        let mut statement = self.connection.prepare("SELECT id, chapter_id, document_json, created_at FROM recovery_logs WHERE chapter_id = ?1 ORDER BY created_at DESC, rowid DESC")?;
+        let rows = statement.query_map([chapter_id.to_string()], |row| Ok(RecoveryLog {
+            id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?,
+            chapter_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e)))?,
+            document_json: row.get(2)?, created_at: row.get(3)?,
+        }))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
     }
 
     /// Reads the SQLite and migration state used by the desktop health query.

@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "pnpm --filter @ainoveltools/desktop tauri dev",
     "build": "pnpm --filter @ainoveltools/desktop build",
-    "check": "pnpm -r check && cargo clippy --workspace --all-targets -- -D warnings",
+    "check": "pnpm -r check && node tools/validate-ipc-contract.mjs && cargo clippy --workspace --all-targets -- -D warnings",
     "test": "pnpm -r test && cargo test --workspace",
     "tauri": "pnpm --filter @ainoveltools/desktop tauri"
   }
