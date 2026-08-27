@@ -4,6 +4,35 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiError { code: &'static str, message: String }
+
+impl ApiError {
+    fn internal(message: impl Into<String>) -> Self { Self { code: "INTERNAL_ERROR", message: message.into() } }
+}
+
+impl From<novel_infrastructure::ProjectError> for ApiError {
+    fn from(error: novel_infrastructure::ProjectError) -> Self {
+        let code = match error { novel_infrastructure::ProjectError::InvalidPath(_) => "INVALID_INPUT", novel_infrastructure::ProjectError::AlreadyExists(_) => "PROJECT_ALREADY_EXISTS", novel_infrastructure::ProjectError::NotInitialized(_) => "PROJECT_NOT_INITIALIZED", novel_infrastructure::ProjectError::Io(_) => "FILE_SYSTEM_ERROR", novel_infrastructure::ProjectError::Manifest(_) => "INVALID_MANIFEST", novel_infrastructure::ProjectError::Database(_) => "DATABASE_ERROR" };
+        Self { code, message: error.to_string() }
+    }
+}
+
+impl From<novel_infrastructure::PlanError> for ApiError {
+    fn from(error: novel_infrastructure::PlanError) -> Self {
+        let code = match error { novel_infrastructure::PlanError::NoProject => "NO_PROJECT_OPEN", novel_infrastructure::PlanError::EmptyTitle | novel_infrastructure::PlanError::InvalidParentKind | novel_infrastructure::PlanError::Cycle => "INVALID_INPUT", novel_infrastructure::PlanError::MissingParent(_) | novel_infrastructure::PlanError::MissingNode(_) => "NOT_FOUND", novel_infrastructure::PlanError::Conflict { .. } => "VERSION_CONFLICT", novel_infrastructure::PlanError::Database(_) => "DATABASE_ERROR" };
+        Self { code, message: error.to_string() }
+    }
+}
+
+impl From<novel_infrastructure::ManuscriptError> for ApiError {
+    fn from(error: novel_infrastructure::ManuscriptError) -> Self {
+        let code = match error { novel_infrastructure::ManuscriptError::NoProject => "NO_PROJECT_OPEN", novel_infrastructure::ManuscriptError::MissingChapter(_) => "NOT_FOUND", novel_infrastructure::ManuscriptError::EmptyDocument | novel_infrastructure::ManuscriptError::InvalidDocument(_) => "INVALID_DOCUMENT", novel_infrastructure::ManuscriptError::Conflict { .. } => "VERSION_CONFLICT", novel_infrastructure::ManuscriptError::Database(_) => "DATABASE_ERROR" };
+        Self { code, message: error.to_string() }
+    }
+}
+
 struct ProjectState {
     manager: Mutex<novel_infrastructure::ProjectManager>,
 }
@@ -67,14 +96,14 @@ fn create_project(
     state: tauri::State<'_, ProjectState>,
     root: String,
     name: String,
-) -> Result<novel_infrastructure::ProjectManifest, String> {
+) -> Result<novel_infrastructure::ProjectManifest, ApiError> {
     let mut manager = state
         .manager
         .lock()
-        .map_err(|_| "project mutex poisoned".to_owned())?;
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
         .create(root, name)
-        .map_err(|error| error.to_string())
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -82,12 +111,12 @@ fn create_project(
 fn open_project(
     state: tauri::State<'_, ProjectState>,
     root: String,
-) -> Result<novel_infrastructure::ProjectManifest, String> {
+) -> Result<novel_infrastructure::ProjectManifest, ApiError> {
     let mut manager = state
         .manager
         .lock()
-        .map_err(|_| "project mutex poisoned".to_owned())?;
-    manager.open(root).map_err(|error| error.to_string())
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.open(root).map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -114,12 +143,12 @@ fn current_project(
 #[allow(clippy::needless_pass_by_value)]
 fn list_plan_nodes(
     state: tauri::State<'_, ProjectState>,
-) -> Result<Vec<novel_infrastructure::PlanNode>, String> {
+) -> Result<Vec<novel_infrastructure::PlanNode>, ApiError> {
     let manager = state
         .manager
         .lock()
-        .map_err(|_| "project mutex poisoned".to_owned())?;
-    manager.list_plan_nodes().map_err(|error| error.to_string())
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_plan_nodes().map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -129,14 +158,14 @@ fn create_plan_node(
     parent_id: Option<uuid::Uuid>,
     kind: novel_infrastructure::PlanNodeKind,
     title: String,
-) -> Result<novel_infrastructure::PlanNode, String> {
+) -> Result<novel_infrastructure::PlanNode, ApiError> {
     let mut manager = state
         .manager
         .lock()
-        .map_err(|_| "project mutex poisoned".to_owned())?;
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
         .create_plan_node(parent_id, kind, title)
-        .map_err(|error| error.to_string())
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -146,42 +175,42 @@ fn update_plan_node(
     id: uuid::Uuid,
     title: String,
     archived: bool,
-) -> Result<novel_infrastructure::PlanNode, String> {
+) -> Result<novel_infrastructure::PlanNode, ApiError> {
     let mut manager = state
         .manager
         .lock()
-        .map_err(|_| "project mutex poisoned".to_owned())?;
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
         .update_plan_node(id, title, archived)
-        .map_err(|error| error.to_string())
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
 fn update_plan_node_checked(
     state: tauri::State<'_, ProjectState>, id: uuid::Uuid, title: String, archived: bool, expected_version: i64,
-) -> Result<novel_infrastructure::PlanNode, String> {
-    let mut manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
-    manager.update_plan_node_checked(id, title, archived, expected_version).map_err(|error| error.to_string())
+) -> Result<novel_infrastructure::PlanNode, ApiError> {
+    let mut manager = state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.update_plan_node_checked(id, title, archived, expected_version).map_err(ApiError::from)
 }
 
 #[tauri::command]
-fn move_plan_node(state: tauri::State<'_, ProjectState>, id: uuid::Uuid, parent_id: Option<uuid::Uuid>, expected_version: i64) -> Result<novel_infrastructure::PlanNode, String> {
-    let mut manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
-    manager.move_plan_node(id, parent_id, expected_version).map_err(|error| error.to_string())
+fn move_plan_node(state: tauri::State<'_, ProjectState>, id: uuid::Uuid, parent_id: Option<uuid::Uuid>, expected_version: i64) -> Result<novel_infrastructure::PlanNode, ApiError> {
+    let mut manager = state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.move_plan_node(id, parent_id, expected_version).map_err(ApiError::from)
 }
 
 #[tauri::command]
 fn current_manuscript(
     state: tauri::State<'_, ProjectState>,
     chapter_id: uuid::Uuid,
-) -> Result<Option<novel_infrastructure::ManuscriptRevision>, String> {
+) -> Result<Option<novel_infrastructure::ManuscriptRevision>, ApiError> {
     let manager = state
         .manager
         .lock()
-        .map_err(|_| "project mutex poisoned".to_owned())?;
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
         .current_manuscript(chapter_id)
-        .map_err(|error| error.to_string())
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -190,64 +219,70 @@ fn save_manuscript(
     chapter_id: uuid::Uuid,
     document_json: String,
     creation_reason: String,
-) -> Result<novel_infrastructure::ManuscriptRevision, String> {
+) -> Result<novel_infrastructure::ManuscriptRevision, ApiError> {
     let mut manager = state
         .manager
         .lock()
-        .map_err(|_| "project mutex poisoned".to_owned())?;
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
         .save_manuscript(chapter_id, document_json, creation_reason)
-        .map_err(|error| error.to_string())
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
 fn save_manuscript_checked(
     state: tauri::State<'_, ProjectState>, chapter_id: uuid::Uuid, base_revision_id: Option<uuid::Uuid>, document_json: String, creation_reason: String,
-) -> Result<novel_infrastructure::ManuscriptRevision, String> {
-    let mut manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
-    manager.save_manuscript_checked(chapter_id, base_revision_id, document_json, creation_reason).map_err(|error| error.to_string())
+) -> Result<novel_infrastructure::ManuscriptRevision, ApiError> {
+    let mut manager = state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.save_manuscript_checked(chapter_id, base_revision_id, document_json, creation_reason).map_err(ApiError::from)
 }
 
 #[tauri::command]
-fn merge_manuscript(state: tauri::State<'_, ProjectState>, base: String, current: String, draft: String) -> Result<novel_infrastructure::MergeResult, String> {
-    let manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
-    manager.merge_manuscript(&base, &current, &draft).map_err(|error| error.to_string())
+fn merge_manuscript(state: tauri::State<'_, ProjectState>, base: String, current: String, draft: String) -> Result<novel_infrastructure::MergeResult, ApiError> {
+    let manager = state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.merge_manuscript(&base, &current, &draft).map_err(ApiError::from)
 }
 
 #[tauri::command]
 fn save_recovery_log(
     state: tauri::State<'_, ProjectState>, chapter_id: uuid::Uuid, document_json: String,
-) -> Result<(), String> {
-    let mut manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
-    manager.save_recovery_log(chapter_id, document_json).map_err(|error| error.to_string())
+) -> Result<(), ApiError> {
+    let mut manager = state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.save_recovery_log(chapter_id, document_json).map_err(ApiError::from)
 }
 
 #[tauri::command]
 fn list_manuscript_revisions(
     state: tauri::State<'_, ProjectState>,
     chapter_id: uuid::Uuid,
-) -> Result<Vec<novel_infrastructure::ManuscriptRevision>, String> {
+) -> Result<Vec<novel_infrastructure::ManuscriptRevision>, ApiError> {
     let manager = state
         .manager
         .lock()
-        .map_err(|_| "project mutex poisoned".to_owned())?;
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
         .list_manuscript_revisions(chapter_id)
-        .map_err(|error| error.to_string())
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
 fn list_recovery_logs(
     state: tauri::State<'_, ProjectState>, chapter_id: uuid::Uuid,
-) -> Result<Vec<novel_infrastructure::RecoveryLog>, String> {
-    let manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
-    manager.list_recovery_logs(chapter_id).map_err(|error| error.to_string())
+) -> Result<Vec<novel_infrastructure::RecoveryLog>, ApiError> {
+    let manager = state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_recovery_logs(chapter_id).map_err(ApiError::from)
 }
 
 #[tauri::command]
-fn list_all_recovery_logs(state: tauri::State<'_, ProjectState>) -> Result<Vec<novel_infrastructure::RecoveryLog>, String> {
-    let manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
-    manager.list_all_recovery_logs().map_err(|error| error.to_string())
+fn list_all_recovery_logs(state: tauri::State<'_, ProjectState>) -> Result<Vec<novel_infrastructure::RecoveryLog>, ApiError> {
+    let manager = state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_all_recovery_logs().map_err(ApiError::from)
+}
+
+#[tauri::command]
+fn clear_recovery_logs(state: tauri::State<'_, ProjectState>, chapter_id: uuid::Uuid) -> Result<(), ApiError> {
+    let mut manager = state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.clear_recovery_logs(chapter_id).map_err(ApiError::from)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -279,6 +314,7 @@ pub fn run() {
             list_manuscript_revisions,
             list_recovery_logs,
             list_all_recovery_logs,
+            clear_recovery_logs,
             save_manuscript,
             save_manuscript_checked,
             merge_manuscript,

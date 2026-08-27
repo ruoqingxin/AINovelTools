@@ -5,6 +5,13 @@ export type BootstrapStatus = {
   layers: ["domain", "application", "infrastructure"];
 };
 
+export type ApiError = { code: string; message: string };
+
+export function errorMessage(cause: unknown) {
+  if (cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string") return cause.message;
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 export type DatabaseHealth = {
   status: "PROJECT_HEALTHY" | "NO_PROJECT_OPEN";
   sqliteVersion: string;
@@ -44,7 +51,7 @@ export type ManuscriptRevision = {
   createdAt: string;
 };
 
-export type FeatureDescriptor = { id: string; status: "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED" };
+export type FeatureDescriptor = { id: string; displayName: string; stage: string; status: "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED"; unavailableReason: string | null };
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
 export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
 export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
@@ -119,6 +126,10 @@ export function listRecoveryLogs(chapterId: string) {
 
 export function listAllRecoveryLogs() {
   return invoke<RecoveryLog[]>("list_all_recovery_logs");
+}
+
+export function clearRecoveryLogs(chapterId: string) {
+  return invoke<void>("clear_recovery_logs", { chapterId });
 }
 
 export function saveManuscript(input: { chapterId: string; documentJson: string; creationReason: string }) {

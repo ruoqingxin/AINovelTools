@@ -33,14 +33,14 @@ pub enum FeatureStatus { Implemented, Partial, Declared, Disabled }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct FeatureDescriptor { pub id: &'static str, pub status: FeatureStatus }
+pub struct FeatureDescriptor { pub id: &'static str, pub display_name: &'static str, pub stage: &'static str, pub status: FeatureStatus, pub unavailable_reason: Option<&'static str> }
 
 pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
-    FeatureDescriptor { id: "project_management", status: FeatureStatus::Implemented },
-    FeatureDescriptor { id: "plan_revisions", status: FeatureStatus::Partial },
-    FeatureDescriptor { id: "manuscript_revisions", status: FeatureStatus::Partial },
-    FeatureDescriptor { id: "recovery_log", status: FeatureStatus::Partial },
-    FeatureDescriptor { id: "conflict_merge", status: FeatureStatus::Declared },
+    FeatureDescriptor { id: "project_management", display_name: "项目管理", stage: "R0", status: FeatureStatus::Implemented, unavailable_reason: None },
+    FeatureDescriptor { id: "plan_revisions", display_name: "规划不可变修订", stage: "R1", status: FeatureStatus::Implemented, unavailable_reason: None },
+    FeatureDescriptor { id: "manuscript_revisions", display_name: "正文不可变修订", stage: "R2", status: FeatureStatus::Implemented, unavailable_reason: None },
+    FeatureDescriptor { id: "recovery_log", display_name: "编辑恢复", stage: "R2", status: FeatureStatus::Implemented, unavailable_reason: None },
+    FeatureDescriptor { id: "conflict_merge", display_name: "正文冲突合并", stage: "R2", status: FeatureStatus::Partial, unavailable_reason: Some("逐块选择工具延后实现") },
 ];
 
 pub struct Database {
@@ -158,6 +158,10 @@ pub struct ManuscriptRevision {
     pub document_schema_version: i64,
     pub created_at: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Chapter { pub id: Uuid, pub plan_node_id: Uuid, pub title: String }
 
 #[derive(Debug, Error)]
 pub enum ManuscriptError {
@@ -400,6 +404,11 @@ impl ProjectManager {
         session.database.list_all_recovery_logs().map_err(ManuscriptError::Database)
     }
 
+    pub fn clear_recovery_logs(&mut self, chapter_id: Uuid) -> Result<(), ManuscriptError> {
+        let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
+        session.database.clear_recovery_logs(chapter_id).map_err(ManuscriptError::Database)
+    }
+
     pub fn merge_manuscript(&self, base: &str, current: &str, draft: &str) -> Result<MergeResult, ManuscriptError> {
         merge_documents(base, current, draft)
     }
@@ -609,6 +618,19 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (5, 'immutable_revisions_and_recovery');",
             )?;
         }
+        if applied.unwrap_or(0) < 6 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS chapters (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    plan_node_id TEXT NOT NULL UNIQUE REFERENCES plan_nodes(id),
+                    title TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT OR IGNORE INTO chapters (id, plan_node_id, title)
+                    SELECT id, id, title FROM plan_nodes WHERE kind = 'CHAPTER';
+                INSERT INTO schema_migrations (version, name) VALUES (6, 'separate_chapter_entities');",
+            )?;
+        }
         Ok(())
     }
 
@@ -617,7 +639,7 @@ impl Database {
             .connection
             .prepare(
                 "SELECT id, parent_id, kind, title, sort_order, archived, revision
-             FROM plan_nodes ORDER BY sort_order, created_at",
+             FROM plan_nodes ORDER BY COALESCE(parent_id, ''), sort_order, created_at",
             )
             .map_err(DatabaseError::from)?;
         let rows = statement.query_map([], |row| {
@@ -715,6 +737,9 @@ impl Database {
                 ],
             )
             .map_err(DatabaseError::from)?;
+        if node.kind == PlanNodeKind::Chapter {
+            self.connection.execute("INSERT INTO chapters (id, plan_node_id, title) VALUES (?1, ?1, ?2)", rusqlite::params![node.id.to_string(), node.title]).map_err(DatabaseError::from)?;
+        }
         self.connection.execute(
             "INSERT INTO plan_revisions (id, node_id, revision, title, archived) VALUES (?1, ?2, 1, ?3, 0)",
             rusqlite::params![Uuid::new_v4().to_string(), node.id.to_string(), node.title],
@@ -903,7 +928,7 @@ impl Database {
         let exists: bool = self
             .connection
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM plan_nodes WHERE id = ?1 AND kind = 'CHAPTER')",
+                "SELECT EXISTS(SELECT 1 FROM chapters WHERE id = ?1)",
                 [chapter_id.to_string()],
                 |row| row.get(0),
             )
@@ -963,6 +988,11 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
     }
 
+    fn clear_recovery_logs(&mut self, chapter_id: Uuid) -> Result<(), DatabaseError> {
+        self.connection.execute("DELETE FROM recovery_logs WHERE chapter_id = ?1", [chapter_id.to_string()])?;
+        Ok(())
+    }
+
     /// Reads the SQLite and migration state used by the desktop health query.
     ///
     /// # Errors
@@ -1016,7 +1046,7 @@ mod tests {
     fn sqlite_applies_pragmas_and_initial_migration() {
         let database = Database::in_memory().expect("in-memory database");
         let health = database.health().expect("database health");
-        assert_eq!(health.schema_version, 5);
+        assert_eq!(health.schema_version, 6);
         assert_eq!(health.journal_mode, "memory");
         assert!(health.foreign_keys_enabled);
         assert!(!health.sqlite_version.is_empty());
@@ -1091,6 +1121,61 @@ mod tests {
             .expect("archive chapter");
         assert_eq!(updated.revision, 2);
         assert!(updated.archived);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_plan_hierarchy_and_stale_updates_are_rejected() {
+        let root = std::path::PathBuf::from("target").join(format!("ainovel-rules-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "规则测试").expect("create");
+        let chapter = manager.create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into()).expect("chapter");
+        assert!(matches!(manager.create_plan_node(Some(chapter.id), super::PlanNodeKind::Volume, "非法分卷".into()), Err(super::PlanError::InvalidParentKind)));
+        manager.update_plan_node_checked(chapter.id, "第一章修订".into(), false, 1).expect("checked update");
+        assert!(matches!(manager.update_plan_node_checked(chapter.id, "过期修改".into(), false, 1), Err(super::PlanError::Conflict { .. })));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manuscript_history_is_immutable_and_conflicts_are_detected() {
+        let root = std::path::PathBuf::from("target").join(format!("ainovel-immutable-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "正文测试").expect("create");
+        let chapter = manager.create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into()).expect("chapter");
+        let doc = r#"{"type":"doc","content":[{"type":"paragraph","attrs":{"blockId":"p1"},"content":[{"type":"text","text":"正文"}]}]}"#;
+        let first = manager.save_manuscript_checked(chapter.id, None, doc.into(), "FIRST".into()).expect("first");
+        let second = manager.save_manuscript_checked(chapter.id, Some(first.id), doc.into(), "SECOND".into()).expect("second");
+        assert!(matches!(manager.save_manuscript_checked(chapter.id, Some(first.id), doc.into(), "STALE".into()), Err(super::ManuscriptError::Conflict { actual: Some(actual), .. }) if actual == second.id));
+        let session = manager.current.as_ref().expect("session");
+        assert!(session.database.connection.execute("UPDATE manuscript_revisions SET creation_reason = 'BAD' WHERE id = ?1", [first.id.to_string()]).is_err());
+        assert!(session.database.connection.execute("DELETE FROM manuscript_revisions WHERE id = ?1", [first.id.to_string()]).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recovery_logs_survive_project_reopen() {
+        let root = std::path::PathBuf::from("target").join(format!("ainovel-recovery-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "恢复测试").expect("create");
+        let chapter = manager.create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into()).expect("chapter");
+        let doc = r#"{"type":"doc","content":[]}"#;
+        manager.save_recovery_log(chapter.id, doc.into()).expect("save recovery");
+        manager.close();
+        manager.open(&root).expect("reopen");
+        assert_eq!(manager.list_all_recovery_logs().expect("logs").len(), 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn malformed_manifest_and_database_are_rejected() {
+        let root = std::path::PathBuf::from("target").join(format!("ainovel-corrupt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("dir");
+        std::fs::write(root.join("project.json"), b"not-json").expect("manifest");
+        let mut manager = super::ProjectManager::new();
+        assert!(matches!(manager.open(&root), Err(super::ProjectError::Manifest(_))));
+        std::fs::write(root.join("project.json"), serde_json::to_vec(&super::ProjectManifest { project_id: uuid::Uuid::new_v4(), format_version: 1, name: "损坏项目".into(), created_at: "0".into() }).expect("json")).expect("manifest");
+        std::fs::write(root.join("project.sqlite"), b"not-sqlite").expect("database");
+        assert!(matches!(manager.open(&root), Err(super::ProjectError::Database(_))));
         let _ = std::fs::remove_dir_all(root);
     }
 }

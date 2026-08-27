@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { createPlanNode, currentManuscript, listManuscriptRevisions, listPlanNodes, listRecoveryLogs, mergeManuscript, saveManuscriptChecked, saveRecoveryLog, updatePlanNode, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
+import { clearRecoveryLogs, createPlanNode, currentManuscript, errorMessage, listManuscriptRevisions, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
 
 const kindLabels: Record<PlanNodeKind, string> = {
   WORK_DESIGN: "作品设计",
@@ -76,6 +76,7 @@ export function ProjectWorkspaceView() {
   const [parentId, setParentId] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [moveParentId, setMoveParentId] = useState("");
   const [draft, setDraft] = useState("");
   const [savingDraft, setSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,7 +98,7 @@ export function ProjectWorkspaceView() {
       setTitle("");
       await client.invalidateQueries({ queryKey: ["plan-nodes"] });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     }
   }
 
@@ -146,20 +147,20 @@ export function ProjectWorkspaceView() {
     if (!selected || !editTitle.trim()) return;
     setError(null);
     try {
-      await updatePlanNode({ id: selected.id, title: editTitle.trim(), archived: selected.archived });
+      await updatePlanNodeChecked({ id: selected.id, title: editTitle.trim(), archived: selected.archived, expectedVersion: selected.revision });
       await client.invalidateQueries({ queryKey: ["plan-nodes"] });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     }
   }
 
   async function toggleArchived(node: PlanNode) {
     setError(null);
     try {
-      await updatePlanNode({ id: node.id, title: node.title, archived: !node.archived });
+      await updatePlanNodeChecked({ id: node.id, title: node.title, archived: !node.archived, expectedVersion: node.revision });
       await client.invalidateQueries({ queryKey: ["plan-nodes"] });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     }
   }
 
@@ -169,10 +170,13 @@ export function ProjectWorkspaceView() {
     setError(null);
     try {
       await saveManuscriptChecked({ chapterId: selected.id, baseRevisionId: manuscript.data?.id, documentJson: draft, creationReason: "MANUAL_SAVE" });
+      await clearRecoveryLogs(selected.id);
       await client.invalidateQueries({ queryKey: ["manuscript", selected.id] });
       await client.invalidateQueries({ queryKey: ["manuscript-history", selected.id] });
+      await client.invalidateQueries({ queryKey: ["recovery-logs", selected.id] });
+      await client.invalidateQueries({ queryKey: ["recovery-all"] });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setSavingDraft(false);
     }
@@ -190,7 +194,7 @@ export function ProjectWorkspaceView() {
     const base = history.data?.find((item) => item.id === manuscript.data?.parentRevisionId);
     if (!base) { setError("缺少合并基线版本"); return; }
     try { setMergeResult(await mergeManuscript({ base: base.documentJson, current: manuscript.data.documentJson, draft })); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    catch (cause) { setError(errorMessage(cause)); }
   }
 
   async function restoreRevision(revision: ManuscriptRevision) {
@@ -199,10 +203,11 @@ export function ProjectWorkspaceView() {
     setError(null);
     try {
       await saveManuscriptChecked({ chapterId: selected.id, baseRevisionId: manuscript.data?.id, documentJson: revision.documentJson, creationReason: "RESTORE_REVISION" });
+      await clearRecoveryLogs(selected.id);
       await client.invalidateQueries({ queryKey: ["manuscript", selected.id] });
       await client.invalidateQueries({ queryKey: ["manuscript-history", selected.id] });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     }
   }
 
@@ -210,6 +215,13 @@ export function ProjectWorkspaceView() {
     if (selected?.kind === "CHAPTER" && draft.trim() && draft !== (manuscript.data?.documentJson ?? "") && !window.confirm("当前正文有未保存修改，确定切换吗？")) return;
     setSelectedId(node.id);
     setEditTitle(node.title);
+    setMoveParentId(node.parentId ?? "");
+  }
+
+  async function moveSelected() {
+    if (!selected) return;
+    try { await movePlanNode({ id: selected.id, ...(moveParentId ? { parentId: moveParentId } : {}), expectedVersion: selected.revision }); await client.invalidateQueries({ queryKey: ["plan-nodes"] }); }
+    catch (cause) { setError(errorMessage(cause)); }
   }
 
   function renderTree(parent: string | null, depth = 0): ReactNode[] {
@@ -262,6 +274,7 @@ export function ProjectWorkspaceView() {
           <button type="button" className="primary-action" onClick={() => void saveSelected()} disabled={!editTitle.trim()}><Check size={15} />保存标题</button>
           <button type="button" className="secondary-action" onClick={() => void toggleArchived(selected)}>{selected.archived ? <RotateCcw size={15} /> : <Archive size={15} />}{selected.archived ? "恢复节点" : "归档节点"}</button>
         </div>
+        <div className="inspector-actions"><select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="">移动到顶层</option>{(nodes.data ?? []).filter((node) => node.id !== selected.id && !node.archived).map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select><button type="button" className="secondary-action" onClick={() => void moveSelected()}>移动节点</button></div>
         {selected.kind === "CHAPTER" ? <div className="chapter-editor">
           <div className="section-heading"><h2>正文草稿</h2><span>{manuscript.data ? "已有修订" : "尚未保存"}</span></div>
           {editor ? <>

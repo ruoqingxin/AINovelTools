@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   createProject,
+  errorMessage,
   invalidateProjectQueries,
   openProject,
 } from "../lib/tauri-client";
@@ -30,7 +31,7 @@ export function EmptyProjectView() {
       await createProject(path, projectNameFromPath(path));
       await invalidateProjectQueries(queryClient);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setBusy(null);
     }
@@ -49,7 +50,7 @@ export function EmptyProjectView() {
       await openProject(path);
       await invalidateProjectQueries(queryClient);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setBusy(null);
     }
