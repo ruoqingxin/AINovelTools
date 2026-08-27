@@ -1,6 +1,6 @@
 //! Adapters for persistence, files, model providers, and operating-system APIs.
 
-#![allow(clippy::missing_errors_doc, clippy::items_after_statements, clippy::match_same_arms, clippy::needless_pass_by_value, clippy::too_many_lines, clippy::collapsible_if)]
+#![allow(clippy::missing_errors_doc, clippy::items_after_statements, clippy::match_same_arms, clippy::needless_pass_by_value, clippy::too_many_lines, clippy::collapsible_if, clippy::if_same_then_else)]
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -123,6 +123,8 @@ pub enum PlanError {
     Conflict { expected: i64, actual: i64 },
     #[error("invalid parent kind for plan node")]
     InvalidParentKind,
+    #[error("moving a plan node would create a cycle")]
+    Cycle,
     #[error("plan database operation failed: {0}")]
     Database(#[from] DatabaseError),
 }
@@ -134,6 +136,14 @@ pub enum ErrorCode { NoProjectOpen, InvalidInput, NotFound, VersionConflict, Inv
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecoveryLog { pub id: Uuid, pub chapter_id: Uuid, pub document_json: String, pub created_at: String }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeConflict { pub block_id: String, pub base: Option<String>, pub current: Option<String>, pub draft: Option<String> }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeResult { pub document_json: String, pub conflicts: Vec<MergeConflict> }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -333,6 +343,11 @@ impl ProjectManager {
         session.database.update_plan_node_checked(id, title, archived, expected_version)
     }
 
+    pub fn move_plan_node(&mut self, id: Uuid, parent_id: Option<Uuid>, expected_version: i64) -> Result<PlanNode, PlanError> {
+        let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
+        session.database.move_plan_node(id, parent_id, expected_version)
+    }
+
     pub fn current_manuscript(
         &self,
         chapter_id: Uuid,
@@ -379,6 +394,15 @@ impl ProjectManager {
         let session = self.current.as_ref().ok_or(ManuscriptError::NoProject)?;
         session.database.list_recovery_logs(chapter_id).map_err(ManuscriptError::Database)
     }
+
+    pub fn list_all_recovery_logs(&self) -> Result<Vec<RecoveryLog>, ManuscriptError> {
+        let session = self.current.as_ref().ok_or(ManuscriptError::NoProject)?;
+        session.database.list_all_recovery_logs().map_err(ManuscriptError::Database)
+    }
+
+    pub fn merge_manuscript(&self, base: &str, current: &str, draft: &str) -> Result<MergeResult, ManuscriptError> {
+        merge_documents(base, current, draft)
+    }
 }
 
 fn now_timestamp() -> String {
@@ -418,6 +442,31 @@ fn normalize_document(document_json: &str) -> Result<String, ManuscriptError> {
 fn validate_document(document_json: &str) -> Result<(), ManuscriptError> {
     let _ = normalize_document(document_json)?;
     Ok(())
+}
+
+fn merge_documents(base: &str, current: &str, draft: &str) -> Result<MergeResult, ManuscriptError> {
+    let mut base_v: serde_json::Value = serde_json::from_str(base).map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?;
+    let current_v: serde_json::Value = serde_json::from_str(current).map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?;
+    let draft_v: serde_json::Value = serde_json::from_str(draft).map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?;
+    let b = base_v.get("content").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let c = current_v.get("content").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let d = draft_v.get("content").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let key = |v: &serde_json::Value| v.get("attrs").and_then(|a| a.get("blockId")).and_then(|x| x.as_str()).unwrap_or("").to_owned();
+    let mut conflicts = Vec::new();
+    let mut merged = Vec::new();
+    for block in d.iter().chain(c.iter()) {
+        let id = key(block);
+        if merged.iter().any(|x: &serde_json::Value| key(x) == id) { continue; }
+        let bv = b.iter().find(|x| key(x) == id);
+        let cv = c.iter().find(|x| key(x) == id);
+        let dv = d.iter().find(|x| key(x) == id);
+        if cv == bv { if let Some(x) = dv { merged.push(x.clone()); } }
+        else if dv == bv { if let Some(x) = cv { merged.push(x.clone()); } }
+        else if cv == dv { if let Some(x) = cv { merged.push(x.clone()); } }
+        else { conflicts.push(MergeConflict { block_id: id, base: bv.map(ToString::to_string), current: cv.map(ToString::to_string), draft: dv.map(ToString::to_string) }); if let Some(x) = cv { merged.push(x.clone()); } }
+    }
+    if let Some(obj) = base_v.as_object_mut() { obj.insert("content".to_owned(), serde_json::Value::Array(merged)); }
+    Ok(MergeResult { document_json: serde_json::to_string(&base_v).map_err(|e| ManuscriptError::InvalidDocument(e.to_string()))?, conflicts })
 }
 
 impl Database {
@@ -698,6 +747,9 @@ impl Database {
                 rusqlite::params![title, i64::from(archived), revision, id.to_string()],
             )
             .map_err(DatabaseError::from)?;
+        if archived {
+            self.connection.execute("UPDATE plan_nodes SET archived = 1 WHERE parent_id = ?1", [id.to_string()]).map_err(DatabaseError::from)?;
+        }
         self.connection
             .execute(
                 "INSERT INTO plan_node_revisions (id, node_id, revision, title, archived)
@@ -727,6 +779,25 @@ impl Database {
         let current = self.list_plan_nodes()?.into_iter().find(|node| node.id == id).ok_or(PlanError::MissingNode(id))?;
         if current.revision != expected_version { return Err(PlanError::Conflict { expected: expected_version, actual: current.revision }); }
         self.update_plan_node(id, title, archived)
+    }
+
+    fn move_plan_node(&mut self, id: Uuid, parent_id: Option<Uuid>, expected_version: i64) -> Result<PlanNode, PlanError> {
+        let current = self.list_plan_nodes()?.into_iter().find(|node| node.id == id).ok_or(PlanError::MissingNode(id))?;
+        if current.revision != expected_version { return Err(PlanError::Conflict { expected: expected_version, actual: current.revision }); }
+        if parent_id == Some(id) { return Err(PlanError::Cycle); }
+        if let Some(parent) = parent_id {
+            let parent_node = self.list_plan_nodes()?.into_iter().find(|node| node.id == parent).ok_or(PlanError::MissingParent(parent))?;
+            let valid = matches!((parent_node.kind, current.kind), (PlanNodeKind::WorkDesign, PlanNodeKind::Outline) | (PlanNodeKind::Outline, PlanNodeKind::Volume | PlanNodeKind::Chapter) | (PlanNodeKind::Volume, PlanNodeKind::Chapter) | (PlanNodeKind::Chapter, PlanNodeKind::Scene));
+            if !valid { return Err(PlanError::InvalidParentKind); }
+            let mut cursor = Some(parent);
+            while let Some(candidate) = cursor {
+                if candidate == id { return Err(PlanError::Cycle); }
+                cursor = self.list_plan_nodes()?.into_iter().find(|node| node.id == candidate).and_then(|node| node.parent_id);
+            }
+        }
+        let sort_order: i64 = self.connection.query_row("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM plan_nodes WHERE parent_id IS ?1", rusqlite::params![parent_id.map(|id| id.to_string())], |row| row.get(0)).map_err(DatabaseError::from)?;
+        self.connection.execute("UPDATE plan_nodes SET parent_id = ?1, sort_order = ?2, revision = revision + 1 WHERE id = ?3", rusqlite::params![parent_id.map(|id| id.to_string()), sort_order, id.to_string()]).map_err(DatabaseError::from)?;
+        self.list_plan_nodes()?.into_iter().find(|node| node.id == id).ok_or(PlanError::MissingNode(id))
     }
 
     fn current_manuscript(
@@ -875,6 +946,16 @@ impl Database {
     fn list_recovery_logs(&self, chapter_id: Uuid) -> Result<Vec<RecoveryLog>, DatabaseError> {
         let mut statement = self.connection.prepare("SELECT id, chapter_id, document_json, created_at FROM recovery_logs WHERE chapter_id = ?1 ORDER BY created_at DESC, rowid DESC")?;
         let rows = statement.query_map([chapter_id.to_string()], |row| Ok(RecoveryLog {
+            id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?,
+            chapter_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e)))?,
+            document_json: row.get(2)?, created_at: row.get(3)?,
+        }))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
+    }
+
+    fn list_all_recovery_logs(&self) -> Result<Vec<RecoveryLog>, DatabaseError> {
+        let mut statement = self.connection.prepare("SELECT id, chapter_id, document_json, created_at FROM recovery_logs ORDER BY created_at DESC, rowid DESC")?;
+        let rows = statement.query_map([], |row| Ok(RecoveryLog {
             id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?,
             chapter_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e)))?,
             document_json: row.get(2)?, created_at: row.get(3)?,

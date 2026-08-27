@@ -46,6 +46,8 @@ export type ManuscriptRevision = {
 
 export type FeatureDescriptor = { id: string; status: "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED" };
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
+export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
+export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
 
 export function getBootstrapStatus() {
   return invoke<BootstrapStatus>("bootstrap_status");
@@ -95,6 +97,10 @@ export function updatePlanNodeChecked(input: { id: string; title: string; archiv
   return invoke<PlanNode>("update_plan_node_checked", input);
 }
 
+export function movePlanNode(input: { id: string; parentId?: string; expectedVersion: number }) {
+  return invoke<PlanNode>("move_plan_node", input);
+}
+
 export function currentManuscript(chapterId: string) {
   return invoke<ManuscriptRevision | null>("current_manuscript", { chapterId });
 }
@@ -111,12 +117,20 @@ export function listRecoveryLogs(chapterId: string) {
   return invoke<RecoveryLog[]>("list_recovery_logs", { chapterId });
 }
 
+export function listAllRecoveryLogs() {
+  return invoke<RecoveryLog[]>("list_all_recovery_logs");
+}
+
 export function saveManuscript(input: { chapterId: string; documentJson: string; creationReason: string }) {
   return invoke<ManuscriptRevision>("save_manuscript", input);
 }
 
 export function saveManuscriptChecked(input: { chapterId: string; baseRevisionId?: string; documentJson: string; creationReason: string }) {
   return invoke<ManuscriptRevision>("save_manuscript_checked", input);
+}
+
+export function mergeManuscript(input: { base: string; current: string; draft: string }) {
+  return invoke<MergeResult>("merge_manuscript", input);
 }
 
 export function invalidateProjectQueries(queryClient: { invalidateQueries: (options: { queryKey: string[] }) => Promise<unknown> }) {

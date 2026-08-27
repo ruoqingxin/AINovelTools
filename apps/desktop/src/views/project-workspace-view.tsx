@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { createPlanNode, currentManuscript, listManuscriptRevisions, listPlanNodes, listRecoveryLogs, saveManuscriptChecked, saveRecoveryLog, updatePlanNode, type ManuscriptRevision, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
+import { createPlanNode, currentManuscript, listManuscriptRevisions, listPlanNodes, listRecoveryLogs, mergeManuscript, saveManuscriptChecked, saveRecoveryLog, updatePlanNode, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
 
 const kindLabels: Record<PlanNodeKind, string> = {
   WORK_DESIGN: "作品设计",
@@ -40,6 +40,20 @@ function documentToText(value: string) {
 }
 
 function diffLines(left: string, right: string) {
+  try {
+    const parse = (value: string) => {
+      const doc = JSON.parse(value) as { content?: Array<{ attrs?: { blockId?: string }; content?: Array<{ text?: string }> }> };
+      return (doc.content ?? []).map((block, index) => ({ id: block.attrs?.blockId ?? `legacy-${index}`, text: (block.content ?? []).map((item) => item.text ?? "").join("") }));
+    };
+    const aBlocks = parse(left); const bBlocks = parse(right);
+    const rows: Array<{ kind: "same" | "added" | "removed"; text: string }> = [];
+    const ids = [...new Set([...aBlocks.map((x) => x.id), ...bBlocks.map((x) => x.id)])];
+    for (const id of ids) {
+      const a = aBlocks.find((x) => x.id === id)?.text; const b = bBlocks.find((x) => x.id === id)?.text;
+      if (a === b) rows.push({ kind: "same", text: a ?? "" }); else { if (a !== undefined) rows.push({ kind: "removed", text: a }); if (b !== undefined) rows.push({ kind: "added", text: b }); }
+    }
+    return rows;
+  } catch { /* fall back to legacy line diff */ }
   const a = left.split("\n");
   const b = right.split("\n");
   const rows: Array<{ kind: "same" | "added" | "removed"; text: string }> = [];
@@ -67,6 +81,7 @@ export function ProjectWorkspaceView() {
   const [error, setError] = useState<string | null>(null);
   const [compareLeftId, setCompareLeftId] = useState<string | null>(null);
   const [compareRightId, setCompareRightId] = useState<string | null>(null);
+  const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
   const editor = useEditor({
     extensions: [StarterKit],
     content: documentToJson(""),
@@ -120,6 +135,13 @@ export function ProjectWorkspaceView() {
     return () => window.clearTimeout(timer);
   }, [draft, manuscript.data?.documentJson, selected]);
 
+  useEffect(() => {
+    const dirty = Boolean(selected?.kind === "CHAPTER" && draft.trim() && draft !== (manuscript.data?.documentJson ?? ""));
+    const onBeforeUnload = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [draft, manuscript.data?.documentJson, selected]);
+
   async function saveSelected() {
     if (!selected || !editTitle.trim()) return;
     setError(null);
@@ -163,6 +185,14 @@ export function ProjectWorkspaceView() {
     if (editor) editor.commands.setContent(documentToJson(latest.documentJson), { emitUpdate: false });
   }
 
+  async function mergeDraft() {
+    if (!selected || !manuscript.data || !draft.trim()) return;
+    const base = history.data?.find((item) => item.id === manuscript.data?.parentRevisionId);
+    if (!base) { setError("缺少合并基线版本"); return; }
+    try { setMergeResult(await mergeManuscript({ base: base.documentJson, current: manuscript.data.documentJson, draft })); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  }
+
   async function restoreRevision(revision: ManuscriptRevision) {
     if (!selected || selected.kind !== "CHAPTER") return;
     setDraft(revision.documentJson);
@@ -177,6 +207,7 @@ export function ProjectWorkspaceView() {
   }
 
   function selectNode(node: PlanNode) {
+    if (selected?.kind === "CHAPTER" && draft.trim() && draft !== (manuscript.data?.documentJson ?? "") && !window.confirm("当前正文有未保存修改，确定切换吗？")) return;
     setSelectedId(node.id);
     setEditTitle(node.title);
   }
@@ -242,6 +273,8 @@ export function ProjectWorkspaceView() {
             <EditorContent editor={editor} />
           </> : <p className="plan-empty">正在加载编辑器…</p>}
           <button type="button" className="primary-action" onClick={() => void saveDraft()} disabled={savingDraft || !draft.trim()}>{savingDraft ? "保存中…" : "保存正文修订"}</button>
+          <button type="button" className="secondary-action" onClick={() => void mergeDraft()} disabled={!manuscript.data || !draft.trim()}>检查并合并冲突</button>
+          {mergeResult ? <div className="merge-panel"><div className="section-heading"><h3>{mergeResult.conflicts.length ? `发现 ${mergeResult.conflicts.length} 个冲突块` : "没有发现冲突"}</h3>{!mergeResult.conflicts.length ? <button type="button" className="secondary-action" onClick={() => { setDraft(mergeResult.documentJson); if (editor) editor.commands.setContent(documentToJson(mergeResult.documentJson), { emitUpdate: false }); }}>应用合并结果</button> : null}</div>{mergeResult.conflicts.map((conflict) => <div className="merge-conflict" key={conflict.blockId}><code>{conflict.blockId}</code><span>当前版本与草稿都修改了该段，请在编辑器中手工选择后再保存。</span></div>)}</div> : null}
           {recovery.data?.length ? <div className="recovery-banner"><span>发现 {recovery.data.length} 条可恢复草稿</span><button type="button" className="secondary-action" onClick={() => void recoverLatest()}>恢复最近草稿</button></div> : null}
           {selected.kind === "CHAPTER" ? <div className="revision-history"><div className="section-heading"><h2>修订历史</h2><span>{history.data?.length ?? 0} 条</span></div>{history.data?.map((revision, index) => <div className="revision-row" key={revision.id}><span>修订 {history.data!.length - index}</span><code>{revision.contentHash}</code><button type="button" className="secondary-action" onClick={() => void restoreRevision(revision)}>恢复为新正文</button></div>)}{(history.data?.length ?? 0) < 2 ? <p className="revision-hint">保存两次正文后，可以在这里选择两个版本进行差异对比。</p> : <div className="revision-compare"><div className="compare-selects"><select value={compareLeftId ?? ""} onChange={(event) => setCompareLeftId(event.target.value)} aria-label="较早修订"><option value="">选择较早修订</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data!.length - index}</option>)}</select><span>对比</span><select value={compareRightId ?? ""} onChange={(event) => setCompareRightId(event.target.value)} aria-label="较新修订"><option value="">选择较新修订</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data!.length - index}</option>)}</select></div>{compareLeftId && compareRightId ? <div className="diff-view">{diffLines(documentToText(history.data!.find((revision) => revision.id === compareLeftId)?.documentJson ?? ""), documentToText(history.data!.find((revision) => revision.id === compareRightId)?.documentJson ?? "")).map((row, index) => <div className={`diff-line diff-${row.kind}`} key={`${index}-${row.kind}`}><span>{row.kind === "added" ? "+" : row.kind === "removed" ? "−" : " "}</span><code>{row.text || " "}</code></div>)}</div> : null}</div>}</div> : null}
         </div> : null}

@@ -11,7 +11,7 @@ import {
   Settings,
   ShieldCheck,
 } from "lucide-react";
-import { getBootstrapStatus, getCurrentProject, getHealth } from "../lib/tauri-client";
+import { getBootstrapStatus, getCurrentProject, getHealth, listAllRecoveryLogs } from "../lib/tauri-client";
 
 const navigation = [
   { label: "项目", icon: LibraryBig, active: true },
@@ -35,6 +35,7 @@ export function AppShell() {
     queryKey: ["current-project"],
     queryFn: getCurrentProject,
   });
+  const recovery = useQuery({ queryKey: ["recovery-all"], queryFn: listAllRecoveryLogs, enabled: Boolean(currentProject.data) });
 
   const serviceLabel = health.isSuccess
     ? `SQLite ${health.data.sqliteVersion} · Schema ${health.data.schemaVersion}`
@@ -93,6 +94,7 @@ export function AppShell() {
       </aside>
 
       <main className="workspace">
+        {recovery.data?.length ? <div className="global-recovery-banner" role="status">发现 {recovery.data.length} 条可恢复草稿，请进入对应章节处理。</div> : null}
         <Outlet />
       </main>
 

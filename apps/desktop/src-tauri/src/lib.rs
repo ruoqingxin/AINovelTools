@@ -165,6 +165,12 @@ fn update_plan_node_checked(
 }
 
 #[tauri::command]
+fn move_plan_node(state: tauri::State<'_, ProjectState>, id: uuid::Uuid, parent_id: Option<uuid::Uuid>, expected_version: i64) -> Result<novel_infrastructure::PlanNode, String> {
+    let mut manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
+    manager.move_plan_node(id, parent_id, expected_version).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn current_manuscript(
     state: tauri::State<'_, ProjectState>,
     chapter_id: uuid::Uuid,
@@ -203,6 +209,12 @@ fn save_manuscript_checked(
 }
 
 #[tauri::command]
+fn merge_manuscript(state: tauri::State<'_, ProjectState>, base: String, current: String, draft: String) -> Result<novel_infrastructure::MergeResult, String> {
+    let manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
+    manager.merge_manuscript(&base, &current, &draft).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn save_recovery_log(
     state: tauri::State<'_, ProjectState>, chapter_id: uuid::Uuid, document_json: String,
 ) -> Result<(), String> {
@@ -232,6 +244,12 @@ fn list_recovery_logs(
     manager.list_recovery_logs(chapter_id).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn list_all_recovery_logs(state: tauri::State<'_, ProjectState>) -> Result<Vec<novel_infrastructure::RecoveryLog>, String> {
+    let manager = state.manager.lock().map_err(|_| "project mutex poisoned".to_owned())?;
+    manager.list_all_recovery_logs().map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Starts the desktop application runtime.
 ///
@@ -256,11 +274,14 @@ pub fn run() {
             create_plan_node,
             update_plan_node,
             update_plan_node_checked,
+            move_plan_node,
             current_manuscript,
             list_manuscript_revisions,
             list_recovery_logs,
+            list_all_recovery_logs,
             save_manuscript,
             save_manuscript_checked,
+            merge_manuscript,
             save_recovery_log
         ])
         .run(tauri::generate_context!())
