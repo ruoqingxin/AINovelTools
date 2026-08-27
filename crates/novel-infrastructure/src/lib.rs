@@ -41,6 +41,7 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
     FeatureDescriptor { id: "manuscript_revisions", display_name: "正文不可变修订", stage: "R2", status: FeatureStatus::Implemented, unavailable_reason: None },
     FeatureDescriptor { id: "recovery_log", display_name: "编辑恢复", stage: "R2", status: FeatureStatus::Implemented, unavailable_reason: None },
     FeatureDescriptor { id: "conflict_merge", display_name: "正文冲突合并", stage: "R2", status: FeatureStatus::Partial, unavailable_reason: Some("逐块选择工具延后实现") },
+    FeatureDescriptor { id: "ai_writing", display_name: "AI 创作闭环", stage: "R3", status: FeatureStatus::Declared, unavailable_reason: Some("R3 尚未实现") },
 ];
 
 pub struct Database {
