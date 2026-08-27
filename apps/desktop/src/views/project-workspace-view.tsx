@@ -244,8 +244,8 @@ export function ProjectWorkspaceView() {
     <section className="project-workspace">
       <div className="workspace-heading">
         <p className="eyebrow">规划工作区</p>
-        <h1>开始搭建你的故事</h1>
-        <p className="workspace-lede">先建立作品设计、分卷和章节结构，规划与正文会保持清晰分离。</p>
+        <h1>作品规划与创作</h1>
+        <p className="workspace-lede">左侧管理故事结构，右侧专注当前节点。规划、正文、AI 和修订彼此分开，工作状态保持连续。</p>
       </div>
 
       <div className="plan-create-row">
@@ -261,6 +261,7 @@ export function ProjectWorkspaceView() {
       </div>
       {error ? <p className="project-error" role="alert">{error}</p> : null}
 
+      <div className="plan-layout">
       <div className="plan-tree" aria-label="规划树">
         <div className="section-heading"><h2>规划树</h2><span>{nodes.data?.length ?? 0} 个节点</span></div>
         {nodes.isPending ? <p className="plan-empty">正在加载规划…</p> : null}
@@ -315,7 +316,8 @@ export function ProjectWorkspaceView() {
           </div> : null}
           {chapterTab === "recovery" ? <div className="chapter-tab-panel">{recovery.data?.length ? <div className="recovery-banner"><span>发现 {recovery.data.length} 条可恢复草稿</span><button type="button" className="secondary-action" onClick={() => void recoverLatest()}>恢复最近草稿</button></div> : <div className="plan-empty">当前没有可恢复的草稿。</div>}</div> : null}
         </div> : null}
-      </aside> : null}
+      </aside> : <div className="plan-inspector plan-inspector-empty"><BookOpen size={24} /><h2>选择一个规划节点</h2><p>从左侧选择章节开始编辑正文，或选择其他节点查看详情。</p></div>}
+      </div>
     </section>
   );
 }

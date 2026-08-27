@@ -196,7 +196,7 @@ button:focus-visible {
 }
 
 .project-workspace {
-  width: min(980px, calc(100% - 64px));
+  width: min(1180px, calc(100% - 56px));
   margin: 0 auto;
   padding: 48px 0 72px;
 }
@@ -232,6 +232,21 @@ button:focus-visible {
 
 .plan-tree {
   margin-top: 42px;
+}
+
+.plan-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.78fr) minmax(0, 1.7fr);
+  gap: 28px;
+  align-items: start;
+  margin-top: 34px;
+}
+
+.plan-layout .plan-tree {
+  min-width: 0;
+  margin-top: 0;
+  padding-right: 12px;
+  border-right: 1px solid var(--line);
 }
 
 .plan-empty {
@@ -277,10 +292,36 @@ button:focus-visible {
 }
 
 .plan-inspector {
-  max-width: 620px;
-  margin-top: 28px;
+  min-width: 0;
+  margin-top: 0;
   padding-top: 18px;
-  border-top: 1px solid var(--line);
+}
+
+.plan-inspector-empty {
+  display: grid;
+  min-height: 360px;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 32px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.plan-inspector-empty h2,
+.plan-inspector-empty p {
+  margin: 0;
+}
+
+.plan-inspector-empty h2 {
+  color: inherit;
+  font-size: 16px;
+}
+
+.plan-inspector-empty p {
+  max-width: 260px;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .inspector-kind {
@@ -891,6 +932,9 @@ button:focus-visible {
   .project-workspace { width: min(100% - 36px, 680px); padding-top: 38px; }
   .plan-create-row { flex-wrap: wrap; }
   .plan-create-row input { min-width: 180px; }
+  .plan-layout { grid-template-columns: 1fr; gap: 20px; margin-top: 24px; }
+  .plan-layout .plan-tree { padding-right: 0; border-right: 0; }
+  .plan-inspector { padding-top: 0; }
   .model-grid,
   .ai-action-grid { grid-template-columns: 1fr; }
   .model-wide { grid-column: auto; }
