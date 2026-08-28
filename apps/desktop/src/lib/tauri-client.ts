@@ -54,6 +54,22 @@ export type ManuscriptRevision = {
 export type FeatureDescriptor = { id: string; displayName: string; stage: string; status: "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED"; unavailableReason: string | null };
 export type R4MigrationDescriptor = { version: number; name: string; purpose: string; dependsOn: number[] };
 export type R4ContractDescriptor = { id: string; layer: string; purpose: string; introducedBy: number };
+export type EntityType = "CHARACTER" | "LOCATION" | "FACTION" | "ITEM" | "CONCEPT";
+export type EntityLifecycleStatus = "ACTIVE" | "ARCHIVED";
+export type Entity = {
+  id: string; projectId: string; entityType: EntityType; lifecycleStatus: EntityLifecycleStatus;
+  currentRevisionId: string; version: number; createdAt: string; updatedAt: string;
+};
+export type EntityRevision = {
+  id: string; entityId: string; revision: number; name: string; aliases: string[];
+  description: string; fixedAttributesJson: string; tags: string[]; baseRevisionId: string | null;
+  sourceVersion: string | null; createdAt: string;
+};
+export type EntityInput = {
+  id?: string; entityType: EntityType; name: string; aliases: string[]; description: string;
+  fixedAttributesJson: string; tags: string[]; baseRevisionId?: string; sourceVersion?: string;
+  expectedVersion?: number;
+};
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
 export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
 export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
@@ -86,6 +102,22 @@ export function getFeatureCatalog() {
 
 export function getHealth() {
   return invoke<DatabaseHealth>("health_query");
+}
+
+export function listEntities(includeArchived = false) {
+  return invoke<Entity[]>("list_entities", { includeArchived });
+}
+
+export function upsertEntity(input: EntityInput) {
+  return invoke<Entity>("upsert_entity", { input });
+}
+
+export function listEntityRevisions(entityId: string) {
+  return invoke<EntityRevision[]>("list_entity_revisions", { entityId });
+}
+
+export function setEntityArchived(input: { id: string; archived: boolean; expectedVersion: number }) {
+  return invoke<Entity>("set_entity_archived", input);
 }
 
 export function getCurrentProject() {

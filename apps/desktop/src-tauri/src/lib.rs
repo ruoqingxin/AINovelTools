@@ -78,6 +78,26 @@ impl From<novel_infrastructure::ManuscriptError> for ApiError {
     }
 }
 
+impl From<novel_infrastructure::EntityStoreError> for ApiError {
+    fn from(error: novel_infrastructure::EntityStoreError) -> Self {
+        let code = match error {
+            novel_infrastructure::EntityStoreError::NoProject => "NO_PROJECT_OPEN",
+            novel_infrastructure::EntityStoreError::MissingEntity(_)
+            | novel_infrastructure::EntityStoreError::MissingRevision(_) => "NOT_FOUND",
+            novel_infrastructure::EntityStoreError::Contract(
+                novel_infrastructure::EntityError::Conflict { .. },
+            ) => "VERSION_CONFLICT",
+            novel_infrastructure::EntityStoreError::Contract(_) => "INVALID_INPUT",
+            novel_infrastructure::EntityStoreError::Sqlite(_)
+            | novel_infrastructure::EntityStoreError::Database(_) => "DATABASE_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
 impl From<novel_infrastructure::AiError> for ApiError {
     fn from(error: novel_infrastructure::AiError) -> Self {
         Self {
@@ -173,6 +193,62 @@ fn health_query(state: tauri::State<'_, ProjectState>) -> Result<DatabaseHealthR
 #[tauri::command]
 fn feature_catalog() -> &'static [novel_infrastructure::FeatureDescriptor] {
     novel_infrastructure::FEATURE_CATALOG
+}
+
+#[tauri::command]
+fn list_entities(
+    state: tauri::State<'_, ProjectState>,
+    include_archived: bool,
+) -> Result<Vec<novel_infrastructure::Entity>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .list_entities(include_archived)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+fn upsert_entity(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_infrastructure::EntityInput,
+) -> Result<novel_infrastructure::Entity, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.upsert_entity(input).map_err(ApiError::from)
+}
+
+#[tauri::command]
+fn list_entity_revisions(
+    state: tauri::State<'_, ProjectState>,
+    entity_id: uuid::Uuid,
+) -> Result<Vec<novel_infrastructure::EntityRevision>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .list_entity_revisions(entity_id)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+fn set_entity_archived(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    archived: bool,
+    expected_version: i64,
+) -> Result<novel_infrastructure::Entity, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .set_entity_archived(id, archived, expected_version)
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -738,6 +814,10 @@ pub fn run() {
             bootstrap_status,
             feature_catalog,
             health_query,
+            list_entities,
+            upsert_entity,
+            list_entity_revisions,
+            set_entity_archived,
             create_project,
             open_project,
             close_project,

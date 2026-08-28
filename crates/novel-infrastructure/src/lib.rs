@@ -22,7 +22,8 @@ use uuid::Uuid;
 mod ai;
 pub use ai::{AiError, EmbeddingGateway, ModelGateway, SecretStore};
 pub use novel_domain::{
-    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, ModelCapability, ModelProfile,
+    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, Entity, EntityError, EntityInput,
+    EntityLifecycleStatus, EntityRevision, EntityType, ModelCapability, ModelProfile,
     ModelProfileInput, ModelProvider, PrivacyLevel,
 };
 
@@ -63,7 +64,7 @@ pub struct FeatureDescriptor {
 
 /// R4 schema and contract planning metadata shared by migration checks and
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
-pub const R4_SCHEMA_VERSION: i64 = 10;
+pub const R4_SCHEMA_VERSION: i64 = 11;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -412,6 +413,22 @@ pub enum ManuscriptError {
     Database(#[from] DatabaseError),
 }
 
+#[derive(Debug, Error)]
+pub enum EntityStoreError {
+    #[error("no project is open")]
+    NoProject,
+    #[error("entity does not exist: {0}")]
+    MissingEntity(Uuid),
+    #[error("entity revision does not exist: {0}")]
+    MissingRevision(Uuid),
+    #[error(transparent)]
+    Contract(#[from] EntityError),
+    #[error("entity sqlite operation failed: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("entity database operation failed: {0}")]
+    Database(#[from] DatabaseError),
+}
+
 pub struct ProjectManager {
     current: Option<ProjectSession>,
 }
@@ -602,6 +619,44 @@ impl ProjectManager {
             .move_plan_node(id, parent_id, expected_version)
     }
 
+    pub fn list_entities(&self, include_archived: bool) -> Result<Vec<Entity>, EntityStoreError> {
+        let session = self.current.as_ref().ok_or(EntityStoreError::NoProject)?;
+        session
+            .database
+            .list_entities(session.manifest.project_id, include_archived)
+    }
+
+    pub fn upsert_entity(&mut self, input: EntityInput) -> Result<Entity, EntityStoreError> {
+        input.validate()?;
+        let session = self.current.as_mut().ok_or(EntityStoreError::NoProject)?;
+        session
+            .database
+            .upsert_entity(session.manifest.project_id, input)
+    }
+
+    pub fn list_entity_revisions(
+        &self,
+        entity_id: Uuid,
+    ) -> Result<Vec<EntityRevision>, EntityStoreError> {
+        let session = self.current.as_ref().ok_or(EntityStoreError::NoProject)?;
+        session.database.list_entity_revisions(entity_id)
+    }
+
+    pub fn set_entity_archived(
+        &mut self,
+        id: Uuid,
+        archived: bool,
+        expected_version: i64,
+    ) -> Result<Entity, EntityStoreError> {
+        let session = self.current.as_mut().ok_or(EntityStoreError::NoProject)?;
+        session.database.set_entity_archived(
+            session.manifest.project_id,
+            id,
+            archived,
+            expected_version,
+        )
+    }
+
     pub fn current_manuscript(
         &self,
         chapter_id: Uuid,
@@ -699,6 +754,113 @@ impl ProjectManager {
     ) -> Result<MergeResult, ManuscriptError> {
         merge_documents(base, current, draft)
     }
+}
+
+fn entity_type_str(value: EntityType) -> &'static str {
+    match value {
+        EntityType::Character => "CHARACTER",
+        EntityType::Location => "LOCATION",
+        EntityType::Faction => "FACTION",
+        EntityType::Item => "ITEM",
+        EntityType::Concept => "CONCEPT",
+    }
+}
+
+fn parse_entity_type(value: &str) -> rusqlite::Result<EntityType> {
+    match value {
+        "CHARACTER" => Ok(EntityType::Character),
+        "LOCATION" => Ok(EntityType::Location),
+        "FACTION" => Ok(EntityType::Faction),
+        "ITEM" => Ok(EntityType::Item),
+        "CONCEPT" => Ok(EntityType::Concept),
+        _ => Err(rusqlite::Error::InvalidColumnType(
+            2,
+            "entity_type".to_owned(),
+            rusqlite::types::Type::Text,
+        )),
+    }
+}
+
+fn map_entity(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entity> {
+    Ok(Entity {
+        id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        project_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        entity_type: parse_entity_type(&row.get::<_, String>(2)?)?,
+        lifecycle_status: match row.get::<_, String>(3)?.as_str() {
+            "ACTIVE" => EntityLifecycleStatus::Active,
+            "ARCHIVED" => EntityLifecycleStatus::Archived,
+            _ => EntityLifecycleStatus::Active,
+        },
+        current_revision_id: Uuid::parse_str(&row.get::<_, String>(4)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                4,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        version: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
+fn map_entity_revision(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntityRevision> {
+    let parse_uuid = |index: usize| -> rusqlite::Result<Uuid> {
+        Uuid::parse_str(&row.get::<_, String>(index)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                index,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })
+    };
+    Ok(EntityRevision {
+        id: parse_uuid(0)?,
+        entity_id: parse_uuid(1)?,
+        revision: row.get(2)?,
+        name: row.get(3)?,
+        aliases: serde_json::from_str(&row.get::<_, String>(4)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                4,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        description: row.get(5)?,
+        fixed_attributes_json: row.get(6)?,
+        tags: serde_json::from_str(&row.get::<_, String>(7)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                7,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        base_revision_id: row
+            .get::<_, Option<String>>(8)?
+            .map(|value| Uuid::parse_str(&value))
+            .transpose()
+            .map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    8,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?,
+        source_version: row.get(9)?,
+        created_at: row.get(10)?,
+    })
 }
 
 fn now_timestamp() -> String {
@@ -1056,6 +1218,43 @@ impl Database {
                 );
                 INSERT OR IGNORE INTO project_settings (project_id) VALUES ('current');
                 INSERT INTO schema_migrations (version, name) VALUES (10, 'r4_project_settings_baseline');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 11 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS entities (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    entity_type TEXT NOT NULL CHECK(entity_type IN ('CHARACTER','LOCATION','FACTION','ITEM','CONCEPT')),
+                    lifecycle_status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(lifecycle_status IN ('ACTIVE','ARCHIVED')),
+                    current_revision_id TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_entities_project_type_status
+                    ON entities(project_id, entity_type, lifecycle_status, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS entity_revisions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    entity_id TEXT NOT NULL REFERENCES entities(id),
+                    revision INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    aliases_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(aliases_json)),
+                    description TEXT NOT NULL DEFAULT '',
+                    fixed_attributes_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(fixed_attributes_json) AND json_type(fixed_attributes_json) = 'object'),
+                    tags_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(tags_json)),
+                    base_revision_id TEXT REFERENCES entity_revisions(id),
+                    source_version TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    UNIQUE(entity_id, revision)
+                );
+                CREATE INDEX IF NOT EXISTS idx_entity_revisions_entity_created
+                    ON entity_revisions(entity_id, revision DESC, created_at DESC);
+                CREATE TRIGGER IF NOT EXISTS prevent_entity_revision_update
+                    BEFORE UPDATE ON entity_revisions BEGIN SELECT RAISE(ABORT, 'immutable entity revision'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_entity_revision_delete
+                    BEFORE DELETE ON entity_revisions BEGIN SELECT RAISE(ABORT, 'immutable entity revision'); END;
+                INSERT INTO schema_migrations (version, name) VALUES (11, 'r4_story_bible_entities');",
             )?;
         }
         Ok(())
@@ -1558,6 +1757,148 @@ impl Database {
         Ok(())
     }
 
+    fn list_entities(
+        &self,
+        project_id: Uuid,
+        include_archived: bool,
+    ) -> Result<Vec<Entity>, EntityStoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, project_id, entity_type, lifecycle_status, current_revision_id, version, created_at, updated_at
+             FROM entities WHERE project_id = ?1 AND (?2 = 1 OR lifecycle_status = 'ACTIVE')
+             ORDER BY updated_at DESC, created_at DESC",
+        )?;
+        let rows = statement.query_map(
+            rusqlite::params![project_id.to_string(), i64::from(include_archived)],
+            map_entity,
+        )?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
+            .map_err(EntityStoreError::from)
+    }
+
+    fn upsert_entity(
+        &mut self,
+        project_id: Uuid,
+        input: EntityInput,
+    ) -> Result<Entity, EntityStoreError> {
+        let entity_id = input.id.unwrap_or_else(Uuid::new_v4);
+        let aliases_json = serde_json::to_string(&input.aliases).map_err(|error| {
+            EntityStoreError::Database(DatabaseError::Sqlite(
+                rusqlite::Error::ToSqlConversionFailure(Box::new(error)),
+            ))
+        })?;
+        let tags_json = serde_json::to_string(&input.tags).map_err(|error| {
+            EntityStoreError::Database(DatabaseError::Sqlite(
+                rusqlite::Error::ToSqlConversionFailure(Box::new(error)),
+            ))
+        })?;
+        let revision_id = Uuid::new_v4();
+        let transaction = self.connection.transaction()?;
+        let existing: Option<(i64, String)> = transaction
+            .query_row(
+                "SELECT version, entity_type FROM entities WHERE id = ?1 AND project_id = ?2",
+                rusqlite::params![entity_id.to_string(), project_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let is_existing = existing.is_some();
+        let (version, revision, base_revision_id) = if let Some((version, entity_type)) = existing {
+            if input.expected_version != Some(version) {
+                return Err(EntityStoreError::Contract(EntityError::Conflict {
+                    expected: input.expected_version.unwrap_or(-1),
+                    actual: version,
+                }));
+            }
+            if entity_type != entity_type_str(input.entity_type) {
+                return Err(EntityStoreError::Database(DatabaseError::Sqlite(
+                    rusqlite::Error::InvalidParameterName("entity_type cannot change".to_owned()),
+                )));
+            }
+            let current_revision: i64 = transaction.query_row(
+                "SELECT revision FROM entity_revisions WHERE id = (SELECT current_revision_id FROM entities WHERE id = ?1)",
+                [entity_id.to_string()],
+                |row| row.get(0),
+            )?;
+            (version + 1, current_revision + 1, input.base_revision_id)
+        } else {
+            if input.expected_version.is_some() {
+                return Err(EntityStoreError::MissingEntity(entity_id));
+            }
+            (1, 1, input.base_revision_id)
+        };
+        if !is_existing {
+            transaction.execute(
+                "INSERT INTO entities (id, project_id, entity_type, current_revision_id, version) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![entity_id.to_string(), project_id.to_string(), entity_type_str(input.entity_type), revision_id.to_string(), version],
+            )?;
+        }
+        transaction.execute(
+            "INSERT INTO entity_revisions (id, entity_id, revision, name, aliases_json, description, fixed_attributes_json, tags_json, base_revision_id, source_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                revision_id.to_string(), entity_id.to_string(), revision, input.name.trim(), aliases_json,
+                input.description, input.fixed_attributes_json, tags_json,
+                base_revision_id.map(|id| id.to_string()), input.source_version,
+            ],
+        )?;
+        if is_existing {
+            transaction.execute(
+                "UPDATE entities SET current_revision_id = ?1, version = ?2, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?3 AND project_id = ?4",
+                rusqlite::params![revision_id.to_string(), version, entity_id.to_string(), project_id.to_string()],
+            )?;
+        }
+        transaction.commit()?;
+        self.get_entity(project_id, entity_id)
+    }
+
+    fn get_entity(&self, project_id: Uuid, id: Uuid) -> Result<Entity, EntityStoreError> {
+        self.connection
+            .query_row(
+                "SELECT id, project_id, entity_type, lifecycle_status, current_revision_id, version, created_at, updated_at FROM entities WHERE id = ?1 AND project_id = ?2",
+                rusqlite::params![id.to_string(), project_id.to_string()],
+                map_entity,
+            )
+            .optional()?
+            .ok_or(EntityStoreError::MissingEntity(id))
+    }
+
+    fn list_entity_revisions(
+        &self,
+        entity_id: Uuid,
+    ) -> Result<Vec<EntityRevision>, EntityStoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, entity_id, revision, name, aliases_json, description, fixed_attributes_json, tags_json, base_revision_id, source_version, created_at
+             FROM entity_revisions WHERE entity_id = ?1 ORDER BY revision DESC",
+        )?;
+        let rows = statement.query_map([entity_id.to_string()], map_entity_revision)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
+            .map_err(EntityStoreError::from)
+    }
+
+    fn set_entity_archived(
+        &mut self,
+        project_id: Uuid,
+        id: Uuid,
+        archived: bool,
+        expected_version: i64,
+    ) -> Result<Entity, EntityStoreError> {
+        let changed = self.connection.execute(
+            "UPDATE entities SET lifecycle_status = ?1, version = version + 1, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?2 AND project_id = ?3 AND version = ?4",
+            rusqlite::params![if archived { "ARCHIVED" } else { "ACTIVE" }, id.to_string(), project_id.to_string(), expected_version],
+        )?;
+        if changed == 0 {
+            if self.get_entity(project_id, id).is_err() {
+                return Err(EntityStoreError::MissingEntity(id));
+            }
+            return Err(EntityStoreError::Contract(EntityError::Conflict {
+                expected: expected_version,
+                actual: self.get_entity(project_id, id)?.version,
+            }));
+        }
+        self.get_entity(project_id, id)
+    }
+
     /// Reads the SQLite and migration state used by the desktop health query.
     ///
     /// # Errors
@@ -1648,6 +1989,101 @@ mod tests {
         assert_eq!(settings.0, "");
         assert_eq!(settings.1, "LOCAL_ONLY");
         assert_eq!(settings.2, "{}");
+    }
+
+    #[test]
+    fn story_bible_entities_are_versioned_and_archivable() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-entities-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        let manifest = manager.create(&root, "实体测试").expect("create project");
+        let created = manager
+            .upsert_entity(super::EntityInput {
+                id: None,
+                entity_type: super::EntityType::Character,
+                name: "林澈".to_owned(),
+                aliases: vec!["阿澈".to_owned()],
+                description: "主角".to_owned(),
+                fixed_attributes_json: "{\"age\":18}".to_owned(),
+                tags: vec!["主角".to_owned()],
+                base_revision_id: None,
+                source_version: Some("manuscript:1".to_owned()),
+                expected_version: None,
+            })
+            .expect("create entity");
+        assert_eq!(created.project_id, manifest.project_id);
+        assert_eq!(created.version, 1);
+        let revisions = manager
+            .list_entity_revisions(created.id)
+            .expect("list revisions");
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(revisions[0].aliases, vec!["阿澈"]);
+
+        let updated = manager
+            .upsert_entity(super::EntityInput {
+                id: Some(created.id),
+                entity_type: super::EntityType::Character,
+                name: "林澈（修订）".to_owned(),
+                aliases: vec![],
+                description: "主角，已成长".to_owned(),
+                fixed_attributes_json: "{}".to_owned(),
+                tags: vec!["主角".to_owned(), "成长".to_owned()],
+                base_revision_id: Some(created.current_revision_id),
+                source_version: Some("manuscript:2".to_owned()),
+                expected_version: Some(1),
+            })
+            .expect("update entity");
+        assert_eq!(updated.version, 2);
+        assert_eq!(
+            manager
+                .list_entity_revisions(created.id)
+                .expect("revisions")
+                .len(),
+            2
+        );
+        assert!(matches!(
+            manager.upsert_entity(super::EntityInput {
+                id: Some(created.id),
+                entity_type: super::EntityType::Character,
+                name: "过期修改".to_owned(),
+                aliases: vec![],
+                description: String::new(),
+                fixed_attributes_json: "{}".to_owned(),
+                tags: vec![],
+                base_revision_id: None,
+                source_version: None,
+                expected_version: Some(1),
+            }),
+            Err(super::EntityStoreError::Contract(
+                super::EntityError::Conflict { actual: 2, .. }
+            ))
+        ));
+        let archived = manager
+            .set_entity_archived(created.id, true, 2)
+            .expect("archive entity");
+        assert_eq!(
+            archived.lifecycle_status,
+            super::EntityLifecycleStatus::Archived
+        );
+        assert!(
+            manager
+                .list_entities(false)
+                .expect("active entities")
+                .is_empty()
+        );
+        assert_eq!(manager.list_entities(true).expect("all entities").len(), 1);
+        let session = manager.current.as_ref().expect("session");
+        assert!(
+            session
+                .database
+                .connection
+                .execute(
+                    "DELETE FROM entity_revisions WHERE id = ?1",
+                    [created.current_revision_id.to_string()],
+                )
+                .is_err()
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
