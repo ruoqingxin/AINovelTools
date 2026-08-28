@@ -61,6 +61,106 @@ pub struct FeatureDescriptor {
     pub unavailable_reason: Option<&'static str>,
 }
 
+/// R4 schema and contract planning metadata shared by migration checks and
+/// diagnostics. The actual feature tables are introduced by later R4 slices.
+pub const R4_SCHEMA_VERSION: i64 = 10;
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct R4MigrationDescriptor {
+    pub version: i64,
+    pub name: &'static str,
+    pub purpose: &'static str,
+    pub depends_on: &'static [i64],
+}
+
+pub const R4_MIGRATION_PLAN: &[R4MigrationDescriptor] = &[
+    R4MigrationDescriptor {
+        version: 10,
+        name: "r4_project_settings_baseline",
+        purpose: "统一项目级写作风格、隐私设置和扩展元数据",
+        depends_on: &[9],
+    },
+    R4MigrationDescriptor {
+        version: 11,
+        name: "r4_story_bible_entities",
+        purpose: "Character、Location、Faction、Item、Concept 和实体修订",
+        depends_on: &[10],
+    },
+    R4MigrationDescriptor {
+        version: 12,
+        name: "r4_summary_and_writing_cards",
+        purpose: "多精度摘要、风格规则卡和写作技巧卡",
+        depends_on: &[11],
+    },
+    R4MigrationDescriptor {
+        version: 13,
+        name: "r4_fts5_projection",
+        purpose: "SQLite FTS5 trigram 搜索投影和重建状态",
+        depends_on: &[11, 12],
+    },
+    R4MigrationDescriptor {
+        version: 14,
+        name: "r4_persistent_jobs",
+        purpose: "备份、恢复验证、健康扫描和 FTS 重建任务",
+        depends_on: &[10],
+    },
+    R4MigrationDescriptor {
+        version: 15,
+        name: "r4_backup_health_diagnostics",
+        purpose: "备份清单、健康扫描和启动诊断元数据",
+        depends_on: &[10, 14],
+    },
+];
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct R4ContractDescriptor {
+    pub id: &'static str,
+    pub layer: &'static str,
+    pub purpose: &'static str,
+    pub introduced_by: i64,
+}
+
+pub const R4_CONTRACTS: &[R4ContractDescriptor] = &[
+    R4ContractDescriptor {
+        id: "project_settings",
+        layer: "persistence",
+        purpose: "项目级写作风格、隐私设置和扩展元数据",
+        introduced_by: 10,
+    },
+    R4ContractDescriptor {
+        id: "story_bible_entities",
+        layer: "domain-ipc",
+        purpose: "实体、实体修订、别名、标签和归档",
+        introduced_by: 11,
+    },
+    R4ContractDescriptor {
+        id: "summary_materials",
+        layer: "domain-ipc",
+        purpose: "章节、人物和设定的多精度摘要材料",
+        introduced_by: 12,
+    },
+    R4ContractDescriptor {
+        id: "search",
+        layer: "application-ipc",
+        purpose: "结构化查询、关键词查询和 FTS 重建",
+        introduced_by: 13,
+    },
+    R4ContractDescriptor {
+        id: "persistent_jobs",
+        layer: "application-ipc",
+        purpose: "可取消、可重试、可恢复的本地后台任务",
+        introduced_by: 14,
+    },
+    R4ContractDescriptor {
+        id: "reliability",
+        layer: "infrastructure-ipc",
+        purpose: "备份、恢复、健康扫描、CrashMarker 和诊断包",
+        introduced_by: 15,
+    },
+];
+
 pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
     FeatureDescriptor {
         id: "project_management",
@@ -110,6 +210,41 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         stage: "R3",
         status: FeatureStatus::Partial,
         unavailable_reason: Some("正在实现 Proposal 交互"),
+    },
+    FeatureDescriptor {
+        id: "r4_project_settings",
+        display_name: "R4 项目设置基线",
+        stage: "R4",
+        status: FeatureStatus::Declared,
+        unavailable_reason: Some("R4 阶段 A 已建立迁移基线，设置读写待后续切片实现"),
+    },
+    FeatureDescriptor {
+        id: "story_bible",
+        display_name: "Story Bible 实体库",
+        stage: "R4",
+        status: FeatureStatus::Declared,
+        unavailable_reason: Some("等待 R4 阶段 B/C 实现实体和实体修订"),
+    },
+    FeatureDescriptor {
+        id: "r4_search",
+        display_name: "SQLite FTS5 搜索",
+        stage: "R4",
+        status: FeatureStatus::Declared,
+        unavailable_reason: Some("等待 R4 阶段 E 实现索引投影和搜索"),
+    },
+    FeatureDescriptor {
+        id: "r4_persistent_jobs",
+        display_name: "R4 持久化任务",
+        stage: "R4",
+        status: FeatureStatus::Declared,
+        unavailable_reason: Some("等待 R4 阶段 G 实现 Job Runner"),
+    },
+    FeatureDescriptor {
+        id: "r4_reliability",
+        display_name: "R4 备份恢复与诊断",
+        stage: "R4",
+        status: FeatureStatus::Declared,
+        unavailable_reason: Some("等待 R4 阶段 H/I 实现可靠性能力"),
     },
 ];
 
@@ -909,6 +1044,20 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (9, 'ai_task_contract_audit');",
             )?;
         }
+        if applied.unwrap_or(0) < 10 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS project_settings (
+                    project_id TEXT PRIMARY KEY NOT NULL DEFAULT 'current',
+                    writing_style TEXT NOT NULL DEFAULT '',
+                    privacy_level TEXT NOT NULL DEFAULT 'LOCAL_ONLY',
+                    metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT OR IGNORE INTO project_settings (project_id) VALUES ('current');
+                INSERT INTO schema_migrations (version, name) VALUES (10, 'r4_project_settings_baseline');",
+            )?;
+        }
         Ok(())
     }
 
@@ -1448,7 +1597,7 @@ pub fn linked_layers() -> [&'static str; 3] {
 
 #[cfg(test)]
 mod tests {
-    use super::Database;
+    use super::{Database, R4_CONTRACTS, R4_MIGRATION_PLAN, R4_SCHEMA_VERSION};
 
     #[test]
     fn infrastructure_depends_inward() {
@@ -1462,10 +1611,43 @@ mod tests {
     fn sqlite_applies_pragmas_and_initial_migration() {
         let database = Database::in_memory().expect("in-memory database");
         let health = database.health().expect("database health");
-        assert_eq!(health.schema_version, 9);
+        assert_eq!(health.schema_version, R4_SCHEMA_VERSION);
         assert_eq!(health.journal_mode, "memory");
         assert!(health.foreign_keys_enabled);
         assert!(!health.sqlite_version.is_empty());
+    }
+
+    #[test]
+    fn r4_baseline_exposes_ordered_migration_and_contract_plans() {
+        assert_eq!(R4_MIGRATION_PLAN.first().map(|item| item.version), Some(10));
+        assert!(
+            R4_MIGRATION_PLAN
+                .windows(2)
+                .all(|pair| pair[0].version < pair[1].version)
+        );
+        assert_eq!(R4_MIGRATION_PLAN.last().map(|item| item.version), Some(15));
+        assert!(
+            R4_CONTRACTS
+                .iter()
+                .any(|item| item.id == "story_bible_entities")
+        );
+        assert!(R4_CONTRACTS.iter().all(|item| item.introduced_by >= 10));
+    }
+
+    #[test]
+    fn r4_project_settings_baseline_is_created_with_safe_defaults() {
+        let database = Database::in_memory().expect("in-memory database");
+        let settings: (String, String, String) = database
+            .connection
+            .query_row(
+                "SELECT writing_style, privacy_level, metadata_json FROM project_settings WHERE project_id='current'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("project settings baseline");
+        assert_eq!(settings.0, "");
+        assert_eq!(settings.1, "LOCAL_ONLY");
+        assert_eq!(settings.2, "{}");
     }
 
     #[test]

@@ -52,6 +52,8 @@ export type ManuscriptRevision = {
 };
 
 export type FeatureDescriptor = { id: string; displayName: string; stage: string; status: "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED"; unavailableReason: string | null };
+export type R4MigrationDescriptor = { version: number; name: string; purpose: string; dependsOn: number[] };
+export type R4ContractDescriptor = { id: string; layer: string; purpose: string; introducedBy: number };
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
 export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
 export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
