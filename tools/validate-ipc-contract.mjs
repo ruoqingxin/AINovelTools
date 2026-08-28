@@ -1,6 +1,19 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 
-const rust = await readFile("apps/desktop/src-tauri/src/lib.rs", "utf8");
+const rustRoot = "apps/desktop/src-tauri/src";
+const rustFiles = ["lib.rs"];
+for (const entry of await readdir(rustRoot, { withFileTypes: true })) {
+  if (entry.isFile() && entry.name.endsWith(".rs") && entry.name !== "lib.rs") {
+    rustFiles.push(entry.name);
+  }
+  if (entry.isDirectory() && entry.name === "commands") {
+    for (const command of await readdir(join(rustRoot, entry.name))) {
+      if (command.endsWith(".rs")) rustFiles.push(join(entry.name, command));
+    }
+  }
+}
+const rust = (await Promise.all(rustFiles.map((file) => readFile(join(rustRoot, file), "utf8")))).join("\n");
 const ts = await readFile("apps/desktop/src/lib/tauri-client.ts", "utf8");
 const commands = [...rust.matchAll(/fn\s+([a-z][a-z0-9_]*)\s*\(/g)].map((m) => m[1]);
 const clientCommands = [...ts.matchAll(/invoke<[^>]*>\("([a-z][a-z0-9_]*)"/g)].map((m) => m[1]);
