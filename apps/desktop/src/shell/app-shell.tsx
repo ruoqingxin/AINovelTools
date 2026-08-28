@@ -1,6 +1,6 @@
 import { AppMark } from "@ainoveltools/ui";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet } from "@tanstack/react-router";
+import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   BookOpenText,
   Bot,
@@ -17,12 +17,13 @@ const navigation = [
   { label: "项目", icon: LibraryBig, active: true },
   { label: "规划", icon: ListTree },
   { label: "正文", icon: BookOpenText },
-  { label: "知识", icon: FileSearch },
+  { label: "知识", icon: FileSearch, path: "/knowledge" as const },
   { label: "AI", icon: Bot },
   { label: "审核", icon: ShieldCheck },
 ];
 
 export function AppShell() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
   useQuery({
     queryKey: ["bootstrap-status"],
     queryFn: getBootstrapStatus,
@@ -51,8 +52,12 @@ export function AppShell() {
           <span>AI Novel Tools</span>
         </div>
         <nav className="top-nav" aria-label="工作区导航">
-          {navigation.map(({ label, icon: Icon, active }) => (
-            <button key={label} type="button" className="top-nav-button" data-active={active || undefined} disabled={!active}>
+          {navigation.map(({ label, icon: Icon, active, path }) => path ? (
+            <Link key={label} to={path} className="top-nav-button top-nav-link" activeProps={{ "data-active": true }}>
+              <Icon size={15} strokeWidth={1.8} />{label}
+            </Link>
+          ) : (
+            <button key={label} type="button" className="top-nav-button" data-active={active && pathname === "/" ? true : undefined} disabled={!active}>
               <Icon size={15} strokeWidth={1.8} />{label}
             </button>
           ))}
@@ -66,16 +71,12 @@ export function AppShell() {
 
       <aside className="activity-bar" aria-label="主要导航">
         <nav>
-          {navigation.map(({ label, icon: Icon, active }) => (
-            <button
-              key={label}
-              type="button"
-              className="activity-button"
-              data-active={active || undefined}
-              aria-label={label}
-              title={label}
-              disabled={!active}
-            >
+          {navigation.map(({ label, icon: Icon, active, path }) => path ? (
+            <Link key={label} to={path} className="activity-button" activeProps={{ "data-active": true }} aria-label={label} title={label}>
+              <Icon size={19} strokeWidth={1.8} />
+            </Link>
+          ) : (
+            <button key={label} type="button" className="activity-button" data-active={active && pathname === "/" ? true : undefined} aria-label={label} title={label} disabled={!active}>
               <Icon size={19} strokeWidth={1.8} />
             </button>
           ))}
