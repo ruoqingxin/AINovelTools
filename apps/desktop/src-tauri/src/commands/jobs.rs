@@ -81,3 +81,14 @@ pub(crate) fn run_next_job(
         .run_next_job()
         .map_err(|error| ApiError::internal(error.to_string()))
 }
+
+#[tauri::command]
+pub(crate) fn health_scan(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<novel_infrastructure::HealthScanReport, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.health_scan().map_err(|error| ApiError::internal(error.to_string()))
+}

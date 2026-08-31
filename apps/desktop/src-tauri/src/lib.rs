@@ -18,7 +18,7 @@ use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::entities::{
     list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
 };
-use commands::jobs::{cancel_job, claim_next_job, enqueue_job, list_jobs, retry_job, run_next_job};
+use commands::jobs::{cancel_job, claim_next_job, enqueue_job, health_scan, list_jobs, retry_job, run_next_job};
 use commands::manuscript::{
     clear_recovery_logs, current_manuscript, list_all_recovery_logs, list_manuscript_revisions,
     list_recovery_logs, merge_manuscript, save_manuscript, save_manuscript_checked,
@@ -113,7 +113,8 @@ pub fn run() {
             cancel_job,
             retry_job,
             claim_next_job,
-            run_next_job
+            run_next_job,
+            health_scan
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

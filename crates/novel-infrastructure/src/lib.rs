@@ -86,6 +86,17 @@ pub struct DatabaseHealth {
     pub foreign_keys_enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthScanReport {
+    pub status: String,
+    pub schema_version: i64,
+    pub sqlite_integrity: String,
+    pub fts_rows: i64,
+    pub warnings: Vec<String>,
+    pub errors: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum FeatureStatus {
@@ -597,7 +608,7 @@ impl ProjectManager {
         }
         let result: Result<(), String> = match job.job_type {
             JobType::RebuildSearchIndex => self.rebuild_search_index().map_err(|e| e.to_string()),
-            JobType::HealthScan => self.health().map(|_| ()).map_err(|e| e.to_string()),
+            JobType::HealthScan => self.health_scan().map(|_| ()).map_err(|e| e.to_string()),
             JobType::Backup => self.perform_backup(&job).map_err(|e| e.to_string()),
             JobType::RestoreVerify => self.perform_restore_verify(&job).map_err(|e| e.to_string()),
         };
@@ -616,13 +627,65 @@ impl ProjectManager {
         Ok(session.database.connection.query_row("SELECT cancel_requested FROM jobs WHERE id=?1", [id.to_string()], |row| row.get::<_, i64>(0))? == 1)
     }
 
+    pub fn health_scan(&self) -> Result<HealthScanReport, DatabaseError> {
+        let session = self.current.as_ref().ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        let health = session.database.health()?;
+        let integrity: String = session.database.connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        let fts_rows: i64 = session.database.connection.query_row("SELECT count(*) FROM search_index", [], |row| row.get(0)).unwrap_or(0);
+        let mut warnings = Vec::new();
+        let mut errors = Vec::new();
+        if integrity != "ok" { errors.push(format!("SQLite integrity check: {integrity}")); }
+        for directory in ["attachments", "snapshots", "recovery", "exports", "temp"] {
+            if !session.root.join(directory).is_dir() { warnings.push(format!("missing directory: {directory}")); }
+        }
+        let status = if errors.is_empty() { if warnings.is_empty() { "HEALTHY" } else { "WARNING" } } else { "ERROR" };
+        Ok(HealthScanReport { status: status.into(), schema_version: health.schema_version, sqlite_integrity: integrity, fts_rows, warnings, errors })
+    }
+
+    pub fn restore_backup_to_new_project(&self, source: impl AsRef<Path>, target: impl AsRef<Path>) -> Result<ProjectManifest, ProjectError> {
+        let source = source.as_ref();
+        let target = target.as_ref();
+        if target.exists() { return Err(ProjectError::AlreadyExists(target.to_path_buf())); }
+        let manifest: ProjectManifest = serde_json::from_slice(&std::fs::read(source.join("project.json"))?)?;
+        let parent = target.parent().ok_or_else(|| ProjectError::InvalidPath(target.to_path_buf()))?;
+        std::fs::create_dir_all(parent)?;
+        let temp = parent.join(format!(".restore-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp)?;
+        let result = (|| {
+            for directory in ["attachments", "snapshots", "recovery", "exports", "temp"] { std::fs::create_dir_all(temp.join(directory))?; }
+            std::fs::copy(source.join("project.json"), temp.join("project.json"))?;
+            std::fs::copy(source.join("project.sqlite"), temp.join("project.sqlite"))?;
+            let _ = Database::open(temp.join("project.sqlite"))?;
+            std::fs::rename(&temp, target)?;
+            Ok(manifest)
+        })();
+        if result.is_err() { let _ = std::fs::remove_dir_all(&temp); }
+        result
+    }
+
     fn perform_backup(&self, job: &Job) -> Result<(), std::io::Error> {
         let session = self.current.as_ref().ok_or_else(|| std::io::Error::other("no project is open"))?;
         let target = session.root.join("snapshots").join(job.id.to_string());
         std::fs::create_dir_all(&target)?;
         std::fs::copy(session.root.join("project.json"), target.join("project.json"))?;
         std::fs::copy(session.root.join("project.sqlite"), target.join("project.sqlite"))?;
-        std::fs::write(target.join("manifest.json"), serde_json::to_vec_pretty(&serde_json::json!({"jobId": job.id, "projectId": session.manifest.project_id, "formatVersion": 1})).unwrap_or_default())?;
+        let mut files = serde_json::Map::new();
+        for relative in ["project.json", "project.sqlite"] {
+            let bytes = std::fs::read(target.join(relative))?;
+            files.insert(relative.into(), serde_json::json!(format!("sha256:{:x}", Sha256::digest(bytes))));
+        }
+        let attachments = session.root.join("attachments");
+        if attachments.is_dir() {
+            for entry in walk_files(&attachments)? {
+                let relative = entry.strip_prefix(&session.root).unwrap_or(&entry).to_path_buf();
+                let destination = target.join(&relative);
+                if let Some(parent) = destination.parent() { std::fs::create_dir_all(parent)?; }
+                std::fs::copy(&entry, &destination)?;
+                let bytes = std::fs::read(&destination)?;
+                files.insert(relative.to_string_lossy().replace('\\', "/"), serde_json::json!(format!("sha256:{:x}", Sha256::digest(bytes))));
+            }
+        }
+        std::fs::write(target.join("manifest.json"), serde_json::to_vec_pretty(&serde_json::json!({"jobId": job.id, "projectId": session.manifest.project_id, "schemaVersion": R4_SCHEMA_VERSION, "formatVersion": 1, "files": files})).unwrap_or_default())?;
         Ok(())
     }
 
@@ -632,7 +695,19 @@ impl ProjectManager {
         let source = payload.get("source").and_then(|v| v.as_str()).map(PathBuf::from).unwrap_or_else(|| session.root.join("snapshots").join(job.id.to_string()));
         let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(source.join("manifest.json"))?).map_err(std::io::Error::other)?;
         if manifest.get("projectId").and_then(|v| v.as_str()) != Some(&session.manifest.project_id.to_string()) { return Err(std::io::Error::other("backup project id mismatch")); }
-        let _ = std::fs::metadata(source.join("project.sqlite"))?;
+        let mut verify_files = vec!["project.json".to_owned(), "project.sqlite".to_owned()];
+        if let Some(files) = manifest.get("files").and_then(|v| v.as_object()) {
+            verify_files.extend(files.keys().filter(|key| key.starts_with("attachments/")).cloned());
+        }
+        for relative in verify_files {
+            let bytes = std::fs::read(source.join(&relative))?;
+            let actual = format!("sha256:{:x}", Sha256::digest(bytes));
+            let expected = manifest.get("files").and_then(|v| v.get(&relative)).and_then(|v| v.as_str());
+            if expected != Some(actual.as_str()) { return Err(std::io::Error::other(format!("backup hash mismatch: {relative}"))); }
+        }
+        if let Some(target) = payload.get("target").and_then(|v| v.as_str()) {
+            self.restore_backup_to_new_project(&source, target).map_err(|e| std::io::Error::other(e.to_string()))?;
+        }
         Ok(())
     }
 
@@ -802,6 +877,16 @@ impl ProjectManager {
             .collect::<Vec<_>>();
         novel_application::ContextAssembler::assemble_with_retrieval(input, &evidence)
     }
+}
+
+fn walk_files(root: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+    let mut files = Vec::new();
+    if !root.is_dir() { return Ok(files); }
+    for entry in std::fs::read_dir(root)? {
+        let path = entry?.path();
+        if path.is_dir() { files.extend(walk_files(&path)?); } else { files.push(path); }
+    }
+    Ok(files)
 }
 
 impl ProjectManager {
@@ -1680,8 +1765,14 @@ mod tests {
             .expect("enqueue");
         let completed = manager.run_next_job().expect("run").expect("completed");
         assert_eq!(completed.status, super::JobStatus::Succeeded);
-        assert!(root.join("snapshots").join(completed.id.to_string()).join("project.sqlite").is_file());
+        let snapshot = root.join("snapshots").join(completed.id.to_string());
+        assert!(snapshot.join("project.sqlite").is_file());
+        assert_eq!(manager.health_scan().expect("health").status, "HEALTHY");
+        let restored = root.with_file_name(format!("{}-restored", root.file_name().unwrap().to_string_lossy()));
+        manager.restore_backup_to_new_project(&snapshot, &restored).expect("restore");
+        assert!(restored.join("project.sqlite").is_file());
         let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(restored);
     }
 
     #[test]
