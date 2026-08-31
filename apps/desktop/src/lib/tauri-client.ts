@@ -82,6 +82,7 @@ export type WritingCard = {
   content: string; sourceVersion: string | null; scope: string; enabled: boolean;
   sortOrder: number; createdAt: string; updatedAt: string;
 };
+export type SearchResult = { objectType: string; objectId: string; sourceVersion: string | null; snippet: string };
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
 export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
 export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
@@ -138,6 +139,8 @@ export function upsertWritingCard(card: WritingCard) { return invoke<WritingCard
 export function setWritingCardEnabled(id: string, enabled: boolean) { return invoke<WritingCard>("set_writing_card_enabled", { id, enabled }); }
 export function setSummaryMaterialLifecycle(id: string, lifecycleStatus: string) { return invoke<SummaryMaterial>("set_summary_material_lifecycle", { id, lifecycleStatus }); }
 export function rebuildSummaryMaterial(id: string) { return invoke<SummaryMaterial>("rebuild_summary_material", { id }); }
+export function rebuildSearchIndex() { return invoke<void>("rebuild_search_index"); }
+export function searchProject(query: string, limit = 50) { return invoke<SearchResult[]>("search_project", { query, limit }); }
 
 export function getCurrentProject() {
   return invoke<ProjectManifest | null>("current_project");

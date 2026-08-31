@@ -34,10 +34,13 @@ impl ProjectManager {
             .as_mut()
             .ok_or(MaterialsStoreError::NoProject)?;
         material.project_id = session.manifest.project_id;
+        let result = session
+            .database
+            .upsert_summary_material(session.manifest.project_id, material)?;
         session
             .database
-            .upsert_summary_material(session.manifest.project_id, material)
-            .map_err(Into::into)
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(result)
     }
 
     pub fn list_writing_cards(
@@ -66,10 +69,13 @@ impl ProjectManager {
             .as_mut()
             .ok_or(MaterialsStoreError::NoProject)?;
         card.project_id = session.manifest.project_id;
+        let result = session
+            .database
+            .upsert_writing_card(session.manifest.project_id, card)?;
         session
             .database
-            .upsert_writing_card(session.manifest.project_id, card)
-            .map_err(Into::into)
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(result)
     }
 
     pub fn set_writing_card_enabled(
@@ -81,10 +87,14 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(MaterialsStoreError::NoProject)?;
+        let result =
+            session
+                .database
+                .set_writing_card_enabled(session.manifest.project_id, id, enabled)?;
         session
             .database
-            .set_writing_card_enabled(session.manifest.project_id, id, enabled)
-            .map_err(Into::into)
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(result)
     }
 
     pub fn set_summary_material_lifecycle(
@@ -96,10 +106,15 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(MaterialsStoreError::NoProject)?;
+        let result = session.database.set_summary_material_lifecycle(
+            session.manifest.project_id,
+            id,
+            lifecycle_status,
+        )?;
         session
             .database
-            .set_summary_material_lifecycle(session.manifest.project_id, id, lifecycle_status)
-            .map_err(Into::into)
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(result)
     }
 
     pub fn rebuild_summary_material(
@@ -110,10 +125,13 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(MaterialsStoreError::NoProject)?;
+        let result = session
+            .database
+            .rebuild_summary_material(session.manifest.project_id, id)?;
         session
             .database
-            .rebuild_summary_material(session.manifest.project_id, id)
-            .map_err(Into::into)
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(result)
     }
 }
 

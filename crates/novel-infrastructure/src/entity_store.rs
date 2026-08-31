@@ -27,9 +27,13 @@ impl ProjectManager {
     pub fn upsert_entity(&mut self, input: EntityInput) -> Result<Entity, EntityStoreError> {
         input.validate()?;
         let session = self.current.as_mut().ok_or(EntityStoreError::NoProject)?;
+        let entity = session
+            .database
+            .upsert_entity(session.manifest.project_id, input)?;
         session
             .database
-            .upsert_entity(session.manifest.project_id, input)
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(entity)
     }
 
     pub fn list_entity_revisions(
@@ -47,12 +51,16 @@ impl ProjectManager {
         expected_version: i64,
     ) -> Result<Entity, EntityStoreError> {
         let session = self.current.as_mut().ok_or(EntityStoreError::NoProject)?;
-        session.database.set_entity_archived(
+        let entity = session.database.set_entity_archived(
             session.manifest.project_id,
             id,
             archived,
             expected_version,
-        )
+        )?;
+        session
+            .database
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(entity)
     }
 }
 

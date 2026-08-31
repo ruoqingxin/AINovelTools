@@ -30,6 +30,7 @@ use commands::planning::{
     create_plan_node, list_plan_nodes, move_plan_node, update_plan_node, update_plan_node_checked,
 };
 use commands::project::{close_project, create_project, current_project, open_project};
+use commands::search::{rebuild_search_index, search_project};
 use errors::ApiError;
 use state::ProjectState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -88,7 +89,9 @@ pub fn run() {
             upsert_writing_card,
             set_writing_card_enabled,
             set_summary_material_lifecycle,
-            rebuild_summary_material
+            rebuild_summary_material,
+            rebuild_search_index,
+            search_project
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

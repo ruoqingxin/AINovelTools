@@ -103,6 +103,19 @@ impl From<novel_infrastructure::MaterialsStoreError> for ApiError {
     }
 }
 
+impl From<novel_infrastructure::SearchStoreError> for ApiError {
+    fn from(error: novel_infrastructure::SearchStoreError) -> Self {
+        let code = match error {
+            novel_infrastructure::SearchStoreError::NoProject => "NO_PROJECT_OPEN",
+            novel_infrastructure::SearchStoreError::Database(_) => "DATABASE_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
 impl From<novel_infrastructure::AiError> for ApiError {
     fn from(error: novel_infrastructure::AiError) -> Self {
         Self {

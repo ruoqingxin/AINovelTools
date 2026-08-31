@@ -306,6 +306,19 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (12, 'r4_summary_and_writing_cards');",
             )?;
         }
+        if applied.unwrap_or(0) < 13 {
+            self.connection.execute_batch(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
+                    object_type UNINDEXED,
+                    object_id UNINDEXED,
+                    project_id UNINDEXED,
+                    source_version UNINDEXED,
+                    content,
+                    tokenize = 'trigram'
+                );
+                INSERT INTO schema_migrations (version, name) VALUES (13, 'r4_fts5_projection');",
+            )?;
+        }
         Ok(())
     }
 
