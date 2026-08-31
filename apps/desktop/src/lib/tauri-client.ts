@@ -135,6 +135,9 @@ export function listSummaryMaterials() { return invoke<SummaryMaterial[]>("list_
 export function upsertSummaryMaterial(material: SummaryMaterial) { return invoke<SummaryMaterial>("upsert_summary_material", { material }); }
 export function listWritingCards(cardType?: string) { return invoke<WritingCard[]>("list_writing_cards", { cardType }); }
 export function upsertWritingCard(card: WritingCard) { return invoke<WritingCard>("upsert_writing_card", { card }); }
+export function setWritingCardEnabled(id: string, enabled: boolean) { return invoke<WritingCard>("set_writing_card_enabled", { id, enabled }); }
+export function setSummaryMaterialLifecycle(id: string, lifecycleStatus: string) { return invoke<SummaryMaterial>("set_summary_material_lifecycle", { id, lifecycleStatus }); }
+export function rebuildSummaryMaterial(id: string) { return invoke<SummaryMaterial>("rebuild_summary_material", { id }); }
 
 export function getCurrentProject() {
   return invoke<ProjectManifest | null>("current_project");

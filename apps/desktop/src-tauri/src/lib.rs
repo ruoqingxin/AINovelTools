@@ -22,7 +22,9 @@ use commands::manuscript::{
     save_recovery_log,
 };
 use commands::materials::{
-    list_summary_materials, list_writing_cards, upsert_summary_material, upsert_writing_card,
+    list_summary_materials, list_writing_cards, rebuild_summary_material,
+    set_summary_material_lifecycle, set_writing_card_enabled, upsert_summary_material,
+    upsert_writing_card,
 };
 use commands::planning::{
     create_plan_node, list_plan_nodes, move_plan_node, update_plan_node, update_plan_node_checked,
@@ -83,7 +85,10 @@ pub fn run() {
             list_summary_materials,
             upsert_summary_material,
             list_writing_cards,
-            upsert_writing_card
+            upsert_writing_card,
+            set_writing_card_enabled,
+            set_summary_material_lifecycle,
+            rebuild_summary_material
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

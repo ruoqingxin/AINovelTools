@@ -50,3 +50,45 @@ pub(crate) fn upsert_writing_card(
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager.upsert_writing_card(card).map_err(ApiError::from)
 }
+
+#[tauri::command]
+pub(crate) fn set_writing_card_enabled(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    enabled: bool,
+) -> Result<novel_infrastructure::WritingCard, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .set_writing_card_enabled(id, enabled)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn set_summary_material_lifecycle(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    lifecycle_status: String,
+) -> Result<novel_infrastructure::SummaryMaterial, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .set_summary_material_lifecycle(id, lifecycle_status)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn rebuild_summary_material(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+) -> Result<novel_infrastructure::SummaryMaterial, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.rebuild_summary_material(id).map_err(ApiError::from)
+}
