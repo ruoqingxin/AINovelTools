@@ -82,7 +82,7 @@ export type WritingCard = {
   content: string; sourceVersion: string | null; scope: string; enabled: boolean;
   sortOrder: number; createdAt: string; updatedAt: string;
 };
-export type SearchResult = { objectType: string; objectId: string; sourceVersion: string | null; snippet: string };
+export type SearchResult = { objectType: string; objectId: string; blockId: string | null; sourceVersion: string | null; snippet: string };
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
 export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
 export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };

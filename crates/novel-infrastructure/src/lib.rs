@@ -567,7 +567,11 @@ impl ProjectManager {
             return Err(PlanError::EmptyTitle);
         }
         let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
-        session.database.create_plan_node(parent_id, kind, title)
+        let node = session.database.create_plan_node(parent_id, kind, title)?;
+        session
+            .database
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(node)
     }
 
     pub fn update_plan_node(
@@ -580,7 +584,11 @@ impl ProjectManager {
             return Err(PlanError::EmptyTitle);
         }
         let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
-        session.database.update_plan_node(id, title, archived)
+        let node = session.database.update_plan_node(id, title, archived)?;
+        session
+            .database
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(node)
     }
 
     pub fn update_plan_node_checked(
@@ -594,9 +602,14 @@ impl ProjectManager {
             return Err(PlanError::EmptyTitle);
         }
         let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
+        let node =
+            session
+                .database
+                .update_plan_node_checked(id, title, archived, expected_version)?;
         session
             .database
-            .update_plan_node_checked(id, title, archived, expected_version)
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(node)
     }
 
     pub fn move_plan_node(
@@ -606,9 +619,13 @@ impl ProjectManager {
         expected_version: i64,
     ) -> Result<PlanNode, PlanError> {
         let session = self.current.as_mut().ok_or(PlanError::NoProject)?;
+        let node = session
+            .database
+            .move_plan_node(id, parent_id, expected_version)?;
         session
             .database
-            .move_plan_node(id, parent_id, expected_version)
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(node)
     }
 
     pub fn current_manuscript(
@@ -637,9 +654,16 @@ impl ProjectManager {
             return Err(ManuscriptError::EmptyDocument);
         }
         let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
+        let revision = session.database.save_manuscript_checked(
+            chapter_id,
+            None,
+            document_json,
+            creation_reason,
+        )?;
         session
             .database
-            .save_manuscript_checked(chapter_id, None, document_json, creation_reason)
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(revision)
     }
 
     pub fn save_manuscript_checked(
@@ -653,12 +677,16 @@ impl ProjectManager {
             return Err(ManuscriptError::EmptyDocument);
         }
         let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
-        session.database.save_manuscript_checked(
+        let revision = session.database.save_manuscript_checked(
             chapter_id,
             base_revision_id,
             document_json,
             creation_reason,
-        )
+        )?;
+        session
+            .database
+            .rebuild_search_index(session.manifest.project_id)?;
+        Ok(revision)
     }
 
     pub fn save_recovery_log(
@@ -1065,6 +1093,70 @@ mod tests {
             .expect("archive chapter");
         assert_eq!(updated.revision, 2);
         assert!(updated.archived);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_handles_chinese_short_queries_and_archived_entities() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-search-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "搜索作品").expect("create project");
+        let entity = manager
+            .upsert_entity(super::EntityInput {
+                id: None,
+                entity_type: super::EntityType::Character,
+                name: "林澈".into(),
+                aliases: vec!["小林".into()],
+                description: "北境的调查者".into(),
+                fixed_attributes_json: "{}".into(),
+                tags: vec!["北境".into()],
+                base_revision_id: None,
+                source_version: Some("test:1".into()),
+                expected_version: None,
+            })
+            .expect("entity");
+        assert_eq!(
+            manager
+                .search_project("林".into(), Some("ENTITY".into()), 50, 0)
+                .expect("short search")
+                .len(),
+            1
+        );
+        assert_eq!(
+            manager
+                .search_project("调查者".into(), None, 50, 0)
+                .expect("fts search")
+                .len(),
+            1
+        );
+        assert!(manager
+            .search_project("林!".into(), None, 50, 0)
+            .expect("special character search")
+            .is_empty());
+        assert_eq!(
+            manager
+                .search_project("北境".into(), None, 50, 0)
+                .expect("deduplicated search")
+                .len(),
+            1
+        );
+        manager
+            .set_entity_archived(entity.id, true, entity.version)
+            .expect("archive");
+        assert!(
+            manager
+                .search_project("林".into(), None, 50, 0)
+                .expect("archived search")
+                .is_empty()
+        );
+        manager.rebuild_search_index().expect("rebuild");
+        assert!(
+            manager
+                .search_project("林".into(), None, 50, 0)
+                .expect("rebuilt search")
+                .is_empty()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

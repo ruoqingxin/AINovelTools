@@ -5,6 +5,7 @@ use super::*;
 pub struct SearchResult {
     pub object_type: String,
     pub object_id: Uuid,
+    pub block_id: Option<Uuid>,
     pub source_version: Option<String>,
     pub snippet: String,
 }
@@ -70,9 +71,9 @@ impl Database {
         let limit = i64::from(limit.clamp(1, 100));
         let offset = i64::from(offset);
         let sql = if query.chars().count() < 3 {
-            "SELECT object_type, object_id, source_version, substr(content,1,180) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND content LIKE '%' || ?3 || '%' LIMIT ?4 OFFSET ?5"
+            "SELECT object_type, object_id, NULL, source_version, substr(content,1,180) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND content LIKE '%' || ?3 || '%' LIMIT ?4 OFFSET ?5"
         } else {
-            "SELECT object_type, object_id, source_version, snippet(search_index, 4, '[', ']', '…', 12) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND search_index MATCH ?3 LIMIT ?4 OFFSET ?5"
+            "SELECT object_type, object_id, NULL, source_version, snippet(search_index, 4, '[', ']', '…', 12) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND search_index MATCH ?3 LIMIT ?4 OFFSET ?5"
         };
         let mut stmt = self.connection.prepare(sql)?;
         let rows = stmt.query_map(
@@ -81,8 +82,11 @@ impl Database {
                 Ok(SearchResult {
                     object_type: row.get(0)?,
                     object_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
-                    source_version: row.get(2)?,
-                    snippet: row.get(3)?,
+                    block_id: row
+                        .get::<_, Option<String>>(2)?
+                        .and_then(|value| Uuid::parse_str(&value).ok()),
+                    source_version: row.get(3)?,
+                    snippet: row.get(4)?,
                 })
             },
         )?;
