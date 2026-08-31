@@ -28,12 +28,20 @@ impl ProjectManager {
     pub fn search_project(
         &self,
         query: String,
+        object_type: Option<String>,
         limit: u32,
+        offset: u32,
     ) -> Result<Vec<SearchResult>, SearchStoreError> {
         let session = self.current.as_ref().ok_or(SearchStoreError::NoProject)?;
         session
             .database
-            .search_project(session.manifest.project_id, &query, limit)
+            .search_project(
+                session.manifest.project_id,
+                &query,
+                object_type.as_deref(),
+                limit,
+                offset,
+            )
             .map_err(Into::into)
     }
 }
@@ -55,17 +63,20 @@ impl Database {
         &self,
         project_id: Uuid,
         query: &str,
+        object_type: Option<&str>,
         limit: u32,
+        offset: u32,
     ) -> Result<Vec<SearchResult>, DatabaseError> {
         let limit = i64::from(limit.clamp(1, 100));
+        let offset = i64::from(offset);
         let sql = if query.chars().count() < 3 {
-            "SELECT object_type, object_id, source_version, substr(content,1,180) FROM search_index WHERE project_id = ?1 AND content LIKE '%' || ?2 || '%' LIMIT ?3"
+            "SELECT object_type, object_id, source_version, substr(content,1,180) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND content LIKE '%' || ?3 || '%' LIMIT ?4 OFFSET ?5"
         } else {
-            "SELECT object_type, object_id, source_version, snippet(search_index, 4, '[', ']', '…', 12) FROM search_index WHERE project_id = ?1 AND search_index MATCH ?2 LIMIT ?3"
+            "SELECT object_type, object_id, source_version, snippet(search_index, 4, '[', ']', '…', 12) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND search_index MATCH ?3 LIMIT ?4 OFFSET ?5"
         };
         let mut stmt = self.connection.prepare(sql)?;
         let rows = stmt.query_map(
-            rusqlite::params![project_id.to_string(), query, limit],
+            rusqlite::params![project_id.to_string(), object_type, query, limit, offset],
             |row| {
                 Ok(SearchResult {
                     object_type: row.get(0)?,

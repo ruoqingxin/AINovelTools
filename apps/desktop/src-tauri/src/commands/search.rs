@@ -13,11 +13,15 @@ pub(crate) fn rebuild_search_index(state: tauri::State<'_, ProjectState>) -> Res
 pub(crate) fn search_project(
     state: tauri::State<'_, ProjectState>,
     query: String,
+    object_type: Option<String>,
     limit: u32,
+    offset: u32,
 ) -> Result<Vec<novel_infrastructure::SearchResult>, ApiError> {
     let manager = state
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager.search_project(query, limit).map_err(ApiError::from)
+    manager
+        .search_project(query, object_type, limit, offset)
+        .map_err(ApiError::from)
 }

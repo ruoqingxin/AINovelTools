@@ -140,7 +140,7 @@ export function setWritingCardEnabled(id: string, enabled: boolean) { return inv
 export function setSummaryMaterialLifecycle(id: string, lifecycleStatus: string) { return invoke<SummaryMaterial>("set_summary_material_lifecycle", { id, lifecycleStatus }); }
 export function rebuildSummaryMaterial(id: string) { return invoke<SummaryMaterial>("rebuild_summary_material", { id }); }
 export function rebuildSearchIndex() { return invoke<void>("rebuild_search_index"); }
-export function searchProject(query: string, limit = 50) { return invoke<SearchResult[]>("search_project", { query, limit }); }
+export function searchProject(query: string, objectType?: string, limit = 50, offset = 0) { return invoke<SearchResult[]>("search_project", { query, objectType, limit, offset }); }
 
 export function getCurrentProject() {
   return invoke<ProjectManifest | null>("current_project");
