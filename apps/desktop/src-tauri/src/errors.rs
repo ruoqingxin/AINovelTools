@@ -89,6 +89,20 @@ impl From<novel_infrastructure::EntityStoreError> for ApiError {
     }
 }
 
+impl From<novel_infrastructure::MaterialsStoreError> for ApiError {
+    fn from(error: novel_infrastructure::MaterialsStoreError) -> Self {
+        let code = match error {
+            novel_infrastructure::MaterialsStoreError::NoProject => "NO_PROJECT_OPEN",
+            novel_infrastructure::MaterialsStoreError::EmptyContent => "INVALID_INPUT",
+            novel_infrastructure::MaterialsStoreError::Database(_) => "DATABASE_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
 impl From<novel_infrastructure::AiError> for ApiError {
     fn from(error: novel_infrastructure::AiError) -> Self {
         Self {

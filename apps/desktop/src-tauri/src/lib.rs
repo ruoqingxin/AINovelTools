@@ -21,6 +21,9 @@ use commands::manuscript::{
     list_recovery_logs, merge_manuscript, save_manuscript, save_manuscript_checked,
     save_recovery_log,
 };
+use commands::materials::{
+    list_summary_materials, list_writing_cards, upsert_summary_material, upsert_writing_card,
+};
 use commands::planning::{
     create_plan_node, list_plan_nodes, move_plan_node, update_plan_node, update_plan_node_checked,
 };
@@ -76,7 +79,11 @@ pub fn run() {
             list_ai_proposals,
             decide_ai_proposal,
             generate_ai_proposal,
-            cancel_ai_task
+            cancel_ai_task,
+            list_summary_materials,
+            upsert_summary_material,
+            list_writing_cards,
+            upsert_writing_card
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

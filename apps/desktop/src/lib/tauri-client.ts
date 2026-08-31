@@ -70,6 +70,18 @@ export type EntityInput = {
   fixedAttributesJson: string; tags: string[]; baseRevisionId?: string; sourceVersion?: string;
   expectedVersion?: number;
 };
+export type SummaryKind = "CHAPTER" | "CHARACTER" | "SETTING";
+export type SummaryPrecision = "L0" | "L1" | "L2" | "L3" | "L4" | "L5";
+export type SummaryMaterial = {
+  id: string; projectId: string; kind: SummaryKind; precision: SummaryPrecision;
+  sourceId: string | null; sourceVersion: string | null; content: string;
+  generationMode: string; lifecycleStatus: string; createdAt: string; updatedAt: string;
+};
+export type WritingCard = {
+  id: string; projectId: string; cardType: "STYLE_RULE" | "TECHNIQUE"; title: string;
+  content: string; sourceVersion: string | null; scope: string; enabled: boolean;
+  sortOrder: number; createdAt: string; updatedAt: string;
+};
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
 export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
 export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
@@ -119,6 +131,10 @@ export function listEntityRevisions(entityId: string) {
 export function setEntityArchived(input: { id: string; archived: boolean; expectedVersion: number }) {
   return invoke<Entity>("set_entity_archived", input);
 }
+export function listSummaryMaterials() { return invoke<SummaryMaterial[]>("list_summary_materials"); }
+export function upsertSummaryMaterial(material: SummaryMaterial) { return invoke<SummaryMaterial>("upsert_summary_material", { material }); }
+export function listWritingCards(cardType?: string) { return invoke<WritingCard[]>("list_writing_cards", { cardType }); }
+export function upsertWritingCard(card: WritingCard) { return invoke<WritingCard>("upsert_writing_card", { card }); }
 
 export function getCurrentProject() {
   return invoke<ProjectManifest | null>("current_project");

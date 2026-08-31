@@ -22,12 +22,15 @@ use uuid::Uuid;
 mod ai;
 mod database;
 mod entity_store;
+mod materials_store;
 pub use ai::{AiError, EmbeddingGateway, ModelGateway, SecretStore};
 pub use entity_store::EntityStoreError;
+pub use materials_store::MaterialsStoreError;
 pub use novel_domain::{
     AiAction, AiProposal, AiProposalStatus, AiTaskStatus, Entity, EntityError, EntityInput,
     EntityLifecycleStatus, EntityRevision, EntityType, ModelCapability, ModelProfile,
-    ModelProfileInput, ModelProvider, PrivacyLevel,
+    ModelProfileInput, ModelProvider, PrivacyLevel, SummaryKind, SummaryMaterial, SummaryPrecision,
+    WritingCard,
 };
 
 #[derive(Debug, Error)]
@@ -67,7 +70,7 @@ pub struct FeatureDescriptor {
 
 /// R4 schema and contract planning metadata shared by migration checks and
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
-pub const R4_SCHEMA_VERSION: i64 = 11;
+pub const R4_SCHEMA_VERSION: i64 = 12;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 mod entity;
+mod materials;
 pub use entity::{
     Entity, EntityError, EntityInput, EntityLifecycleStatus, EntityRevision, EntityType,
 };
+pub use materials::{SummaryKind, SummaryMaterial, SummaryPrecision, WritingCard};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

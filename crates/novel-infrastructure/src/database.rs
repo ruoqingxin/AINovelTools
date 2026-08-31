@@ -272,6 +272,40 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (11, 'r4_story_bible_entities');",
             )?;
         }
+        if applied.unwrap_or(0) < 12 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS summary_materials (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    kind TEXT NOT NULL CHECK(kind IN ('CHAPTER','CHARACTER','SETTING')),
+                    precision TEXT NOT NULL CHECK(precision IN ('L0','L1','L2','L3','L4','L5')),
+                    source_id TEXT,
+                    source_version TEXT,
+                    content TEXT NOT NULL,
+                    generation_mode TEXT NOT NULL DEFAULT 'MANUAL',
+                    lifecycle_status TEXT NOT NULL DEFAULT 'ACTIVE',
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    UNIQUE(project_id, kind, precision, source_id)
+                );
+                CREATE TABLE IF NOT EXISTS writing_cards (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    card_type TEXT NOT NULL CHECK(card_type IN ('STYLE_RULE','TECHNIQUE')),
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    source_version TEXT,
+                    scope TEXT NOT NULL DEFAULT 'PROJECT',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_summary_materials_project ON summary_materials(project_id, kind, precision);
+                CREATE INDEX IF NOT EXISTS idx_writing_cards_project ON writing_cards(project_id, card_type, enabled, sort_order);
+                INSERT INTO schema_migrations (version, name) VALUES (12, 'r4_summary_and_writing_cards');",
+            )?;
+        }
         Ok(())
     }
 
