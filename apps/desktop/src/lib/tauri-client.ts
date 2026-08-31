@@ -115,6 +115,13 @@ export type AiProposal = {
   contextVersion: string; promptVersion: string; outputText: string; acceptedText: string | null;
   status: AiProposalStatus; createdAt: string; decidedAt: string | null;
 };
+export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX";
+export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+export type Job = {
+  id: string; jobType: JobType; payload: string; status: JobStatus; progress: number;
+  attemptCount: number; cancelRequested: boolean; errorSummary: string | null;
+  createdAt: string; updatedAt: string;
+};
 export type ModelConnectionResponse = { capability: ModelCapability; provider: ModelProvider; modelId: string; detail: string };
 
 export function getBootstrapStatus() {
@@ -267,6 +274,13 @@ export function generateAiProposal(input: {
 export function cancelAiTask(taskId: string) {
   return invoke<void>("cancel_ai_task", { taskId });
 }
+
+export function listJobs() { return invoke<Job[]>("list_jobs"); }
+export function enqueueJob(jobType: JobType, payload = "{}") {
+  return invoke<Job>("enqueue_job", { jobType, payload });
+}
+export function cancelJob(id: string) { return invoke<Job>("cancel_job", { id }); }
+export function retryJob(id: string) { return invoke<Job>("retry_job", { id }); }
 
 export function decideAiProposal(input: { id: string; status: Exclude<AiProposalStatus, "PENDING">; acceptedText?: string }) {
   return invoke<AiProposal>("decide_ai_proposal", input);

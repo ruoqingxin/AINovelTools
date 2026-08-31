@@ -16,6 +16,7 @@ use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::entities::{
     list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
 };
+use commands::jobs::{cancel_job, enqueue_job, list_jobs, retry_job};
 use commands::manuscript::{
     clear_recovery_logs, current_manuscript, list_all_recovery_logs, list_manuscript_revisions,
     list_recovery_logs, merge_manuscript, save_manuscript, save_manuscript_checked,
@@ -92,7 +93,11 @@ pub fn run() {
             set_summary_material_lifecycle,
             rebuild_summary_material,
             rebuild_search_index,
-            search_project
+            search_project,
+            list_jobs,
+            enqueue_job,
+            cancel_job,
+            retry_job
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

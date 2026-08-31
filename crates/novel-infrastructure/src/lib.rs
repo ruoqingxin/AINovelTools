@@ -502,7 +502,10 @@ fn valid_job_transition(from: JobStatus, to: JobStatus) -> bool {
     matches!(
         (from, to),
         (JobStatus::Queued, JobStatus::Running | JobStatus::Cancelled)
-            | (JobStatus::Running, JobStatus::Succeeded | JobStatus::Failed | JobStatus::Cancelled)
+            | (
+                JobStatus::Running,
+                JobStatus::Succeeded | JobStatus::Failed | JobStatus::Cancelled
+            )
             | (JobStatus::Failed, JobStatus::Queued)
     )
 }
@@ -535,16 +538,22 @@ impl Default for ProjectManager {
 }
 
 impl ProjectManager {
-    pub fn enqueue_job(&mut self, job_type: JobType, payload: String) -> Result<Job, DatabaseError> {
-        let session = self.current.as_mut().ok_or_else(|| {
-            DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
+    pub fn enqueue_job(
+        &mut self,
+        job_type: JobType,
+        payload: String,
+    ) -> Result<Job, DatabaseError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        let payload_value: serde_json::Value = serde_json::from_str(&payload).map_err(|_| {
+            rusqlite::Error::InvalidParameterName("job payload must be valid JSON".into())
         })?;
-        let serde_json::Value = serde_json::from_str(&payload)
-            .map_err(|_| rusqlite::Error::InvalidParameterName("job payload must be valid JSON".into()))?;
-        if !serde_json.is_object() {
-            return Err(DatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(
-                "job payload must be a JSON object".into(),
-            )));
+        if !payload_value.is_object() {
+            return Err(DatabaseError::Sqlite(
+                rusqlite::Error::InvalidParameterName("job payload must be a JSON object".into()),
+            ));
         }
         let job = Job {
             id: Uuid::new_v4(),
@@ -566,14 +575,16 @@ impl ProjectManager {
     }
 
     pub fn list_jobs(&self) -> Result<Vec<Job>, DatabaseError> {
-        let session = self.current.as_ref().ok_or_else(|| {
-            DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
-        })?;
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         let mut statement = session.database.connection.prepare(
             "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs ORDER BY updated_at DESC, rowid DESC",
         )?;
         let rows = statement.query_map([], read_job)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
     }
 
     pub fn update_job_status(
@@ -583,9 +594,10 @@ impl ProjectManager {
         progress: u8,
         error_summary: Option<String>,
     ) -> Result<Job, DatabaseError> {
-        let session = self.current.as_mut().ok_or_else(|| {
-            DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
-        })?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         let current = session.database.connection.query_row(
             "SELECT status FROM jobs WHERE id=?1",
             [id.to_string()],
@@ -593,9 +605,9 @@ impl ProjectManager {
         )?;
         let current_status = parse_job_status(&current);
         if !valid_job_transition(current_status, status) {
-            return Err(DatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(
-                "invalid job status transition".into(),
-            )));
+            return Err(DatabaseError::Sqlite(
+                rusqlite::Error::InvalidParameterName("invalid job status transition".into()),
+            ));
         }
         let progress = progress.min(100);
         session.database.connection.execute(
@@ -610,9 +622,10 @@ impl ProjectManager {
     }
 
     pub fn request_job_cancel(&mut self, id: Uuid) -> Result<Job, DatabaseError> {
-        let session = self.current.as_mut().ok_or_else(|| {
-            DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
-        })?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         session.database.connection.execute(
             "UPDATE jobs SET cancel_requested=1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status IN ('QUEUED','RUNNING')",
             [id.to_string()],
@@ -625,9 +638,10 @@ impl ProjectManager {
     }
 
     pub fn retry_job(&mut self, id: Uuid) -> Result<Job, DatabaseError> {
-        let session = self.current.as_mut().ok_or_else(|| {
-            DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
-        })?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         session.database.connection.execute(
             "UPDATE jobs SET status='QUEUED', progress=0, attempt_count=attempt_count+1, cancel_requested=0, error_summary=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status='FAILED'",
             [id.to_string()],
@@ -1478,6 +1492,45 @@ mod tests {
             assert_eq!(package.entity_source_status, "RETRIEVAL_ATTACHED");
             assert_eq!(package.action, action);
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persistent_jobs_enforce_lifecycle_and_retry_failed_work() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-jobs-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "任务测试").expect("create");
+        let job = manager
+            .enqueue_job(super::JobType::RebuildSearchIndex, "{}".into())
+            .expect("enqueue");
+        assert_eq!(job.status, super::JobStatus::Queued);
+        manager
+            .update_job_status(job.id, super::JobStatus::Running, 10, None)
+            .expect("running");
+        let failed = manager
+            .update_job_status(
+                job.id,
+                super::JobStatus::Failed,
+                35,
+                Some("索引不可用".into()),
+            )
+            .expect("failed");
+        assert_eq!(failed.error_summary.as_deref(), Some("索引不可用"));
+        let retried = manager.retry_job(job.id).expect("retry");
+        assert_eq!(retried.status, super::JobStatus::Queued);
+        assert_eq!(retried.attempt_count, 1);
+        assert!(
+            manager
+                .update_job_status(job.id, super::JobStatus::Succeeded, 100, None)
+                .is_err()
+        );
+        let cancelled = manager.request_job_cancel(job.id).expect("cancel");
+        assert!(cancelled.cancel_requested);
+        let cancelled = manager
+            .update_job_status(job.id, super::JobStatus::Cancelled, 0, None)
+            .expect("cancelled");
+        assert_eq!(cancelled.status, super::JobStatus::Cancelled);
         let _ = std::fs::remove_dir_all(root);
     }
 
