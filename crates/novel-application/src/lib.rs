@@ -112,6 +112,39 @@ mod tests {
     }
 
     #[test]
+    fn retrieval_marks_missing_source_versions_as_unverified() {
+        let input = super::AssembleContextInput {
+            chapter_id: uuid::Uuid::new_v4(),
+            target_revision_id: None,
+            action: novel_domain::AiAction::Continue,
+            chapter_title: "第一章".into(),
+            chapter_plan: String::new(),
+            document_json: r#"{"type":"doc","content":[]}"#.into(),
+            selection: None,
+            instruction: None,
+            input_token_budget: 2048,
+        };
+        let evidence = novel_domain::RetrievalEvidence {
+            chunk: novel_domain::KnowledgeChunk {
+                id: uuid::Uuid::new_v4(),
+                source_id: uuid::Uuid::new_v4(),
+                source_revision: "search:current".into(),
+                source_hash: "sha256:test".into(),
+                chunk_index: 0,
+                chunking_version: "r4-search-v1".into(),
+                content: "未绑定版本的搜索材料".into(),
+                embedding: None,
+            },
+            method: novel_domain::RetrievalMethod::Keyword,
+            authority: novel_domain::ContextAuthority::Reference,
+            relevance: 5000,
+        };
+        let package = super::ContextAssembler::assemble_with_retrieval(&input, &[evidence])
+            .expect("assemble");
+        assert_eq!(package.entity_source_status, "SOURCE_VERSION_UNVERIFIED");
+    }
+
+    #[test]
     fn writing_calls_have_bounded_roles_and_audited_priority_sections() {
         let input = super::AssembleContextInput {
             chapter_id: uuid::Uuid::new_v4(),

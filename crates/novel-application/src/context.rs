@@ -655,6 +655,14 @@ fn compile_retrieval_evidence(evidence: &[RetrievalEvidence]) -> CompiledRetriev
             authority: item.authority,
         });
     }
+    let source_status = if evidence
+        .iter()
+        .any(|item| item.chunk.source_revision == "search:current")
+    {
+        "SOURCE_VERSION_UNVERIFIED"
+    } else {
+        "RETRIEVAL_ATTACHED"
+    };
     CompiledRetrieval {
         authoritative_count: u16::try_from(authoritative_facts.len()).unwrap_or(u16::MAX),
         authoritative_facts: authoritative_facts.join("\n\n"),
@@ -663,7 +671,7 @@ fn compile_retrieval_evidence(evidence: &[RetrievalEvidence]) -> CompiledRetriev
         reference_count: u16::try_from(references.len()).unwrap_or(u16::MAX),
         references: references.join("\n\n"),
         evidence_refs,
-        source_status: "RETRIEVAL_ATTACHED".to_owned(),
+        source_status: source_status.to_owned(),
     }
 }
 

@@ -36,6 +36,40 @@ pub use novel_domain::{
 };
 pub use search_store::{SearchResult, SearchStoreError};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum JobStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum JobType {
+    Backup,
+    RestoreVerify,
+    HealthScan,
+    RebuildSearchIndex,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Job {
+    pub id: Uuid,
+    pub job_type: JobType,
+    pub payload: String,
+    pub status: JobStatus,
+    pub progress: u8,
+    pub attempt_count: u32,
+    pub cancel_requested: bool,
+    pub error_summary: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Error)]
 pub enum DatabaseError {
     #[error("database operation failed: {0}")]
@@ -73,7 +107,7 @@ pub struct FeatureDescriptor {
 
 /// R4 schema and contract planning metadata shared by migration checks and
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
-pub const R4_SCHEMA_VERSION: i64 = 13;
+pub const R4_SCHEMA_VERSION: i64 = 14;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -426,6 +460,74 @@ pub struct ProjectManager {
     current: Option<ProjectSession>,
 }
 
+fn job_type_str(value: JobType) -> &'static str {
+    match value {
+        JobType::Backup => "BACKUP",
+        JobType::RestoreVerify => "RESTORE_VERIFY",
+        JobType::HealthScan => "HEALTH_SCAN",
+        JobType::RebuildSearchIndex => "REBUILD_SEARCH_INDEX",
+    }
+}
+
+fn parse_job_type(value: &str) -> JobType {
+    match value {
+        "RESTORE_VERIFY" => JobType::RestoreVerify,
+        "HEALTH_SCAN" => JobType::HealthScan,
+        "REBUILD_SEARCH_INDEX" => JobType::RebuildSearchIndex,
+        _ => JobType::Backup,
+    }
+}
+
+fn job_status_str(value: JobStatus) -> &'static str {
+    match value {
+        JobStatus::Queued => "QUEUED",
+        JobStatus::Running => "RUNNING",
+        JobStatus::Succeeded => "SUCCEEDED",
+        JobStatus::Failed => "FAILED",
+        JobStatus::Cancelled => "CANCELLED",
+    }
+}
+
+fn parse_job_status(value: &str) -> JobStatus {
+    match value {
+        "RUNNING" => JobStatus::Running,
+        "SUCCEEDED" => JobStatus::Succeeded,
+        "FAILED" => JobStatus::Failed,
+        "CANCELLED" => JobStatus::Cancelled,
+        _ => JobStatus::Queued,
+    }
+}
+
+fn valid_job_transition(from: JobStatus, to: JobStatus) -> bool {
+    matches!(
+        (from, to),
+        (JobStatus::Queued, JobStatus::Running | JobStatus::Cancelled)
+            | (JobStatus::Running, JobStatus::Succeeded | JobStatus::Failed | JobStatus::Cancelled)
+            | (JobStatus::Failed, JobStatus::Queued)
+    )
+}
+
+fn read_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
+    Ok(Job {
+        id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        job_type: parse_job_type(&row.get::<_, String>(1)?),
+        payload: row.get(2)?,
+        status: parse_job_status(&row.get::<_, String>(3)?),
+        progress: row.get::<_, i64>(4)?.clamp(0, 100) as u8,
+        attempt_count: row.get::<_, i64>(5)?.max(0) as u32,
+        cancel_requested: row.get::<_, i64>(6)? == 1,
+        error_summary: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
 impl Default for ProjectManager {
     fn default() -> Self {
         Self::new()
@@ -433,6 +535,110 @@ impl Default for ProjectManager {
 }
 
 impl ProjectManager {
+    pub fn enqueue_job(&mut self, job_type: JobType, payload: String) -> Result<Job, DatabaseError> {
+        let session = self.current.as_mut().ok_or_else(|| {
+            DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
+        })?;
+        let serde_json::Value = serde_json::from_str(&payload)
+            .map_err(|_| rusqlite::Error::InvalidParameterName("job payload must be valid JSON".into()))?;
+        if !serde_json.is_object() {
+            return Err(DatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(
+                "job payload must be a JSON object".into(),
+            )));
+        }
+        let job = Job {
+            id: Uuid::new_v4(),
+            job_type,
+            payload,
+            status: JobStatus::Queued,
+            progress: 0,
+            attempt_count: 0,
+            cancel_requested: false,
+            error_summary: None,
+            created_at: now_timestamp(),
+            updated_at: now_timestamp(),
+        };
+        session.database.connection.execute(
+            "INSERT INTO jobs (id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary) VALUES (?1, ?2, ?3, 'QUEUED', 0, 0, 0, NULL)",
+            rusqlite::params![job.id.to_string(), job_type_str(job.job_type), job.payload],
+        )?;
+        Ok(job)
+    }
+
+    pub fn list_jobs(&self) -> Result<Vec<Job>, DatabaseError> {
+        let session = self.current.as_ref().ok_or_else(|| {
+            DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
+        })?;
+        let mut statement = session.database.connection.prepare(
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs ORDER BY updated_at DESC, rowid DESC",
+        )?;
+        let rows = statement.query_map([], read_job)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
+    }
+
+    pub fn update_job_status(
+        &mut self,
+        id: Uuid,
+        status: JobStatus,
+        progress: u8,
+        error_summary: Option<String>,
+    ) -> Result<Job, DatabaseError> {
+        let session = self.current.as_mut().ok_or_else(|| {
+            DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
+        })?;
+        let current = session.database.connection.query_row(
+            "SELECT status FROM jobs WHERE id=?1",
+            [id.to_string()],
+            |row| row.get::<_, String>(0),
+        )?;
+        let current_status = parse_job_status(&current);
+        if !valid_job_transition(current_status, status) {
+            return Err(DatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(
+                "invalid job status transition".into(),
+            )));
+        }
+        let progress = progress.min(100);
+        session.database.connection.execute(
+            "UPDATE jobs SET status=?1, progress=?2, error_summary=?3, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?4",
+            rusqlite::params![job_status_str(status), progress, error_summary, id.to_string()],
+        )?;
+        session.database.connection.query_row(
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            [id.to_string()],
+            read_job,
+        ).map_err(DatabaseError::from)
+    }
+
+    pub fn request_job_cancel(&mut self, id: Uuid) -> Result<Job, DatabaseError> {
+        let session = self.current.as_mut().ok_or_else(|| {
+            DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
+        })?;
+        session.database.connection.execute(
+            "UPDATE jobs SET cancel_requested=1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status IN ('QUEUED','RUNNING')",
+            [id.to_string()],
+        )?;
+        session.database.connection.query_row(
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            [id.to_string()],
+            read_job,
+        ).map_err(DatabaseError::from)
+    }
+
+    pub fn retry_job(&mut self, id: Uuid) -> Result<Job, DatabaseError> {
+        let session = self.current.as_mut().ok_or_else(|| {
+            DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
+        })?;
+        session.database.connection.execute(
+            "UPDATE jobs SET status='QUEUED', progress=0, attempt_count=attempt_count+1, cancel_requested=0, error_summary=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status='FAILED'",
+            [id.to_string()],
+        )?;
+        session.database.connection.query_row(
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            [id.to_string()],
+            read_job,
+        ).map_err(DatabaseError::from)
+    }
+
     pub fn assemble_context_with_project_knowledge(
         &self,
         input: &novel_application::AssembleContextInput,
@@ -1240,26 +1446,38 @@ mod tests {
                 expected_version: None,
             })
             .expect("entity");
-        let package = manager
-            .assemble_context_with_project_knowledge(&novel_application::AssembleContextInput {
-                chapter_id: chapter.id,
-                target_revision_id: None,
-                action: super::AiAction::Continue,
-                chapter_title: "第一章".into(),
-                chapter_plan: "调查失踪案".into(),
-                document_json: r#"{"type":"doc","content":[]}"#.into(),
-                selection: None,
-                instruction: Some("调查失踪案".into()),
-                input_token_budget: 4096,
-            })
-            .expect("context package");
-        assert!(
-            package
-                .retrieval_evidence
-                .iter()
-                .any(|item| item.source_revision == "entity:1")
-        );
-        assert_eq!(package.entity_source_status, "RETRIEVAL_ATTACHED");
+        for action in [
+            super::AiAction::Continue,
+            super::AiAction::Rewrite,
+            super::AiAction::Polish,
+            super::AiAction::Summarize,
+        ] {
+            let package = manager
+                .assemble_context_with_project_knowledge(
+                    &novel_application::AssembleContextInput {
+                        chapter_id: chapter.id,
+                        target_revision_id: None,
+                        action,
+                        chapter_title: "第一章".into(),
+                        chapter_plan: "调查失踪案".into(),
+                        document_json: r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"沈砚来到车站。"}]}]}"#.into(),
+                        selection: action
+                            .requires_selection()
+                            .then(|| "沈砚来到车站。".to_owned()),
+                        instruction: Some("调查失踪案".into()),
+                        input_token_budget: 4096,
+                    },
+                )
+                .expect("context package");
+            assert!(
+                package
+                    .retrieval_evidence
+                    .iter()
+                    .any(|item| item.source_revision == "entity:1")
+            );
+            assert_eq!(package.entity_source_status, "RETRIEVAL_ATTACHED");
+            assert_eq!(package.action, action);
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -229,25 +229,32 @@ pub(crate) async fn generate_ai_proposal(
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
-    let context =
-        novel_application::ContextAssembler::assemble(&novel_application::AssembleContextInput {
-            chapter_id,
-            target_revision_id,
-            action,
-            chapter_title,
-            chapter_plan,
-            document_json,
-            selection,
-            instruction,
-            input_token_budget: profile
-                .context_window
-                .saturating_sub(profile.max_output_tokens)
-                .max(256),
-        })
-        .map_err(|error| ApiError {
-            code: "INVALID_INPUT",
-            message: error.to_string(),
-        })?;
+    let context_input = novel_application::AssembleContextInput {
+        chapter_id,
+        target_revision_id,
+        action,
+        chapter_title,
+        chapter_plan,
+        document_json,
+        selection,
+        instruction,
+        input_token_budget: profile
+            .context_window
+            .saturating_sub(profile.max_output_tokens)
+            .max(256),
+    };
+    let context = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        manager
+            .assemble_context_with_project_knowledge(&context_input)
+            .map_err(|error| ApiError {
+                code: "INVALID_INPUT",
+                message: error.to_string(),
+            })?
+    };
     let secret = match profile.secret_ref.as_deref() {
         Some(secret_ref) => {
             Some(novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?)
