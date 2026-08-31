@@ -200,6 +200,7 @@ pub(crate) fn cancel_ai_task(
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn generate_ai_proposal(
     app: tauri::AppHandle,
     state: tauri::State<'_, ProjectState>,

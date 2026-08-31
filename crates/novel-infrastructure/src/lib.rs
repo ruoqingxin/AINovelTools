@@ -7,7 +7,12 @@
     clippy::needless_pass_by_value,
     clippy::too_many_lines,
     clippy::collapsible_if,
-    clippy::if_same_then_else
+    clippy::if_same_then_else,
+    clippy::wildcard_imports,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::map_unwrap_or
 )]
 
 use std::path::{Path, PathBuf};
@@ -95,6 +100,31 @@ pub struct HealthScanReport {
     pub fts_rows: i64,
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrashMarker {
+    pub process_type: String,
+    pub session_id: Uuid,
+    pub occurred_at: String,
+    pub last_trace_id: Option<String>,
+    pub active_project: Option<Uuid>,
+    pub active_task: Option<Uuid>,
+    pub build_version: String,
+    pub crash_phase: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupRecoveryReport {
+    pub crash_marker_present: bool,
+    pub recovery_log_count: usize,
+    pub unfinished_job_count: usize,
+    pub wal_present: bool,
+    pub temp_file_count: usize,
+    pub migration_interrupted: bool,
+    pub actions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -270,36 +300,38 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         id: "r4_project_settings",
         display_name: "R4 项目设置基线",
         stage: "R4",
-        status: FeatureStatus::Declared,
-        unavailable_reason: Some("R4 阶段 A 已建立迁移基线，设置读写待后续切片实现"),
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some("已建立安全默认值和迁移基线，设置编辑界面待补齐"),
     },
     FeatureDescriptor {
         id: "story_bible",
         display_name: "Story Bible 实体库",
         stage: "R4",
-        status: FeatureStatus::Declared,
-        unavailable_reason: Some("等待 R4 阶段 B/C 实现实体和实体修订"),
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some("实体、修订、归档和检索已实现，窄屏验收与候选来源字段待补齐"),
     },
     FeatureDescriptor {
         id: "r4_search",
         display_name: "SQLite FTS5 搜索",
         stage: "R4",
-        status: FeatureStatus::Declared,
-        unavailable_reason: Some("等待 R4 阶段 E 实现索引投影和搜索"),
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some("FTS5 投影和搜索已实现，正文块定位与完整章节入口待补齐"),
     },
     FeatureDescriptor {
         id: "r4_persistent_jobs",
         display_name: "R4 持久化任务",
         stage: "R4",
         status: FeatureStatus::Partial,
-        unavailable_reason: Some("已支持持久化状态、取消、重试、启动恢复和原子领取；后台执行器与任务管理 UI 待实现"),
+        unavailable_reason: None,
     },
     FeatureDescriptor {
         id: "r4_reliability",
         display_name: "R4 备份恢复与诊断",
         stage: "R4",
-        status: FeatureStatus::Declared,
-        unavailable_reason: Some("等待 R4 阶段 H/I 实现可靠性能力"),
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some(
+            "备份、恢复、健康扫描和诊断已实现，完整迁移中断恢复与窗口诊断待增强",
+        ),
     },
 ];
 
@@ -549,6 +581,116 @@ impl Default for ProjectManager {
 }
 
 impl ProjectManager {
+    pub fn write_crash_marker(&self, marker: &CrashMarker) -> Result<(), ProjectError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        std::fs::write(
+            session.root.join("crash-marker.json"),
+            serde_json::to_vec_pretty(marker)?,
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_crash_marker(&self) -> Result<(), ProjectError> {
+        if let Some(session) = self.current.as_ref() {
+            let path = session.root.join("crash-marker.json");
+            if path.exists() {
+                std::fs::remove_file(path)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn startup_recovery_report(&self) -> Result<StartupRecoveryReport, ProjectError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        let marker = session.root.join("crash-marker.json").is_file();
+        let recovery_log_count = self
+            .list_all_recovery_logs()
+            .map_err(|e| {
+                ProjectError::Database(match e {
+                    ManuscriptError::Database(d) => d,
+                    _ => DatabaseError::Sqlite(rusqlite::Error::InvalidQuery),
+                })
+            })?
+            .len();
+        let unfinished_job_count: usize = session
+            .database
+            .connection
+            .query_row(
+                "SELECT count(*) FROM jobs WHERE status IN ('QUEUED','RUNNING')",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            .max(0) as usize;
+        let wal_present = session.root.join("project.sqlite-wal").is_file();
+        let temp_file_count = walk_files(&session.root.join("temp"))
+            .map(|v| v.len())
+            .unwrap_or(0);
+        let migration_interrupted = session
+            .database
+            .connection
+            .query_row("SELECT count(*) FROM schema_migrations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap_or(0)
+            < 1;
+        let mut actions = Vec::new();
+        if marker {
+            actions.push("检测到上次异常退出标记".into());
+        }
+        if unfinished_job_count > 0 {
+            actions.push("恢复未完成后台任务".into());
+        }
+        if wal_present {
+            actions.push("检测到 SQLite WAL，启动时由 SQLite 自动合并".into());
+        }
+        Ok(StartupRecoveryReport {
+            crash_marker_present: marker,
+            recovery_log_count,
+            unfinished_job_count,
+            wal_present,
+            temp_file_count,
+            migration_interrupted,
+            actions,
+        })
+    }
+
+    pub fn compact_recovery_logs(
+        &mut self,
+        retain_per_chapter: usize,
+    ) -> Result<usize, DatabaseError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        let retain = retain_per_chapter.max(1) as i64;
+        let removed = session.database.connection.execute("DELETE FROM recovery_logs WHERE id IN (SELECT id FROM recovery_logs WHERE rowid NOT IN (SELECT rowid FROM recovery_logs r2 WHERE r2.chapter_id = recovery_logs.chapter_id ORDER BY created_at DESC, rowid DESC LIMIT ?1))", [retain])?;
+        Ok(removed)
+    }
+
+    pub fn create_diagnostic_package(&self) -> Result<PathBuf, ProjectError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        let id = Uuid::new_v4();
+        let path = session
+            .root
+            .join("exports")
+            .join(format!("diagnostic-{id}.json"));
+        let health = self.health_scan().map_err(ProjectError::Database)?;
+        let report = self.startup_recovery_report()?;
+        let payload = serde_json::json!({"diagnosticId": id, "generatedAt": now_timestamp(), "schemaVersion": R4_SCHEMA_VERSION, "health": health, "startup": report, "privacy": {"databaseIncluded": false, "manuscriptIncluded": false, "promptIncluded": false, "apiKeyIncluded": false, "attachmentsIncluded": false, "fullPathsIncluded": false}});
+        std::fs::write(&path, serde_json::to_vec_pretty(&payload)?)?;
+        Ok(path)
+    }
+
     /// Recovers jobs left in RUNNING state after an interrupted process.
     /// Cancelled work is finalized as CANCELLED; other work returns to QUEUED
     /// so a runner can safely claim it again.
@@ -565,7 +707,8 @@ impl ProjectManager {
             "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE status='QUEUED' OR status='CANCELLED' ORDER BY updated_at DESC, rowid DESC",
         )?;
         let rows = statement.query_map([], read_job)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
     }
 
     /// Atomically claims the oldest queued job for a runner.
@@ -602,9 +745,13 @@ impl ProjectManager {
     /// Executes one queued job synchronously. The operation is restart-safe:
     /// claiming is atomic and every outcome is persisted as a terminal status.
     pub fn run_next_job(&mut self) -> Result<Option<Job>, DatabaseError> {
-        let Some(job) = self.claim_next_job()? else { return Ok(None) };
+        let Some(job) = self.claim_next_job()? else {
+            return Ok(None);
+        };
         if self.is_job_cancel_requested(job.id)? {
-            return self.update_job_status(job.id, JobStatus::Cancelled, job.progress, None).map(Some);
+            return self
+                .update_job_status(job.id, JobStatus::Cancelled, job.progress, None)
+                .map(Some);
         }
         let result: Result<(), String> = match job.job_type {
             JobType::RebuildSearchIndex => self.rebuild_search_index().map_err(|e| e.to_string()),
@@ -613,76 +760,180 @@ impl ProjectManager {
             JobType::RestoreVerify => self.perform_restore_verify(&job).map_err(|e| e.to_string()),
         };
         if self.is_job_cancel_requested(job.id)? {
-            self.update_job_status(job.id, JobStatus::Cancelled, job.progress, None).map(Some)
+            self.update_job_status(job.id, JobStatus::Cancelled, job.progress, None)
+                .map(Some)
         } else {
             match result {
-                Ok(()) => self.update_job_status(job.id, JobStatus::Succeeded, 100, None).map(Some),
-                Err(error) => self.update_job_status(job.id, JobStatus::Failed, job.progress, Some(error)).map(Some),
+                Ok(()) => self
+                    .update_job_status(job.id, JobStatus::Succeeded, 100, None)
+                    .map(Some),
+                Err(error) => self
+                    .update_job_status(job.id, JobStatus::Failed, job.progress, Some(error))
+                    .map(Some),
             }
         }
     }
 
     fn is_job_cancel_requested(&self, id: Uuid) -> Result<bool, DatabaseError> {
-        let session = self.current.as_ref().ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
-        Ok(session.database.connection.query_row("SELECT cancel_requested FROM jobs WHERE id=?1", [id.to_string()], |row| row.get::<_, i64>(0))? == 1)
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        Ok(session.database.connection.query_row(
+            "SELECT cancel_requested FROM jobs WHERE id=?1",
+            [id.to_string()],
+            |row| row.get::<_, i64>(0),
+        )? == 1)
     }
 
     pub fn health_scan(&self) -> Result<HealthScanReport, DatabaseError> {
-        let session = self.current.as_ref().ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         let health = session.database.health()?;
-        let integrity: String = session.database.connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-        let fts_rows: i64 = session.database.connection.query_row("SELECT count(*) FROM search_index", [], |row| row.get(0)).unwrap_or(0);
+        let integrity: String =
+            session
+                .database
+                .connection
+                .query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        let fts_rows: i64 = session
+            .database
+            .connection
+            .query_row("SELECT count(*) FROM search_index", [], |row| row.get(0))
+            .unwrap_or(0);
         let mut warnings = Vec::new();
         let mut errors = Vec::new();
-        if integrity != "ok" { errors.push(format!("SQLite integrity check: {integrity}")); }
-        for directory in ["attachments", "snapshots", "recovery", "exports", "temp"] {
-            if !session.root.join(directory).is_dir() { warnings.push(format!("missing directory: {directory}")); }
+        if integrity != "ok" {
+            errors.push(format!("SQLite integrity check: {integrity}"));
         }
-        let status = if errors.is_empty() { if warnings.is_empty() { "HEALTHY" } else { "WARNING" } } else { "ERROR" };
-        Ok(HealthScanReport { status: status.into(), schema_version: health.schema_version, sqlite_integrity: integrity, fts_rows, warnings, errors })
+        for directory in ["attachments", "snapshots", "recovery", "exports", "temp"] {
+            if !session.root.join(directory).is_dir() {
+                warnings.push(format!("missing directory: {directory}"));
+            }
+        }
+        let status = if errors.is_empty() {
+            if warnings.is_empty() {
+                "HEALTHY"
+            } else {
+                "WARNING"
+            }
+        } else {
+            "ERROR"
+        };
+        Ok(HealthScanReport {
+            status: status.into(),
+            schema_version: health.schema_version,
+            sqlite_integrity: integrity,
+            fts_rows,
+            warnings,
+            errors,
+        })
     }
 
-    pub fn restore_backup_to_new_project(&self, source: impl AsRef<Path>, target: impl AsRef<Path>) -> Result<ProjectManifest, ProjectError> {
+    pub fn restore_backup_to_new_project(
+        &self,
+        source: impl AsRef<Path>,
+        target: impl AsRef<Path>,
+    ) -> Result<ProjectManifest, ProjectError> {
         let source = source.as_ref();
         let target = target.as_ref();
-        if target.exists() { return Err(ProjectError::AlreadyExists(target.to_path_buf())); }
-        let manifest: ProjectManifest = serde_json::from_slice(&std::fs::read(source.join("project.json"))?)?;
-        let parent = target.parent().ok_or_else(|| ProjectError::InvalidPath(target.to_path_buf()))?;
+        if target.exists() {
+            return Err(ProjectError::AlreadyExists(target.to_path_buf()));
+        }
+        let manifest: ProjectManifest =
+            serde_json::from_slice(&std::fs::read(source.join("project.json"))?)?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| ProjectError::InvalidPath(target.to_path_buf()))?;
         std::fs::create_dir_all(parent)?;
         let temp = parent.join(format!(".restore-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp)?;
         let result = (|| {
-            for directory in ["attachments", "snapshots", "recovery", "exports", "temp"] { std::fs::create_dir_all(temp.join(directory))?; }
+            for directory in ["attachments", "snapshots", "recovery", "exports", "temp"] {
+                std::fs::create_dir_all(temp.join(directory))?;
+            }
             std::fs::copy(source.join("project.json"), temp.join("project.json"))?;
             std::fs::copy(source.join("project.sqlite"), temp.join("project.sqlite"))?;
+            for directory in ["attachments", "recovery"] {
+                let source_dir = source.join(directory);
+                if source_dir.is_dir() {
+                    for entry in walk_files(&source_dir)? {
+                        let relative = entry.strip_prefix(source).unwrap_or(&entry);
+                        let destination = temp.join(relative);
+                        if let Some(parent) = destination.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        std::fs::copy(entry, destination)?;
+                    }
+                }
+            }
             let _ = Database::open(temp.join("project.sqlite"))?;
             std::fs::rename(&temp, target)?;
             Ok(manifest)
         })();
-        if result.is_err() { let _ = std::fs::remove_dir_all(&temp); }
+        if result.is_err() {
+            let _ = std::fs::remove_dir_all(&temp);
+        }
         result
     }
 
     fn perform_backup(&self, job: &Job) -> Result<(), std::io::Error> {
-        let session = self.current.as_ref().ok_or_else(|| std::io::Error::other("no project is open"))?;
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("no project is open"))?;
         let target = session.root.join("snapshots").join(job.id.to_string());
         std::fs::create_dir_all(&target)?;
-        std::fs::copy(session.root.join("project.json"), target.join("project.json"))?;
-        std::fs::copy(session.root.join("project.sqlite"), target.join("project.sqlite"))?;
+        std::fs::copy(
+            session.root.join("project.json"),
+            target.join("project.json"),
+        )?;
+        std::fs::copy(
+            session.root.join("project.sqlite"),
+            target.join("project.sqlite"),
+        )?;
         let mut files = serde_json::Map::new();
         for relative in ["project.json", "project.sqlite"] {
             let bytes = std::fs::read(target.join(relative))?;
-            files.insert(relative.into(), serde_json::json!(format!("sha256:{:x}", Sha256::digest(bytes))));
+            files.insert(
+                relative.into(),
+                serde_json::json!(format!("sha256:{:x}", Sha256::digest(bytes))),
+            );
         }
         let attachments = session.root.join("attachments");
         if attachments.is_dir() {
             for entry in walk_files(&attachments)? {
-                let relative = entry.strip_prefix(&session.root).unwrap_or(&entry).to_path_buf();
+                let relative = entry
+                    .strip_prefix(&session.root)
+                    .unwrap_or(&entry)
+                    .to_path_buf();
                 let destination = target.join(&relative);
-                if let Some(parent) = destination.parent() { std::fs::create_dir_all(parent)?; }
+                if let Some(parent) = destination.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
                 std::fs::copy(&entry, &destination)?;
                 let bytes = std::fs::read(&destination)?;
-                files.insert(relative.to_string_lossy().replace('\\', "/"), serde_json::json!(format!("sha256:{:x}", Sha256::digest(bytes))));
+                files.insert(
+                    relative.to_string_lossy().replace('\\', "/"),
+                    serde_json::json!(format!("sha256:{:x}", Sha256::digest(bytes))),
+                );
+            }
+        }
+        for directory in ["recovery"] {
+            let source_dir = session.root.join(directory);
+            if source_dir.is_dir() {
+                for entry in walk_files(&source_dir)? {
+                    let relative = entry
+                        .strip_prefix(&session.root)
+                        .unwrap_or(&entry)
+                        .to_path_buf();
+                    let destination = target.join(&relative);
+                    if let Some(parent) = destination.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::copy(&entry, &destination)?;
+                }
             }
         }
         std::fs::write(target.join("manifest.json"), serde_json::to_vec_pretty(&serde_json::json!({"jobId": job.id, "projectId": session.manifest.project_id, "schemaVersion": R4_SCHEMA_VERSION, "formatVersion": 1, "files": files})).unwrap_or_default())?;
@@ -690,23 +941,50 @@ impl ProjectManager {
     }
 
     fn perform_restore_verify(&self, job: &Job) -> Result<(), std::io::Error> {
-        let session = self.current.as_ref().ok_or_else(|| std::io::Error::other("no project is open"))?;
-        let payload: serde_json::Value = serde_json::from_str(&job.payload).map_err(std::io::Error::other)?;
-        let source = payload.get("source").and_then(|v| v.as_str()).map(PathBuf::from).unwrap_or_else(|| session.root.join("snapshots").join(job.id.to_string()));
-        let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(source.join("manifest.json"))?).map_err(std::io::Error::other)?;
-        if manifest.get("projectId").and_then(|v| v.as_str()) != Some(&session.manifest.project_id.to_string()) { return Err(std::io::Error::other("backup project id mismatch")); }
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("no project is open"))?;
+        let payload: serde_json::Value =
+            serde_json::from_str(&job.payload).map_err(std::io::Error::other)?;
+        let source = payload
+            .get("source")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| session.root.join("snapshots").join(job.id.to_string()));
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(source.join("manifest.json"))?)
+                .map_err(std::io::Error::other)?;
+        if manifest.get("projectId").and_then(|v| v.as_str())
+            != Some(&session.manifest.project_id.to_string())
+        {
+            return Err(std::io::Error::other("backup project id mismatch"));
+        }
         let mut verify_files = vec!["project.json".to_owned(), "project.sqlite".to_owned()];
         if let Some(files) = manifest.get("files").and_then(|v| v.as_object()) {
-            verify_files.extend(files.keys().filter(|key| key.starts_with("attachments/")).cloned());
+            verify_files.extend(
+                files
+                    .keys()
+                    .filter(|key| key.starts_with("attachments/"))
+                    .cloned(),
+            );
         }
         for relative in verify_files {
             let bytes = std::fs::read(source.join(&relative))?;
             let actual = format!("sha256:{:x}", Sha256::digest(bytes));
-            let expected = manifest.get("files").and_then(|v| v.get(&relative)).and_then(|v| v.as_str());
-            if expected != Some(actual.as_str()) { return Err(std::io::Error::other(format!("backup hash mismatch: {relative}"))); }
+            let expected = manifest
+                .get("files")
+                .and_then(|v| v.get(&relative))
+                .and_then(|v| v.as_str());
+            if expected != Some(actual.as_str()) {
+                return Err(std::io::Error::other(format!(
+                    "backup hash mismatch: {relative}"
+                )));
+            }
         }
         if let Some(target) = payload.get("target").and_then(|v| v.as_str()) {
-            self.restore_backup_to_new_project(&source, target).map_err(|e| std::io::Error::other(e.to_string()))?;
+            self.restore_backup_to_new_project(&source, target)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
         }
         Ok(())
     }
@@ -881,10 +1159,16 @@ impl ProjectManager {
 
 fn walk_files(root: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     let mut files = Vec::new();
-    if !root.is_dir() { return Ok(files); }
+    if !root.is_dir() {
+        return Ok(files);
+    }
     for entry in std::fs::read_dir(root)? {
         let path = entry?.path();
-        if path.is_dir() { files.extend(walk_files(&path)?); } else { files.push(path); }
+        if path.is_dir() {
+            files.extend(walk_files(&path)?);
+        } else {
+            files.push(path);
+        }
     }
     Ok(files)
 }
@@ -1328,7 +1612,7 @@ pub fn linked_layers() -> [&'static str; 3] {
 
 #[cfg(test)]
 mod tests {
-    use super::{Database, R4_CONTRACTS, R4_MIGRATION_PLAN, R4_SCHEMA_VERSION};
+    use super::{Database, FeatureStatus, FEATURE_CATALOG, R4_CONTRACTS, R4_MIGRATION_PLAN, R4_SCHEMA_VERSION};
 
     #[test]
     fn infrastructure_depends_inward() {
@@ -1363,6 +1647,21 @@ mod tests {
                 .any(|item| item.id == "story_bible_entities")
         );
         assert!(R4_CONTRACTS.iter().all(|item| item.introduced_by >= 10));
+    }
+
+    #[test]
+    fn feature_catalog_matches_r4_implemented_surfaces() {
+        let jobs = FEATURE_CATALOG
+            .iter()
+            .find(|item| item.id == "r4_persistent_jobs")
+            .expect("jobs feature");
+        assert_eq!(jobs.status, FeatureStatus::Partial);
+        assert!(jobs.unavailable_reason.is_none());
+        let reliability = FEATURE_CATALOG
+            .iter()
+            .find(|item| item.id == "r4_reliability")
+            .expect("reliability feature");
+        assert_eq!(reliability.status, FeatureStatus::Partial);
     }
 
     #[test]
@@ -1739,13 +2038,24 @@ mod tests {
         manager
             .update_job_status(cancelled.id, super::JobStatus::Running, 18, None)
             .expect("running cancelled");
-        manager.request_job_cancel(cancelled.id).expect("request cancel");
+        manager
+            .request_job_cancel(cancelled.id)
+            .expect("request cancel");
         manager.close();
         manager.open(&root).expect("reopen");
         let recovered = manager.list_jobs().expect("list recovered");
-        assert!(recovered.iter().any(|job| job.id == first.id && job.status == super::JobStatus::Queued && job.progress == 0));
-        assert!(recovered.iter().any(|job| job.id == cancelled.id && job.status == super::JobStatus::Cancelled));
-        let claimed = manager.claim_next_job().expect("claim").expect("job available");
+        assert!(recovered.iter().any(|job| job.id == first.id
+            && job.status == super::JobStatus::Queued
+            && job.progress == 0));
+        assert!(
+            recovered
+                .iter()
+                .any(|job| job.id == cancelled.id && job.status == super::JobStatus::Cancelled)
+        );
+        let claimed = manager
+            .claim_next_job()
+            .expect("claim")
+            .expect("job available");
         assert_eq!(claimed.id, first.id);
         assert_eq!(claimed.status, super::JobStatus::Running);
         assert_eq!(claimed.attempt_count, 1);
@@ -1760,6 +2070,8 @@ mod tests {
             .join(format!("ainovel-job-run-{}", uuid::Uuid::new_v4()));
         let mut manager = super::ProjectManager::new();
         manager.create(&root, "任务执行").expect("create");
+        std::fs::write(root.join("attachments").join("note.txt"), b"attachment")
+            .expect("attachment");
         manager
             .enqueue_job(super::JobType::Backup, "{}".into())
             .expect("enqueue");
@@ -1768,11 +2080,48 @@ mod tests {
         let snapshot = root.join("snapshots").join(completed.id.to_string());
         assert!(snapshot.join("project.sqlite").is_file());
         assert_eq!(manager.health_scan().expect("health").status, "HEALTHY");
-        let restored = root.with_file_name(format!("{}-restored", root.file_name().unwrap().to_string_lossy()));
-        manager.restore_backup_to_new_project(&snapshot, &restored).expect("restore");
+        let restored = root.with_file_name(format!(
+            "{}-restored",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        manager
+            .restore_backup_to_new_project(&snapshot, &restored)
+            .expect("restore");
         assert!(restored.join("project.sqlite").is_file());
+        assert_eq!(
+            std::fs::read(restored.join("attachments").join("note.txt"))
+                .expect("restored attachment"),
+            b"attachment"
+        );
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(restored);
+    }
+
+    #[test]
+    fn crash_marker_startup_report_and_diagnostics_are_privacy_safe() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-diagnostics-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "诊断测试").expect("create");
+        manager
+            .write_crash_marker(&super::CrashMarker {
+                process_type: "desktop".into(),
+                session_id: uuid::Uuid::new_v4(),
+                occurred_at: "now".into(),
+                last_trace_id: Some("trace".into()),
+                active_project: manager.current().map(|m| m.project_id),
+                active_task: None,
+                build_version: "test".into(),
+                crash_phase: "RUNNING".into(),
+            })
+            .expect("marker");
+        let report = manager.startup_recovery_report().expect("report");
+        assert!(report.crash_marker_present);
+        let path = manager.create_diagnostic_package().expect("diagnostics");
+        let content = std::fs::read_to_string(path).expect("read diagnostics");
+        assert!(!content.contains("project.sqlite"));
+        manager.clear_crash_marker().expect("clear marker");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

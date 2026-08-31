@@ -74,6 +74,13 @@ pub enum EntityError {
 }
 
 impl EntityInput {
+    /// Validates the entity name and fixed-attribute JSON shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityError::EmptyName`] for blank names or
+    /// [`EntityError::InvalidFixedAttributes`] when the attributes are not a
+    /// JSON object.
     pub fn validate(&self) -> Result<(), EntityError> {
         if self.name.trim().is_empty() {
             return Err(EntityError::EmptyName);

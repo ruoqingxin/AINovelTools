@@ -90,5 +90,32 @@ pub(crate) fn health_scan(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager.health_scan().map_err(|error| ApiError::internal(error.to_string()))
+    manager
+        .health_scan()
+        .map_err(|error| ApiError::internal(error.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn startup_recovery_report(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<novel_infrastructure::StartupRecoveryReport, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.startup_recovery_report().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn create_diagnostic_package(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<String, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .create_diagnostic_package()
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(ApiError::from)
 }

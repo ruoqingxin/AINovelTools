@@ -123,6 +123,7 @@ export type Job = {
   createdAt: string; updatedAt: string;
 };
 export type HealthScanReport = { status: "HEALTHY" | "WARNING" | "ERROR"; schemaVersion: number; sqliteIntegrity: string; ftsRows: number; warnings: string[]; errors: string[] };
+export type StartupRecoveryReport = { crashMarkerPresent: boolean; recoveryLogCount: number; unfinishedJobCount: number; walPresent: boolean; tempFileCount: number; migrationInterrupted: boolean; actions: string[] };
 export type ModelConnectionResponse = { capability: ModelCapability; provider: ModelProvider; modelId: string; detail: string };
 
 export function getBootstrapStatus() {
@@ -285,6 +286,8 @@ export function retryJob(id: string) { return invoke<Job>("retry_job", { id }); 
 export function claimNextJob() { return invoke<Job | null>("claim_next_job"); }
 export function runNextJob() { return invoke<Job | null>("run_next_job"); }
 export function healthScan() { return invoke<HealthScanReport>("health_scan"); }
+export function startupRecoveryReport() { return invoke<StartupRecoveryReport>("startup_recovery_report"); }
+export function createDiagnosticPackage() { return invoke<string>("create_diagnostic_package"); }
 
 export function decideAiProposal(input: { id: string; status: Exclude<AiProposalStatus, "PENDING">; acceptedText?: string }) {
   return invoke<AiProposal>("decide_ai_proposal", input);

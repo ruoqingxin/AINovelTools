@@ -23,7 +23,21 @@ pub(crate) fn open_project(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager.open(root).map_err(ApiError::from)
+    let manifest = manager.open(root).map_err(ApiError::from)?;
+    let marker = novel_infrastructure::CrashMarker {
+        process_type: "desktop".into(),
+        session_id: uuid::Uuid::new_v4(),
+        occurred_at: chrono_like_now(),
+        last_trace_id: None,
+        active_project: Some(manifest.project_id),
+        active_task: None,
+        build_version: env!("CARGO_PKG_VERSION").into(),
+        crash_phase: "RUNNING".into(),
+    };
+    manager
+        .write_crash_marker(&marker)
+        .map_err(ApiError::from)?;
+    Ok(manifest)
 }
 
 #[tauri::command]
@@ -31,7 +45,16 @@ pub(crate) fn open_project(
 pub(crate) fn close_project(
     state: tauri::State<'_, ProjectState>,
 ) -> Option<novel_infrastructure::ProjectManifest> {
-    state.manager.lock().ok()?.close()
+    let mut manager = state.manager.lock().ok()?;
+    let _ = manager.clear_crash_marker();
+    manager.close()
+}
+
+fn chrono_like_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or_else(|_| "0".into(), |d| d.as_secs().to_string())
 }
 
 #[tauri::command]

@@ -18,7 +18,10 @@ use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::entities::{
     list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
 };
-use commands::jobs::{cancel_job, claim_next_job, enqueue_job, health_scan, list_jobs, retry_job, run_next_job};
+use commands::jobs::{
+    cancel_job, claim_next_job, create_diagnostic_package, enqueue_job, health_scan, list_jobs,
+    retry_job, run_next_job, startup_recovery_report,
+};
 use commands::manuscript::{
     clear_recovery_logs, current_manuscript, list_all_recovery_logs, list_manuscript_revisions,
     list_recovery_logs, merge_manuscript, save_manuscript, save_manuscript_checked,
@@ -53,13 +56,20 @@ pub fn run() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
-            std::thread::spawn(move || loop {
-                if let Some(state) = handle.try_state::<ProjectState>() {
-                    if let Ok(mut manager) = state.manager.lock() {
+            std::thread::spawn(move || {
+                let mut ticks = 0u32;
+                loop {
+                    if let Some(state) = handle.try_state::<ProjectState>()
+                        && let Ok(mut manager) = state.manager.lock()
+                    {
                         let _ = manager.run_next_job();
+                        ticks = ticks.wrapping_add(1);
+                        if ticks.is_multiple_of(120) {
+                            let _ = manager.compact_recovery_logs(20);
+                        }
                     }
+                    std::thread::sleep(Duration::from_millis(500));
                 }
-                std::thread::sleep(Duration::from_millis(500));
             });
             Ok(())
         })
@@ -114,7 +124,9 @@ pub fn run() {
             retry_job,
             claim_next_job,
             run_next_job,
-            health_scan
+            health_scan,
+            startup_recovery_report,
+            create_diagnostic_package
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
