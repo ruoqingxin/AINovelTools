@@ -28,9 +28,10 @@ pub use ai::{AiError, EmbeddingGateway, ModelGateway, SecretStore};
 pub use entity_store::EntityStoreError;
 pub use materials_store::MaterialsStoreError;
 pub use novel_domain::{
-    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, Entity, EntityError, EntityInput,
-    EntityLifecycleStatus, EntityRevision, EntityType, ModelCapability, ModelProfile,
-    ModelProfileInput, ModelProvider, PrivacyLevel, SummaryKind, SummaryMaterial, SummaryPrecision,
+    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, ContextAuthority, Entity, EntityError,
+    EntityInput, EntityLifecycleStatus, EntityRevision, EntityType, KnowledgeChunk,
+    ModelCapability, ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel,
+    RetrievalEvidence, RetrievalMethod, SummaryKind, SummaryMaterial, SummaryPrecision,
     WritingCard,
 };
 pub use search_store::{SearchResult, SearchStoreError};
@@ -428,6 +429,60 @@ pub struct ProjectManager {
 impl Default for ProjectManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ProjectManager {
+    pub fn assemble_context_with_project_knowledge(
+        &self,
+        input: &novel_application::AssembleContextInput,
+    ) -> Result<novel_application::ContextPackage, novel_application::ContextError> {
+        self.assemble_context_with_project_knowledge_and_objects(input, &[])
+    }
+
+    pub fn assemble_context_with_project_knowledge_and_objects(
+        &self,
+        input: &novel_application::AssembleContextInput,
+        object_ids: &[Uuid],
+    ) -> Result<novel_application::ContextPackage, novel_application::ContextError> {
+        let query = input
+            .instruction
+            .as_deref()
+            .unwrap_or(input.chapter_title.as_str())
+            .trim()
+            .to_owned();
+        let mut results = self.search_project_objects(object_ids).unwrap_or_default();
+        results.extend(self.search_project(query, None, 8, 0).unwrap_or_default());
+        let mut seen = std::collections::HashSet::new();
+        results.retain(|item| seen.insert(item.object_id));
+        let evidence = results
+            .into_iter()
+            .enumerate()
+            .map(|(index, result)| {
+                let source_hash = format!("{:x}", Sha256::digest(result.snippet.as_bytes()));
+                RetrievalEvidence {
+                    chunk: KnowledgeChunk {
+                        id: Uuid::new_v4(),
+                        source_id: result.object_id,
+                        source_revision: result
+                            .source_version
+                            .unwrap_or_else(|| "search:current".to_owned()),
+                        source_hash,
+                        chunk_index: u32::try_from(index).unwrap_or(u32::MAX),
+                        chunking_version: "r4-search-v1".to_owned(),
+                        content: result.snippet,
+                        embedding: None,
+                    },
+                    method: RetrievalMethod::Keyword,
+                    authority: match result.object_type.as_str() {
+                        "ENTITY" | "PLAN" | "MANUSCRIPT" => ContextAuthority::TaskMaterial,
+                        _ => ContextAuthority::Reference,
+                    },
+                    relevance: 5_000,
+                }
+            })
+            .collect::<Vec<_>>();
+        novel_application::ContextAssembler::assemble_with_retrieval(input, &evidence)
     }
 }
 
@@ -1130,10 +1185,12 @@ mod tests {
                 .len(),
             1
         );
-        assert!(manager
-            .search_project("林!".into(), None, 50, 0)
-            .expect("special character search")
-            .is_empty());
+        assert!(
+            manager
+                .search_project("林!".into(), None, 50, 0)
+                .expect("special character search")
+                .is_empty()
+        );
         assert_eq!(
             manager
                 .search_project("北境".into(), None, 50, 0)
@@ -1157,6 +1214,52 @@ mod tests {
                 .expect("rebuilt search")
                 .is_empty()
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn context_assembly_attaches_only_active_project_sources() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-context-search-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "上下文搜索").expect("create project");
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
+        manager
+            .upsert_entity(super::EntityInput {
+                id: None,
+                entity_type: super::EntityType::Character,
+                name: "沈砚".into(),
+                aliases: vec![],
+                description: "负责调查失踪案".into(),
+                fixed_attributes_json: "{}".into(),
+                tags: vec![],
+                base_revision_id: None,
+                source_version: Some("entity:1".into()),
+                expected_version: None,
+            })
+            .expect("entity");
+        let package = manager
+            .assemble_context_with_project_knowledge(&novel_application::AssembleContextInput {
+                chapter_id: chapter.id,
+                target_revision_id: None,
+                action: super::AiAction::Continue,
+                chapter_title: "第一章".into(),
+                chapter_plan: "调查失踪案".into(),
+                document_json: r#"{"type":"doc","content":[]}"#.into(),
+                selection: None,
+                instruction: Some("调查失踪案".into()),
+                input_token_budget: 4096,
+            })
+            .expect("context package");
+        assert!(
+            package
+                .retrieval_evidence
+                .iter()
+                .any(|item| item.source_revision == "entity:1")
+        );
+        assert_eq!(package.entity_source_status, "RETRIEVAL_ATTACHED");
         let _ = std::fs::remove_dir_all(root);
     }
 

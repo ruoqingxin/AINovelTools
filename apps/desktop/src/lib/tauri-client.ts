@@ -83,6 +83,18 @@ export type WritingCard = {
   sortOrder: number; createdAt: string; updatedAt: string;
 };
 export type SearchResult = { objectType: string; objectId: string; blockId: string | null; sourceVersion: string | null; snippet: string };
+export type AssembleContextInput = {
+  chapterId: string; targetRevisionId: string | null; action: AiAction; chapterTitle: string;
+  chapterPlan: string; documentJson: string; selection: string | null; instruction: string | null;
+  inputTokenBudget: number;
+  knowledgeObjectIds?: string[];
+};
+export type ContextPackage = {
+  chapterId: string; targetRevisionId: string | null; action: AiAction; contextVersion: string;
+  promptVersion: string; systemPrompt: string; userPrompt: string; estimatedInputTokens: number;
+  truncated: boolean; entitySourceStatus: string; retrievalEvidence: unknown[];
+  taskContract: unknown; sectionAudit: unknown[];
+};
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
 export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
 export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
@@ -141,6 +153,9 @@ export function setSummaryMaterialLifecycle(id: string, lifecycleStatus: string)
 export function rebuildSummaryMaterial(id: string) { return invoke<SummaryMaterial>("rebuild_summary_material", { id }); }
 export function rebuildSearchIndex() { return invoke<void>("rebuild_search_index"); }
 export function searchProject(query: string, objectType?: string, limit = 50, offset = 0) { return invoke<SearchResult[]>("search_project", { query, objectType, limit, offset }); }
+export function assembleContextWithProjectKnowledge(input: AssembleContextInput) {
+  return invoke<ContextPackage>("assemble_context_with_project_knowledge", { input, objectIds: input.knowledgeObjectIds });
+}
 
 export function getCurrentProject() {
   return invoke<ProjectManifest | null>("current_project");

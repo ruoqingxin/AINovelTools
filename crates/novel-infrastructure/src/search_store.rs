@@ -19,6 +19,16 @@ pub enum SearchStoreError {
 }
 
 impl ProjectManager {
+    pub fn search_project_objects(
+        &self,
+        object_ids: &[Uuid],
+    ) -> Result<Vec<SearchResult>, SearchStoreError> {
+        let session = self.current.as_ref().ok_or(SearchStoreError::NoProject)?;
+        session
+            .database
+            .search_project_objects(session.manifest.project_id, object_ids)
+            .map_err(Into::into)
+    }
     pub fn rebuild_search_index(&mut self) -> Result<(), SearchStoreError> {
         let session = self.current.as_mut().ok_or(SearchStoreError::NoProject)?;
         session
@@ -91,5 +101,30 @@ impl Database {
             },
         )?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    fn search_project_objects(
+        &self,
+        project_id: Uuid,
+        object_ids: &[Uuid],
+    ) -> Result<Vec<SearchResult>, DatabaseError> {
+        let mut output = Vec::new();
+        let mut stmt = self.connection.prepare("SELECT object_type, object_id, NULL, source_version, substr(content,1,180) FROM search_index WHERE project_id = ?1 AND object_id = ?2")?;
+        for object_id in object_ids {
+            let mut rows = stmt.query(rusqlite::params![
+                project_id.to_string(),
+                object_id.to_string()
+            ])?;
+            while let Some(row) = rows.next()? {
+                output.push(SearchResult {
+                    object_type: row.get(0)?,
+                    object_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
+                    block_id: None,
+                    source_version: row.get(3)?,
+                    snippet: row.get(4)?,
+                });
+            }
+        }
+        Ok(output)
     }
 }

@@ -7,6 +7,24 @@ use std::sync::{
 use tauri::Emitter;
 
 #[tauri::command]
+pub(crate) fn assemble_context_with_project_knowledge(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_application::AssembleContextInput,
+    object_ids: Option<Vec<uuid::Uuid>>,
+) -> Result<novel_application::ContextPackage, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .assemble_context_with_project_knowledge_and_objects(
+            &input,
+            object_ids.as_deref().unwrap_or_default(),
+        )
+        .map_err(|error| ApiError::internal(error.to_string()))
+}
+
+#[tauri::command]
 pub(crate) fn list_model_profiles(
     state: tauri::State<'_, ProjectState>,
 ) -> Result<Vec<novel_infrastructure::ModelProfile>, ApiError> {

@@ -8,9 +8,9 @@ mod errors;
 mod state;
 
 use commands::ai::{
-    cancel_ai_task, decide_ai_proposal, delete_model_secret, generate_ai_proposal,
-    list_ai_proposals, list_model_profiles, save_model_secret, test_model_profile,
-    upsert_model_profile,
+    assemble_context_with_project_knowledge, cancel_ai_task, decide_ai_proposal,
+    delete_model_secret, generate_ai_proposal, list_ai_proposals, list_model_profiles,
+    save_model_secret, test_model_profile, upsert_model_profile,
 };
 use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::entities::{
@@ -83,6 +83,7 @@ pub fn run() {
             decide_ai_proposal,
             generate_ai_proposal,
             cancel_ai_task,
+            assemble_context_with_project_knowledge,
             list_summary_materials,
             upsert_summary_material,
             list_writing_cards,
