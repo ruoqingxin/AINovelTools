@@ -281,6 +281,8 @@ export function enqueueJob(jobType: JobType, payload = "{}") {
 }
 export function cancelJob(id: string) { return invoke<Job>("cancel_job", { id }); }
 export function retryJob(id: string) { return invoke<Job>("retry_job", { id }); }
+export function claimNextJob() { return invoke<Job | null>("claim_next_job"); }
+export function runNextJob() { return invoke<Job | null>("run_next_job"); }
 
 export function decideAiProposal(input: { id: string; status: Exclude<AiProposalStatus, "PENDING">; acceptedText?: string }) {
   return invoke<AiProposal>("decide_ai_proposal", input);

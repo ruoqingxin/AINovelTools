@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Duration;
+use tauri::Manager;
 
 mod commands;
 mod errors;
@@ -16,7 +18,7 @@ use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::entities::{
     list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
 };
-use commands::jobs::{cancel_job, enqueue_job, list_jobs, retry_job};
+use commands::jobs::{cancel_job, claim_next_job, enqueue_job, list_jobs, retry_job, run_next_job};
 use commands::manuscript::{
     clear_recovery_logs, current_manuscript, list_all_recovery_logs, list_manuscript_revisions,
     list_recovery_logs, merge_manuscript, save_manuscript, save_manuscript_checked,
@@ -48,6 +50,18 @@ pub fn run() {
             gateway: novel_infrastructure::ModelGateway::default(),
             embedding_gateway: novel_infrastructure::EmbeddingGateway::default(),
             ai_cancellations: Mutex::new(HashMap::new()),
+        })
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                if let Some(state) = handle.try_state::<ProjectState>() {
+                    if let Ok(mut manager) = state.manager.lock() {
+                        let _ = manager.run_next_job();
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            });
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             bootstrap_status,
@@ -97,7 +111,9 @@ pub fn run() {
             list_jobs,
             enqueue_job,
             cancel_job,
-            retry_job
+            retry_job,
+            claim_next_job,
+            run_next_job
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -10,6 +10,7 @@ import {
   ListTree,
   Settings,
   ShieldCheck,
+  ListChecks,
 } from "lucide-react";
 import { getBootstrapStatus, getCurrentProject, getHealth, listAllRecoveryLogs } from "../lib/tauri-client";
 
@@ -20,6 +21,7 @@ const navigation = [
   { label: "知识", icon: FileSearch, path: "/knowledge" as const },
   { label: "AI", icon: Bot },
   { label: "审核", icon: ShieldCheck },
+  { label: "任务", icon: ListChecks, path: "/jobs" as const },
 ];
 
 export function AppShell() {

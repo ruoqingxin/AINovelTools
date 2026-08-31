@@ -55,3 +55,29 @@ pub(crate) fn retry_job(
         .retry_job(id)
         .map_err(|error| ApiError::internal(error.to_string()))
 }
+
+#[tauri::command]
+pub(crate) fn claim_next_job(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Option<novel_infrastructure::Job>, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .claim_next_job()
+        .map_err(|error| ApiError::internal(error.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn run_next_job(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Option<novel_infrastructure::Job>, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .run_next_job()
+        .map_err(|error| ApiError::internal(error.to_string()))
+}

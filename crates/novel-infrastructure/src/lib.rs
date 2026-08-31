@@ -280,8 +280,8 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         id: "r4_persistent_jobs",
         display_name: "R4 持久化任务",
         stage: "R4",
-        status: FeatureStatus::Declared,
-        unavailable_reason: Some("等待 R4 阶段 G 实现 Job Runner"),
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some("已支持持久化状态、取消、重试、启动恢复和原子领取；后台执行器与任务管理 UI 待实现"),
     },
     FeatureDescriptor {
         id: "r4_reliability",
@@ -538,6 +538,104 @@ impl Default for ProjectManager {
 }
 
 impl ProjectManager {
+    /// Recovers jobs left in RUNNING state after an interrupted process.
+    /// Cancelled work is finalized as CANCELLED; other work returns to QUEUED
+    /// so a runner can safely claim it again.
+    pub fn recover_unfinished_jobs(&mut self) -> Result<Vec<Job>, DatabaseError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        session.database.connection.execute(
+            "UPDATE jobs SET status=CASE WHEN cancel_requested=1 THEN 'CANCELLED' ELSE 'QUEUED' END, progress=CASE WHEN cancel_requested=1 THEN progress ELSE 0 END, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status='RUNNING'",
+            [],
+        )?;
+        let mut statement = session.database.connection.prepare(
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE status='QUEUED' OR status='CANCELLED' ORDER BY updated_at DESC, rowid DESC",
+        )?;
+        let rows = statement.query_map([], read_job)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
+    }
+
+    /// Atomically claims the oldest queued job for a runner.
+    pub fn claim_next_job(&mut self) -> Result<Option<Job>, DatabaseError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        let tx = session.database.connection.transaction()?;
+        let id: Option<String> = tx
+            .query_row(
+                "SELECT id FROM jobs WHERE status='QUEUED' AND cancel_requested=0 ORDER BY created_at, rowid LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(id) = id else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        tx.execute(
+            "UPDATE jobs SET status='RUNNING', attempt_count=attempt_count+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status='QUEUED' AND cancel_requested=0",
+            [&id],
+        )?;
+        let job = tx.query_row(
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            [&id],
+            read_job,
+        )?;
+        tx.commit()?;
+        Ok(Some(job))
+    }
+
+    /// Executes one queued job synchronously. The operation is restart-safe:
+    /// claiming is atomic and every outcome is persisted as a terminal status.
+    pub fn run_next_job(&mut self) -> Result<Option<Job>, DatabaseError> {
+        let Some(job) = self.claim_next_job()? else { return Ok(None) };
+        if self.is_job_cancel_requested(job.id)? {
+            return self.update_job_status(job.id, JobStatus::Cancelled, job.progress, None).map(Some);
+        }
+        let result: Result<(), String> = match job.job_type {
+            JobType::RebuildSearchIndex => self.rebuild_search_index().map_err(|e| e.to_string()),
+            JobType::HealthScan => self.health().map(|_| ()).map_err(|e| e.to_string()),
+            JobType::Backup => self.perform_backup(&job).map_err(|e| e.to_string()),
+            JobType::RestoreVerify => self.perform_restore_verify(&job).map_err(|e| e.to_string()),
+        };
+        if self.is_job_cancel_requested(job.id)? {
+            self.update_job_status(job.id, JobStatus::Cancelled, job.progress, None).map(Some)
+        } else {
+            match result {
+                Ok(()) => self.update_job_status(job.id, JobStatus::Succeeded, 100, None).map(Some),
+                Err(error) => self.update_job_status(job.id, JobStatus::Failed, job.progress, Some(error)).map(Some),
+            }
+        }
+    }
+
+    fn is_job_cancel_requested(&self, id: Uuid) -> Result<bool, DatabaseError> {
+        let session = self.current.as_ref().ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        Ok(session.database.connection.query_row("SELECT cancel_requested FROM jobs WHERE id=?1", [id.to_string()], |row| row.get::<_, i64>(0))? == 1)
+    }
+
+    fn perform_backup(&self, job: &Job) -> Result<(), std::io::Error> {
+        let session = self.current.as_ref().ok_or_else(|| std::io::Error::other("no project is open"))?;
+        let target = session.root.join("snapshots").join(job.id.to_string());
+        std::fs::create_dir_all(&target)?;
+        std::fs::copy(session.root.join("project.json"), target.join("project.json"))?;
+        std::fs::copy(session.root.join("project.sqlite"), target.join("project.sqlite"))?;
+        std::fs::write(target.join("manifest.json"), serde_json::to_vec_pretty(&serde_json::json!({"jobId": job.id, "projectId": session.manifest.project_id, "formatVersion": 1})).unwrap_or_default())?;
+        Ok(())
+    }
+
+    fn perform_restore_verify(&self, job: &Job) -> Result<(), std::io::Error> {
+        let session = self.current.as_ref().ok_or_else(|| std::io::Error::other("no project is open"))?;
+        let payload: serde_json::Value = serde_json::from_str(&job.payload).map_err(std::io::Error::other)?;
+        let source = payload.get("source").and_then(|v| v.as_str()).map(PathBuf::from).unwrap_or_else(|| session.root.join("snapshots").join(job.id.to_string()));
+        let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(source.join("manifest.json"))?).map_err(std::io::Error::other)?;
+        if manifest.get("projectId").and_then(|v| v.as_str()) != Some(&session.manifest.project_id.to_string()) { return Err(std::io::Error::other("backup project id mismatch")); }
+        let _ = std::fs::metadata(source.join("project.sqlite"))?;
+        Ok(())
+    }
+
     pub fn enqueue_job(
         &mut self,
         job_type: JobType,
@@ -799,6 +897,7 @@ impl ProjectManager {
             manifest,
             database,
         });
+        self.recover_unfinished_jobs()?;
         Ok(result)
     }
 
@@ -1531,6 +1630,57 @@ mod tests {
             .update_job_status(job.id, super::JobStatus::Cancelled, 0, None)
             .expect("cancelled");
         assert_eq!(cancelled.status, super::JobStatus::Cancelled);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn opening_project_recovers_running_jobs_and_claims_once() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-job-recovery-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "任务恢复").expect("create");
+        let first = manager
+            .enqueue_job(super::JobType::HealthScan, "{}".into())
+            .expect("enqueue first");
+        let second = manager
+            .enqueue_job(super::JobType::Backup, "{}".into())
+            .expect("enqueue second");
+        let cancelled = manager
+            .enqueue_job(super::JobType::RestoreVerify, "{}".into())
+            .expect("enqueue cancelled");
+        manager
+            .update_job_status(first.id, super::JobStatus::Running, 42, None)
+            .expect("running");
+        manager
+            .update_job_status(cancelled.id, super::JobStatus::Running, 18, None)
+            .expect("running cancelled");
+        manager.request_job_cancel(cancelled.id).expect("request cancel");
+        manager.close();
+        manager.open(&root).expect("reopen");
+        let recovered = manager.list_jobs().expect("list recovered");
+        assert!(recovered.iter().any(|job| job.id == first.id && job.status == super::JobStatus::Queued && job.progress == 0));
+        assert!(recovered.iter().any(|job| job.id == cancelled.id && job.status == super::JobStatus::Cancelled));
+        let claimed = manager.claim_next_job().expect("claim").expect("job available");
+        assert_eq!(claimed.id, first.id);
+        assert_eq!(claimed.status, super::JobStatus::Running);
+        assert_eq!(claimed.attempt_count, 1);
+        assert!(manager.claim_next_job().expect("second claim").is_some());
+        let _ = std::fs::remove_dir_all(root);
+        let _ = second;
+    }
+
+    #[test]
+    fn run_next_job_persists_success_and_backup_artifacts() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-job-run-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "任务执行").expect("create");
+        manager
+            .enqueue_job(super::JobType::Backup, "{}".into())
+            .expect("enqueue");
+        let completed = manager.run_next_job().expect("run").expect("completed");
+        assert_eq!(completed.status, super::JobStatus::Succeeded);
+        assert!(root.join("snapshots").join(completed.id.to_string()).join("project.sqlite").is_file());
         let _ = std::fs::remove_dir_all(root);
     }
 
