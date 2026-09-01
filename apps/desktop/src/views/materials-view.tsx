@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Save } from "lucide-react";
 import { useState } from "react";
 import {
+  errorMessage,
   listSummaryMaterials,
   listWritingCards,
   rebuildSummaryMaterial,
@@ -25,6 +26,21 @@ export function MaterialsView() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  async function refresh(key: string[]) {
+    await client.invalidateQueries({ queryKey: key });
+  }
+
+  async function runItemAction(action: () => Promise<unknown>, key: string[], success: string) {
+    try {
+      await action();
+      await refresh(key);
+      setNotice(success);
+      setError(null);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
   async function saveSummary() {
     try {
       await upsertSummaryMaterial({ id: crypto.randomUUID(), projectId: "", kind: summary.kind, precision: summary.precision, sourceId: null, sourceVersion: summary.sourceVersion || null, content: summary.content, generationMode: "MANUAL", lifecycleStatus: "ACTIVE", createdAt: "", updatedAt: "" });
@@ -43,11 +59,11 @@ export function MaterialsView() {
     <div className="materials-layout">
       <div className="materials-panel"><div className="section-heading"><h2>新建摘要</h2><span>{summaries.data?.length ?? 0} 条</span></div>
         <div className="entity-form-grid"><label>类型<select value={summary.kind} onChange={(e) => setSummary({ ...summary, kind: e.target.value as SummaryKind })}><option value="CHAPTER">章节</option><option value="CHARACTER">人物</option><option value="SETTING">设定</option></select></label><label>精度<select value={summary.precision} onChange={(e) => setSummary({ ...summary, precision: e.target.value as SummaryPrecision })}>{["L0","L1","L2","L3","L4","L5"].map((v) => <option key={v}>{v}</option>)}</select></label><label className="entity-form-wide">来源版本<input value={summary.sourceVersion} onChange={(e) => setSummary({ ...summary, sourceVersion: e.target.value })} placeholder="例如：chapter:2" /></label><label className="entity-form-wide">摘要内容<textarea rows={6} value={summary.content} onChange={(e) => setSummary({ ...summary, content: e.target.value })} /></label></div><button type="button" className="primary-action" onClick={() => void saveSummary()} disabled={!summary.content.trim()}><Save size={15} />保存摘要</button>
-        <div className="materials-list">{summaries.data?.map((item) => <div className="material-row" key={item.id}><strong>{item.kind} · {item.precision}</strong><span>{item.content}</span><small>{item.sourceVersion ?? "暂无来源"} · <span className={item.lifecycleStatus === "CANDIDATE" ? "material-candidate" : undefined}>{item.lifecycleStatus === "ACTIVE" ? "有效" : item.lifecycleStatus === "CANDIDATE" ? "AI 候选" : "已失效"}</span> · {item.generationMode}</small><div className="material-actions"><button type="button" className="secondary-action" onClick={() => void setSummaryMaterialLifecycle(item.id, item.lifecycleStatus === "ACTIVE" ? "STALE" : "ACTIVE").then(() => client.invalidateQueries({ queryKey: ["summary-materials"] }))}>{item.lifecycleStatus === "ACTIVE" ? "标记失效" : "恢复摘要"}</button><button type="button" className="secondary-action" onClick={() => void setSummaryMaterialLifecycle(item.id, item.lifecycleStatus === "CANDIDATE" ? "ACTIVE" : "CANDIDATE").then(() => client.invalidateQueries({ queryKey: ["summary-materials"] }))}>{item.lifecycleStatus === "CANDIDATE" ? "保留候选" : "标记候选"}</button><button type="button" className="secondary-action" onClick={() => void rebuildSummaryMaterial(item.id).then(() => client.invalidateQueries({ queryKey: ["summary-materials"] }))}>重建记录</button></div></div>)}</div>
+        <div className="materials-list">{summaries.data?.map((item) => <div className="material-row" key={item.id}><strong>{item.kind} · {item.precision}</strong><span>{item.content}</span><small>{item.sourceVersion ?? "暂无来源"} · <span className={item.lifecycleStatus === "CANDIDATE" ? "material-candidate" : undefined}>{item.lifecycleStatus === "ACTIVE" ? "有效" : item.lifecycleStatus === "CANDIDATE" ? "AI 候选" : "已失效"}</span> · {item.generationMode}</small><div className="material-actions"><button type="button" className="secondary-action" onClick={() => void runItemAction(() => setSummaryMaterialLifecycle(item.id, item.lifecycleStatus === "ACTIVE" ? "STALE" : "ACTIVE"), ["summary-materials"], item.lifecycleStatus === "ACTIVE" ? "摘要已标记失效" : "摘要已恢复有效")}>{item.lifecycleStatus === "ACTIVE" ? "标记失效" : "恢复摘要"}</button><button type="button" className="secondary-action" onClick={() => void runItemAction(() => setSummaryMaterialLifecycle(item.id, item.lifecycleStatus === "CANDIDATE" ? "ACTIVE" : "CANDIDATE"), ["summary-materials"], item.lifecycleStatus === "CANDIDATE" ? "摘要已设为有效" : "摘要已标记候选")}>{item.lifecycleStatus === "CANDIDATE" ? "设为有效" : "标记候选"}</button><button type="button" className="secondary-action" onClick={() => void runItemAction(() => rebuildSummaryMaterial(item.id), ["summary-materials"], "摘要已重建")}>重建记录</button></div></div>)}</div>
       </div>
       <div className="materials-panel"><div className="section-heading"><h2>写作卡片</h2><span>{cards.data?.length ?? 0} 条</span></div>
         <div className="entity-form-grid"><label>卡片类型<select value={card.cardType} onChange={(e) => setCard({ ...card, cardType: e.target.value as WritingCard["cardType"] })}><option value="STYLE_RULE">风格规则</option><option value="TECHNIQUE">写作技巧</option></select></label><label>作用范围<input value={card.scope} onChange={(e) => setCard({ ...card, scope: e.target.value })} /></label><label className="entity-form-wide">标题<input value={card.title} onChange={(e) => setCard({ ...card, title: e.target.value })} /></label><label className="entity-form-wide">内容<textarea rows={6} value={card.content} onChange={(e) => setCard({ ...card, content: e.target.value })} /></label></div><button type="button" className="primary-action" onClick={() => void saveCard()} disabled={!card.title.trim() || !card.content.trim()}><Save size={15} />保存卡片</button>
-        <div className="materials-list">{cards.data?.map((item) => <div className="material-row" key={item.id}><strong>{item.cardType === "STYLE_RULE" ? "风格规则" : "写作技巧"} · {item.title}</strong><span>{item.content}</span><small>{item.enabled ? "已启用" : "已停用"} · {item.scope}</small><label className="material-order">排序<input type="number" value={item.sortOrder} onChange={(e) => { const next = Number(e.target.value); if (Number.isFinite(next)) void upsertWritingCard({ ...item, sortOrder: next }); }} /></label><button type="button" className="secondary-action" onClick={() => void setWritingCardEnabled(item.id, !item.enabled).then(() => client.invalidateQueries({ queryKey: ["writing-cards"] }))}>{item.enabled ? "停用" : "启用"}此卡片</button></div>)}</div>
+        <div className="materials-list">{cards.data?.map((item) => <div className="material-row" key={item.id}><strong>{item.cardType === "STYLE_RULE" ? "风格规则" : "写作技巧"} · {item.title}</strong><span>{item.content}</span><small>{item.enabled ? "已启用" : "已停用"} · {item.scope}</small><label className="material-order">排序<input type="number" value={item.sortOrder} onChange={(e) => { const next = Number(e.target.value); if (Number.isFinite(next)) void runItemAction(() => upsertWritingCard({ ...item, sortOrder: next }), ["writing-cards"], "卡片排序已更新"); }} /></label><button type="button" className="secondary-action" onClick={() => void runItemAction(() => setWritingCardEnabled(item.id, !item.enabled), ["writing-cards"], item.enabled ? "卡片已停用" : "卡片已启用")}>{item.enabled ? "停用" : "启用"}此卡片</button></div>)}</div>
       </div>
     </div>
   </section>;

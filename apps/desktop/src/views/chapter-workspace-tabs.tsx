@@ -14,7 +14,10 @@ export function ChapterWorkspaceTabs(props: { value: ChapterWorkspaceTab; onChan
     {tabs.map(({ value, label, icon: Icon }) => <button
       type="button"
       role="tab"
+      id={`chapter-tab-${value}`}
+      aria-controls={`chapter-panel-${value}`}
       aria-selected={props.value === value}
+      tabIndex={props.value === value ? 0 : -1}
       data-active={props.value === value || undefined}
       key={value}
       onClick={() => props.onChange(value)}

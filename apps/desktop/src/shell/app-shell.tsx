@@ -1,6 +1,6 @@
 import { AppMark } from "@ainoveltools/ui";
 import { useQuery } from "@tanstack/react-query";
-import { Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { Link, Outlet } from "@tanstack/react-router";
 import {
   BookOpenText,
   Bot,
@@ -15,7 +15,7 @@ import {
 import { getBootstrapStatus, getCurrentProject, getHealth, listAllRecoveryLogs } from "../lib/tauri-client";
 
 const navigation = [
-  { label: "项目", icon: LibraryBig, active: true },
+  { label: "项目", icon: LibraryBig, path: "/" as const },
   { label: "规划", icon: ListTree },
   { label: "正文", icon: BookOpenText },
   { label: "知识", icon: FileSearch, path: "/knowledge" as const },
@@ -25,7 +25,6 @@ const navigation = [
 ];
 
 export function AppShell() {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
   useQuery({
     queryKey: ["bootstrap-status"],
     queryFn: getBootstrapStatus,
@@ -54,44 +53,43 @@ export function AppShell() {
           <span>AI Novel Tools</span>
         </div>
         <nav className="top-nav" aria-label="工作区导航">
-          {navigation.map(({ label, icon: Icon, active, path }) => path ? (
+          {navigation.map(({ label, icon: Icon, path }) => path ? (
             <Link key={label} to={path} className="top-nav-button top-nav-link" activeProps={{ "data-active": true }}>
               <Icon size={15} strokeWidth={1.8} />{label}
             </Link>
           ) : (
-            <button key={label} type="button" className="top-nav-button" data-active={active && pathname === "/" ? true : undefined} disabled={!active}>
+            <button key={label} type="button" className="top-nav-button" disabled>
               <Icon size={15} strokeWidth={1.8} />{label}
             </button>
           ))}
         </nav>
         <div className="title-actions">
           <span className="project-context">{currentProject.data?.name ?? "未打开项目"}</span>
-          <button type="button" className="title-action">＋ 新建小说</button>
-          <button type="button" className="title-icon" aria-label="设置"><Settings size={16} /></button>
+          <button type="button" className="title-action" disabled title="请在项目主页创建或打开项目">＋ 新建小说</button>
+          <Link to="/settings" className="title-icon" aria-label="设置" title="设置"><Settings size={16} /></Link>
         </div>
       </header>
 
       <aside className="activity-bar" aria-label="主要导航">
         <nav>
-          {navigation.map(({ label, icon: Icon, active, path }) => path ? (
+          {navigation.map(({ label, icon: Icon, path }) => path ? (
             <Link key={label} to={path} className="activity-button" activeProps={{ "data-active": true }} aria-label={label} title={label}>
               <Icon size={19} strokeWidth={1.8} />
             </Link>
           ) : (
-            <button key={label} type="button" className="activity-button" data-active={active && pathname === "/" ? true : undefined} aria-label={label} title={label} disabled={!active}>
+            <button key={label} type="button" className="activity-button" aria-label={label} title={label} disabled>
               <Icon size={19} strokeWidth={1.8} />
             </button>
           ))}
         </nav>
-        <button
-          type="button"
+        <Link
+          to="/settings"
           className="activity-button activity-settings"
           aria-label="设置"
           title="设置"
-          disabled
         >
           <Settings size={19} strokeWidth={1.8} />
-        </button>
+        </Link>
       </aside>
 
       <main className="workspace">
