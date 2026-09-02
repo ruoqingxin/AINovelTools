@@ -337,6 +337,15 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (14, 'r4_persistent_jobs');",
             )?;
         }
+        if applied.unwrap_or(0) < 15 {
+            // R4 reliability artifacts live outside SQLite; this migration
+            // closes the schema ledger for the already-implemented backup,
+            // health, recovery, and diagnostics contract.
+            self.connection.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (15, 'r4_backup_health_diagnostics')",
+                [],
+            )?;
+        }
         Ok(())
     }
 

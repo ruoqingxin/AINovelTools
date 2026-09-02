@@ -148,7 +148,7 @@ pub struct FeatureDescriptor {
 
 /// R4 schema and contract planning metadata shared by migration checks and
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
-pub const R4_SCHEMA_VERSION: i64 = 14;
+pub const R4_SCHEMA_VERSION: i64 = 15;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -332,6 +332,27 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         unavailable_reason: Some(
             "备份、恢复、健康扫描和诊断已实现，完整迁移中断恢复与窗口诊断待增强",
         ),
+    },
+    FeatureDescriptor {
+        id: "r5_fact_governance",
+        display_name: "R5 Fact 知识治理",
+        stage: "R5",
+        status: FeatureStatus::Declared,
+        unavailable_reason: Some("R5 首批设计已冻结，Fact/EvidenceAnchor 尚未实现"),
+    },
+    FeatureDescriptor {
+        id: "r5_chapter_review",
+        display_name: "R5 单章节审核与定稿",
+        stage: "R5",
+        status: FeatureStatus::Declared,
+        unavailable_reason: Some("等待候选、证据锚点和 ChangeSet 迁移落地"),
+    },
+    FeatureDescriptor {
+        id: "r5_conflict_detection",
+        display_name: "R5 确定性冲突检测",
+        stage: "R5",
+        status: FeatureStatus::Declared,
+        unavailable_reason: Some("首批仅规划确定性规则，高风险命中需人工确认"),
     },
 ];
 
