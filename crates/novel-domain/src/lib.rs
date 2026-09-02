@@ -326,6 +326,100 @@ pub struct KnowledgeConflict {
     pub high_risk: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeVersion {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub version: u64,
+    pub fact_refs: Vec<(Uuid, u32)>,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorldStateEntry {
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub fact_knowledge_id: Uuid,
+    pub fact_version: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorldState {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub knowledge_version_id: Uuid,
+    pub entries: Vec<WorldStateEntry>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Relation {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub relation_version: u32,
+    pub from_knowledge_id: Uuid,
+    pub to_knowledge_id: Uuid,
+    pub relation_type: String,
+    pub evidence_anchor_ids: Vec<Uuid>,
+    pub lifecycle_status: KnowledgeLifecycleStatus,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Event {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub event_version: u32,
+    pub name: String,
+    pub occurred_at: String,
+    pub participant_fact_ids: Vec<Uuid>,
+    pub evidence_anchor_ids: Vec<Uuid>,
+    pub lifecycle_status: KnowledgeLifecycleStatus,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Belief {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub belief_version: u32,
+    pub holder_knowledge_id: Uuid,
+    pub proposition: String,
+    pub evidence_anchor_ids: Vec<Uuid>,
+    pub lifecycle_status: KnowledgeLifecycleStatus,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Foreshadowing {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub foreshadowing_version: u32,
+    pub title: String,
+    pub target_chapter_id: Option<Uuid>,
+    pub status: String,
+    pub evidence_anchor_ids: Vec<Uuid>,
+    pub lifecycle_status: KnowledgeLifecycleStatus,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum AiContractError {
     #[error("profile name cannot be empty")]
@@ -374,6 +468,103 @@ pub enum KnowledgeContractError {
     EmptyChangeSet,
     #[error("change set status transition is invalid")]
     InvalidChangeSetTransition,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum KnowledgeExpansionError {
+    #[error("knowledge expansion text cannot be empty")]
+    EmptyText,
+    #[error("knowledge expansion must reference evidence")]
+    MissingEvidence,
+    #[error("knowledge expansion version must be positive")]
+    InvalidVersion,
+    #[error("knowledge expansion actor cannot be empty")]
+    EmptyActor,
+}
+
+fn validate_expansion(
+    version: u32,
+    text_fields: &[&str],
+    evidence_anchor_ids: &[Uuid],
+    created_by: &str,
+) -> Result<(), KnowledgeExpansionError> {
+    if version == 0 {
+        return Err(KnowledgeExpansionError::InvalidVersion);
+    }
+    if text_fields.iter().any(|value| value.trim().is_empty()) {
+        return Err(KnowledgeExpansionError::EmptyText);
+    }
+    if evidence_anchor_ids.is_empty() {
+        return Err(KnowledgeExpansionError::MissingEvidence);
+    }
+    if created_by.trim().is_empty() {
+        return Err(KnowledgeExpansionError::EmptyActor);
+    }
+    Ok(())
+}
+
+impl Relation {
+    /// Validates relation text, version, evidence, and actor fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnowledgeExpansionError`] when any required field is invalid.
+    pub fn validate(&self) -> Result<(), KnowledgeExpansionError> {
+        validate_expansion(
+            self.relation_version,
+            &[&self.relation_type],
+            &self.evidence_anchor_ids,
+            &self.created_by,
+        )
+    }
+}
+
+impl Event {
+    /// Validates event text, version, evidence, and actor fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnowledgeExpansionError`] when any required field is invalid.
+    pub fn validate(&self) -> Result<(), KnowledgeExpansionError> {
+        validate_expansion(
+            self.event_version,
+            &[&self.name, &self.occurred_at],
+            &self.evidence_anchor_ids,
+            &self.created_by,
+        )
+    }
+}
+
+impl Belief {
+    /// Validates belief text, version, evidence, and actor fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnowledgeExpansionError`] when any required field is invalid.
+    pub fn validate(&self) -> Result<(), KnowledgeExpansionError> {
+        validate_expansion(
+            self.belief_version,
+            &[&self.proposition],
+            &self.evidence_anchor_ids,
+            &self.created_by,
+        )
+    }
+}
+
+impl Foreshadowing {
+    /// Validates foreshadowing text, version, evidence, and actor fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnowledgeExpansionError`] when any required field is invalid.
+    pub fn validate(&self) -> Result<(), KnowledgeExpansionError> {
+        validate_expansion(
+            self.foreshadowing_version,
+            &[&self.title, &self.status],
+            &self.evidence_anchor_ids,
+            &self.created_by,
+        )
+    }
 }
 
 impl EvidenceAnchor {

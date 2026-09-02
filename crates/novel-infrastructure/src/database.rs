@@ -498,6 +498,128 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (20, 'r5_fact_current_pointer');",
             )?;
         }
+        if applied.unwrap_or(0) < 21 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS knowledge_versions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    version INTEGER NOT NULL CHECK(version > 0),
+                    fact_refs_json TEXT NOT NULL CHECK(json_valid(fact_refs_json)),
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    UNIQUE(project_id, version)
+                );
+                CREATE INDEX IF NOT EXISTS idx_knowledge_versions_project
+                    ON knowledge_versions(project_id, version DESC);
+                INSERT INTO schema_migrations (version, name) VALUES (21, 'r5_knowledge_versions');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 22 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS world_states (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    knowledge_version_id TEXT NOT NULL REFERENCES knowledge_versions(id),
+                    entries_json TEXT NOT NULL CHECK(json_valid(entries_json)),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    UNIQUE(project_id, knowledge_version_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_world_states_project_created
+                    ON world_states(project_id, created_at DESC);
+                INSERT INTO schema_migrations (version, name) VALUES (22, 'r5_world_state_projection');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 23 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS relations (
+                    id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    relation_version INTEGER NOT NULL CHECK(relation_version > 0),
+                    from_knowledge_id TEXT NOT NULL,
+                    to_knowledge_id TEXT NOT NULL,
+                    relation_type TEXT NOT NULL,
+                    evidence_anchor_ids_json TEXT NOT NULL CHECK(json_valid(evidence_anchor_ids_json)),
+                    lifecycle_status TEXT NOT NULL CHECK(lifecycle_status IN ('ACTIVE','NEEDS_REVIEW','ARCHIVED')),
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    PRIMARY KEY(id, relation_version)
+                );
+                CREATE TRIGGER IF NOT EXISTS prevent_relation_update
+                    BEFORE UPDATE ON relations BEGIN SELECT RAISE(ABORT, 'immutable relation version'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_relation_delete
+                    BEFORE DELETE ON relations BEGIN SELECT RAISE(ABORT, 'immutable relation version'); END;
+                INSERT INTO schema_migrations (version, name) VALUES (23, 'r5_relations');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 24 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS events (
+                    id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    event_version INTEGER NOT NULL CHECK(event_version > 0),
+                    name TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    participant_fact_ids_json TEXT NOT NULL CHECK(json_valid(participant_fact_ids_json)),
+                    evidence_anchor_ids_json TEXT NOT NULL CHECK(json_valid(evidence_anchor_ids_json)),
+                    lifecycle_status TEXT NOT NULL CHECK(lifecycle_status IN ('ACTIVE','NEEDS_REVIEW','ARCHIVED')),
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    PRIMARY KEY(id, event_version)
+                );
+                CREATE TRIGGER IF NOT EXISTS prevent_event_update
+                    BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'immutable event version'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_event_delete
+                    BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'immutable event version'); END;
+                INSERT INTO schema_migrations (version, name) VALUES (24, 'r5_events');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 25 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS beliefs (
+                    id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    belief_version INTEGER NOT NULL CHECK(belief_version > 0),
+                    holder_knowledge_id TEXT NOT NULL,
+                    proposition TEXT NOT NULL,
+                    evidence_anchor_ids_json TEXT NOT NULL CHECK(json_valid(evidence_anchor_ids_json)),
+                    lifecycle_status TEXT NOT NULL CHECK(lifecycle_status IN ('ACTIVE','NEEDS_REVIEW','ARCHIVED')),
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    PRIMARY KEY(id, belief_version)
+                );
+                CREATE TRIGGER IF NOT EXISTS prevent_belief_update
+                    BEFORE UPDATE ON beliefs BEGIN SELECT RAISE(ABORT, 'immutable belief version'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_belief_delete
+                    BEFORE DELETE ON beliefs BEGIN SELECT RAISE(ABORT, 'immutable belief version'); END;
+                INSERT INTO schema_migrations (version, name) VALUES (25, 'r5_beliefs');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 26 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS foreshadowings (
+                    id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    foreshadowing_version INTEGER NOT NULL CHECK(foreshadowing_version > 0),
+                    title TEXT NOT NULL,
+                    target_chapter_id TEXT REFERENCES chapters(id),
+                    status TEXT NOT NULL,
+                    evidence_anchor_ids_json TEXT NOT NULL CHECK(json_valid(evidence_anchor_ids_json)),
+                    lifecycle_status TEXT NOT NULL CHECK(lifecycle_status IN ('ACTIVE','NEEDS_REVIEW','ARCHIVED')),
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    PRIMARY KEY(id, foreshadowing_version)
+                );
+                CREATE TRIGGER IF NOT EXISTS prevent_foreshadowing_update
+                    BEFORE UPDATE ON foreshadowings BEGIN SELECT RAISE(ABORT, 'immutable foreshadowing version'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_foreshadowing_delete
+                    BEFORE DELETE ON foreshadowings BEGIN SELECT RAISE(ABORT, 'immutable foreshadowing version'); END;
+                INSERT INTO schema_migrations (version, name) VALUES (26, 'r5_foreshadowings');",
+            )?;
+        }
         Ok(())
     }
 

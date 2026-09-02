@@ -35,13 +35,14 @@ pub use entity_store::EntityStoreError;
 pub use knowledge_store::KnowledgeStoreError;
 pub use materials_store::MaterialsStoreError;
 pub use novel_domain::{
-    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, CandidateStatus, ChangeSet,
+    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, Belief, CandidateStatus, ChangeSet,
     ChangeSetStatus, ContextAuthority, Entity, EntityError, EntityInput, EntityLifecycleStatus,
-    EntityRevision, EntityType, EvidenceAnchor, Fact, KnowledgeCandidate, KnowledgeChunk,
-    KnowledgeConflict, KnowledgeConflictKind, KnowledgeContractError, KnowledgeLifecycleStatus,
-    ModelCapability, ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel,
-    RetrievalEvidence, RetrievalMethod, ReviewDecision, SummaryKind, SummaryMaterial,
-    SummaryPrecision, WritingCard,
+    EntityRevision, EntityType, Event, EvidenceAnchor, Fact, Foreshadowing, KnowledgeCandidate,
+    KnowledgeChunk, KnowledgeConflict, KnowledgeConflictKind, KnowledgeContractError,
+    KnowledgeExpansionError, KnowledgeLifecycleStatus, KnowledgeVersion, ModelCapability,
+    ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel, Relation, RetrievalEvidence,
+    RetrievalMethod, ReviewDecision, SummaryKind, SummaryMaterial, SummaryPrecision, WorldState,
+    WorldStateEntry, WritingCard,
 };
 pub use search_store::{SearchResult, SearchStoreError};
 
@@ -154,7 +155,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 20;
+pub const CURRENT_SCHEMA_VERSION: i64 = 26;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -359,6 +360,20 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         stage: "R5",
         status: FeatureStatus::Declared,
         unavailable_reason: Some("首批仅规划确定性规则，高风险命中需人工确认"),
+    },
+    FeatureDescriptor {
+        id: "r5_knowledge_version",
+        display_name: "R5 KnowledgeVersion",
+        stage: "R5",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "r5_world_state",
+        display_name: "R5 WorldState 投影",
+        stage: "R5",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
     },
 ];
 

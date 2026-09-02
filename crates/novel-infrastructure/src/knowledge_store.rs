@@ -6,6 +6,8 @@ pub enum KnowledgeStoreError {
     NoProject,
     #[error("knowledge contract failed: {0}")]
     Contract(#[from] KnowledgeContractError),
+    #[error("knowledge expansion contract failed: {0}")]
+    Expansion(#[from] KnowledgeExpansionError),
     #[error("knowledge candidate does not exist: {0}")]
     MissingCandidate(Uuid),
     #[error("knowledge evidence anchor does not exist: {0}")]
@@ -25,6 +27,49 @@ pub enum KnowledgeStoreError {
 }
 
 impl ProjectManager {
+    pub fn create_relation(&mut self, relation: Relation) -> Result<Relation, KnowledgeStoreError> {
+        relation.validate()?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session.database.insert_relation(&relation)?;
+        Ok(relation)
+    }
+
+    pub fn create_event(&mut self, event: Event) -> Result<Event, KnowledgeStoreError> {
+        event.validate()?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session.database.insert_event(&event)?;
+        Ok(event)
+    }
+
+    pub fn create_belief(&mut self, belief: Belief) -> Result<Belief, KnowledgeStoreError> {
+        belief.validate()?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session.database.insert_belief(&belief)?;
+        Ok(belief)
+    }
+
+    pub fn create_foreshadowing(
+        &mut self,
+        foreshadowing: Foreshadowing,
+    ) -> Result<Foreshadowing, KnowledgeStoreError> {
+        foreshadowing.validate()?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session.database.insert_foreshadowing(&foreshadowing)?;
+        Ok(foreshadowing)
+    }
+
     pub fn create_evidence_anchor(
         &mut self,
         anchor: EvidenceAnchor,
@@ -149,6 +194,24 @@ impl ProjectManager {
             .finalize_candidates(project_id, chapter_id, selected, actor)
     }
 
+    pub fn rebuild_world_state(
+        &mut self,
+        actor: String,
+    ) -> Result<WorldState, KnowledgeStoreError> {
+        if actor.trim().is_empty() {
+            return Err(KnowledgeStoreError::Contract(
+                KnowledgeContractError::EmptyActor,
+            ));
+        }
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session
+            .database
+            .rebuild_world_state(session.manifest.project_id, actor)
+    }
+
     pub fn review_knowledge_candidate(
         &mut self,
         id: Uuid,
@@ -176,6 +239,78 @@ impl ProjectManager {
 }
 
 impl Database {
+    fn ensure_anchors(
+        tx: &rusqlite::Transaction<'_>,
+        project_id: Uuid,
+        ids: &[Uuid],
+    ) -> Result<String, KnowledgeStoreError> {
+        let json = serde_json::to_string(ids)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        for id in ids {
+            let found: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM evidence_anchors WHERE id = ?1 AND project_id = ?2 AND lifecycle_status = 'ACTIVE'",
+                    rusqlite::params![id.to_string(), project_id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if found.is_none() {
+                return Err(KnowledgeStoreError::MissingAnchor(*id));
+            }
+        }
+        Ok(json)
+    }
+
+    fn insert_relation(&mut self, value: &Relation) -> Result<(), KnowledgeStoreError> {
+        let tx = self.connection.transaction()?;
+        let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
+        tx.execute(
+            "INSERT INTO relations (id, project_id, relation_version, from_knowledge_id, to_knowledge_id, relation_type, evidence_anchor_ids_json, lifecycle_status, created_by)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            rusqlite::params![value.id.to_string(), value.project_id.to_string(), value.relation_version, value.from_knowledge_id.to_string(), value.to_knowledge_id.to_string(), value.relation_type, anchors, knowledge_lifecycle_str(value.lifecycle_status), value.created_by],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn insert_event(&mut self, value: &Event) -> Result<(), KnowledgeStoreError> {
+        let tx = self.connection.transaction()?;
+        let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
+        let participants = serde_json::to_string(&value.participant_fact_ids)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        tx.execute(
+            "INSERT INTO events (id, project_id, event_version, name, occurred_at, participant_fact_ids_json, evidence_anchor_ids_json, lifecycle_status, created_by)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            rusqlite::params![value.id.to_string(), value.project_id.to_string(), value.event_version, value.name, value.occurred_at, participants, anchors, knowledge_lifecycle_str(value.lifecycle_status), value.created_by],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn insert_belief(&mut self, value: &Belief) -> Result<(), KnowledgeStoreError> {
+        let tx = self.connection.transaction()?;
+        let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
+        tx.execute(
+            "INSERT INTO beliefs (id, project_id, belief_version, holder_knowledge_id, proposition, evidence_anchor_ids_json, lifecycle_status, created_by)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            rusqlite::params![value.id.to_string(), value.project_id.to_string(), value.belief_version, value.holder_knowledge_id.to_string(), value.proposition, anchors, knowledge_lifecycle_str(value.lifecycle_status), value.created_by],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn insert_foreshadowing(&mut self, value: &Foreshadowing) -> Result<(), KnowledgeStoreError> {
+        let tx = self.connection.transaction()?;
+        let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
+        tx.execute(
+            "INSERT INTO foreshadowings (id, project_id, foreshadowing_version, title, target_chapter_id, status, evidence_anchor_ids_json, lifecycle_status, created_by)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            rusqlite::params![value.id.to_string(), value.project_id.to_string(), value.foreshadowing_version, value.title, value.target_chapter_id.map(|id| id.to_string()), value.status, anchors, knowledge_lifecycle_str(value.lifecycle_status), value.created_by],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     fn insert_evidence_anchor(
         &mut self,
         anchor: &EvidenceAnchor,
@@ -486,6 +621,85 @@ impl Database {
             updated_at: now_timestamp(),
         })
     }
+
+    fn rebuild_world_state(
+        &mut self,
+        project_id: Uuid,
+        actor: String,
+    ) -> Result<WorldState, KnowledgeStoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT f.knowledge_id, f.knowledge_version, f.subject, f.predicate, f.object
+             FROM facts f
+             JOIN fact_current_versions current
+               ON current.knowledge_id = f.knowledge_id
+              AND current.knowledge_version = f.knowledge_version
+             WHERE f.project_id = ?1
+             ORDER BY f.subject, f.predicate, f.object",
+        )?;
+        let rows = statement.query_map([project_id.to_string()], |row| {
+            let knowledge_id = Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(WorldStateEntry {
+                fact_knowledge_id: knowledge_id,
+                fact_version: row.get(1)?,
+                subject: row.get(2)?,
+                predicate: row.get(3)?,
+                object: row.get(4)?,
+            })
+        })?;
+        let entries = rows.collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        let fact_refs = entries
+            .iter()
+            .map(|entry| (entry.fact_knowledge_id, entry.fact_version))
+            .collect::<Vec<_>>();
+        let refs_json = serde_json::to_string(&fact_refs)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let entries_json = serde_json::to_string(&entries)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let version_id = Uuid::new_v4();
+        let state_id = Uuid::new_v4();
+        let tx = self.connection.transaction()?;
+        let next_version: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM knowledge_versions WHERE project_id = ?1",
+            [project_id.to_string()],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO knowledge_versions (id, project_id, version, fact_refs_json, created_by)
+             VALUES (?1,?2,?3,?4,?5)",
+            rusqlite::params![
+                version_id.to_string(),
+                project_id.to_string(),
+                next_version,
+                refs_json,
+                actor
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO world_states (id, project_id, knowledge_version_id, entries_json)
+             VALUES (?1,?2,?3,?4)",
+            rusqlite::params![
+                state_id.to_string(),
+                project_id.to_string(),
+                version_id.to_string(),
+                entries_json
+            ],
+        )?;
+        tx.commit()?;
+        Ok(WorldState {
+            id: state_id,
+            project_id,
+            knowledge_version_id: version_id,
+            entries,
+            created_at: now_timestamp(),
+        })
+    }
 }
 
 fn knowledge_lifecycle_str(value: KnowledgeLifecycleStatus) -> &'static str {
@@ -717,6 +931,11 @@ mod tests {
             .finalize_knowledge_candidates(chapter.id, vec![candidate.id], "finalizer".into())
             .expect("finalize candidate");
         assert_eq!(change_set.status, ChangeSetStatus::Finalized);
+        let world_state = manager
+            .rebuild_world_state("projector".into())
+            .expect("rebuild world state");
+        assert_eq!(world_state.entries.len(), 1);
+        assert_eq!(world_state.entries[0].object, "乙");
         assert!(matches!(
             manager.review_knowledge_candidate(
                 candidate.id,

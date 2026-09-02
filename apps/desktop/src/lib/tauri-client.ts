@@ -111,6 +111,12 @@ export type ChangeSet = {
   id: string; projectId: string; chapterId: string; sourceRevisionId: string;
   status: ChangeSetStatus; candidateIds: string[]; createdBy: string; createdAt: string; updatedAt: string;
 };
+export type WorldStateEntry = { subject: string; predicate: string; object: string; factKnowledgeId: string; factVersion: number };
+export type WorldState = { id: string; projectId: string; knowledgeVersionId: string; entries: WorldStateEntry[]; createdAt: string };
+export type Relation = { id: string; projectId: string; relationVersion: number; fromKnowledgeId: string; toKnowledgeId: string; relationType: string; evidenceAnchorIds: string[]; lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string; createdAt: string; updatedAt: string };
+export type Event = { id: string; projectId: string; eventVersion: number; name: string; occurredAt: string; participantFactIds: string[]; evidenceAnchorIds: string[]; lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string; createdAt: string; updatedAt: string };
+export type Belief = { id: string; projectId: string; beliefVersion: number; holderKnowledgeId: string; proposition: string; evidenceAnchorIds: string[]; lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string; createdAt: string; updatedAt: string };
+export type Foreshadowing = { id: string; projectId: string; foreshadowingVersion: number; title: string; targetChapterId: string | null; status: string; evidenceAnchorIds: string[]; lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string; createdAt: string; updatedAt: string };
 export type AssembleContextInput = {
   chapterId: string; targetRevisionId: string | null; action: AiAction; chapterTitle: string;
   chapterPlan: string; documentJson: string; selection: string | null; instruction: string | null;
@@ -200,6 +206,11 @@ export function detectCandidateConflicts(chapterId: string) { return invoke<Know
 export function finalizeKnowledgeCandidates(input: { chapterId: string; candidateIds: string[]; actor: string }) {
   return invoke<ChangeSet>("finalize_knowledge_candidates", input);
 }
+export function rebuildWorldState(actor: string) { return invoke<WorldState>("rebuild_world_state", { actor }); }
+export function createRelation(relation: Relation) { return invoke<Relation>("create_relation", { relation }); }
+export function createEvent(event: Event) { return invoke<Event>("create_event", { event }); }
+export function createBelief(belief: Belief) { return invoke<Belief>("create_belief", { belief }); }
+export function createForeshadowing(foreshadowing: Foreshadowing) { return invoke<Foreshadowing>("create_foreshadowing", { foreshadowing }); }
 export function assembleContextWithProjectKnowledge(input: AssembleContextInput) {
   return invoke<ContextPackage>("assemble_context_with_project_knowledge", { input, objectIds: input.knowledgeObjectIds });
 }

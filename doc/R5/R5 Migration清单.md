@@ -9,8 +9,14 @@
 | 18 | `r5_facts` | Fact 正式版本、生命周期和当前版本指针 | 17 |
 | 19 | `r5_change_sets_audit_outbox` | 单章节 ChangeSet、ChangeItem、审核决定、审计和 Outbox | 18 |
 | 20 | `r5_fact_current_pointer` | Fact 当前版本指针，不破坏历史版本追加 | 18 |
+| 21 | `r5_knowledge_versions` | 正式 Fact 引用集合的可审计版本 | 20 |
+| 22 | `r5_world_state_projection` | 从正式 Fact 重建的 WorldState 投影 | 21 |
+| 23 | `r5_relations` | 关系知识的不可变版本 | 18/22 |
+| 24 | `r5_events` | 事件及参与事实引用的不可变版本 | 18/22 |
+| 25 | `r5_beliefs` | 持有者与命题的信念知识版本 | 18/22 |
+| 26 | `r5_foreshadowings` | 伏笔状态和目标章节的不可变版本 | 18/22 |
 
-R4 版本 15 已补齐为可靠性契约的 schema ledger 收尾标记；R5 从 16 开始，当前 R5 schema version 为 20。每个迁移必须支持空库、已有项目和失败回滚演练。
+R4 版本 15 已补齐为可靠性契约的 schema ledger 收尾标记；R5 从 16 开始，当前 R5 schema version 为 26。每个迁移必须支持空库、已有项目和失败回滚演练。
 
 ## 统一字段
 

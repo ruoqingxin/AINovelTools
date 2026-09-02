@@ -126,7 +126,8 @@ impl From<novel_infrastructure::KnowledgeStoreError> for ApiError {
             novel_infrastructure::KnowledgeStoreError::Conflict => "VERSION_CONFLICT",
             novel_infrastructure::KnowledgeStoreError::HighRiskConflict => "KNOWLEDGE_CONFLICT",
             novel_infrastructure::KnowledgeStoreError::EmptyCandidates
-            | novel_infrastructure::KnowledgeStoreError::Contract(_) => "INVALID_INPUT",
+            | novel_infrastructure::KnowledgeStoreError::Contract(_)
+            | novel_infrastructure::KnowledgeStoreError::Expansion(_) => "INVALID_INPUT",
             novel_infrastructure::KnowledgeStoreError::Sqlite(_)
             | novel_infrastructure::KnowledgeStoreError::Database(_) => "DATABASE_ERROR",
         };

@@ -24,8 +24,10 @@ use commands::jobs::{
     retry_job, run_next_job, startup_recovery_report,
 };
 use commands::knowledge::{
-    create_evidence_anchor, create_knowledge_candidate, detect_candidate_conflicts,
-    finalize_knowledge_candidates, list_knowledge_candidates, review_knowledge_candidate,
+    create_belief, create_event, create_evidence_anchor, create_foreshadowing,
+    create_knowledge_candidate, create_relation, detect_candidate_conflicts,
+    finalize_knowledge_candidates, list_knowledge_candidates, rebuild_world_state,
+    review_knowledge_candidate,
 };
 use commands::manuscript::{
     clear_recovery_logs, current_manuscript, list_all_recovery_logs, list_manuscript_revisions,
@@ -137,11 +139,16 @@ pub fn run() {
             startup_recovery_report,
             create_diagnostic_package,
             create_evidence_anchor,
+            create_relation,
+            create_event,
+            create_belief,
+            create_foreshadowing,
             create_knowledge_candidate,
             list_knowledge_candidates,
             review_knowledge_candidate,
             detect_candidate_conflicts,
-            finalize_knowledge_candidates
+            finalize_knowledge_candidates,
+            rebuild_world_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
