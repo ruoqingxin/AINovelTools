@@ -29,7 +29,7 @@ mod database;
 mod entity_store;
 mod materials_store;
 mod search_store;
-pub use ai::{AiError, EmbeddingGateway, ModelGateway, SecretStore};
+pub use ai::{AiError, EmbeddingGateway, ModelGateway, ModelProfileStore, SecretStore};
 pub use entity_store::EntityStoreError;
 pub use materials_store::MaterialsStoreError;
 pub use novel_domain::{
@@ -1612,7 +1612,10 @@ pub fn linked_layers() -> [&'static str; 3] {
 
 #[cfg(test)]
 mod tests {
-    use super::{Database, FeatureStatus, FEATURE_CATALOG, R4_CONTRACTS, R4_MIGRATION_PLAN, R4_SCHEMA_VERSION};
+    use super::{
+        Database, FEATURE_CATALOG, FeatureStatus, R4_CONTRACTS, R4_MIGRATION_PLAN,
+        R4_SCHEMA_VERSION,
+    };
 
     #[test]
     fn infrastructure_depends_inward() {

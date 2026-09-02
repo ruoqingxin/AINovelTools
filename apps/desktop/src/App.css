@@ -1130,8 +1130,22 @@ button:focus-visible {
 .settings-content-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
 .settings-content-heading h2 { margin:0; color:#263b60; font-size:20px; }
 .settings-content-heading p { margin:8px 0 0; color:#7183a0; font-size:12px; line-height:1.6; }
-.settings-content .model-profile-switcher { grid-template-columns:minmax(0,1fr); }
 .settings-empty-label { min-height:34px; display:flex; align-items:center; padding:0 9px; border:1px dashed var(--line-strong); border-radius:5px; color:#8797b0; font-size:12px; }
+.model-profile-workbench { display:grid; grid-template-columns:224px minmax(0,1fr); margin-top:22px; border-top:1px solid #e4eaf3; }
+.model-profile-list { min-width:0; padding:16px 16px 16px 0; border-right:1px solid #e4eaf3; }
+.model-profile-list-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 4px 10px; }
+.model-profile-list-heading h3 { margin:0; color:#34496d; font-size:12px; }
+.model-profile-list-items { display:grid; gap:5px; }
+.model-profile-item { display:grid; width:100%; min-height:74px; gap:4px; padding:10px 11px; border:1px solid transparent; border-left:2px solid transparent; border-radius:6px; color:#657792; background:transparent; text-align:left; }
+.model-profile-item:hover:not(:disabled) { border-color:#d7e3f8; background:#f7faff; }
+.model-profile-item[data-active] { border-color:#cedcf5; border-left-color:#3f78f6; color:#285dcb; background:#edf3ff; }
+.model-profile-item:disabled { cursor:default; opacity:.72; }
+.model-profile-item-name { overflow:hidden; color:inherit; font-size:12px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
+.model-profile-item-meta { overflow:hidden; color:#8292aa; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.model-profile-item-state { display:flex; align-items:center; gap:6px; color:#8a9ab1; font-size:10px; }
+.model-profile-item-state span + span::before { margin-right:6px; color:#b1bed1; content:"·"; }
+.model-profile-editor { min-width:0; padding:16px 0 0 26px; }
+.model-profile-editor .model-grid { margin-top:0; }
 .jobs-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:20px 0; color:#7183a0; font-size:12px; }
 .jobs-list { border-top:1px solid #e4eaf3; }
 .job-row { display:grid; grid-template-columns:minmax(180px,1fr) auto minmax(120px,220px) minmax(120px,1fr) auto; gap:12px; align-items:center; padding:13px 0; border-bottom:1px solid #e4eaf3; font-size:12px; }
@@ -1188,6 +1202,11 @@ button:focus-visible {
   .settings-nav { display:flex; overflow-x:auto; padding:0; border-right:0; border-bottom:1px solid #e4eaf3; }
   .settings-nav-item { flex:0 0 auto; border-radius:6px 6px 0 0; }
   .settings-content { padding:18px; }
+  .model-profile-workbench { grid-template-columns:1fr; }
+  .model-profile-list { padding:14px 0; border-right:0; border-bottom:1px solid #e4eaf3; }
+  .model-profile-list-items { display:flex; overflow-x:auto; padding-bottom:2px; }
+  .model-profile-item { flex:0 0 206px; }
+  .model-profile-editor { padding:18px 0 0; }
   .materials-layout { grid-template-columns:1fr; }
   .search-toolbar { flex-wrap:wrap; }
   .story-bible-layout { grid-template-columns:1fr; }

@@ -1,6 +1,7 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::Manager;
@@ -46,10 +47,14 @@ use state::ProjectState;
 ///
 /// Panics when Tauri cannot initialize or the application event loop fails.
 pub fn run() {
+    let settings_database = settings_database_path();
+    let model_profiles = novel_infrastructure::ModelProfileStore::open(settings_database)
+        .expect("application model settings database must initialize");
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(ProjectState {
             manager: Mutex::new(novel_infrastructure::ProjectManager::new()),
+            model_profiles: Mutex::new(model_profiles),
             gateway: novel_infrastructure::ModelGateway::default(),
             embedding_gateway: novel_infrastructure::EmbeddingGateway::default(),
             ai_cancellations: Mutex::new(HashMap::new()),
@@ -130,6 +135,15 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn settings_database_path() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .or_else(|| std::env::var_os("APPDATA"))
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("AINovelTools")
+        .join("settings.sqlite")
 }
 
 #[cfg(test)]

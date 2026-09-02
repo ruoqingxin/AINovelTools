@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 pub(crate) struct ProjectState {
     pub(crate) manager: Mutex<novel_infrastructure::ProjectManager>,
+    pub(crate) model_profiles: Mutex<novel_infrastructure::ModelProfileStore>,
     pub(crate) gateway: novel_infrastructure::ModelGateway,
     pub(crate) embedding_gateway: novel_infrastructure::EmbeddingGateway,
     pub(crate) ai_cancellations: Mutex<HashMap<uuid::Uuid, Arc<AtomicBool>>>,

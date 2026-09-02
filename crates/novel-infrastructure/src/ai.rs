@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -13,6 +14,8 @@ use novel_domain::{
 };
 use reqwest::StatusCode;
 use rusqlite::OptionalExtension;
+#[cfg(windows)]
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -91,25 +94,118 @@ impl SecretStore {
         if secret.trim().is_empty() {
             return Err(AiError::MissingSecret);
         }
-        Entry::new(SECRET_SERVICE, secret_ref)
-            .map_err(|_| AiError::SecretStore)?
-            .set_password(secret)
+        let result = Entry::new(SECRET_SERVICE, secret_ref)
             .map_err(|_| AiError::SecretStore)
+            .and_then(|entry| entry.set_password(secret).map_err(|_| AiError::SecretStore));
+        match result {
+            Ok(()) => {
+                let _ = dpapi_fallback::delete(secret_ref);
+                Ok(())
+            }
+            Err(_) => dpapi_fallback::set(secret_ref, secret),
+        }
     }
 
     pub fn get(secret_ref: &str) -> Result<String, AiError> {
-        Entry::new(SECRET_SERVICE, secret_ref)
-            .map_err(|_| AiError::SecretStore)?
-            .get_password()
+        let result = Entry::new(SECRET_SERVICE, secret_ref)
             .map_err(|_| AiError::SecretStore)
+            .and_then(|entry| entry.get_password().map_err(|_| AiError::SecretStore));
+        result.or_else(|_| dpapi_fallback::get(secret_ref))
     }
 
     pub fn delete(secret_ref: &str) -> Result<(), AiError> {
-        let entry = Entry::new(SECRET_SERVICE, secret_ref).map_err(|_| AiError::SecretStore)?;
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        if let Ok(entry) = Entry::new(SECRET_SERVICE, secret_ref) {
+            let _ = entry.delete_credential();
+        }
+        dpapi_fallback::delete(secret_ref)
+    }
+}
+
+#[cfg(windows)]
+mod dpapi_fallback {
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+
+    use super::{AiError, Digest, Sha256};
+
+    const PROTECT_SCRIPT: &str = "$inputText = [Console]::In.ReadToEnd(); $bytes = [Text.Encoding]::UTF8.GetBytes($inputText); $protected = [Security.Cryptography.ProtectedData]::Protect($bytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($protected))";
+    const UNPROTECT_SCRIPT: &str = "$encoded = [Console]::In.ReadToEnd(); $protected = [Convert]::FromBase64String($encoded); $bytes = [Security.Cryptography.ProtectedData]::Unprotect($protected, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Text.Encoding]::UTF8.GetString($bytes))";
+
+    pub(super) fn set(secret_ref: &str, secret: &str) -> Result<(), AiError> {
+        let encrypted = run(PROTECT_SCRIPT, secret)?;
+        let path = secret_path(secret_ref)?;
+        std::fs::write(path, encrypted.trim()).map_err(|_| AiError::SecretStore)
+    }
+
+    pub(super) fn get(secret_ref: &str) -> Result<String, AiError> {
+        let encrypted =
+            std::fs::read_to_string(secret_path(secret_ref)?).map_err(|_| AiError::SecretStore)?;
+        run(UNPROTECT_SCRIPT, &encrypted)
+    }
+
+    pub(super) fn delete(secret_ref: &str) -> Result<(), AiError> {
+        let path = secret_path(secret_ref)?;
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(_) => Err(AiError::SecretStore),
         }
+    }
+
+    fn secret_path(secret_ref: &str) -> Result<PathBuf, AiError> {
+        let root = std::env::var_os("LOCALAPPDATA")
+            .or_else(|| std::env::var_os("APPDATA"))
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("AINovelTools")
+            .join("secrets");
+        std::fs::create_dir_all(&root).map_err(|_| AiError::SecretStore)?;
+        let digest = Sha256::digest(secret_ref.as_bytes());
+        Ok(root.join(format!("{digest:x}.dpapi")))
+    }
+
+    fn run(script: &str, input: &str) -> Result<String, AiError> {
+        run_with_shell("pwsh.exe", script, input)
+            .or_else(|_| run_with_shell("powershell.exe", script, input))
+    }
+
+    fn run_with_shell(shell: &str, script: &str, input: &str) -> Result<String, AiError> {
+        let mut child = Command::new(shell)
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| AiError::SecretStore)?;
+        child
+            .stdin
+            .as_mut()
+            .ok_or(AiError::SecretStore)?
+            .write_all(input.as_bytes())
+            .map_err(|_| AiError::SecretStore)?;
+        let output = child.wait_with_output().map_err(|_| AiError::SecretStore)?;
+        if !output.status.success() {
+            return Err(AiError::SecretStore);
+        }
+        String::from_utf8(output.stdout).map_err(|_| AiError::SecretStore)
+    }
+}
+
+#[cfg(not(windows))]
+mod dpapi_fallback {
+    use super::AiError;
+
+    pub(super) fn set(_: &str, _: &str) -> Result<(), AiError> {
+        Err(AiError::SecretStore)
+    }
+
+    pub(super) fn get(_: &str) -> Result<String, AiError> {
+        Err(AiError::SecretStore)
+    }
+
+    pub(super) fn delete(_: &str) -> Result<(), AiError> {
+        Ok(())
     }
 }
 
@@ -132,6 +228,7 @@ impl ModelGateway {
         secret: Option<&str>,
         context: &ContextPackage,
         stream: bool,
+        disable_thinking: bool,
         cancelled: Arc<AtomicBool>,
         mut on_chunk: F,
     ) -> Result<String, AiError>
@@ -159,6 +256,9 @@ impl ModelGateway {
             "max_tokens"
         };
         body[token_field] = serde_json::json!(profile.max_output_tokens);
+        if profile.provider == ModelProvider::DeepSeek && disable_thinking {
+            body["thinking"] = serde_json::json!({ "type": "disabled" });
+        }
         let attempts = usize::from(profile.retry_limit) + 1;
         for attempt in 0..attempts {
             if cancelled.load(Ordering::Relaxed) {
@@ -374,6 +474,73 @@ fn map_status(status: StatusCode) -> AiError {
 #[allow(clippy::cast_possible_truncation)]
 fn embedding_component(number: f64) -> f32 {
     number as f32
+}
+
+/// Application-wide model configuration store. It intentionally remains
+/// independent from the currently open novel project.
+pub struct ModelProfileStore {
+    database: crate::Database,
+}
+
+impl ModelProfileStore {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, DatabaseError> {
+        Ok(Self {
+            database: crate::Database::open(path)?,
+        })
+    }
+
+    #[cfg(test)]
+    pub fn in_memory() -> Result<Self, DatabaseError> {
+        Ok(Self {
+            database: crate::Database::in_memory()?,
+        })
+    }
+
+    pub fn list(&self) -> Result<Vec<ModelProfile>, AiError> {
+        let mut statement = self.database.connection.prepare(
+            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles ORDER BY updated_at DESC"
+        ).map_err(DatabaseError::from)?;
+        let rows = statement
+            .query_map([], read_profile)
+            .map_err(DatabaseError::from)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
+            .map_err(AiError::from)
+    }
+
+    pub fn get(&self, id: Uuid) -> Result<ModelProfile, AiError> {
+        self.database.connection.query_row(
+            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles WHERE id = ?1",
+            [id.to_string()], read_profile,
+        ).optional().map_err(DatabaseError::from)?.ok_or(AiError::MissingProfile(id))
+    }
+
+    pub fn upsert(&mut self, input: ModelProfileInput) -> Result<ModelProfile, AiError> {
+        input.validate()?;
+        let id = input.id.unwrap_or_else(Uuid::new_v4);
+        self.database.connection.execute(
+            "INSERT INTO model_profiles (id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, capability=excluded.capability, base_url=excluded.base_url, model_id=excluded.model_id, context_window=excluded.context_window, max_output_tokens=excluded.max_output_tokens, privacy_level=excluded.privacy_level, timeout_seconds=excluded.timeout_seconds, retry_limit=excluded.retry_limit, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            rusqlite::params![id.to_string(), input.name.trim(), provider_str(input.provider), capability_str(input.capability), input.base_url.trim_end_matches('/'), input.model_id.trim(), input.context_window, input.max_output_tokens, privacy_str(input.privacy_level), input.timeout_seconds, input.retry_limit],
+        ).map_err(DatabaseError::from)?;
+        self.get(id)
+    }
+
+    pub fn set_secret_ref(
+        &mut self,
+        id: Uuid,
+        secret_ref: Option<&str>,
+    ) -> Result<ModelProfile, AiError> {
+        let changed = self.database.connection.execute(
+            "UPDATE model_profiles SET secret_ref = ?2, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?1",
+            rusqlite::params![id.to_string(), secret_ref],
+        ).map_err(DatabaseError::from)?;
+        if changed == 0 {
+            return Err(AiError::MissingProfile(id));
+        }
+        self.get(id)
+    }
 }
 
 impl ProjectManager {
@@ -690,7 +857,7 @@ fn parse_proposal_status(value: &str) -> AiProposalStatus {
 mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::sync::{Arc, atomic::AtomicBool};
+    use std::sync::{Arc, Mutex, atomic::AtomicBool};
     use std::time::Duration;
 
     fn serve(body: &'static str, content_type: &'static str, delay: Duration) -> String {
@@ -750,6 +917,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn model_profile_store_is_available_without_an_open_project() {
+        let mut store = super::ModelProfileStore::in_memory().expect("settings store");
+        let saved = store
+            .upsert(novel_domain::ModelProfileInput {
+                id: None,
+                name: "应用级模型".into(),
+                provider: novel_domain::ModelProvider::DeepSeek,
+                capability: novel_domain::ModelCapability::Chat,
+                base_url: "https://api.deepseek.com".into(),
+                model_id: "deepseek-v4-flash".into(),
+                context_window: 128_000,
+                max_output_tokens: 8_192,
+                privacy_level: novel_domain::PrivacyLevel::AllowCloud,
+                timeout_seconds: 120,
+                retry_limit: 1,
+            })
+            .expect("save profile");
+
+        let saved = store
+            .set_secret_ref(saved.id, Some("model-profile:test"))
+            .expect("save secret reference");
+        assert!(saved.has_secret);
+        assert_eq!(store.list().expect("list profiles").len(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires unsandboxed Windows credential or DPAPI storage access"]
+    fn windows_secret_store_round_trips() {
+        let secret_ref = format!("test:{}", uuid::Uuid::new_v4());
+        super::SecretStore::set(&secret_ref, "temporary-test-secret").expect("write credential");
+        assert_eq!(
+            super::SecretStore::get(&secret_ref).expect("read credential"),
+            "temporary-test-secret"
+        );
+        super::SecretStore::delete(&secret_ref).expect("delete credential");
+    }
+
     #[tokio::test]
     async fn gateway_reads_non_streaming_and_streaming_responses() {
         let gateway = super::ModelGateway::default();
@@ -763,6 +969,7 @@ mod tests {
                 &profile(non_stream_url, 3),
                 Some("test-key"),
                 &context(),
+                false,
                 false,
                 Arc::new(AtomicBool::new(false)),
                 |_| {},
@@ -782,12 +989,59 @@ mod tests {
                 None,
                 &context(),
                 true,
+                false,
                 Arc::new(AtomicBool::new(false)),
                 |_| {},
             )
             .await
             .expect("stream response");
         assert_eq!(output, "候选正文");
+    }
+
+    #[tokio::test]
+    async fn deepseek_connection_tests_can_disable_thinking() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock provider");
+        let address = listener.local_addr().expect("mock address");
+        let request = Arc::new(Mutex::new(String::new()));
+        let request_capture = Arc::clone(&request);
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = [0_u8; 16_384];
+            let count = stream.read(&mut buffer).expect("read request");
+            *request_capture.lock().expect("request lock") =
+                String::from_utf8_lossy(&buffer[..count]).into_owned();
+            let body = r#"{"choices":[{"message":{"content":"连接成功"}}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        let mut profile = profile(format!("http://{address}/v1"), 3);
+        profile.provider = novel_domain::ModelProvider::DeepSeek;
+        let output = super::ModelGateway::default()
+            .generate(
+                &profile,
+                Some("test-key"),
+                &context(),
+                false,
+                true,
+                Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .await
+            .expect("DeepSeek response");
+
+        assert_eq!(output, "连接成功");
+        assert!(
+            request
+                .lock()
+                .expect("request lock")
+                .contains(r#""thinking":{"type":"disabled"}"#)
+        );
     }
 
     #[tokio::test]
@@ -800,6 +1054,7 @@ mod tests {
                     &profile("https://example.invalid/v1".into(), 3),
                     None,
                     &context(),
+                    false,
                     false,
                     cancelled,
                     |_| {},
@@ -818,6 +1073,7 @@ mod tests {
                 &profile(timeout_url, 1),
                 None,
                 &context(),
+                false,
                 false,
                 Arc::new(AtomicBool::new(false)),
                 |_| {},

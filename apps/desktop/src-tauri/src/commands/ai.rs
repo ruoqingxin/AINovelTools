@@ -6,6 +6,31 @@ use std::sync::{
 };
 use tauri::Emitter;
 
+fn sync_model_profile(
+    manager: &mut novel_infrastructure::ProjectManager,
+    profile: &novel_infrastructure::ModelProfile,
+) -> Result<(), ApiError> {
+    manager
+        .upsert_model_profile(novel_infrastructure::ModelProfileInput {
+            id: Some(profile.id),
+            name: profile.name.clone(),
+            provider: profile.provider,
+            capability: profile.capability,
+            base_url: profile.base_url.clone(),
+            model_id: profile.model_id.clone(),
+            context_window: profile.context_window,
+            max_output_tokens: profile.max_output_tokens,
+            privacy_level: profile.privacy_level,
+            timeout_seconds: profile.timeout_seconds,
+            retry_limit: profile.retry_limit,
+        })
+        .map_err(ApiError::from)?;
+    manager
+        .set_model_profile_secret_ref(profile.id, profile.secret_ref.as_deref())
+        .map_err(ApiError::from)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) fn assemble_context_with_project_knowledge(
     state: tauri::State<'_, ProjectState>,
@@ -28,11 +53,11 @@ pub(crate) fn assemble_context_with_project_knowledge(
 pub(crate) fn list_model_profiles(
     state: tauri::State<'_, ProjectState>,
 ) -> Result<Vec<novel_infrastructure::ModelProfile>, ApiError> {
-    let manager = state
-        .manager
+    let store = state
+        .model_profiles
         .lock()
-        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager.list_model_profiles().map_err(ApiError::from)
+        .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+    store.list().map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -40,11 +65,11 @@ pub(crate) fn upsert_model_profile(
     state: tauri::State<'_, ProjectState>,
     input: novel_infrastructure::ModelProfileInput,
 ) -> Result<novel_infrastructure::ModelProfile, ApiError> {
-    let mut manager = state
-        .manager
+    let mut store = state
+        .model_profiles
         .lock()
-        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager.upsert_model_profile(input).map_err(ApiError::from)
+        .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+    store.upsert(input).map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -55,11 +80,11 @@ pub(crate) fn save_model_secret(
 ) -> Result<novel_infrastructure::ModelProfile, ApiError> {
     let secret_ref = novel_infrastructure::SecretStore::secret_ref(profile_id);
     novel_infrastructure::SecretStore::set(&secret_ref, &secret).map_err(ApiError::from)?;
-    let mut manager = state
-        .manager
+    let mut store = state
+        .model_profiles
         .lock()
-        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    match manager.set_model_profile_secret_ref(profile_id, Some(&secret_ref)) {
+        .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+    match store.set_secret_ref(profile_id, Some(&secret_ref)) {
         Ok(profile) => Ok(profile),
         Err(error) => {
             let _ = novel_infrastructure::SecretStore::delete(&secret_ref);
@@ -74,24 +99,21 @@ pub(crate) fn delete_model_secret(
     profile_id: uuid::Uuid,
 ) -> Result<novel_infrastructure::ModelProfile, ApiError> {
     let secret_ref = {
-        let manager = state
-            .manager
+        let store = state
+            .model_profiles
             .lock()
-            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-        manager
-            .get_model_profile(profile_id)
-            .map_err(ApiError::from)?
-            .secret_ref
+            .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+        store.get(profile_id).map_err(ApiError::from)?.secret_ref
     };
     if let Some(secret_ref) = secret_ref {
         novel_infrastructure::SecretStore::delete(&secret_ref).map_err(ApiError::from)?;
     }
-    let mut manager = state
-        .manager
+    let mut store = state
+        .model_profiles
         .lock()
-        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
-        .set_model_profile_secret_ref(profile_id, None)
+        .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+    store
+        .set_secret_ref(profile_id, None)
         .map_err(ApiError::from)
 }
 
@@ -101,13 +123,11 @@ pub(crate) async fn test_model_profile(
     profile_id: uuid::Uuid,
 ) -> Result<ModelConnectionResponse, ApiError> {
     let (mut profile, secret) = {
-        let manager = state
-            .manager
+        let store = state
+            .model_profiles
             .lock()
-            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-        let profile = manager
-            .get_model_profile(profile_id)
-            .map_err(ApiError::from)?;
+            .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+        let profile = store.get(profile_id).map_err(ApiError::from)?;
         let secret_ref = profile
             .secret_ref
             .as_deref()
@@ -127,6 +147,7 @@ pub(crate) async fn test_model_profile(
                     Some(&secret),
                     &context,
                     false,
+                    true,
                     Arc::new(AtomicBool::new(false)),
                     |_| {},
                 )
@@ -214,18 +235,22 @@ pub(crate) async fn generate_ai_proposal(
     instruction: Option<String>,
     stream: bool,
 ) -> Result<novel_infrastructure::AiProposal, ApiError> {
-    let (profile, target_revision_id) = {
+    let profile = {
+        let store = state
+            .model_profiles
+            .lock()
+            .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+        store.get(profile_id).map_err(ApiError::from)?
+    };
+    let target_revision_id = {
         let manager = state
             .manager
             .lock()
             .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-        let profile = manager
-            .get_model_profile(profile_id)
-            .map_err(ApiError::from)?;
         let revision = manager
             .current_manuscript(chapter_id)
             .map_err(ApiError::from)?;
-        (profile, revision.map(|value| value.id))
+        revision.map(|value| value.id)
     };
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
@@ -269,6 +294,7 @@ pub(crate) async fn generate_ai_proposal(
             .manager
             .lock()
             .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        sync_model_profile(&mut manager, &profile)?;
         manager
             .create_ai_task(profile_id, &context)
             .map_err(ApiError::from)?
@@ -287,6 +313,7 @@ pub(crate) async fn generate_ai_proposal(
             secret.as_deref(),
             &context,
             stream,
+            false,
             Arc::clone(&cancelled),
             |chunk| {
                 let _ = app.emit(
