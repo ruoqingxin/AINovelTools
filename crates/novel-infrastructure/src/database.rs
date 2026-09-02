@@ -620,6 +620,19 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (26, 'r5_foreshadowings');",
             )?;
         }
+        if applied.unwrap_or(0) < 27 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS planning_sections (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    content TEXT NOT NULL DEFAULT '',
+                    rationale TEXT NOT NULL DEFAULT '',
+                    consequence TEXT NOT NULL DEFAULT '',
+                    references_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(references_json)),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT INTO schema_migrations (version, name) VALUES (27, 'planning_sections');",
+            )?;
+        }
         Ok(())
     }
 
@@ -671,6 +684,71 @@ impl Database {
         })?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(DatabaseError::from)
+    }
+
+    pub(super) fn list_planning_sections(&self) -> Result<Vec<PlanningSection>, DatabaseError> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, content, rationale, consequence, references_json, updated_at
+                 FROM planning_sections ORDER BY updated_at DESC, id",
+            )
+            .map_err(DatabaseError::from)?;
+        let rows = statement.query_map([], |row| {
+            let references_json: String = row.get(4)?;
+            let references = serde_json::from_str(&references_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    4,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(PlanningSection {
+                id: row.get(0)?,
+                content: row.get(1)?,
+                rationale: row.get(2)?,
+                consequence: row.get(3)?,
+                references,
+                updated_at: row.get(5)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
+    }
+
+    pub(super) fn save_planning_section(
+        &mut self,
+        section: PlanningSection,
+    ) -> Result<PlanningSection, DatabaseError> {
+        let references_json = serde_json::to_string(&section.references).map_err(|error| {
+            DatabaseError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+        })?;
+        self.connection
+            .execute(
+                "INSERT INTO planning_sections (id, content, rationale, consequence, references_json, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                 ON CONFLICT(id) DO UPDATE SET
+                   content = excluded.content,
+                   rationale = excluded.rationale,
+                   consequence = excluded.consequence,
+                   references_json = excluded.references_json,
+                   updated_at = excluded.updated_at",
+                rusqlite::params![
+                    section.id,
+                    section.content,
+                    section.rationale,
+                    section.consequence,
+                    references_json
+                ],
+            )
+            .map_err(DatabaseError::from)?;
+        let mut saved = section;
+        saved.updated_at = self.connection.query_row(
+            "SELECT updated_at FROM planning_sections WHERE id = ?1",
+            [saved.id.as_str()],
+            |row| row.get(0),
+        )?;
+        Ok(saved)
     }
 
     pub(super) fn create_plan_node(

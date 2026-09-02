@@ -45,6 +45,15 @@ export type PlanNode = {
   revision: number;
 };
 
+export type PlanningSection = {
+  id: string;
+  content: string;
+  rationale: string;
+  consequence: string;
+  references: string[];
+  updatedAt: string;
+};
+
 export type ManuscriptRevision = {
   id: string;
   chapterId: string;
@@ -253,6 +262,14 @@ export function closeProject() {
 
 export function listPlanNodes() {
   return invoke<PlanNode[]>("list_plan_nodes");
+}
+
+export function listPlanningSections() {
+  return invoke<PlanningSection[]>("list_planning_sections");
+}
+
+export function savePlanningSection(section: PlanningSection) {
+  return invoke<PlanningSection>("save_planning_section", { section });
 }
 
 export function createPlanNode(input: {

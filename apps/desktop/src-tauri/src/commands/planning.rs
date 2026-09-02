@@ -12,6 +12,30 @@ pub(crate) fn list_plan_nodes(
 }
 
 #[tauri::command]
+pub(crate) fn list_planning_sections(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Vec<novel_infrastructure::PlanningSection>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_planning_sections().map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn save_planning_section(
+    state: tauri::State<'_, ProjectState>,
+    section: novel_infrastructure::PlanningSection,
+) -> Result<novel_infrastructure::PlanningSection, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.save_planning_section(section).map_err(ApiError::from)
+}
+
+#[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn create_plan_node(
     state: tauri::State<'_, ProjectState>,

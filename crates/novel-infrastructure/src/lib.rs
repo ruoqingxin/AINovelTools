@@ -465,6 +465,17 @@ pub struct PlanNode {
     pub archived: bool,
     pub revision: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanningSection {
+    pub id: String,
+    pub content: String,
+    pub rationale: String,
+    pub consequence: String,
+    pub references: Vec<String>,
+    pub updated_at: String,
+}
 #[derive(Debug, Error)]
 pub enum PlanError {
     #[error("no project is open")]
@@ -1435,6 +1446,25 @@ impl ProjectManager {
         Ok(session.database.list_plan_nodes()?)
     }
 
+    pub fn list_planning_sections(&self) -> Result<Vec<PlanningSection>, ProjectError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        Ok(session.database.list_planning_sections()?)
+    }
+
+    pub fn save_planning_section(
+        &mut self,
+        section: PlanningSection,
+    ) -> Result<PlanningSection, ProjectError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        Ok(session.database.save_planning_section(section)?)
+    }
+
     pub fn create_plan_node(
         &mut self,
         parent_id: Option<Uuid>,
@@ -2045,6 +2075,36 @@ mod tests {
             .expect("archive chapter");
         assert_eq!(updated.revision, 2);
         assert!(updated.archived);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn planning_sections_preserve_content_reasoning_and_references() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-planning-sections-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "设定测试").expect("create project");
+        let saved = manager
+            .save_planning_section(super::PlanningSection {
+                id: "story-core".to_owned(),
+                content: "修仙题材，主题是反抗既定命运。".to_owned(),
+                rationale: "灵根等级决定资源分配。".to_owned(),
+                consequence: "主角会与宗门秩序发生冲突。".to_owned(),
+                references: vec!["planning.txt:1-3".to_owned()],
+                updated_at: String::new(),
+            })
+            .expect("save section");
+        assert!(!saved.updated_at.is_empty());
+        let restored = manager
+            .list_planning_sections()
+            .expect("list sections")
+            .into_iter()
+            .find(|section| section.id == "story-core")
+            .expect("saved section");
+        assert_eq!(restored.content, saved.content);
+        assert_eq!(restored.rationale, saved.rationale);
+        assert_eq!(restored.consequence, saved.consequence);
+        assert_eq!(restored.references, saved.references);
         let _ = std::fs::remove_dir_all(root);
     }
 
