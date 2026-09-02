@@ -140,8 +140,7 @@ pub fn run() {
 fn settings_database_path() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .or_else(|| std::env::var_os("APPDATA"))
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
+        .map_or_else(std::env::temp_dir, PathBuf::from)
         .join("AINovelTools")
         .join("settings.sqlite")
 }

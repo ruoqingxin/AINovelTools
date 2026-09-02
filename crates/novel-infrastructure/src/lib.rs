@@ -286,8 +286,8 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         id: "ai_model_profiles",
         display_name: "AI 模型配置与系统密钥",
         stage: "R3",
-        status: FeatureStatus::Partial,
-        unavailable_reason: Some("等待桌面闭环验收"),
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
     },
     FeatureDescriptor {
         id: "ai_writing",
@@ -321,7 +321,7 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         id: "r4_persistent_jobs",
         display_name: "R4 持久化任务",
         stage: "R4",
-        status: FeatureStatus::Partial,
+        status: FeatureStatus::Implemented,
         unavailable_reason: None,
     },
     FeatureDescriptor {
@@ -1658,7 +1658,7 @@ mod tests {
             .iter()
             .find(|item| item.id == "r4_persistent_jobs")
             .expect("jobs feature");
-        assert_eq!(jobs.status, FeatureStatus::Partial);
+        assert_eq!(jobs.status, FeatureStatus::Implemented);
         assert!(jobs.unavailable_reason.is_none());
         let reliability = FEATURE_CATALOG
             .iter()
