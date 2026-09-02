@@ -346,6 +346,147 @@ impl Database {
                 [],
             )?;
         }
+        if applied.unwrap_or(0) < 16 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS knowledge_candidates (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    chapter_id TEXT NOT NULL REFERENCES chapters(id),
+                    proposal_id TEXT REFERENCES ai_proposals(id),
+                    knowledge_id TEXT NOT NULL,
+                    knowledge_version INTEGER NOT NULL CHECK(knowledge_version > 0),
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    source_revision_id TEXT NOT NULL REFERENCES manuscript_revisions(id),
+                    evidence_anchor_ids_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(evidence_anchor_ids_json)),
+                    lifecycle_status TEXT NOT NULL CHECK(lifecycle_status IN ('ACTIVE','NEEDS_REVIEW','ARCHIVED')),
+                    created_by TEXT NOT NULL,
+                    candidate_status TEXT NOT NULL CHECK(candidate_status IN ('PENDING','NEEDS_REVIEW','APPROVED','REJECTED','FINALIZED')),
+                    review_decision TEXT CHECK(review_decision IS NULL OR review_decision IN ('APPROVE','REJECT','NEEDS_REVIEW')),
+                    reviewer TEXT,
+                    reviewed_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_knowledge_candidates_project_chapter_status
+                    ON knowledge_candidates(project_id, chapter_id, candidate_status, updated_at DESC);
+                INSERT INTO schema_migrations (version, name) VALUES (16, 'r5_knowledge_candidates');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 17 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS evidence_anchors (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    chapter_id TEXT NOT NULL REFERENCES chapters(id),
+                    source_revision_id TEXT NOT NULL REFERENCES manuscript_revisions(id),
+                    block_id TEXT NOT NULL,
+                    start_offset INTEGER NOT NULL CHECK(start_offset >= 0),
+                    end_offset INTEGER NOT NULL CHECK(end_offset > start_offset),
+                    source_version TEXT NOT NULL,
+                    source_hash TEXT NOT NULL,
+                    lifecycle_status TEXT NOT NULL CHECK(lifecycle_status IN ('ACTIVE','NEEDS_REVIEW','ARCHIVED')),
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_evidence_anchors_source
+                    ON evidence_anchors(project_id, chapter_id, source_revision_id, lifecycle_status);
+                CREATE TRIGGER IF NOT EXISTS prevent_evidence_anchor_identity_update
+                    BEFORE UPDATE OF id, project_id, chapter_id, source_revision_id, block_id, start_offset, end_offset, source_version, source_hash, created_at
+                    ON evidence_anchors BEGIN SELECT RAISE(ABORT, 'immutable evidence anchor identity'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_evidence_anchor_delete
+                    BEFORE DELETE ON evidence_anchors BEGIN SELECT RAISE(ABORT, 'immutable evidence anchor'); END;
+                INSERT INTO schema_migrations (version, name) VALUES (17, 'r5_evidence_anchors');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 18 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS facts (
+                    knowledge_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    knowledge_version INTEGER NOT NULL CHECK(knowledge_version > 0),
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    source_revision_id TEXT NOT NULL REFERENCES manuscript_revisions(id),
+                    evidence_anchor_ids_json TEXT NOT NULL CHECK(json_valid(evidence_anchor_ids_json)),
+                    lifecycle_status TEXT NOT NULL CHECK(lifecycle_status IN ('ACTIVE','NEEDS_REVIEW','ARCHIVED')),
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    PRIMARY KEY(knowledge_id, knowledge_version)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_current_version
+                    ON facts(knowledge_id) WHERE lifecycle_status = 'ACTIVE';
+                CREATE INDEX IF NOT EXISTS idx_facts_project_status
+                    ON facts(project_id, lifecycle_status, updated_at DESC);
+                CREATE TRIGGER IF NOT EXISTS prevent_fact_update
+                    BEFORE UPDATE ON facts BEGIN SELECT RAISE(ABORT, 'immutable fact version'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_fact_delete
+                    BEFORE DELETE ON facts BEGIN SELECT RAISE(ABORT, 'immutable fact version'); END;
+                INSERT INTO schema_migrations (version, name) VALUES (18, 'r5_facts');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 19 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS change_sets (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    chapter_id TEXT NOT NULL REFERENCES chapters(id),
+                    source_revision_id TEXT NOT NULL REFERENCES manuscript_revisions(id),
+                    status TEXT NOT NULL CHECK(status IN ('DRAFT','IN_REVIEW','BLOCKED','FINALIZED','REJECTED')),
+                    candidate_ids_json TEXT NOT NULL CHECK(json_valid(candidate_ids_json)),
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE TABLE IF NOT EXISTS change_set_items (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    change_set_id TEXT NOT NULL REFERENCES change_sets(id),
+                    candidate_id TEXT NOT NULL REFERENCES knowledge_candidates(id),
+                    decision TEXT CHECK(decision IS NULL OR decision IN ('APPROVE','REJECT','NEEDS_REVIEW')),
+                    conflict_code TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    UNIQUE(change_set_id, candidate_id)
+                );
+                CREATE TABLE IF NOT EXISTS knowledge_audit_records (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    change_set_id TEXT REFERENCES change_sets(id),
+                    candidate_id TEXT REFERENCES knowledge_candidates(id),
+                    action TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json)),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE TABLE IF NOT EXISTS knowledge_outbox_events (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    aggregate_type TEXT NOT NULL,
+                    aggregate_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+                    published_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_change_sets_project_chapter_status
+                    ON change_sets(project_id, chapter_id, status, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_knowledge_audit_project_created
+                    ON knowledge_audit_records(project_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_knowledge_outbox_unpublished
+                    ON knowledge_outbox_events(published_at, created_at);
+                CREATE TRIGGER IF NOT EXISTS prevent_change_set_identity_update
+                    BEFORE UPDATE OF id, project_id, chapter_id, source_revision_id, created_at
+                    ON change_sets BEGIN SELECT RAISE(ABORT, 'immutable change set identity'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_knowledge_audit_update
+                    BEFORE UPDATE ON knowledge_audit_records BEGIN SELECT RAISE(ABORT, 'immutable knowledge audit'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_knowledge_audit_delete
+                    BEFORE DELETE ON knowledge_audit_records BEGIN SELECT RAISE(ABORT, 'immutable knowledge audit'); END;
+                INSERT INTO schema_migrations (version, name) VALUES (19, 'r5_change_sets_audit_outbox');",
+            )?;
+        }
         Ok(())
     }
 

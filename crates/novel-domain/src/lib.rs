@@ -193,6 +193,119 @@ pub struct AiProposal {
     pub decided_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum KnowledgeLifecycleStatus {
+    Active,
+    NeedsReview,
+    Archived,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CandidateStatus {
+    Pending,
+    NeedsReview,
+    Approved,
+    Rejected,
+    Finalized,
+}
+
+impl CandidateStatus {
+    #[must_use]
+    pub const fn can_transition_to(self, next: Self) -> bool {
+        matches!(
+            (self, next),
+            (Self::Pending, Self::NeedsReview | Self::Approved | Self::Rejected)
+                | (Self::NeedsReview, Self::Approved | Self::Rejected)
+                | (Self::Approved, Self::Finalized)
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ReviewDecision {
+    Approve,
+    Reject,
+    NeedsReview,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ChangeSetStatus {
+    Draft,
+    InReview,
+    Blocked,
+    Finalized,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceAnchor {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub chapter_id: Uuid,
+    pub source_revision_id: Uuid,
+    pub block_id: String,
+    pub start_offset: u32,
+    pub end_offset: u32,
+    pub source_version: String,
+    pub source_hash: String,
+    pub lifecycle_status: KnowledgeLifecycleStatus,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Fact {
+    pub knowledge_id: Uuid,
+    pub project_id: Uuid,
+    pub knowledge_version: u32,
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub source_revision_id: Uuid,
+    pub evidence_anchor_ids: Vec<Uuid>,
+    pub lifecycle_status: KnowledgeLifecycleStatus,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeCandidate {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub chapter_id: Uuid,
+    pub proposal_id: Option<Uuid>,
+    pub candidate_status: CandidateStatus,
+    pub review_decision: Option<ReviewDecision>,
+    pub reviewer: Option<String>,
+    pub reviewed_at: Option<String>,
+    pub fact: Fact,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeSet {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub chapter_id: Uuid,
+    pub source_revision_id: Uuid,
+    pub status: ChangeSetStatus,
+    pub candidate_ids: Vec<Uuid>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum AiContractError {
     #[error("profile name cannot be empty")]
@@ -217,6 +330,114 @@ pub enum AiContractError {
     InvalidProposalTransition,
     #[error("retrieval evidence metadata is invalid")]
     InvalidRetrievalEvidence,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum KnowledgeContractError {
+    #[error("knowledge text fields cannot be empty")]
+    EmptyText,
+    #[error("a fact must reference at least one evidence anchor")]
+    MissingEvidence,
+    #[error("evidence anchor offsets are invalid")]
+    InvalidEvidenceRange,
+    #[error("evidence anchor block id cannot be empty")]
+    EmptyBlockId,
+    #[error("knowledge source version and hash cannot be empty")]
+    EmptySourceIdentity,
+    #[error("knowledge actor cannot be empty")]
+    EmptyActor,
+    #[error("knowledge version must be positive")]
+    InvalidKnowledgeVersion,
+    #[error("candidate review decision does not match candidate status")]
+    InvalidCandidateReview,
+    #[error("change set must contain at least one candidate")]
+    EmptyChangeSet,
+    #[error("change set status transition is invalid")]
+    InvalidChangeSetTransition,
+}
+
+impl EvidenceAnchor {
+    pub fn validate(&self) -> Result<(), KnowledgeContractError> {
+        if self.block_id.trim().is_empty() {
+            return Err(KnowledgeContractError::EmptyBlockId);
+        }
+        if self.start_offset >= self.end_offset {
+            return Err(KnowledgeContractError::InvalidEvidenceRange);
+        }
+        if self.source_version.trim().is_empty() || self.source_hash.trim().is_empty() {
+            return Err(KnowledgeContractError::EmptySourceIdentity);
+        }
+        if self.created_by.trim().is_empty() {
+            return Err(KnowledgeContractError::EmptyActor);
+        }
+        Ok(())
+    }
+}
+
+impl Fact {
+    pub fn validate(&self) -> Result<(), KnowledgeContractError> {
+        if self.knowledge_version == 0 {
+            return Err(KnowledgeContractError::InvalidKnowledgeVersion);
+        }
+        if self.subject.trim().is_empty()
+            || self.predicate.trim().is_empty()
+            || self.object.trim().is_empty()
+        {
+            return Err(KnowledgeContractError::EmptyText);
+        }
+        if self.evidence_anchor_ids.is_empty() {
+            return Err(KnowledgeContractError::MissingEvidence);
+        }
+        if self.created_by.trim().is_empty() {
+            return Err(KnowledgeContractError::EmptyActor);
+        }
+        Ok(())
+    }
+}
+
+impl KnowledgeCandidate {
+    pub fn validate(&self) -> Result<(), KnowledgeContractError> {
+        self.fact.validate()?;
+        if self.fact.project_id != self.project_id {
+            return Err(KnowledgeContractError::InvalidCandidateReview);
+        }
+        let review_consistent = match self.candidate_status {
+            CandidateStatus::Pending | CandidateStatus::NeedsReview => {
+                self.review_decision.is_none()
+            }
+            CandidateStatus::Approved => self.review_decision == Some(ReviewDecision::Approve),
+            CandidateStatus::Rejected => self.review_decision == Some(ReviewDecision::Reject),
+            CandidateStatus::Finalized => self.review_decision == Some(ReviewDecision::Approve),
+        };
+        if !review_consistent {
+            return Err(KnowledgeContractError::InvalidCandidateReview);
+        }
+        Ok(())
+    }
+}
+
+impl ChangeSet {
+    pub fn validate(&self) -> Result<(), KnowledgeContractError> {
+        if self.candidate_ids.is_empty() {
+            return Err(KnowledgeContractError::EmptyChangeSet);
+        }
+        if self.created_by.trim().is_empty() {
+            return Err(KnowledgeContractError::EmptyActor);
+        }
+        Ok(())
+    }
+}
+
+impl ChangeSetStatus {
+    #[must_use]
+    pub const fn can_transition_to(self, next: Self) -> bool {
+        matches!(
+            (self, next),
+            (Self::Draft, Self::InReview | Self::Rejected)
+                | (Self::InReview, Self::Blocked | Self::Finalized | Self::Rejected)
+                | (Self::Blocked, Self::InReview | Self::Rejected)
+        )
+    }
 }
 
 impl ModelProfileInput {
@@ -333,5 +554,91 @@ mod tests {
             invalid.validate(),
             Err(super::AiContractError::InvalidRetrievalEvidence)
         );
+    }
+
+    #[test]
+    fn validates_fact_and_evidence_contracts() {
+        let project_id = uuid::Uuid::new_v4();
+        let chapter_id = uuid::Uuid::new_v4();
+        let revision_id = uuid::Uuid::new_v4();
+        let anchor_id = uuid::Uuid::new_v4();
+        let anchor = super::EvidenceAnchor {
+            id: anchor_id,
+            project_id,
+            chapter_id,
+            source_revision_id: revision_id,
+            block_id: "paragraph-1".into(),
+            start_offset: 0,
+            end_offset: 5,
+            source_version: "revision-1".into(),
+            source_hash: "sha256:test".into(),
+            lifecycle_status: super::KnowledgeLifecycleStatus::Active,
+            created_by: "author".into(),
+            created_at: "2026-09-02T00:00:00Z".into(),
+            updated_at: "2026-09-02T00:00:00Z".into(),
+        };
+        assert_eq!(anchor.validate(), Ok(()));
+
+        let fact = super::Fact {
+            knowledge_id: uuid::Uuid::new_v4(),
+            project_id,
+            knowledge_version: 1,
+            subject: "林澈".into(),
+            predicate: "喜欢".into(),
+            object: "雨天".into(),
+            source_revision_id: revision_id,
+            evidence_anchor_ids: vec![anchor_id],
+            lifecycle_status: super::KnowledgeLifecycleStatus::Active,
+            created_by: "author".into(),
+            created_at: "2026-09-02T00:00:00Z".into(),
+            updated_at: "2026-09-02T00:00:00Z".into(),
+        };
+        assert_eq!(fact.validate(), Ok(()));
+
+        let mut invalid = fact;
+        invalid.evidence_anchor_ids.clear();
+        assert_eq!(
+            invalid.validate(),
+            Err(super::KnowledgeContractError::MissingEvidence)
+        );
+    }
+
+    #[test]
+    fn validates_candidate_review_and_change_set_transitions() {
+        let project_id = uuid::Uuid::new_v4();
+        let fact = super::Fact {
+            knowledge_id: uuid::Uuid::new_v4(),
+            project_id,
+            knowledge_version: 1,
+            subject: "甲".into(),
+            predicate: "认识".into(),
+            object: "乙".into(),
+            source_revision_id: uuid::Uuid::new_v4(),
+            evidence_anchor_ids: vec![uuid::Uuid::new_v4()],
+            lifecycle_status: super::KnowledgeLifecycleStatus::Active,
+            created_by: "author".into(),
+            created_at: "2026-09-02T00:00:00Z".into(),
+            updated_at: "2026-09-02T00:00:00Z".into(),
+        };
+        let candidate = super::KnowledgeCandidate {
+            id: uuid::Uuid::new_v4(),
+            project_id,
+            chapter_id: uuid::Uuid::new_v4(),
+            proposal_id: None,
+            candidate_status: super::CandidateStatus::Approved,
+            review_decision: Some(super::ReviewDecision::Approve),
+            reviewer: Some("reviewer".into()),
+            reviewed_at: Some("2026-09-02T00:00:00Z".into()),
+            fact,
+            created_at: "2026-09-02T00:00:00Z".into(),
+            updated_at: "2026-09-02T00:00:00Z".into(),
+        };
+        assert_eq!(candidate.validate(), Ok(()));
+        assert!(super::ChangeSetStatus::Draft.can_transition_to(
+            super::ChangeSetStatus::InReview
+        ));
+        assert!(!super::ChangeSetStatus::Finalized.can_transition_to(
+            super::ChangeSetStatus::Draft
+        ));
     }
 }

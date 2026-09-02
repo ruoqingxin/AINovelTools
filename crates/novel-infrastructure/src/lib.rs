@@ -27,14 +27,18 @@ use uuid::Uuid;
 mod ai;
 mod database;
 mod entity_store;
+mod knowledge_store;
 mod materials_store;
 mod search_store;
 pub use ai::{AiError, EmbeddingGateway, ModelGateway, ModelProfileStore, SecretStore};
 pub use entity_store::EntityStoreError;
+pub use knowledge_store::KnowledgeStoreError;
 pub use materials_store::MaterialsStoreError;
 pub use novel_domain::{
     AiAction, AiProposal, AiProposalStatus, AiTaskStatus, ContextAuthority, Entity, EntityError,
     EntityInput, EntityLifecycleStatus, EntityRevision, EntityType, KnowledgeChunk,
+    CandidateStatus, ChangeSet, ChangeSetStatus, EvidenceAnchor, Fact, KnowledgeCandidate,
+    KnowledgeContractError, KnowledgeLifecycleStatus, ReviewDecision,
     ModelCapability, ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel,
     RetrievalEvidence, RetrievalMethod, SummaryKind, SummaryMaterial, SummaryPrecision,
     WritingCard,
@@ -149,6 +153,8 @@ pub struct FeatureDescriptor {
 /// R4 schema and contract planning metadata shared by migration checks and
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
+/// Current database schema after the R5 persistence baseline migrations.
+pub const CURRENT_SCHEMA_VERSION: i64 = 19;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -707,7 +713,7 @@ impl ProjectManager {
             .join(format!("diagnostic-{id}.json"));
         let health = self.health_scan().map_err(ProjectError::Database)?;
         let report = self.startup_recovery_report()?;
-        let payload = serde_json::json!({"diagnosticId": id, "generatedAt": now_timestamp(), "schemaVersion": R4_SCHEMA_VERSION, "health": health, "startup": report, "privacy": {"databaseIncluded": false, "manuscriptIncluded": false, "promptIncluded": false, "apiKeyIncluded": false, "attachmentsIncluded": false, "fullPathsIncluded": false}});
+        let payload = serde_json::json!({"diagnosticId": id, "generatedAt": now_timestamp(), "schemaVersion": CURRENT_SCHEMA_VERSION, "health": health, "startup": report, "privacy": {"databaseIncluded": false, "manuscriptIncluded": false, "promptIncluded": false, "apiKeyIncluded": false, "attachmentsIncluded": false, "fullPathsIncluded": false}});
         std::fs::write(&path, serde_json::to_vec_pretty(&payload)?)?;
         Ok(path)
     }
@@ -957,7 +963,7 @@ impl ProjectManager {
                 }
             }
         }
-        std::fs::write(target.join("manifest.json"), serde_json::to_vec_pretty(&serde_json::json!({"jobId": job.id, "projectId": session.manifest.project_id, "schemaVersion": R4_SCHEMA_VERSION, "formatVersion": 1, "files": files})).unwrap_or_default())?;
+        std::fs::write(target.join("manifest.json"), serde_json::to_vec_pretty(&serde_json::json!({"jobId": job.id, "projectId": session.manifest.project_id, "schemaVersion": CURRENT_SCHEMA_VERSION, "formatVersion": 1, "files": files})).unwrap_or_default())?;
         Ok(())
     }
 
@@ -1634,8 +1640,8 @@ pub fn linked_layers() -> [&'static str; 3] {
 #[cfg(test)]
 mod tests {
     use super::{
-        Database, FEATURE_CATALOG, FeatureStatus, R4_CONTRACTS, R4_MIGRATION_PLAN,
-        R4_SCHEMA_VERSION,
+        Database, CURRENT_SCHEMA_VERSION, FEATURE_CATALOG, FeatureStatus, R4_CONTRACTS,
+        R4_MIGRATION_PLAN, R4_SCHEMA_VERSION,
     };
 
     #[test]
@@ -1650,7 +1656,8 @@ mod tests {
     fn sqlite_applies_pragmas_and_initial_migration() {
         let database = Database::in_memory().expect("in-memory database");
         let health = database.health().expect("database health");
-        assert_eq!(health.schema_version, R4_SCHEMA_VERSION);
+        assert_eq!(health.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(R4_SCHEMA_VERSION, 15);
         assert_eq!(health.journal_mode, "memory");
         assert!(health.foreign_keys_enabled);
         assert!(!health.sqlite_version.is_empty());
@@ -1671,6 +1678,30 @@ mod tests {
                 .any(|item| item.id == "story_bible_entities")
         );
         assert!(R4_CONTRACTS.iter().all(|item| item.introduced_by >= 10));
+    }
+
+    #[test]
+    fn r5_schema_baseline_creates_governance_tables() {
+        let database = Database::in_memory().expect("in-memory database");
+        for table in [
+            "knowledge_candidates",
+            "evidence_anchors",
+            "facts",
+            "change_sets",
+            "change_set_items",
+            "knowledge_audit_records",
+            "knowledge_outbox_events",
+        ] {
+            let exists: i64 = database
+                .connection
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .expect("schema lookup");
+            assert_eq!(exists, 1, "missing table {table}");
+        }
     }
 
     #[test]
