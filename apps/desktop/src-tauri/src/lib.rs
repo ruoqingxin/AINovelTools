@@ -1,4 +1,4 @@
-#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -26,8 +26,9 @@ use commands::jobs::{
 use commands::knowledge::{
     create_belief, create_event, create_evidence_anchor, create_foreshadowing,
     create_knowledge_candidate, create_relation, detect_candidate_conflicts,
-    finalize_knowledge_candidates, list_knowledge_candidates, rebuild_world_state,
-    review_knowledge_candidate,
+    finalize_knowledge_candidates, list_beliefs, list_current_facts, list_events,
+    list_evidence_anchors, list_foreshadowings, list_knowledge_candidates, list_relations,
+    rebuild_world_state, review_knowledge_candidate,
 };
 use commands::manuscript::{
     clear_recovery_logs, current_manuscript, list_all_recovery_logs, list_manuscript_revisions,
@@ -143,6 +144,12 @@ pub fn run() {
             create_event,
             create_belief,
             create_foreshadowing,
+            list_evidence_anchors,
+            list_current_facts,
+            list_relations,
+            list_events,
+            list_beliefs,
+            list_foreshadowings,
             create_knowledge_candidate,
             list_knowledge_candidates,
             review_knowledge_candidate,

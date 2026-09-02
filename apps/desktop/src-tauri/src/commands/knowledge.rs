@@ -1,6 +1,72 @@
 use crate::{ApiError, ProjectState};
 
 #[tauri::command]
+pub(crate) fn list_evidence_anchors(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Vec<novel_infrastructure::EvidenceAnchor>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_evidence_anchors().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn list_current_facts(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Vec<novel_infrastructure::Fact>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_current_facts().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn list_relations(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Vec<novel_infrastructure::Relation>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_relations().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn list_events(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Vec<novel_infrastructure::Event>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_events().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn list_beliefs(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Vec<novel_infrastructure::Belief>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_beliefs().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn list_foreshadowings(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Vec<novel_infrastructure::Foreshadowing>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_foreshadowings().map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn create_relation(
     state: tauri::State<'_, ProjectState>,
     relation: novel_infrastructure::Relation,

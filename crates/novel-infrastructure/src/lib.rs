@@ -344,22 +344,22 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         id: "r5_fact_governance",
         display_name: "R5 Fact 知识治理",
         stage: "R5",
-        status: FeatureStatus::Declared,
-        unavailable_reason: Some("R5 首批设计已冻结，Fact/EvidenceAnchor 尚未实现"),
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
     },
     FeatureDescriptor {
         id: "r5_chapter_review",
         display_name: "R5 单章节审核与定稿",
         stage: "R5",
-        status: FeatureStatus::Declared,
-        unavailable_reason: Some("等待候选、证据锚点和 ChangeSet 迁移落地"),
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
     },
     FeatureDescriptor {
         id: "r5_conflict_detection",
         display_name: "R5 确定性冲突检测",
         stage: "R5",
-        status: FeatureStatus::Declared,
-        unavailable_reason: Some("首批仅规划确定性规则，高风险命中需人工确认"),
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
     },
     FeatureDescriptor {
         id: "r5_knowledge_version",
@@ -374,6 +374,13 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         stage: "R5",
         status: FeatureStatus::Implemented,
         unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "r5_knowledge_extensions",
+        display_name: "R5 关系、事件、信念与伏笔",
+        stage: "R5",
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some("创建、查询与记录展示已实现；独立编辑表单和专项审核 UI 待补齐"),
     },
 ];
 

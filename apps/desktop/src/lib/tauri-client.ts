@@ -197,6 +197,8 @@ export function rebuildSummaryMaterial(id: string) { return invoke<SummaryMateri
 export function rebuildSearchIndex() { return invoke<void>("rebuild_search_index"); }
 export function searchProject(query: string, objectType?: string, limit = 50, offset = 0) { return invoke<SearchResult[]>("search_project", { query, objectType, limit, offset }); }
 export function createEvidenceAnchor(anchor: EvidenceAnchor) { return invoke<EvidenceAnchor>("create_evidence_anchor", { anchor }); }
+export function listEvidenceAnchors() { return invoke<EvidenceAnchor[]>("list_evidence_anchors"); }
+export function listCurrentFacts() { return invoke<Fact[]>("list_current_facts"); }
 export function createKnowledgeCandidate(candidate: KnowledgeCandidate) { return invoke<KnowledgeCandidate>("create_knowledge_candidate", { candidate }); }
 export function listKnowledgeCandidates(chapterId: string) { return invoke<KnowledgeCandidate[]>("list_knowledge_candidates", { chapterId }); }
 export function reviewKnowledgeCandidate(input: { id: string; expectedStatus: CandidateStatus; decision: ReviewDecision; reviewer: string }) {
@@ -211,6 +213,10 @@ export function createRelation(relation: Relation) { return invoke<Relation>("cr
 export function createEvent(event: Event) { return invoke<Event>("create_event", { event }); }
 export function createBelief(belief: Belief) { return invoke<Belief>("create_belief", { belief }); }
 export function createForeshadowing(foreshadowing: Foreshadowing) { return invoke<Foreshadowing>("create_foreshadowing", { foreshadowing }); }
+export function listRelations() { return invoke<Relation[]>("list_relations"); }
+export function listEvents() { return invoke<Event[]>("list_events"); }
+export function listBeliefs() { return invoke<Belief[]>("list_beliefs"); }
+export function listForeshadowings() { return invoke<Foreshadowing[]>("list_foreshadowings"); }
 export function assembleContextWithProjectKnowledge(input: AssembleContextInput) {
   return invoke<ContextPackage>("assemble_context_with_project_knowledge", { input, objectIds: input.knowledgeObjectIds });
 }

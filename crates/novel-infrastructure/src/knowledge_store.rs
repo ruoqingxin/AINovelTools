@@ -27,6 +27,60 @@ pub enum KnowledgeStoreError {
 }
 
 impl ProjectManager {
+    pub fn list_evidence_anchors(&self) -> Result<Vec<EvidenceAnchor>, KnowledgeStoreError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session
+            .database
+            .list_evidence_anchors(session.manifest.project_id)
+    }
+
+    pub fn list_current_facts(&self) -> Result<Vec<Fact>, KnowledgeStoreError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session
+            .database
+            .list_current_facts(session.manifest.project_id)
+    }
+
+    pub fn list_relations(&self) -> Result<Vec<Relation>, KnowledgeStoreError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session.database.list_relations(session.manifest.project_id)
+    }
+
+    pub fn list_events(&self) -> Result<Vec<Event>, KnowledgeStoreError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session.database.list_events(session.manifest.project_id)
+    }
+
+    pub fn list_beliefs(&self) -> Result<Vec<Belief>, KnowledgeStoreError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session.database.list_beliefs(session.manifest.project_id)
+    }
+
+    pub fn list_foreshadowings(&self) -> Result<Vec<Foreshadowing>, KnowledgeStoreError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session
+            .database
+            .list_foreshadowings(session.manifest.project_id)
+    }
+
     pub fn create_relation(&mut self, relation: Relation) -> Result<Relation, KnowledgeStoreError> {
         relation.validate()?;
         let session = self
@@ -239,6 +293,67 @@ impl ProjectManager {
 }
 
 impl Database {
+    fn list_evidence_anchors(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<EvidenceAnchor>, KnowledgeStoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, project_id, chapter_id, source_revision_id, block_id, start_offset,
+                    end_offset, source_version, source_hash, lifecycle_status, created_by,
+                    created_at, updated_at
+             FROM evidence_anchors WHERE project_id = ?1 ORDER BY created_at DESC",
+        )?;
+        let rows = statement.query_map([project_id.to_string()], map_evidence_anchor)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(KnowledgeStoreError::from)
+    }
+
+    fn list_current_facts(&self, project_id: Uuid) -> Result<Vec<Fact>, KnowledgeStoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT f.knowledge_id, f.project_id, f.knowledge_version, f.subject, f.predicate,
+                    f.object, f.source_revision_id, f.evidence_anchor_ids_json,
+                    f.lifecycle_status, f.created_by, f.created_at, f.updated_at
+             FROM facts f JOIN fact_current_versions current
+               ON current.knowledge_id = f.knowledge_id
+              AND current.knowledge_version = f.knowledge_version
+             WHERE f.project_id = ?1 ORDER BY f.created_at DESC",
+        )?;
+        let rows = statement.query_map([project_id.to_string()], map_fact)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(KnowledgeStoreError::from)
+    }
+
+    fn list_relations(&self, project_id: Uuid) -> Result<Vec<Relation>, KnowledgeStoreError> {
+        let mut statement = self.connection.prepare("SELECT id, project_id, relation_version, from_knowledge_id, to_knowledge_id, relation_type, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM relations WHERE project_id = ?1 ORDER BY created_at DESC")?;
+        let rows = statement.query_map([project_id.to_string()], map_relation)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(KnowledgeStoreError::from)
+    }
+
+    fn list_events(&self, project_id: Uuid) -> Result<Vec<Event>, KnowledgeStoreError> {
+        let mut statement = self.connection.prepare("SELECT id, project_id, event_version, name, occurred_at, participant_fact_ids_json, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM events WHERE project_id = ?1 ORDER BY created_at DESC")?;
+        let rows = statement.query_map([project_id.to_string()], map_event)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(KnowledgeStoreError::from)
+    }
+
+    fn list_beliefs(&self, project_id: Uuid) -> Result<Vec<Belief>, KnowledgeStoreError> {
+        let mut statement = self.connection.prepare("SELECT id, project_id, belief_version, holder_knowledge_id, proposition, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM beliefs WHERE project_id = ?1 ORDER BY created_at DESC")?;
+        let rows = statement.query_map([project_id.to_string()], map_belief)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(KnowledgeStoreError::from)
+    }
+
+    fn list_foreshadowings(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<Foreshadowing>, KnowledgeStoreError> {
+        let mut statement = self.connection.prepare("SELECT id, project_id, foreshadowing_version, title, target_chapter_id, status, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM foreshadowings WHERE project_id = ?1 ORDER BY created_at DESC")?;
+        let rows = statement.query_map([project_id.to_string()], map_foreshadowing)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(KnowledgeStoreError::from)
+    }
+
     fn ensure_anchors(
         tx: &rusqlite::Transaction<'_>,
         project_id: Uuid,
@@ -834,6 +949,142 @@ fn detect_conflicts(candidates: &[KnowledgeCandidate]) -> Vec<KnowledgeConflict>
         }
     }
     conflicts
+}
+
+fn parse_uuid_column(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Uuid> {
+    Uuid::parse_str(&row.get::<_, String>(index)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })
+}
+
+fn parse_uuid_vec(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Vec<Uuid>> {
+    serde_json::from_str(&row.get::<_, String>(index)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })
+}
+
+fn parse_lifecycle(value: &str) -> KnowledgeLifecycleStatus {
+    match value {
+        "ACTIVE" => KnowledgeLifecycleStatus::Active,
+        "ARCHIVED" => KnowledgeLifecycleStatus::Archived,
+        _ => KnowledgeLifecycleStatus::NeedsReview,
+    }
+}
+
+fn map_evidence_anchor(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceAnchor> {
+    Ok(EvidenceAnchor {
+        id: parse_uuid_column(row, 0)?,
+        project_id: parse_uuid_column(row, 1)?,
+        chapter_id: parse_uuid_column(row, 2)?,
+        source_revision_id: parse_uuid_column(row, 3)?,
+        block_id: row.get(4)?,
+        start_offset: row.get(5)?,
+        end_offset: row.get(6)?,
+        source_version: row.get(7)?,
+        source_hash: row.get(8)?,
+        lifecycle_status: parse_lifecycle(&row.get::<_, String>(9)?),
+        created_by: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+    })
+}
+
+fn map_fact(row: &rusqlite::Row<'_>) -> rusqlite::Result<Fact> {
+    Ok(Fact {
+        knowledge_id: parse_uuid_column(row, 0)?,
+        project_id: parse_uuid_column(row, 1)?,
+        knowledge_version: row.get(2)?,
+        subject: row.get(3)?,
+        predicate: row.get(4)?,
+        object: row.get(5)?,
+        source_revision_id: parse_uuid_column(row, 6)?,
+        evidence_anchor_ids: parse_uuid_vec(row, 7)?,
+        lifecycle_status: parse_lifecycle(&row.get::<_, String>(8)?),
+        created_by: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
+}
+
+fn map_relation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Relation> {
+    Ok(Relation {
+        id: parse_uuid_column(row, 0)?,
+        project_id: parse_uuid_column(row, 1)?,
+        relation_version: row.get(2)?,
+        from_knowledge_id: parse_uuid_column(row, 3)?,
+        to_knowledge_id: parse_uuid_column(row, 4)?,
+        relation_type: row.get(5)?,
+        evidence_anchor_ids: parse_uuid_vec(row, 6)?,
+        lifecycle_status: parse_lifecycle(&row.get::<_, String>(7)?),
+        created_by: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
+fn map_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Event> {
+    Ok(Event {
+        id: parse_uuid_column(row, 0)?,
+        project_id: parse_uuid_column(row, 1)?,
+        event_version: row.get(2)?,
+        name: row.get(3)?,
+        occurred_at: row.get(4)?,
+        participant_fact_ids: parse_uuid_vec(row, 5)?,
+        evidence_anchor_ids: parse_uuid_vec(row, 6)?,
+        lifecycle_status: parse_lifecycle(&row.get::<_, String>(7)?),
+        created_by: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
+fn map_belief(row: &rusqlite::Row<'_>) -> rusqlite::Result<Belief> {
+    Ok(Belief {
+        id: parse_uuid_column(row, 0)?,
+        project_id: parse_uuid_column(row, 1)?,
+        belief_version: row.get(2)?,
+        holder_knowledge_id: parse_uuid_column(row, 3)?,
+        proposition: row.get(4)?,
+        evidence_anchor_ids: parse_uuid_vec(row, 5)?,
+        lifecycle_status: parse_lifecycle(&row.get::<_, String>(6)?),
+        created_by: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
+fn map_foreshadowing(row: &rusqlite::Row<'_>) -> rusqlite::Result<Foreshadowing> {
+    Ok(Foreshadowing {
+        id: parse_uuid_column(row, 0)?,
+        project_id: parse_uuid_column(row, 1)?,
+        foreshadowing_version: row.get(2)?,
+        title: row.get(3)?,
+        target_chapter_id: row
+            .get::<_, Option<String>>(4)?
+            .map(|value| Uuid::parse_str(&value))
+            .transpose()
+            .map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    4,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?,
+        status: row.get(5)?,
+        evidence_anchor_ids: parse_uuid_vec(row, 6)?,
+        lifecycle_status: parse_lifecycle(&row.get::<_, String>(7)?),
+        created_by: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
 }
 
 #[cfg(test)]

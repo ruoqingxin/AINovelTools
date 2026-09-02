@@ -172,6 +172,7 @@ export function StoryBibleView() {
           <option value="ACTIVE">仅显示活动</option><option value="ALL">全部状态</option><option value="ARCHIVED">仅显示归档</option>
         </select>
         <button type="button" className="primary-action" onClick={startNew}><Plus size={15} />新建实体</button>
+        <a href="/knowledge/records" className="secondary-action">知识记录</a>
       </div>
       {error ? <p className="project-error" role="alert">{error}</p> : null}
       {notice ? <p className="project-notice" role="status">{notice}</p> : null}
