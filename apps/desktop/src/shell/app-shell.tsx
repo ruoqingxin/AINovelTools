@@ -1,4 +1,3 @@
-import { AppMark } from "@ainoveltools/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import {
@@ -47,35 +46,6 @@ export function AppShell() {
 
   return (
     <div className="app-shell">
-      <header className="title-bar">
-        <div className="brand-lockup">
-          <AppMark className="app-mark" />
-          <span>AI Novel Tools</span>
-        </div>
-        <nav className="top-nav" aria-label="工作区导航">
-          {navigation.map(({ label, icon: Icon, path }) => path ? (
-            <Link
-              key={label}
-              to={path}
-              className="top-nav-button top-nav-link"
-              activeOptions={{ exact: true }}
-              activeProps={{ "data-active": true }}
-            >
-              <Icon size={15} strokeWidth={1.8} />{label}
-            </Link>
-          ) : (
-            <button key={label} type="button" className="top-nav-button" disabled>
-              <Icon size={15} strokeWidth={1.8} />{label}
-            </button>
-          ))}
-        </nav>
-        <div className="title-actions">
-          <span className="project-context">{currentProject.data?.name ?? "未打开项目"}</span>
-          <button type="button" className="title-action" disabled title="请在项目主页创建或打开项目">＋ 新建小说</button>
-          <Link to="/settings" className="title-icon" aria-label="设置" title="设置"><Settings size={16} /></Link>
-        </div>
-      </header>
-
       <aside className="activity-bar" aria-label="主要导航">
         <nav>
           {navigation.map(({ label, icon: Icon, path }) => path ? (
@@ -88,11 +58,13 @@ export function AppShell() {
               aria-label={label}
               title={label}
             >
-              <Icon size={19} strokeWidth={1.8} />
+              <Icon size={20} strokeWidth={1.8} />
+              <span>{label}</span>
             </Link>
           ) : (
             <button key={label} type="button" className="activity-button" aria-label={label} title={label} disabled>
-              <Icon size={19} strokeWidth={1.8} />
+              <Icon size={20} strokeWidth={1.8} />
+              <span>{label}</span>
             </button>
           ))}
         </nav>
@@ -102,7 +74,8 @@ export function AppShell() {
           aria-label="设置"
           title="设置"
         >
-          <Settings size={19} strokeWidth={1.8} />
+          <Settings size={20} strokeWidth={1.8} />
+          <span>设置</span>
         </Link>
       </aside>
 

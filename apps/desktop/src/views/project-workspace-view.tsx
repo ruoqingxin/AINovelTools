@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpen, Check, FileText, ListTree, Plus, RotateCcw } from "lucide-react";
+import { ArchiveRestore, BookOpen, Check, Eye, EyeOff, FileText, ListTree, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -15,6 +15,23 @@ const kindLabels: Record<PlanNodeKind, string> = {
   CHAPTER: "章节",
   SCENE: "场景",
 };
+
+const rootDefinitions: Array<{ kind: PlanNodeKind; label: string }> = [
+  { kind: "WORK_DESIGN", label: "作品设定" },
+  { kind: "OUTLINE", label: "故事大纲" },
+];
+
+function isRootKind(kind: PlanNodeKind) {
+  return kind === "WORK_DESIGN" || kind === "OUTLINE";
+}
+
+function isValidParentKind(parent: PlanNodeKind, child: PlanNodeKind) {
+  return (
+    (parent === "OUTLINE" && (child === "VOLUME" || child === "CHAPTER"))
+    || (parent === "VOLUME" && child === "CHAPTER")
+    || (parent === "CHAPTER" && child === "SCENE")
+  );
+}
 
 function documentToJson(value: string) {
   try {
@@ -86,6 +103,8 @@ export function ProjectWorkspaceView() {
   const [compareRightId, setCompareRightId] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
   const [chapterTab, setChapterTab] = useState<ChapterWorkspaceTab>("editor");
+  const [showStarterChoices, setShowStarterChoices] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const editor = useEditor({
     extensions: [StarterKit],
     content: documentToJson(""),
@@ -99,6 +118,7 @@ export function ProjectWorkspaceView() {
     try {
       await createPlanNode({ kind, title: title.trim(), ...(parentId ? { parentId } : {}) });
       setTitle("");
+      if (isRootKind(kind)) setKind("CHAPTER");
       await client.invalidateQueries({ queryKey: ["plan-nodes"] });
     } catch (cause) {
       setError(errorMessage(cause));
@@ -108,10 +128,30 @@ export function ProjectWorkspaceView() {
   async function createStarterNode(starterKind: PlanNodeKind, starterTitle: string) {
     setError(null);
     try {
-      const node = await createPlanNode({ kind: starterKind, title: starterTitle });
+      const activeNodes = (nodes.data ?? []).filter((item) => !item.archived);
+      const existingRoot = activeNodes.find((item) => item.parentId === null && item.kind === starterKind);
+      if (starterKind !== "CHAPTER" && existingRoot) {
+        setSelectedId(existingRoot.id);
+        setEditTitle(existingRoot.title);
+        setMoveParentId("");
+        setShowStarterChoices(false);
+        return;
+      }
+
+      let node;
+      if (starterKind === "CHAPTER") {
+        let outline = activeNodes.find((item) => item.parentId === null && item.kind === "OUTLINE");
+        if (!outline) {
+          outline = await createPlanNode({ kind: "OUTLINE", title: "故事大纲" });
+        }
+        node = await createPlanNode({ kind: "CHAPTER", title: starterTitle, parentId: outline.id });
+      } else {
+        node = await createPlanNode({ kind: starterKind, title: starterTitle });
+      }
       setSelectedId(node.id);
       setEditTitle(node.title);
       setMoveParentId("");
+      setShowStarterChoices(false);
       await client.invalidateQueries({ queryKey: ["plan-nodes"] });
     } catch (cause) {
       setError(errorMessage(cause));
@@ -119,8 +159,20 @@ export function ProjectWorkspaceView() {
   }
 
   const selected = nodes.data?.find((node) => node.id === selectedId) ?? null;
+  const activeNodes = (nodes.data ?? []).filter((node) => !node.archived);
+  const visibleNodes = (nodes.data ?? []).filter((node) => !node.archived || showArchived);
   const hasPlanNodes = Boolean(nodes.data?.length);
-  const showPlanningStart = !nodes.isPending && !nodes.isError && !hasPlanNodes;
+  const showPlanningStart = !nodes.isPending && !nodes.isError && (!hasPlanNodes || showStarterChoices);
+  const rootNodeFor = (kind: PlanNodeKind) => activeNodes.find((node) => node.parentId === null && node.kind === kind);
+  const primaryRootIds = new Set(rootDefinitions.map(({ kind }) => rootNodeFor(kind)?.id).filter((id): id is string => Boolean(id)));
+  const unorganizedRoots = visibleNodes.filter((node) => node.parentId === null && !primaryRootIds.has(node.id));
+  const parentCandidates = activeNodes.filter((node) => isValidParentKind(node.kind, kind));
+  const canCreateAtRoot = isRootKind(kind) && !rootNodeFor(kind);
+  const canAddNode = Boolean(title.trim()) && (canCreateAtRoot || Boolean(parentId));
+  const moveCandidates = selected
+    ? activeNodes.filter((node) => node.id !== selected.id && isValidParentKind(node.kind, selected.kind))
+    : [];
+  const canMoveToRoot = Boolean(selected && isRootKind(selected.kind) && !activeNodes.some((node) => node.id !== selected.id && node.parentId === null && node.kind === selected.kind));
   const manuscript = useQuery({
     queryKey: ["manuscript", selected?.id],
     queryFn: () => currentManuscript(selected!.id),
@@ -177,9 +229,20 @@ export function ProjectWorkspaceView() {
     try {
       await updatePlanNodeChecked({ id: node.id, title: node.title, archived: !node.archived, expectedVersion: node.revision });
       await client.invalidateQueries({ queryKey: ["plan-nodes"] });
+      if (!node.archived) setSelectedId(null);
     } catch (cause) {
       setError(errorMessage(cause));
     }
+  }
+
+  async function deleteSelected() {
+    if (!selected) return;
+    if ((nodes.data ?? []).some((node) => node.parentId === selected.id && !node.archived)) {
+      setError("请先删除或移动该节点下的子节点");
+      return;
+    }
+    if (!window.confirm(`删除“${selected.title}”吗？删除后可通过“显示已删除节点”恢复。`)) return;
+    await toggleArchived(selected);
   }
 
   async function saveDraft() {
@@ -243,17 +306,15 @@ export function ProjectWorkspaceView() {
     catch (cause) { setError(errorMessage(cause)); }
   }
 
-  function renderTree(parent: string | null, depth = 0): ReactNode[] {
-    return (nodes.data ?? [])
-      .filter((node) => node.parentId === parent)
-      .map((node) => (
-        <div key={node.id}>
-          <button type="button" className="plan-row" data-selected={selectedId === node.id || undefined} data-archived={node.archived || undefined} style={{ paddingLeft: `${10 + depth * 22}px` }} onClick={() => selectNode(node)}>
-            <span className="plan-kind">{kindLabels[node.kind]}</span><span>{node.title}</span>
-          </button>
-          {renderTree(node.id, depth + 1)}
-        </div>
-      ));
+  function renderNode(node: PlanNode, depth = 0): ReactNode {
+    return (
+      <div key={node.id}>
+        <button type="button" className="plan-row" data-selected={selectedId === node.id || undefined} data-archived={node.archived || undefined} style={{ paddingLeft: `${10 + depth * 22}px` }} onClick={() => selectNode(node)}>
+          <span className="plan-kind">{kindLabels[node.kind]}</span><span>{node.title}</span>
+        </button>
+        {visibleNodes.filter((child) => child.parentId === node.id).map((child) => renderNode(child, depth + 1))}
+      </div>
+    );
   }
 
   return (
@@ -265,24 +326,32 @@ export function ProjectWorkspaceView() {
       </div>
 
       {nodes.isPending ? <p className="plan-loading">正在加载规划…</p> : null}
-      {hasPlanNodes ? (
+      {hasPlanNodes && !showStarterChoices ? (
         <div className="plan-create-row">
-          <select value={kind} onChange={(event) => setKind(event.target.value as PlanNodeKind)} aria-label="节点类型">
-            {Object.entries(kindLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          <select value={kind} onChange={(event) => { setKind(event.target.value as PlanNodeKind); setParentId(""); }} aria-label="节点类型">
+            {Object.entries(kindLabels).map(([value, label]) => {
+              const nodeKind = value as PlanNodeKind;
+              const rootAlreadyExists = isRootKind(nodeKind) && Boolean(rootNodeFor(nodeKind));
+              return <option key={value} value={value} disabled={rootAlreadyExists}>{label}{rootAlreadyExists ? "（顶层已存在）" : ""}</option>;
+            })}
           </select>
           <select value={parentId} onChange={(event) => setParentId(event.target.value)} aria-label="父节点">
-            <option value="">作为顶层节点</option>
-            {(nodes.data ?? []).filter((node) => !node.archived).map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}
+            <option value="" disabled={!canCreateAtRoot}>{canCreateAtRoot ? "作为顶层节点" : "选择归属节点"}</option>
+            {parentCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}
           </select>
           <input value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void addNode(); }} placeholder="例如：第一卷·启程" aria-label="节点标题" />
-          <button type="button" className="primary-action" onClick={() => void addNode()} disabled={!title.trim()}><Plus size={16} />新建节点</button>
+          <button type="button" className="primary-action" onClick={() => void addNode()} disabled={!canAddNode}><Plus size={16} />新建节点</button>
+          <button type="button" className="secondary-action" onClick={() => setShowStarterChoices(true)}><BookOpen size={16} />新建规划</button>
         </div>
       ) : null}
       {showPlanningStart ? (
         <div className="planning-start" aria-label="创建首个规划">
           <div className="planning-start-heading">
-            <p className="eyebrow">第一步</p>
-            <h2>创建第一项规划</h2>
+            <div>
+              <p className="eyebrow">{hasPlanNodes ? "新建规划" : "第一步"}</p>
+              <h2>{hasPlanNodes ? "选择一个新的规划起点" : "创建第一项规划"}</h2>
+            </div>
+            {hasPlanNodes ? <button type="button" className="icon-command planning-start-close" onClick={() => setShowStarterChoices(false)} aria-label="返回规划树" title="返回规划树"><X size={17} /></button> : null}
           </div>
           <div className="planning-start-actions">
             <button type="button" onClick={() => void createStarterNode("WORK_DESIGN", "作品设定")}>
@@ -300,10 +369,26 @@ export function ProjectWorkspaceView() {
       {nodes.isError ? <p className="project-error" role="alert">无法加载规划：{String(nodes.error)}</p> : null}
       {error ? <p className="project-error" role="alert">{error}</p> : null}
 
-      {hasPlanNodes ? <div className="plan-layout">
+      {hasPlanNodes && !showStarterChoices ? <div className="plan-layout">
       <div className="plan-tree" aria-label="规划树">
-        <div className="section-heading"><h2>规划树</h2><span>{nodes.data?.length ?? 0} 个节点</span></div>
-        {nodes.data && nodes.data.length > 0 ? renderTree(null) : null}
+        <div className="section-heading"><h2>规划树</h2><span>{activeNodes.length} 个节点</span><button type="button" className="icon-command plan-archive-toggle" onClick={() => setShowArchived((value) => !value)} aria-label={showArchived ? "隐藏已删除节点" : "显示已删除节点"} title={showArchived ? "隐藏已删除节点" : "显示已删除节点"}>{showArchived ? <EyeOff size={15} /> : <Eye size={15} />}</button></div>
+        <div className="plan-root-list">
+          {rootDefinitions.map(({ kind: rootKind, label }) => {
+            const root = rootNodeFor(rootKind);
+            return (
+              <section className="plan-root-section" key={rootKind}>
+                <div className="plan-root-heading"><strong>{label}</strong><span>{root ? "已创建" : "未创建"}</span></div>
+                {root ? renderNode(root) : <p>尚未建立</p>}
+              </section>
+            );
+          })}
+          {unorganizedRoots.length ? (
+            <section className="plan-root-section plan-root-unorganized">
+              <div className="plan-root-heading"><strong>待整理</strong><span>{unorganizedRoots.length} 个节点</span></div>
+              {unorganizedRoots.map((node) => renderNode(node))}
+            </section>
+          ) : null}
+        </div>
       </div>
 
       {selected ? <aside className="plan-inspector" aria-label="节点详情">
@@ -312,9 +397,9 @@ export function ProjectWorkspaceView() {
         <input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} aria-label="编辑节点标题" />
         <div className="inspector-actions">
           <button type="button" className="primary-action" onClick={() => void saveSelected()} disabled={!editTitle.trim()}><Check size={15} />保存标题</button>
-          <button type="button" className="secondary-action" onClick={() => void toggleArchived(selected)}>{selected.archived ? <RotateCcw size={15} /> : <Archive size={15} />}{selected.archived ? "恢复节点" : "归档节点"}</button>
+          {selected.archived ? <button type="button" className="secondary-action" onClick={() => void toggleArchived(selected)}><ArchiveRestore size={15} />恢复节点</button> : <button type="button" className="secondary-action destructive-action" onClick={() => void deleteSelected()}><Trash2 size={15} />删除节点</button>}
         </div>
-        <div className="inspector-actions"><select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="">移动到顶层</option>{(nodes.data ?? []).filter((node) => node.id !== selected.id && !node.archived).map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select><button type="button" className="secondary-action" onClick={() => void moveSelected()}>移动节点</button></div>
+        <div className="inspector-actions"><select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="" disabled={!canMoveToRoot}>{canMoveToRoot ? "移动到顶层" : "选择合法父节点"}</option>{moveCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select><button type="button" className="secondary-action" onClick={() => void moveSelected()} disabled={!canMoveToRoot && !moveParentId}>移动节点</button></div>
         {selected.kind === "CHAPTER" ? <div className="chapter-editor">
           <div className="section-heading"><h2>章节工作区</h2><span>{manuscript.data ? "已有修订" : "尚未保存"}</span></div>
           <ChapterWorkspaceTabs value={chapterTab} onChange={setChapterTab} recoveryCount={recovery.data?.length ?? 0} />
