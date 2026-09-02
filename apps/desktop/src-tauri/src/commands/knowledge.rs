@@ -79,6 +79,21 @@ pub(crate) fn create_relation(
 }
 
 #[tauri::command]
+pub(crate) fn update_relation(
+    state: tauri::State<'_, ProjectState>,
+    relation: novel_infrastructure::Relation,
+    expected_version: u32,
+) -> Result<novel_infrastructure::Relation, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .update_relation(relation, expected_version)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn create_event(
     state: tauri::State<'_, ProjectState>,
     event: novel_infrastructure::Event,
@@ -88,6 +103,21 @@ pub(crate) fn create_event(
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager.create_event(event).map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn update_event(
+    state: tauri::State<'_, ProjectState>,
+    event: novel_infrastructure::Event,
+    expected_version: u32,
+) -> Result<novel_infrastructure::Event, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .update_event(event, expected_version)
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -103,6 +133,21 @@ pub(crate) fn create_belief(
 }
 
 #[tauri::command]
+pub(crate) fn update_belief(
+    state: tauri::State<'_, ProjectState>,
+    belief: novel_infrastructure::Belief,
+    expected_version: u32,
+) -> Result<novel_infrastructure::Belief, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .update_belief(belief, expected_version)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn create_foreshadowing(
     state: tauri::State<'_, ProjectState>,
     foreshadowing: novel_infrastructure::Foreshadowing,
@@ -113,6 +158,21 @@ pub(crate) fn create_foreshadowing(
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
         .create_foreshadowing(foreshadowing)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn update_foreshadowing(
+    state: tauri::State<'_, ProjectState>,
+    foreshadowing: novel_infrastructure::Foreshadowing,
+    expected_version: u32,
+) -> Result<novel_infrastructure::Foreshadowing, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .update_foreshadowing(foreshadowing, expected_version)
         .map_err(ApiError::from)
 }
 

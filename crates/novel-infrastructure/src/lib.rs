@@ -379,8 +379,8 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         id: "r5_knowledge_extensions",
         display_name: "R5 关系、事件、信念与伏笔",
         stage: "R5",
-        status: FeatureStatus::Partial,
-        unavailable_reason: Some("创建、查询与记录展示已实现；独立编辑表单和专项审核 UI 待补齐"),
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
     },
 ];
 

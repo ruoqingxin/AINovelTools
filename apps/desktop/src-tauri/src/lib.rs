@@ -28,7 +28,8 @@ use commands::knowledge::{
     create_knowledge_candidate, create_relation, detect_candidate_conflicts,
     finalize_knowledge_candidates, list_beliefs, list_current_facts, list_events,
     list_evidence_anchors, list_foreshadowings, list_knowledge_candidates, list_relations,
-    rebuild_world_state, review_knowledge_candidate,
+    rebuild_world_state, review_knowledge_candidate, update_belief, update_event,
+    update_foreshadowing, update_relation,
 };
 use commands::manuscript::{
     clear_recovery_logs, current_manuscript, list_all_recovery_logs, list_manuscript_revisions,
@@ -141,9 +142,13 @@ pub fn run() {
             create_diagnostic_package,
             create_evidence_anchor,
             create_relation,
+            update_relation,
             create_event,
+            update_event,
             create_belief,
+            update_belief,
             create_foreshadowing,
+            update_foreshadowing,
             list_evidence_anchors,
             list_current_facts,
             list_relations,

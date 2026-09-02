@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KnowledgeRecordsView } from "./knowledge-records-view";
 
 const mocks = vi.hoisted(() => ({
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   listForeshadowings: vi.fn(),
   listPlanNodes: vi.fn(),
   listRelations: vi.fn(),
+  updateRelation: vi.fn(),
 }));
 
 vi.mock("../lib/tauri-client", async () => {
@@ -22,6 +23,8 @@ vi.mock("../lib/tauri-client", async () => {
 });
 
 describe("KnowledgeRecordsView", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1", formatVersion: 1, name: "测试项目", createdAt: "" });
     mocks.listCurrentFacts.mockResolvedValue([
@@ -35,6 +38,7 @@ describe("KnowledgeRecordsView", () => {
     mocks.listBeliefs.mockResolvedValue([]);
     mocks.listForeshadowings.mockResolvedValue([]);
     mocks.createRelation.mockResolvedValue({});
+    mocks.updateRelation.mockResolvedValue({});
   });
 
   it("creates a relation from current facts and an evidence anchor", async () => {
@@ -59,5 +63,34 @@ describe("KnowledgeRecordsView", () => {
       evidenceAnchorIds: ["anchor-1"],
     })));
     expect(await screen.findByRole("status")).toHaveTextContent("已创建关系记录");
+  });
+
+  it("appends an edited relation as the next version", async () => {
+    mocks.listRelations.mockResolvedValue([{
+      id: "relation-1", projectId: "project-1", relationVersion: 1,
+      fromKnowledgeId: "fact-1", toKnowledgeId: "fact-2", relationType: "同盟",
+      evidenceAnchorIds: ["anchor-1"], lifecycleStatus: "ACTIVE", createdBy: "desktop-user",
+      createdAt: "", updatedAt: "",
+    }]);
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <KnowledgeRecordsView />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑同盟" }));
+    const relationTypeInputs = screen.getAllByPlaceholderText("例如：师徒、敌对、隶属");
+    fireEvent.change(relationTypeInputs[relationTypeInputs.length - 1]!, { target: { value: "师徒" } });
+    fireEvent.change(screen.getByLabelText("审核状态"), { target: { value: "NEEDS_REVIEW" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存为 v2" }));
+
+    await waitFor(() => expect(mocks.updateRelation).toHaveBeenCalledWith(expect.objectContaining({
+      id: "relation-1",
+      relationVersion: 2,
+      relationType: "师徒",
+      lifecycleStatus: "NEEDS_REVIEW",
+    }), 1));
+    expect(await screen.findByText("已追加为 v2")).toBeVisible();
   });
 });

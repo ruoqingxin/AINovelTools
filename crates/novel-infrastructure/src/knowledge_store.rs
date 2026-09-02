@@ -87,7 +87,29 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(KnowledgeStoreError::NoProject)?;
-        session.database.insert_relation(&relation)?;
+        if relation.project_id != session.manifest.project_id {
+            return Err(KnowledgeStoreError::Conflict);
+        }
+        session.database.insert_relation(&relation, None)?;
+        Ok(relation)
+    }
+
+    pub fn update_relation(
+        &mut self,
+        relation: Relation,
+        expected_version: u32,
+    ) -> Result<Relation, KnowledgeStoreError> {
+        relation.validate()?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        if relation.project_id != session.manifest.project_id {
+            return Err(KnowledgeStoreError::Conflict);
+        }
+        session
+            .database
+            .insert_relation(&relation, Some(expected_version))?;
         Ok(relation)
     }
 
@@ -97,7 +119,29 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(KnowledgeStoreError::NoProject)?;
-        session.database.insert_event(&event)?;
+        if event.project_id != session.manifest.project_id {
+            return Err(KnowledgeStoreError::Conflict);
+        }
+        session.database.insert_event(&event, None)?;
+        Ok(event)
+    }
+
+    pub fn update_event(
+        &mut self,
+        event: Event,
+        expected_version: u32,
+    ) -> Result<Event, KnowledgeStoreError> {
+        event.validate()?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        if event.project_id != session.manifest.project_id {
+            return Err(KnowledgeStoreError::Conflict);
+        }
+        session
+            .database
+            .insert_event(&event, Some(expected_version))?;
         Ok(event)
     }
 
@@ -107,7 +151,29 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(KnowledgeStoreError::NoProject)?;
-        session.database.insert_belief(&belief)?;
+        if belief.project_id != session.manifest.project_id {
+            return Err(KnowledgeStoreError::Conflict);
+        }
+        session.database.insert_belief(&belief, None)?;
+        Ok(belief)
+    }
+
+    pub fn update_belief(
+        &mut self,
+        belief: Belief,
+        expected_version: u32,
+    ) -> Result<Belief, KnowledgeStoreError> {
+        belief.validate()?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        if belief.project_id != session.manifest.project_id {
+            return Err(KnowledgeStoreError::Conflict);
+        }
+        session
+            .database
+            .insert_belief(&belief, Some(expected_version))?;
         Ok(belief)
     }
 
@@ -120,7 +186,31 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(KnowledgeStoreError::NoProject)?;
-        session.database.insert_foreshadowing(&foreshadowing)?;
+        if foreshadowing.project_id != session.manifest.project_id {
+            return Err(KnowledgeStoreError::Conflict);
+        }
+        session
+            .database
+            .insert_foreshadowing(&foreshadowing, None)?;
+        Ok(foreshadowing)
+    }
+
+    pub fn update_foreshadowing(
+        &mut self,
+        foreshadowing: Foreshadowing,
+        expected_version: u32,
+    ) -> Result<Foreshadowing, KnowledgeStoreError> {
+        foreshadowing.validate()?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        if foreshadowing.project_id != session.manifest.project_id {
+            return Err(KnowledgeStoreError::Conflict);
+        }
+        session
+            .database
+            .insert_foreshadowing(&foreshadowing, Some(expected_version))?;
         Ok(foreshadowing)
     }
 
@@ -324,21 +414,21 @@ impl Database {
     }
 
     fn list_relations(&self, project_id: Uuid) -> Result<Vec<Relation>, KnowledgeStoreError> {
-        let mut statement = self.connection.prepare("SELECT id, project_id, relation_version, from_knowledge_id, to_knowledge_id, relation_type, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM relations WHERE project_id = ?1 ORDER BY created_at DESC")?;
+        let mut statement = self.connection.prepare("SELECT id, project_id, relation_version, from_knowledge_id, to_knowledge_id, relation_type, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM relations value WHERE project_id = ?1 AND relation_version = (SELECT MAX(current.relation_version) FROM relations current WHERE current.id = value.id AND current.project_id = value.project_id) ORDER BY created_at DESC")?;
         let rows = statement.query_map([project_id.to_string()], map_relation)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(KnowledgeStoreError::from)
     }
 
     fn list_events(&self, project_id: Uuid) -> Result<Vec<Event>, KnowledgeStoreError> {
-        let mut statement = self.connection.prepare("SELECT id, project_id, event_version, name, occurred_at, participant_fact_ids_json, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM events WHERE project_id = ?1 ORDER BY created_at DESC")?;
+        let mut statement = self.connection.prepare("SELECT id, project_id, event_version, name, occurred_at, participant_fact_ids_json, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM events value WHERE project_id = ?1 AND event_version = (SELECT MAX(current.event_version) FROM events current WHERE current.id = value.id AND current.project_id = value.project_id) ORDER BY created_at DESC")?;
         let rows = statement.query_map([project_id.to_string()], map_event)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(KnowledgeStoreError::from)
     }
 
     fn list_beliefs(&self, project_id: Uuid) -> Result<Vec<Belief>, KnowledgeStoreError> {
-        let mut statement = self.connection.prepare("SELECT id, project_id, belief_version, holder_knowledge_id, proposition, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM beliefs WHERE project_id = ?1 ORDER BY created_at DESC")?;
+        let mut statement = self.connection.prepare("SELECT id, project_id, belief_version, holder_knowledge_id, proposition, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM beliefs value WHERE project_id = ?1 AND belief_version = (SELECT MAX(current.belief_version) FROM beliefs current WHERE current.id = value.id AND current.project_id = value.project_id) ORDER BY created_at DESC")?;
         let rows = statement.query_map([project_id.to_string()], map_belief)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(KnowledgeStoreError::from)
@@ -348,7 +438,7 @@ impl Database {
         &self,
         project_id: Uuid,
     ) -> Result<Vec<Foreshadowing>, KnowledgeStoreError> {
-        let mut statement = self.connection.prepare("SELECT id, project_id, foreshadowing_version, title, target_chapter_id, status, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM foreshadowings WHERE project_id = ?1 ORDER BY created_at DESC")?;
+        let mut statement = self.connection.prepare("SELECT id, project_id, foreshadowing_version, title, target_chapter_id, status, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM foreshadowings value WHERE project_id = ?1 AND foreshadowing_version = (SELECT MAX(current.foreshadowing_version) FROM foreshadowings current WHERE current.id = value.id AND current.project_id = value.project_id) ORDER BY created_at DESC")?;
         let rows = statement.query_map([project_id.to_string()], map_foreshadowing)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(KnowledgeStoreError::from)
@@ -376,8 +466,21 @@ impl Database {
         Ok(json)
     }
 
-    fn insert_relation(&mut self, value: &Relation) -> Result<(), KnowledgeStoreError> {
+    fn insert_relation(
+        &mut self,
+        value: &Relation,
+        expected_version: Option<u32>,
+    ) -> Result<(), KnowledgeStoreError> {
         let tx = self.connection.transaction()?;
+        ensure_next_version(
+            &tx,
+            "relations",
+            "relation_version",
+            value.id,
+            value.project_id,
+            value.relation_version,
+            expected_version,
+        )?;
         let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
         tx.execute(
             "INSERT INTO relations (id, project_id, relation_version, from_knowledge_id, to_knowledge_id, relation_type, evidence_anchor_ids_json, lifecycle_status, created_by)
@@ -388,8 +491,21 @@ impl Database {
         Ok(())
     }
 
-    fn insert_event(&mut self, value: &Event) -> Result<(), KnowledgeStoreError> {
+    fn insert_event(
+        &mut self,
+        value: &Event,
+        expected_version: Option<u32>,
+    ) -> Result<(), KnowledgeStoreError> {
         let tx = self.connection.transaction()?;
+        ensure_next_version(
+            &tx,
+            "events",
+            "event_version",
+            value.id,
+            value.project_id,
+            value.event_version,
+            expected_version,
+        )?;
         let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
         let participants = serde_json::to_string(&value.participant_fact_ids)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
@@ -402,8 +518,21 @@ impl Database {
         Ok(())
     }
 
-    fn insert_belief(&mut self, value: &Belief) -> Result<(), KnowledgeStoreError> {
+    fn insert_belief(
+        &mut self,
+        value: &Belief,
+        expected_version: Option<u32>,
+    ) -> Result<(), KnowledgeStoreError> {
         let tx = self.connection.transaction()?;
+        ensure_next_version(
+            &tx,
+            "beliefs",
+            "belief_version",
+            value.id,
+            value.project_id,
+            value.belief_version,
+            expected_version,
+        )?;
         let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
         tx.execute(
             "INSERT INTO beliefs (id, project_id, belief_version, holder_knowledge_id, proposition, evidence_anchor_ids_json, lifecycle_status, created_by)
@@ -414,8 +543,21 @@ impl Database {
         Ok(())
     }
 
-    fn insert_foreshadowing(&mut self, value: &Foreshadowing) -> Result<(), KnowledgeStoreError> {
+    fn insert_foreshadowing(
+        &mut self,
+        value: &Foreshadowing,
+        expected_version: Option<u32>,
+    ) -> Result<(), KnowledgeStoreError> {
         let tx = self.connection.transaction()?;
+        ensure_next_version(
+            &tx,
+            "foreshadowings",
+            "foreshadowing_version",
+            value.id,
+            value.project_id,
+            value.foreshadowing_version,
+            expected_version,
+        )?;
         let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
         tx.execute(
             "INSERT INTO foreshadowings (id, project_id, foreshadowing_version, title, target_chapter_id, status, evidence_anchor_ids_json, lifecycle_status, created_by)
@@ -951,6 +1093,35 @@ fn detect_conflicts(candidates: &[KnowledgeCandidate]) -> Vec<KnowledgeConflict>
     conflicts
 }
 
+fn ensure_next_version(
+    tx: &rusqlite::Transaction<'_>,
+    table: &str,
+    version_column: &str,
+    id: Uuid,
+    project_id: Uuid,
+    next_version: u32,
+    expected_version: Option<u32>,
+) -> Result<(), KnowledgeStoreError> {
+    let sql =
+        format!("SELECT MAX({version_column}) FROM {table} WHERE id = ?1 AND project_id = ?2");
+    let current: Option<u32> = tx.query_row(
+        &sql,
+        rusqlite::params![id.to_string(), project_id.to_string()],
+        |row| row.get(0),
+    )?;
+    let valid = match expected_version {
+        Some(expected) => {
+            current == Some(expected) && expected.checked_add(1) == Some(next_version)
+        }
+        None => current.is_none() && next_version == 1,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(KnowledgeStoreError::Conflict)
+    }
+}
+
 fn parse_uuid_column(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Uuid> {
     Uuid::parse_str(&row.get::<_, String>(index)?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
@@ -1194,6 +1365,37 @@ mod tests {
                 ReviewDecision::Reject,
                 "other".into()
             ),
+            Err(KnowledgeStoreError::Conflict)
+        ));
+        let relation_id = Uuid::new_v4();
+        let relation = Relation {
+            id: relation_id,
+            project_id: manifest.project_id,
+            relation_version: 1,
+            from_knowledge_id: candidate.fact.knowledge_id,
+            to_knowledge_id: candidate.fact.knowledge_id,
+            relation_type: "同盟".into(),
+            evidence_anchor_ids: vec![anchor.id],
+            lifecycle_status: KnowledgeLifecycleStatus::Active,
+            created_by: "tester".into(),
+            created_at: now_timestamp(),
+            updated_at: now_timestamp(),
+        };
+        manager
+            .create_relation(relation.clone())
+            .expect("create relation");
+        let mut revised_relation = relation.clone();
+        revised_relation.relation_version = 2;
+        revised_relation.relation_type = "师徒".into();
+        manager
+            .update_relation(revised_relation.clone(), 1)
+            .expect("append relation version");
+        let current_relations = manager.list_relations().expect("list current relations");
+        assert_eq!(current_relations.len(), 1);
+        assert_eq!(current_relations[0].relation_version, 2);
+        assert_eq!(current_relations[0].relation_type, "师徒");
+        assert!(matches!(
+            manager.update_relation(revised_relation, 1),
             Err(KnowledgeStoreError::Conflict)
         ));
         let _ = std::fs::remove_dir_all(root);

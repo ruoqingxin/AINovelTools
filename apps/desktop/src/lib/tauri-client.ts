@@ -210,9 +210,13 @@ export function finalizeKnowledgeCandidates(input: { chapterId: string; candidat
 }
 export function rebuildWorldState(actor: string) { return invoke<WorldState>("rebuild_world_state", { actor }); }
 export function createRelation(relation: Relation) { return invoke<Relation>("create_relation", { relation }); }
+export function updateRelation(relation: Relation, expectedVersion: number) { return invoke<Relation>("update_relation", { relation, expectedVersion }); }
 export function createEvent(event: Event) { return invoke<Event>("create_event", { event }); }
+export function updateEvent(event: Event, expectedVersion: number) { return invoke<Event>("update_event", { event, expectedVersion }); }
 export function createBelief(belief: Belief) { return invoke<Belief>("create_belief", { belief }); }
+export function updateBelief(belief: Belief, expectedVersion: number) { return invoke<Belief>("update_belief", { belief, expectedVersion }); }
 export function createForeshadowing(foreshadowing: Foreshadowing) { return invoke<Foreshadowing>("create_foreshadowing", { foreshadowing }); }
+export function updateForeshadowing(foreshadowing: Foreshadowing, expectedVersion: number) { return invoke<Foreshadowing>("update_foreshadowing", { foreshadowing, expectedVersion }); }
 export function listRelations() { return invoke<Relation[]>("list_relations"); }
 export function listEvents() { return invoke<Event[]>("list_events"); }
 export function listBeliefs() { return invoke<Belief[]>("list_beliefs"); }
