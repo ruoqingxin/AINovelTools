@@ -382,6 +382,13 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         status: FeatureStatus::Implemented,
         unavailable_reason: None,
     },
+    FeatureDescriptor {
+        id: "r6_capability_admission",
+        display_name: "R6 高级能力准入与评测基线",
+        stage: "R6",
+        status: FeatureStatus::Declared,
+        unavailable_reason: Some("尚未有满足门槛的高级能力实现切片"),
+    },
 ];
 
 pub struct Database {
