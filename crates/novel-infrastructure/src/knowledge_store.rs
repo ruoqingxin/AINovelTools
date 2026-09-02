@@ -14,6 +14,10 @@ pub enum KnowledgeStoreError {
     MissingSourceRevision(Uuid),
     #[error("knowledge candidate version conflict")]
     Conflict,
+    #[error("high-risk knowledge conflict blocks finalization")]
+    HighRiskConflict,
+    #[error("knowledge candidate list is empty")]
+    EmptyCandidates,
     #[error("knowledge database operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("knowledge database operation failed: {0}")]
@@ -26,7 +30,10 @@ impl ProjectManager {
         anchor: EvidenceAnchor,
     ) -> Result<EvidenceAnchor, KnowledgeStoreError> {
         anchor.validate()?;
-        let session = self.current.as_mut().ok_or(KnowledgeStoreError::NoProject)?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
         session.database.insert_evidence_anchor(&anchor)?;
         Ok(anchor)
     }
@@ -36,7 +43,10 @@ impl ProjectManager {
         candidate: KnowledgeCandidate,
     ) -> Result<KnowledgeCandidate, KnowledgeStoreError> {
         candidate.validate()?;
-        let session = self.current.as_mut().ok_or(KnowledgeStoreError::NoProject)?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
         if candidate.project_id != session.manifest.project_id {
             return Err(KnowledgeStoreError::Contract(
                 KnowledgeContractError::InvalidCandidateReview,
@@ -50,8 +60,93 @@ impl ProjectManager {
         &self,
         chapter_id: Uuid,
     ) -> Result<Vec<KnowledgeCandidate>, KnowledgeStoreError> {
-        let session = self.current.as_ref().ok_or(KnowledgeStoreError::NoProject)?;
-        session.database.list_knowledge_candidates(session.manifest.project_id, chapter_id)
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session
+            .database
+            .list_knowledge_candidates(session.manifest.project_id, chapter_id)
+    }
+
+    pub fn detect_candidate_conflicts(
+        &self,
+        chapter_id: Uuid,
+    ) -> Result<Vec<KnowledgeConflict>, KnowledgeStoreError> {
+        let candidates = self.list_knowledge_candidates(chapter_id)?;
+        let mut conflicts = Vec::new();
+        for (index, left) in candidates.iter().enumerate() {
+            for right in candidates.iter().skip(index + 1) {
+                if left.fact.subject != right.fact.subject
+                    || left.fact.predicate != right.fact.predicate
+                {
+                    continue;
+                }
+                if left.fact.object == right.fact.object {
+                    conflicts.push(KnowledgeConflict {
+                        kind: KnowledgeConflictKind::DuplicateFact,
+                        candidate_ids: vec![left.id, right.id],
+                        subject: left.fact.subject.clone(),
+                        predicate: left.fact.predicate.clone(),
+                        objects: vec![left.fact.object.clone()],
+                        high_risk: false,
+                    });
+                } else {
+                    conflicts.push(KnowledgeConflict {
+                        kind: KnowledgeConflictKind::ContradictoryObject,
+                        candidate_ids: vec![left.id, right.id],
+                        subject: left.fact.subject.clone(),
+                        predicate: left.fact.predicate.clone(),
+                        objects: vec![left.fact.object.clone(), right.fact.object.clone()],
+                        high_risk: true,
+                    });
+                }
+            }
+        }
+        Ok(conflicts)
+    }
+
+    pub fn finalize_knowledge_candidates(
+        &mut self,
+        chapter_id: Uuid,
+        candidate_ids: Vec<Uuid>,
+        actor: String,
+    ) -> Result<ChangeSet, KnowledgeStoreError> {
+        if candidate_ids.is_empty() {
+            return Err(KnowledgeStoreError::EmptyCandidates);
+        }
+        if actor.trim().is_empty() {
+            return Err(KnowledgeStoreError::Contract(
+                KnowledgeContractError::EmptyActor,
+            ));
+        }
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        let project_id = session.manifest.project_id;
+        let candidates = session
+            .database
+            .list_knowledge_candidates(project_id, chapter_id)?;
+        let selected = candidates
+            .into_iter()
+            .filter(|candidate| candidate_ids.contains(&candidate.id))
+            .collect::<Vec<_>>();
+        if selected.len() != candidate_ids.len()
+            || selected.iter().any(|candidate| {
+                candidate.candidate_status != CandidateStatus::Approved
+                    || candidate.chapter_id != chapter_id
+            })
+        {
+            return Err(KnowledgeStoreError::Conflict);
+        }
+        let conflicts = detect_conflicts(&selected);
+        if conflicts.iter().any(|conflict| conflict.high_risk) {
+            return Err(KnowledgeStoreError::HighRiskConflict);
+        }
+        session
+            .database
+            .finalize_candidates(project_id, chapter_id, selected, actor)
     }
 
     pub fn review_knowledge_candidate(
@@ -66,20 +161,33 @@ impl ProjectManager {
                 KnowledgeContractError::EmptyActor,
             ));
         }
-        let session = self.current.as_mut().ok_or(KnowledgeStoreError::NoProject)?;
-        session
-            .database
-            .review_knowledge_candidate(session.manifest.project_id, id, expected_status, decision, reviewer)
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session.database.review_knowledge_candidate(
+            session.manifest.project_id,
+            id,
+            expected_status,
+            decision,
+            reviewer,
+        )
     }
 }
 
 impl Database {
-    fn insert_evidence_anchor(&mut self, anchor: &EvidenceAnchor) -> Result<(), KnowledgeStoreError> {
+    fn insert_evidence_anchor(
+        &mut self,
+        anchor: &EvidenceAnchor,
+    ) -> Result<(), KnowledgeStoreError> {
         let tx = self.connection.transaction()?;
         let source_exists: Option<String> = tx
             .query_row(
                 "SELECT id FROM manuscript_revisions WHERE id = ?1 AND chapter_id = ?2",
-                rusqlite::params![anchor.source_revision_id.to_string(), anchor.chapter_id.to_string()],
+                rusqlite::params![
+                    anchor.source_revision_id.to_string(),
+                    anchor.chapter_id.to_string()
+                ],
                 |row| row.get(0),
             )
             .optional()?;
@@ -263,6 +371,121 @@ impl Database {
         tx.commit()?;
         Ok(candidate)
     }
+
+    fn finalize_candidates(
+        &mut self,
+        project_id: Uuid,
+        chapter_id: Uuid,
+        candidates: Vec<KnowledgeCandidate>,
+        actor: String,
+    ) -> Result<ChangeSet, KnowledgeStoreError> {
+        let source_revision_id = candidates[0].fact.source_revision_id;
+        let change_set_id = Uuid::new_v4();
+        let candidate_ids = candidates
+            .iter()
+            .map(|candidate| candidate.id)
+            .collect::<Vec<_>>();
+        let candidate_ids_json = serde_json::to_string(&candidate_ids)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let tx = self.connection.transaction()?;
+        tx.execute(
+            "INSERT INTO change_sets
+             (id, project_id, chapter_id, source_revision_id, status, candidate_ids_json, created_by)
+             VALUES (?1,?2,?3,?4,'FINALIZED',?5,?6)",
+            rusqlite::params![
+                change_set_id.to_string(),
+                project_id.to_string(),
+                chapter_id.to_string(),
+                source_revision_id.to_string(),
+                candidate_ids_json,
+                actor
+            ],
+        )?;
+        for candidate in &candidates {
+            let evidence_json = serde_json::to_string(&candidate.fact.evidence_anchor_ids)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            let next_version: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(knowledge_version), 0) + 1
+                     FROM facts WHERE knowledge_id = ?1",
+                [candidate.fact.knowledge_id.to_string()],
+                |row| row.get(0),
+            )?;
+            tx.execute(
+                "INSERT INTO facts
+                 (knowledge_id, project_id, knowledge_version, subject, predicate, object,
+                  source_revision_id, evidence_anchor_ids_json, lifecycle_status, created_by)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'ACTIVE',?9)",
+                rusqlite::params![
+                    candidate.fact.knowledge_id.to_string(),
+                    project_id.to_string(),
+                    next_version,
+                    candidate.fact.subject,
+                    candidate.fact.predicate,
+                    candidate.fact.object,
+                    candidate.fact.source_revision_id.to_string(),
+                    evidence_json,
+                    actor
+                ],
+            )?;
+            tx.execute(
+                "INSERT INTO fact_current_versions (knowledge_id, knowledge_version)
+                 VALUES (?1,?2)
+                 ON CONFLICT(knowledge_id) DO UPDATE SET knowledge_version = excluded.knowledge_version",
+                rusqlite::params![candidate.fact.knowledge_id.to_string(), next_version],
+            )?;
+            tx.execute(
+                "INSERT INTO change_set_items (id, change_set_id, candidate_id, decision)
+                 VALUES (?1,?2,?3,'APPROVE')",
+                rusqlite::params![
+                    Uuid::new_v4().to_string(),
+                    change_set_id.to_string(),
+                    candidate.id.to_string()
+                ],
+            )?;
+            tx.execute(
+                "UPDATE knowledge_candidates
+                 SET candidate_status = 'FINALIZED', updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                 WHERE id = ?1 AND project_id = ?2 AND candidate_status = 'APPROVED'",
+                rusqlite::params![candidate.id.to_string(), project_id.to_string()],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO knowledge_audit_records
+             (id, project_id, change_set_id, action, actor, details_json)
+             VALUES (?1,?2,?3,'FINALIZE',?4,?5)",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                project_id.to_string(),
+                change_set_id.to_string(),
+                actor,
+                serde_json::json!({"candidateCount": candidates.len()}).to_string()
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO knowledge_outbox_events
+             (id, project_id, aggregate_type, aggregate_id, event_type, payload_json)
+             VALUES (?1,?2,'CHANGE_SET',?3,'KNOWLEDGE_FINALIZED',?4)",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                project_id.to_string(),
+                change_set_id.to_string(),
+                serde_json::json!({"changeSetId": change_set_id, "candidateIds": candidate_ids})
+                    .to_string()
+            ],
+        )?;
+        tx.commit()?;
+        Ok(ChangeSet {
+            id: change_set_id,
+            project_id,
+            chapter_id,
+            source_revision_id,
+            status: ChangeSetStatus::Finalized,
+            candidate_ids,
+            created_by: actor,
+            created_at: now_timestamp(),
+            updated_at: now_timestamp(),
+        })
+    }
 }
 
 fn knowledge_lifecycle_str(value: KnowledgeLifecycleStatus) -> &'static str {
@@ -366,6 +589,39 @@ fn map_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<KnowledgeCandidate
     })
 }
 
+fn detect_conflicts(candidates: &[KnowledgeCandidate]) -> Vec<KnowledgeConflict> {
+    let mut conflicts = Vec::new();
+    for (index, left) in candidates.iter().enumerate() {
+        for right in candidates.iter().skip(index + 1) {
+            if left.fact.subject != right.fact.subject
+                || left.fact.predicate != right.fact.predicate
+            {
+                continue;
+            }
+            if left.fact.object == right.fact.object {
+                conflicts.push(KnowledgeConflict {
+                    kind: KnowledgeConflictKind::DuplicateFact,
+                    candidate_ids: vec![left.id, right.id],
+                    subject: left.fact.subject.clone(),
+                    predicate: left.fact.predicate.clone(),
+                    objects: vec![left.fact.object.clone()],
+                    high_risk: false,
+                });
+            } else {
+                conflicts.push(KnowledgeConflict {
+                    kind: KnowledgeConflictKind::ContradictoryObject,
+                    candidate_ids: vec![left.id, right.id],
+                    subject: left.fact.subject.clone(),
+                    predicate: left.fact.predicate.clone(),
+                    objects: vec![left.fact.object.clone(), right.fact.object.clone()],
+                    high_risk: true,
+                });
+            }
+        }
+    }
+    conflicts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,11 +688,22 @@ mod tests {
         manager
             .create_knowledge_candidate(candidate.clone())
             .expect("create candidate");
+        let mut contradictory = candidate.clone();
+        contradictory.id = Uuid::new_v4();
+        contradictory.fact.knowledge_id = Uuid::new_v4();
+        contradictory.fact.object = "丙".into();
+        manager
+            .create_knowledge_candidate(contradictory)
+            .expect("create contradictory candidate");
         let listed = manager
             .list_knowledge_candidates(chapter.id)
             .expect("list candidates");
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].fact.knowledge_id, candidate.fact.knowledge_id);
+        assert_eq!(listed.len(), 2);
+        let conflicts = manager
+            .detect_candidate_conflicts(chapter.id)
+            .expect("detect conflicts");
+        assert_eq!(conflicts.len(), 1);
+        assert!(conflicts[0].high_risk);
         let reviewed = manager
             .review_knowledge_candidate(
                 candidate.id,
@@ -446,6 +713,10 @@ mod tests {
             )
             .expect("review candidate");
         assert_eq!(reviewed.candidate_status, CandidateStatus::Approved);
+        let change_set = manager
+            .finalize_knowledge_candidates(chapter.id, vec![candidate.id], "finalizer".into())
+            .expect("finalize candidate");
+        assert_eq!(change_set.status, ChangeSetStatus::Finalized);
         assert!(matches!(
             manager.review_knowledge_candidate(
                 candidate.id,

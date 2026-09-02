@@ -35,13 +35,13 @@ pub use entity_store::EntityStoreError;
 pub use knowledge_store::KnowledgeStoreError;
 pub use materials_store::MaterialsStoreError;
 pub use novel_domain::{
-    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, ContextAuthority, Entity, EntityError,
-    EntityInput, EntityLifecycleStatus, EntityRevision, EntityType, KnowledgeChunk,
-    CandidateStatus, ChangeSet, ChangeSetStatus, EvidenceAnchor, Fact, KnowledgeCandidate,
-    KnowledgeContractError, KnowledgeLifecycleStatus, ReviewDecision,
+    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, CandidateStatus, ChangeSet,
+    ChangeSetStatus, ContextAuthority, Entity, EntityError, EntityInput, EntityLifecycleStatus,
+    EntityRevision, EntityType, EvidenceAnchor, Fact, KnowledgeCandidate, KnowledgeChunk,
+    KnowledgeConflict, KnowledgeConflictKind, KnowledgeContractError, KnowledgeLifecycleStatus,
     ModelCapability, ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel,
-    RetrievalEvidence, RetrievalMethod, SummaryKind, SummaryMaterial, SummaryPrecision,
-    WritingCard,
+    RetrievalEvidence, RetrievalMethod, ReviewDecision, SummaryKind, SummaryMaterial,
+    SummaryPrecision, WritingCard,
 };
 pub use search_store::{SearchResult, SearchStoreError};
 
@@ -154,7 +154,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 19;
+pub const CURRENT_SCHEMA_VERSION: i64 = 20;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1640,7 +1640,7 @@ pub fn linked_layers() -> [&'static str; 3] {
 #[cfg(test)]
 mod tests {
     use super::{
-        Database, CURRENT_SCHEMA_VERSION, FEATURE_CATALOG, FeatureStatus, R4_CONTRACTS,
+        CURRENT_SCHEMA_VERSION, Database, FEATURE_CATALOG, FeatureStatus, R4_CONTRACTS,
         R4_MIGRATION_PLAN, R4_SCHEMA_VERSION,
     };
 

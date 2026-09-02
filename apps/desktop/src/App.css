@@ -1083,6 +1083,13 @@ button:focus-visible {
 .story-bible-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:20px; }
 .story-bible-toolbar select, .search-field { min-height:36px; border:1px solid var(--line-strong); border-radius:8px; background:#fff; color:inherit; font-size:12px; }
 .story-bible-toolbar select { padding:0 10px; }
+.knowledge-review-view .story-bible-toolbar label { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+.knowledge-review-list { display:grid; gap:10px; margin-top:22px; }
+.knowledge-candidate-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+.knowledge-candidate-main { display:grid; gap:6px; min-width:0; }
+.knowledge-candidate-main strong { overflow-wrap:anywhere; }
+.knowledge-candidate-main span { color:var(--muted); font-size:12px; }
+.knowledge-conflict-banner { display:flex; align-items:center; gap:8px; margin-top:16px; padding:12px 14px; border:1px solid #e2b75d; background:#fff8e6; color:#7a5413; border-radius:8px; }
 .search-field { display:flex; min-width:220px; flex:1 1 260px; align-items:center; gap:7px; padding:0 10px; color:#8294b1; }
 .search-field input { min-width:0; flex:1; border:0; outline:0; color:inherit; background:transparent; font:inherit; }
 .story-bible-layout { display:grid; grid-template-columns:minmax(260px,.8fr) minmax(0,1.65fr); gap:18px; margin-top:22px; align-items:start; }

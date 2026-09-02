@@ -2,6 +2,7 @@ pub(crate) mod ai;
 pub(crate) mod core;
 pub(crate) mod entities;
 pub(crate) mod jobs;
+pub(crate) mod knowledge;
 pub(crate) mod manuscript;
 pub(crate) mod materials;
 pub(crate) mod planning;

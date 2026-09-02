@@ -20,7 +20,7 @@ const navigation = [
   { label: "正文", icon: BookOpenText },
   { label: "知识", icon: FileSearch, path: "/knowledge" as const },
   { label: "AI", icon: Bot },
-  { label: "审核", icon: ShieldCheck },
+  { label: "审核", icon: ShieldCheck, path: "/knowledge/review" as const },
   { label: "任务", icon: ListChecks, path: "/jobs" as const },
 ];
 

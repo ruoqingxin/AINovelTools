@@ -83,6 +83,34 @@ export type WritingCard = {
   sortOrder: number; createdAt: string; updatedAt: string;
 };
 export type SearchResult = { objectType: string; objectId: string; blockId: string | null; sourceVersion: string | null; snippet: string };
+export type KnowledgeLifecycleStatus = "ACTIVE" | "NEEDS_REVIEW" | "ARCHIVED";
+export type CandidateStatus = "PENDING" | "NEEDS_REVIEW" | "APPROVED" | "REJECTED" | "FINALIZED";
+export type ReviewDecision = "APPROVE" | "REJECT" | "NEEDS_REVIEW";
+export type ChangeSetStatus = "DRAFT" | "IN_REVIEW" | "BLOCKED" | "FINALIZED" | "REJECTED";
+export type EvidenceAnchor = {
+  id: string; projectId: string; chapterId: string; sourceRevisionId: string;
+  blockId: string; startOffset: number; endOffset: number; sourceVersion: string;
+  sourceHash: string; lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string;
+  createdAt: string; updatedAt: string;
+};
+export type Fact = {
+  knowledgeId: string; projectId: string; knowledgeVersion: number; subject: string;
+  predicate: string; object: string; sourceRevisionId: string; evidenceAnchorIds: string[];
+  lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string; createdAt: string; updatedAt: string;
+};
+export type KnowledgeCandidate = {
+  id: string; projectId: string; chapterId: string; proposalId: string | null;
+  candidateStatus: CandidateStatus; reviewDecision: ReviewDecision | null;
+  reviewer: string | null; reviewedAt: string | null; fact: Fact; createdAt: string; updatedAt: string;
+};
+export type KnowledgeConflict = {
+  kind: "DUPLICATE_FACT" | "CONTRADICTORY_OBJECT"; candidateIds: string[];
+  subject: string; predicate: string; objects: string[]; highRisk: boolean;
+};
+export type ChangeSet = {
+  id: string; projectId: string; chapterId: string; sourceRevisionId: string;
+  status: ChangeSetStatus; candidateIds: string[]; createdBy: string; createdAt: string; updatedAt: string;
+};
 export type AssembleContextInput = {
   chapterId: string; targetRevisionId: string | null; action: AiAction; chapterTitle: string;
   chapterPlan: string; documentJson: string; selection: string | null; instruction: string | null;
@@ -162,6 +190,16 @@ export function setSummaryMaterialLifecycle(id: string, lifecycleStatus: string)
 export function rebuildSummaryMaterial(id: string) { return invoke<SummaryMaterial>("rebuild_summary_material", { id }); }
 export function rebuildSearchIndex() { return invoke<void>("rebuild_search_index"); }
 export function searchProject(query: string, objectType?: string, limit = 50, offset = 0) { return invoke<SearchResult[]>("search_project", { query, objectType, limit, offset }); }
+export function createEvidenceAnchor(anchor: EvidenceAnchor) { return invoke<EvidenceAnchor>("create_evidence_anchor", { anchor }); }
+export function createKnowledgeCandidate(candidate: KnowledgeCandidate) { return invoke<KnowledgeCandidate>("create_knowledge_candidate", { candidate }); }
+export function listKnowledgeCandidates(chapterId: string) { return invoke<KnowledgeCandidate[]>("list_knowledge_candidates", { chapterId }); }
+export function reviewKnowledgeCandidate(input: { id: string; expectedStatus: CandidateStatus; decision: ReviewDecision; reviewer: string }) {
+  return invoke<KnowledgeCandidate>("review_knowledge_candidate", input);
+}
+export function detectCandidateConflicts(chapterId: string) { return invoke<KnowledgeConflict[]>("detect_candidate_conflicts", { chapterId }); }
+export function finalizeKnowledgeCandidates(input: { chapterId: string; candidateIds: string[]; actor: string }) {
+  return invoke<ChangeSet>("finalize_knowledge_candidates", input);
+}
 export function assembleContextWithProjectKnowledge(input: AssembleContextInput) {
   return invoke<ContextPackage>("assemble_context_with_project_knowledge", { input, objectIds: input.knowledgeObjectIds });
 }

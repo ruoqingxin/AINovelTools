@@ -216,8 +216,10 @@ impl CandidateStatus {
     pub const fn can_transition_to(self, next: Self) -> bool {
         matches!(
             (self, next),
-            (Self::Pending, Self::NeedsReview | Self::Approved | Self::Rejected)
-                | (Self::NeedsReview, Self::Approved | Self::Rejected)
+            (
+                Self::Pending,
+                Self::NeedsReview | Self::Approved | Self::Rejected
+            ) | (Self::NeedsReview, Self::Approved | Self::Rejected)
                 | (Self::Approved, Self::Finalized)
         )
     }
@@ -306,6 +308,24 @@ pub struct ChangeSet {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum KnowledgeConflictKind {
+    DuplicateFact,
+    ContradictoryObject,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeConflict {
+    pub kind: KnowledgeConflictKind,
+    pub candidate_ids: Vec<Uuid>,
+    pub subject: String,
+    pub predicate: String,
+    pub objects: Vec<String>,
+    pub high_risk: bool,
+}
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum AiContractError {
     #[error("profile name cannot be empty")]
@@ -357,6 +377,12 @@ pub enum KnowledgeContractError {
 }
 
 impl EvidenceAnchor {
+    /// Validates source identity and character range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnowledgeContractError`] when source metadata or the range
+    /// is invalid.
     pub fn validate(&self) -> Result<(), KnowledgeContractError> {
         if self.block_id.trim().is_empty() {
             return Err(KnowledgeContractError::EmptyBlockId);
@@ -375,6 +401,12 @@ impl EvidenceAnchor {
 }
 
 impl Fact {
+    /// Validates the immutable fact version contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnowledgeContractError`] when text, version, evidence, or
+    /// actor fields are invalid.
     pub fn validate(&self) -> Result<(), KnowledgeContractError> {
         if self.knowledge_version == 0 {
             return Err(KnowledgeContractError::InvalidKnowledgeVersion);
@@ -396,6 +428,12 @@ impl Fact {
 }
 
 impl KnowledgeCandidate {
+    /// Validates the candidate and review metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnowledgeContractError`] when the embedded fact or review
+    /// state is inconsistent.
     pub fn validate(&self) -> Result<(), KnowledgeContractError> {
         self.fact.validate()?;
         if self.fact.project_id != self.project_id {
@@ -405,9 +443,10 @@ impl KnowledgeCandidate {
             CandidateStatus::Pending | CandidateStatus::NeedsReview => {
                 self.review_decision.is_none()
             }
-            CandidateStatus::Approved => self.review_decision == Some(ReviewDecision::Approve),
+            CandidateStatus::Approved | CandidateStatus::Finalized => {
+                self.review_decision == Some(ReviewDecision::Approve)
+            }
             CandidateStatus::Rejected => self.review_decision == Some(ReviewDecision::Reject),
-            CandidateStatus::Finalized => self.review_decision == Some(ReviewDecision::Approve),
         };
         if !review_consistent {
             return Err(KnowledgeContractError::InvalidCandidateReview);
@@ -417,6 +456,12 @@ impl KnowledgeCandidate {
 }
 
 impl ChangeSet {
+    /// Validates the minimum `ChangeSet` metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnowledgeContractError`] when no candidates or actor is
+    /// provided.
     pub fn validate(&self) -> Result<(), KnowledgeContractError> {
         if self.candidate_ids.is_empty() {
             return Err(KnowledgeContractError::EmptyChangeSet);
@@ -433,9 +478,11 @@ impl ChangeSetStatus {
     pub const fn can_transition_to(self, next: Self) -> bool {
         matches!(
             (self, next),
-            (Self::Draft, Self::InReview | Self::Rejected)
-                | (Self::InReview, Self::Blocked | Self::Finalized | Self::Rejected)
-                | (Self::Blocked, Self::InReview | Self::Rejected)
+            (Self::Draft | Self::Blocked, Self::InReview | Self::Rejected)
+                | (
+                    Self::InReview,
+                    Self::Blocked | Self::Finalized | Self::Rejected
+                )
         )
     }
 }
@@ -634,11 +681,9 @@ mod tests {
             updated_at: "2026-09-02T00:00:00Z".into(),
         };
         assert_eq!(candidate.validate(), Ok(()));
-        assert!(super::ChangeSetStatus::Draft.can_transition_to(
-            super::ChangeSetStatus::InReview
-        ));
-        assert!(!super::ChangeSetStatus::Finalized.can_transition_to(
-            super::ChangeSetStatus::Draft
-        ));
+        assert!(super::ChangeSetStatus::Draft.can_transition_to(super::ChangeSetStatus::InReview));
+        assert!(
+            !super::ChangeSetStatus::Finalized.can_transition_to(super::ChangeSetStatus::Draft)
+        );
     }
 }

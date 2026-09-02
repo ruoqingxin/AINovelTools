@@ -23,6 +23,10 @@ use commands::jobs::{
     cancel_job, claim_next_job, create_diagnostic_package, enqueue_job, health_scan, list_jobs,
     retry_job, run_next_job, startup_recovery_report,
 };
+use commands::knowledge::{
+    create_evidence_anchor, create_knowledge_candidate, detect_candidate_conflicts,
+    finalize_knowledge_candidates, list_knowledge_candidates, review_knowledge_candidate,
+};
 use commands::manuscript::{
     clear_recovery_logs, current_manuscript, list_all_recovery_logs, list_manuscript_revisions,
     list_recovery_logs, merge_manuscript, save_manuscript, save_manuscript_checked,
@@ -131,7 +135,13 @@ pub fn run() {
             run_next_job,
             health_scan,
             startup_recovery_report,
-            create_diagnostic_package
+            create_diagnostic_package,
+            create_evidence_anchor,
+            create_knowledge_candidate,
+            list_knowledge_candidates,
+            review_knowledge_candidate,
+            detect_candidate_conflicts,
+            finalize_knowledge_candidates
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

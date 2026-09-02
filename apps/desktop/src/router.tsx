@@ -11,6 +11,7 @@ import { MaterialsView } from "./views/materials-view";
 import { SearchView } from "./views/search-view";
 import { JobsView } from "./views/jobs-view";
 import { SettingsView } from "./views/settings-view";
+import { KnowledgeReviewView } from "./views/knowledge-review-view";
 import { useQuery } from "@tanstack/react-query";
 import { getCurrentProject } from "./lib/tauri-client";
 
@@ -36,12 +37,13 @@ const knowledgeRoute = createRoute({
   path: "/knowledge",
   component: StoryBibleView,
 });
+const knowledgeReviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/review", component: KnowledgeReviewView });
 const materialsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/materials", component: MaterialsView });
 const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", component: SearchView });
 const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: JobsView });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsView });
 
-const routeTree = rootRoute.addChildren([indexRoute, knowledgeRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, knowledgeRoute, knowledgeReviewRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
 
 export const router = createRouter({ routeTree });
 

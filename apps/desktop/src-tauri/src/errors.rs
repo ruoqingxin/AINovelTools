@@ -116,6 +116,27 @@ impl From<novel_infrastructure::SearchStoreError> for ApiError {
     }
 }
 
+impl From<novel_infrastructure::KnowledgeStoreError> for ApiError {
+    fn from(error: novel_infrastructure::KnowledgeStoreError) -> Self {
+        let code = match error {
+            novel_infrastructure::KnowledgeStoreError::NoProject => "NO_PROJECT_OPEN",
+            novel_infrastructure::KnowledgeStoreError::MissingCandidate(_)
+            | novel_infrastructure::KnowledgeStoreError::MissingAnchor(_)
+            | novel_infrastructure::KnowledgeStoreError::MissingSourceRevision(_) => "NOT_FOUND",
+            novel_infrastructure::KnowledgeStoreError::Conflict => "VERSION_CONFLICT",
+            novel_infrastructure::KnowledgeStoreError::HighRiskConflict => "KNOWLEDGE_CONFLICT",
+            novel_infrastructure::KnowledgeStoreError::EmptyCandidates
+            | novel_infrastructure::KnowledgeStoreError::Contract(_) => "INVALID_INPUT",
+            novel_infrastructure::KnowledgeStoreError::Sqlite(_)
+            | novel_infrastructure::KnowledgeStoreError::Database(_) => "DATABASE_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
 impl From<novel_infrastructure::AiError> for ApiError {
     fn from(error: novel_infrastructure::AiError) -> Self {
         Self {

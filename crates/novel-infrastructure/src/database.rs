@@ -487,6 +487,17 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (19, 'r5_change_sets_audit_outbox');",
             )?;
         }
+        if applied.unwrap_or(0) < 20 {
+            self.connection.execute_batch(
+                "DROP INDEX IF EXISTS idx_facts_current_version;
+                CREATE TABLE IF NOT EXISTS fact_current_versions (
+                    knowledge_id TEXT PRIMARY KEY NOT NULL,
+                    knowledge_version INTEGER NOT NULL,
+                    UNIQUE(knowledge_id, knowledge_version)
+                );
+                INSERT INTO schema_migrations (version, name) VALUES (20, 'r5_fact_current_pointer');",
+            )?;
+        }
         Ok(())
     }
 

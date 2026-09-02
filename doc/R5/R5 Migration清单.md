@@ -8,8 +8,9 @@
 | 17 | `r5_evidence_anchors` | 章节/修订/block/字符范围/来源版本锚点 | 16 |
 | 18 | `r5_facts` | Fact 正式版本、生命周期和当前版本指针 | 17 |
 | 19 | `r5_change_sets_audit_outbox` | 单章节 ChangeSet、ChangeItem、审核决定、审计和 Outbox | 18 |
+| 20 | `r5_fact_current_pointer` | Fact 当前版本指针，不破坏历史版本追加 | 18 |
 
-R4 版本 15 已补齐为可靠性契约的 schema ledger 收尾标记；R5 从 16 开始。每个迁移必须支持空库、已有项目和失败回滚演练。
+R4 版本 15 已补齐为可靠性契约的 schema ledger 收尾标记；R5 从 16 开始，当前 R5 schema version 为 20。每个迁移必须支持空库、已有项目和失败回滚演练。
 
 ## 统一字段
 
