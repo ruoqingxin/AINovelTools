@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpen, Check, Plus, RotateCcw } from "lucide-react";
+import { Archive, BookOpen, Check, FileText, ListTree, Plus, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -105,7 +105,22 @@ export function ProjectWorkspaceView() {
     }
   }
 
+  async function createStarterNode(starterKind: PlanNodeKind, starterTitle: string) {
+    setError(null);
+    try {
+      const node = await createPlanNode({ kind: starterKind, title: starterTitle });
+      setSelectedId(node.id);
+      setEditTitle(node.title);
+      setMoveParentId("");
+      await client.invalidateQueries({ queryKey: ["plan-nodes"] });
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
   const selected = nodes.data?.find((node) => node.id === selectedId) ?? null;
+  const hasPlanNodes = Boolean(nodes.data?.length);
+  const showPlanningStart = !nodes.isPending && !nodes.isError && !hasPlanNodes;
   const manuscript = useQuery({
     queryKey: ["manuscript", selected?.id],
     queryFn: () => currentManuscript(selected!.id),
@@ -249,25 +264,45 @@ export function ProjectWorkspaceView() {
         <p className="workspace-lede">左侧管理故事结构，右侧专注当前节点。规划、正文、AI 和修订彼此分开，工作状态保持连续。</p>
       </div>
 
-      <div className="plan-create-row">
-        <select value={kind} onChange={(event) => setKind(event.target.value as PlanNodeKind)} aria-label="节点类型">
-          {Object.entries(kindLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>
-        <select value={parentId} onChange={(event) => setParentId(event.target.value)} aria-label="父节点">
-          <option value="">作为顶层节点</option>
-          {(nodes.data ?? []).filter((node) => !node.archived).map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}
-        </select>
-        <input value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void addNode(); }} placeholder="例如：第一卷·启程" aria-label="节点标题" />
-        <button type="button" className="primary-action" onClick={() => void addNode()} disabled={!title.trim()}><Plus size={16} />新建节点</button>
-      </div>
+      {nodes.isPending ? <p className="plan-loading">正在加载规划…</p> : null}
+      {hasPlanNodes ? (
+        <div className="plan-create-row">
+          <select value={kind} onChange={(event) => setKind(event.target.value as PlanNodeKind)} aria-label="节点类型">
+            {Object.entries(kindLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <select value={parentId} onChange={(event) => setParentId(event.target.value)} aria-label="父节点">
+            <option value="">作为顶层节点</option>
+            {(nodes.data ?? []).filter((node) => !node.archived).map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}
+          </select>
+          <input value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void addNode(); }} placeholder="例如：第一卷·启程" aria-label="节点标题" />
+          <button type="button" className="primary-action" onClick={() => void addNode()} disabled={!title.trim()}><Plus size={16} />新建节点</button>
+        </div>
+      ) : null}
+      {showPlanningStart ? (
+        <div className="planning-start" aria-label="创建首个规划">
+          <div className="planning-start-heading">
+            <p className="eyebrow">第一步</p>
+            <h2>创建第一项规划</h2>
+          </div>
+          <div className="planning-start-actions">
+            <button type="button" onClick={() => void createStarterNode("WORK_DESIGN", "作品设定")}>
+              <BookOpen size={20} /><strong>作品设定</strong><span>人物、世界观与写作规则</span>
+            </button>
+            <button type="button" onClick={() => void createStarterNode("OUTLINE", "故事大纲")}>
+              <ListTree size={20} /><strong>故事大纲</strong><span>主线、冲突与关键转折</span>
+            </button>
+            <button type="button" onClick={() => void createStarterNode("CHAPTER", "第一章")}>
+              <FileText size={20} /><strong>直接写第一章</strong><span>创建章节并开始正文</span>
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {nodes.isError ? <p className="project-error" role="alert">无法加载规划：{String(nodes.error)}</p> : null}
       {error ? <p className="project-error" role="alert">{error}</p> : null}
 
-      <div className="plan-layout">
+      {hasPlanNodes ? <div className="plan-layout">
       <div className="plan-tree" aria-label="规划树">
         <div className="section-heading"><h2>规划树</h2><span>{nodes.data?.length ?? 0} 个节点</span></div>
-        {nodes.isPending ? <p className="plan-empty">正在加载规划…</p> : null}
-        {nodes.isError ? <p className="project-error" role="alert">无法加载规划：{String(nodes.error)}</p> : null}
-        {nodes.data?.length === 0 ? <div className="plan-empty"><BookOpen size={20} /><p>还没有规划节点，从上方创建第一章吧。</p></div> : null}
         {nodes.data && nodes.data.length > 0 ? renderTree(null) : null}
       </div>
 
@@ -316,7 +351,7 @@ export function ProjectWorkspaceView() {
           {chapterTab === "recovery" ? <div className="chapter-tab-panel" id="chapter-panel-recovery" role="tabpanel" aria-labelledby="chapter-tab-recovery">{recovery.data?.length ? <div className="recovery-banner"><span>发现 {recovery.data.length} 条可恢复草稿</span><button type="button" className="secondary-action" onClick={() => void recoverLatest()}>恢复最近草稿</button></div> : <div className="plan-empty">当前没有可恢复的草稿。</div>}</div> : null}
         </div> : null}
       </aside> : <div className="plan-inspector plan-inspector-empty"><BookOpen size={24} /><h2>选择一个规划节点</h2><p>从左侧选择章节开始编辑正文，或选择其他节点查看详情。</p></div>}
-      </div>
+      </div> : null}
     </section>
   );
 }

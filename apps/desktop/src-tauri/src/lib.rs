@@ -44,7 +44,9 @@ use commands::materials::{
 use commands::planning::{
     create_plan_node, list_plan_nodes, move_plan_node, update_plan_node, update_plan_node_checked,
 };
-use commands::project::{close_project, create_project, current_project, open_project};
+use commands::project::{
+    close_project, create_project, current_project, list_recent_projects, open_project,
+};
 use commands::search::{rebuild_search_index, search_project};
 use errors::ApiError;
 use state::ProjectState;
@@ -58,10 +60,13 @@ pub fn run() {
     let settings_database = settings_database_path();
     let model_profiles = novel_infrastructure::ModelProfileStore::open(settings_database)
         .expect("application model settings database must initialize");
+    let mut project_manager =
+        novel_infrastructure::ProjectManager::new_with_recent_projects(recent_projects_path());
+    let _ = project_manager.restore_last_project();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(ProjectState {
-            manager: Mutex::new(novel_infrastructure::ProjectManager::new()),
+            manager: Mutex::new(project_manager),
             model_profiles: Mutex::new(model_profiles),
             gateway: novel_infrastructure::ModelGateway::default(),
             embedding_gateway: novel_infrastructure::EmbeddingGateway::default(),
@@ -98,6 +103,7 @@ pub fn run() {
             open_project,
             close_project,
             current_project,
+            list_recent_projects,
             list_plan_nodes,
             create_plan_node,
             update_plan_node,
@@ -172,6 +178,14 @@ fn settings_database_path() -> PathBuf {
         .map_or_else(std::env::temp_dir, PathBuf::from)
         .join("AINovelTools")
         .join("settings.sqlite")
+}
+
+fn recent_projects_path() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .or_else(|| std::env::var_os("APPDATA"))
+        .map_or_else(std::env::temp_dir, PathBuf::from)
+        .join("AINovelTools")
+        .join("recent-projects.json")
 }
 
 #[cfg(test)]

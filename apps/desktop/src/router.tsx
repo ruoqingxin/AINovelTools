@@ -17,6 +17,10 @@ import { useQuery } from "@tanstack/react-query";
 import { getCurrentProject } from "./lib/tauri-client";
 
 function ProjectEntryView() {
+  return <EmptyProjectView />;
+}
+
+function PlanningEntryView() {
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
   return project.data ? <ProjectWorkspaceView /> : <EmptyProjectView />;
@@ -33,6 +37,12 @@ const indexRoute = createRoute({
   component: ProjectEntryView,
 });
 
+const planningRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/planning",
+  component: PlanningEntryView,
+});
+
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/knowledge",
@@ -45,7 +55,7 @@ const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/searc
 const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: JobsView });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsView });
 
-const routeTree = rootRoute.addChildren([indexRoute, knowledgeRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, planningRoute, knowledgeRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
 
 export const router = createRouter({ routeTree });
 

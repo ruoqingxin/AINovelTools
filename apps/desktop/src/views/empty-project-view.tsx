@@ -1,12 +1,16 @@
-import { FilePlus2, FolderOpen } from "lucide-react";
+import { FilePlus2, FolderOpen, ListTree } from "lucide-react";
 import { save, open } from "@tauri-apps/plugin-dialog";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import {
   createProject,
   errorMessage,
+  getCurrentProject,
   invalidateProjectQueries,
+  listRecentProjects,
   openProject,
+  type RecentProject,
 } from "../lib/tauri-client";
 
 function projectNameFromPath(path: string) {
@@ -14,10 +18,27 @@ function projectNameFromPath(path: string) {
   return normalized.split(/[\\/]/).pop() || "未命名工程";
 }
 
+function lastOpenedLabel(timestamp: string) {
+  const seconds = Number(timestamp);
+  if (!Number.isFinite(seconds)) return "最近打开";
+  return new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(seconds * 1000));
+}
+
 export function EmptyProjectView() {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<"create" | "open" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const recentProjects = useQuery({
+    queryKey: ["recent-projects"],
+    queryFn: listRecentProjects,
+  });
+  const currentProject = useQuery({
+    queryKey: ["current-project"],
+    queryFn: getCurrentProject,
+  });
 
   async function handleCreate() {
     setBusy("create");
@@ -56,6 +77,19 @@ export function EmptyProjectView() {
     }
   }
 
+  async function handleOpenRecent(project: RecentProject) {
+    setBusy("open");
+    setError(null);
+    try {
+      await openProject(project.root);
+      await invalidateProjectQueries(queryClient);
+    } catch (cause) {
+      setError(`无法打开“${project.name}”：${errorMessage(cause)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <section className="empty-project-view">
       <div className="workspace-heading">
@@ -76,17 +110,53 @@ export function EmptyProjectView() {
 
       {error ? <p className="project-error" role="alert">{error}</p> : null}
 
+      {currentProject.data ? (
+        <div className="current-project-panel">
+          <div className="current-project-icon" aria-hidden="true"><FolderOpen size={20} strokeWidth={1.6} /></div>
+          <div>
+            <span>当前工程</span>
+            <strong>{currentProject.data.name}</strong>
+          </div>
+          <Link to="/planning" className="secondary-action current-project-open">
+            <ListTree size={15} />进入规划
+          </Link>
+        </div>
+      ) : null}
+
       <div className="recent-projects">
         <div className="section-heading">
           <h2>最近使用</h2>
-          <span>0 个工程</span>
+          <span>{recentProjects.data?.length ?? 0} 个工程</span>
         </div>
-        <div className="empty-list">
-          <div className="empty-list-icon" aria-hidden="true">
-            <FolderOpen size={21} strokeWidth={1.5} />
+        {recentProjects.data?.length ? (
+          <div className="recent-project-list">
+            {recentProjects.data.map((project) => (
+              <button
+                key={project.root}
+                type="button"
+                className="recent-project-row"
+                disabled={busy !== null}
+                onClick={() => void handleOpenRecent(project)}
+              >
+                <FolderOpen size={18} strokeWidth={1.6} />
+                <span className="recent-project-copy">
+                  <strong>{project.name}</strong>
+                  <span title={project.root}>{project.root}</span>
+                </span>
+                <time dateTime={project.lastOpenedAt}>
+                  {lastOpenedLabel(project.lastOpenedAt)}
+                </time>
+              </button>
+            ))}
           </div>
-          <p>最近打开的工程会显示在这里</p>
-        </div>
+        ) : (
+          <div className="empty-list">
+            <div className="empty-list-icon" aria-hidden="true">
+              <FolderOpen size={21} strokeWidth={1.5} />
+            </div>
+            <p>{recentProjects.isPending ? "正在加载最近工程…" : "最近打开的工程会显示在这里"}</p>
+          </div>
+        )}
       </div>
     </section>
   );

@@ -426,6 +426,14 @@ pub struct ProjectSession {
     pub database: Database,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentProject {
+    pub root: PathBuf,
+    pub name: String,
+    pub last_opened_at: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PlanNodeKind {
@@ -557,6 +565,7 @@ pub enum ManuscriptError {
 
 pub struct ProjectManager {
     current: Option<ProjectSession>,
+    recent_projects_path: Option<PathBuf>,
 }
 
 fn job_type_str(value: JobType) -> &'static str {
@@ -1233,7 +1242,19 @@ impl ProjectManager {
     /// Creates a manager without an opened project.
     #[must_use]
     pub const fn new() -> Self {
-        Self { current: None }
+        Self {
+            current: None,
+            recent_projects_path: None,
+        }
+    }
+
+    /// Creates a manager that persists recently opened projects at the given path.
+    #[must_use]
+    pub fn new_with_recent_projects(path: impl Into<PathBuf>) -> Self {
+        Self {
+            current: None,
+            recent_projects_path: Some(path.into()),
+        }
     }
 
     /// Creates a project using a temporary directory and atomically completes it.
@@ -1294,6 +1315,7 @@ impl ProjectManager {
                 database,
             };
             self.current = Some(session);
+            self.record_recent_project(&root, &manifest)?;
             Ok(manifest)
         })();
         if result.is_err() {
@@ -1318,11 +1340,12 @@ impl ProjectManager {
         let database = Database::open(root.join("project.sqlite"))?;
         let result = manifest.clone();
         self.current = Some(ProjectSession {
-            root,
+            root: root.clone(),
             manifest,
             database,
         });
         self.recover_unfinished_jobs()?;
+        self.record_recent_project(&root, &result)?;
         Ok(result)
     }
 
@@ -1335,6 +1358,62 @@ impl ProjectManager {
     #[must_use]
     pub fn current(&self) -> Option<&ProjectManifest> {
         self.current.as_ref().map(|session| &session.manifest)
+    }
+
+    /// Lists recently created or opened projects, newest first.
+    pub fn recent_projects(&self) -> Result<Vec<RecentProject>, ProjectError> {
+        let Some(path) = self.recent_projects_path.as_ref() else {
+            return Ok(Vec::new());
+        };
+        if !path.is_file() {
+            return Ok(Vec::new());
+        }
+        let content = std::fs::read(path)?;
+        Ok(serde_json::from_slice(&content).unwrap_or_default())
+    }
+
+    /// Opens the most recently used project when it is still available.
+    pub fn restore_last_project(&mut self) -> Result<Option<ProjectManifest>, ProjectError> {
+        let Some(recent) = self.recent_projects()?.into_iter().next() else {
+            return Ok(None);
+        };
+        match self.open(&recent.root) {
+            Ok(manifest) => Ok(Some(manifest)),
+            Err(ProjectError::NotInitialized(_))
+            | Err(ProjectError::Manifest(_))
+            | Err(ProjectError::Database(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn record_recent_project(
+        &self,
+        root: &Path,
+        manifest: &ProjectManifest,
+    ) -> Result<(), ProjectError> {
+        let Some(path) = self.recent_projects_path.as_ref() else {
+            return Ok(());
+        };
+        let mut projects = self.recent_projects()?;
+        projects.retain(|project| project.root != root);
+        projects.insert(
+            0,
+            RecentProject {
+                root: root.to_path_buf(),
+                name: manifest.name.clone(),
+                last_opened_at: now_timestamp(),
+            },
+        );
+        projects.truncate(10);
+
+        let parent = path
+            .parent()
+            .ok_or_else(|| ProjectError::InvalidPath(path.clone()))?;
+        std::fs::create_dir_all(parent)?;
+        let temporary = path.with_extension("tmp");
+        std::fs::write(&temporary, serde_json::to_vec_pretty(&projects)?)?;
+        std::fs::rename(temporary, path)?;
+        Ok(())
     }
 
     /// Returns health for the current project database.
@@ -1874,6 +1953,37 @@ mod tests {
         let reopened = manager.open(&root).expect("reopen project");
         assert_eq!(reopened, manifest);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recent_project_is_persisted_and_restored_on_startup() {
+        let test_root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-recent-project-{}", uuid::Uuid::new_v4()));
+        let project_root = test_root.join("project");
+        let recent_path = test_root.join("app").join("recent-projects.json");
+
+        let manifest = {
+            let mut manager = super::ProjectManager::new_with_recent_projects(&recent_path);
+            manager
+                .create(&project_root, "最近工程")
+                .expect("create project")
+        };
+
+        let mut restarted = super::ProjectManager::new_with_recent_projects(&recent_path);
+        assert_eq!(
+            restarted.restore_last_project().expect("restore project"),
+            Some(manifest)
+        );
+        assert_eq!(
+            restarted
+                .recent_projects()
+                .expect("recent projects")
+                .first()
+                .map(|project| project.root.as_path()),
+            Some(project_root.as_path())
+        );
+
+        let _ = std::fs::remove_dir_all(test_root);
     }
 
     #[test]

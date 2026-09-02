@@ -68,3 +68,14 @@ pub(crate) fn current_project(
         .map_err(|_| "project mutex poisoned".to_owned())?;
     Ok(manager.current().cloned())
 }
+
+#[tauri::command]
+pub(crate) fn list_recent_projects(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Vec<novel_infrastructure::RecentProject>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.recent_projects().map_err(ApiError::from)
+}

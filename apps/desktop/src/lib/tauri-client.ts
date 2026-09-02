@@ -27,6 +27,12 @@ export type ProjectManifest = {
   createdAt: string;
 };
 
+export type RecentProject = {
+  root: string;
+  name: string;
+  lastOpenedAt: string;
+};
+
 export type PlanNodeKind = "WORK_DESIGN" | "OUTLINE" | "VOLUME" | "CHAPTER" | "SCENE";
 
 export type PlanNode = {
@@ -229,6 +235,10 @@ export function getCurrentProject() {
   return invoke<ProjectManifest | null>("current_project");
 }
 
+export function listRecentProjects() {
+  return invoke<RecentProject[]>("list_recent_projects");
+}
+
 export function createProject(root: string, name: string) {
   return invoke<ProjectManifest>("create_project", { root, name });
 }
@@ -355,6 +365,7 @@ export function decideAiProposal(input: { id: string; status: Exclude<AiProposal
 export function invalidateProjectQueries(queryClient: { invalidateQueries: (options: { queryKey: string[] }) => Promise<unknown> }) {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: ["current-project"] }),
+    queryClient.invalidateQueries({ queryKey: ["recent-projects"] }),
     queryClient.invalidateQueries({ queryKey: ["health"] }),
   ]);
 }

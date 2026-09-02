@@ -16,7 +16,7 @@ import { getBootstrapStatus, getCurrentProject, getHealth, listAllRecoveryLogs }
 
 const navigation = [
   { label: "项目", icon: LibraryBig, path: "/" as const },
-  { label: "规划", icon: ListTree },
+  { label: "规划", icon: ListTree, path: "/planning" as const },
   { label: "正文", icon: BookOpenText },
   { label: "知识", icon: FileSearch, path: "/knowledge" as const },
   { label: "AI", icon: Bot },
@@ -54,7 +54,13 @@ export function AppShell() {
         </div>
         <nav className="top-nav" aria-label="工作区导航">
           {navigation.map(({ label, icon: Icon, path }) => path ? (
-            <Link key={label} to={path} className="top-nav-button top-nav-link" activeProps={{ "data-active": true }}>
+            <Link
+              key={label}
+              to={path}
+              className="top-nav-button top-nav-link"
+              activeOptions={{ exact: true }}
+              activeProps={{ "data-active": true }}
+            >
               <Icon size={15} strokeWidth={1.8} />{label}
             </Link>
           ) : (
@@ -73,7 +79,15 @@ export function AppShell() {
       <aside className="activity-bar" aria-label="主要导航">
         <nav>
           {navigation.map(({ label, icon: Icon, path }) => path ? (
-            <Link key={label} to={path} className="activity-button" activeProps={{ "data-active": true }} aria-label={label} title={label}>
+            <Link
+              key={label}
+              to={path}
+              className="activity-button"
+              activeOptions={{ exact: true }}
+              activeProps={{ "data-active": true }}
+              aria-label={label}
+              title={label}
+            >
               <Icon size={19} strokeWidth={1.8} />
             </Link>
           ) : (
