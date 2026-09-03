@@ -76,9 +76,16 @@ export function StoryPlanningWorkbench(props: {
 
   return (
     <section className="story-planning-workbench" aria-label="作品设定工作台">
-      <div className="section-heading"><h2>作品设定工作台</h2><span>{completedCount} / {sections.length} 已完成</span></div>
+      <div className="story-planning-titlebar">
+        <div>
+          <p className="eyebrow">作品设定</p>
+          <h2>把故事的基础设定整理清楚</h2>
+        </div>
+        <span className="story-planning-progress">{completedCount} / {sections.length} 已完成</span>
+      </div>
       <div className="story-planning-layout">
         <nav className="story-planning-sections" aria-label="设定模块">
+          <div className="story-planning-sections-heading"><strong>设定目录</strong><span>逐项完善</span></div>
           {sections.map((section) => {
             const completed = Boolean(storedSections.data?.find((item) => item.id === section.id)?.content.trim());
             return (
@@ -88,20 +95,27 @@ export function StoryPlanningWorkbench(props: {
                 data-active={selectedId === section.id || undefined}
                 onClick={() => setSelectedId(section.id)}
               >
-                <strong>{section.label}</strong>
-                <span>{completed ? "已完成" : section.prompt}</span>
+                <span className="story-planning-section-index">{String(sections.findIndex((item) => item.id === section.id) + 1).padStart(2, "0")}</span>
+                <span className="story-planning-section-copy"><strong>{section.label}</strong><small>{section.prompt}</small></span>
+                <span className="story-planning-section-status" data-complete={completed || undefined}>{completed ? "完成" : "待填写"}</span>
               </button>
             );
           })}
         </nav>
         <div className="story-planning-editor">
           <div className="story-planning-editor-heading">
-            <div><h3>{selectedDefinition.label}</h3><p>{selectedDefinition.prompt}</p></div>
+            <div><span className="story-planning-current-label">当前设定</span><h3>{selectedDefinition.label}</h3><p>{selectedDefinition.prompt}</p></div>
           </div>
-          <label>设定内容<textarea rows={6} value={form.content} onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))} placeholder="写下当前确认的设定" /></label>
-          <label>形成原因<textarea rows={3} value={form.rationale} onChange={(event) => setForm((current) => ({ ...current, rationale: event.target.value }))} placeholder="它为什么会形成？" /></label>
-          <label>产生结果<textarea rows={3} value={form.consequence} onChange={(event) => setForm((current) => ({ ...current, consequence: event.target.value }))} placeholder="它会造成什么结果？" /></label>
-          <label>来源引用<textarea rows={3} value={referencesText} onChange={(event) => setReferencesText(event.target.value)} placeholder="每行一条来源版本、资料摘录或证据标记" /></label>
+          <div className="story-planning-primary-field">
+            <label><span>设定内容</span><small>先写下已经确认的事实、规则或方向</small><textarea rows={7} value={form.content} onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))} placeholder="写下当前确认的设定" /></label>
+          </div>
+          <div className="story-planning-secondary-fields">
+            <label><span>形成原因</span><small>为什么会形成这样的设定？</small><textarea rows={5} value={form.rationale} onChange={(event) => setForm((current) => ({ ...current, rationale: event.target.value }))} placeholder="它为什么会形成？" /></label>
+            <label><span>产生结果</span><small>它会如何影响人物或后续情节？</small><textarea rows={5} value={form.consequence} onChange={(event) => setForm((current) => ({ ...current, consequence: event.target.value }))} placeholder="它会造成什么结果？" /></label>
+          </div>
+          <div className="story-planning-reference-field">
+            <label><span>来源引用</span><small>每行一条来源版本、资料摘录或证据标记</small><textarea rows={4} value={referencesText} onChange={(event) => setReferencesText(event.target.value)} placeholder="例如：资料卡片 · 时代背景摘录" /></label>
+          </div>
           <div className="story-planning-actions">
             <button type="button" className="primary-action" onClick={() => void save()} disabled={saving}><Save size={15} />{saving ? "保存中…" : "保存设定"}</button>
             {notice ? <span className="project-notice">{notice}</span> : null}
@@ -110,6 +124,7 @@ export function StoryPlanningWorkbench(props: {
         </div>
       </div>
       <div className="story-planning-next">
+        <div className="story-planning-next-heading"><strong>下一步</strong><span>设定完成后继续推进创作</span></div>
         <div><UsersRound size={16} /><span>人物、地点和势力等具体对象在知识库中维护。</span><Link to="/knowledge">进入知识库</Link></div>
         <div><ListTree size={16} /><span>设定确定后，用故事大纲拆分分卷、章节与场景。</span><button type="button" onClick={props.onCreateOutline}>建立故事大纲</button></div>
         <div><Bot size={16} /><span>AI 只生成候选；先配置模型，再在章节中续写、改写或总结。</span><Link to="/settings">配置模型</Link></div>

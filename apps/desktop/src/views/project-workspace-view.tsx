@@ -393,14 +393,15 @@ export function ProjectWorkspaceView() {
       </div>
 
       {selected ? <aside className="plan-inspector" aria-label="节点详情">
-        <div className="section-heading"><h2>节点详情</h2><span>修订 {selected.revision}</span></div>
-        <p className="inspector-kind">{kindLabels[selected.kind]}</p>
-        <input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} aria-label="编辑节点标题" />
-        <div className="inspector-actions">
-          <button type="button" className="primary-action" onClick={() => void saveSelected()} disabled={!editTitle.trim()}><Check size={15} />保存标题</button>
-          {selected.archived ? <button type="button" className="secondary-action" onClick={() => void toggleArchived(selected)}><ArchiveRestore size={15} />恢复节点</button> : <button type="button" className="secondary-action destructive-action" onClick={() => void deleteSelected()}><Trash2 size={15} />删除节点</button>}
+        <div className="plan-inspector-heading"><div><span>当前节点</span><h2>{kindLabels[selected.kind]}</h2><p>修订 {selected.revision}</p></div><span className="inspector-node-id">{selected.title}</span></div>
+        <div className="inspector-node-settings">
+          <label>节点名称<input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} aria-label="编辑节点标题" /></label>
+          <div className="inspector-actions">
+            <button type="button" className="primary-action" onClick={() => void saveSelected()} disabled={!editTitle.trim()}><Check size={15} />保存名称</button>
+            {selected.archived ? <button type="button" className="secondary-action" onClick={() => void toggleArchived(selected)}><ArchiveRestore size={15} />恢复节点</button> : <button type="button" className="secondary-action destructive-action" onClick={() => void deleteSelected()}><Trash2 size={15} />删除节点</button>}
+          </div>
+          <div className="inspector-move-row"><label>调整归属<select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="" disabled={!canMoveToRoot}>{canMoveToRoot ? "移动到顶层" : "选择合法父节点"}</option>{moveCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select></label><button type="button" className="secondary-action" onClick={() => void moveSelected()} disabled={!canMoveToRoot && !moveParentId}>移动节点</button></div>
         </div>
-        <div className="inspector-actions"><select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="" disabled={!canMoveToRoot}>{canMoveToRoot ? "移动到顶层" : "选择合法父节点"}</option>{moveCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select><button type="button" className="secondary-action" onClick={() => void moveSelected()} disabled={!canMoveToRoot && !moveParentId}>移动节点</button></div>
         {selected.kind === "WORK_DESIGN" ? <StoryPlanningWorkbench onCreateOutline={() => void createStarterNode("OUTLINE", "故事大纲")} onCreateChapter={() => void createStarterNode("CHAPTER", "第一章")} /> : null}
         {selected.kind === "CHAPTER" ? <div className="chapter-editor">
           <div className="section-heading"><h2>章节工作区</h2><span>{manuscript.data ? "已有修订" : "尚未保存"}</span></div>
