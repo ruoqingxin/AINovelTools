@@ -174,6 +174,7 @@ export type Job = {
 export type HealthScanReport = { status: "HEALTHY" | "WARNING" | "ERROR"; schemaVersion: number; sqliteIntegrity: string; ftsRows: number; warnings: string[]; errors: string[] };
 export type StartupRecoveryReport = { crashMarkerPresent: boolean; recoveryLogCount: number; unfinishedJobCount: number; walPresent: boolean; tempFileCount: number; migrationInterrupted: boolean; actions: string[] };
 export type ModelConnectionResponse = { capability: ModelCapability; provider: ModelProvider; modelId: string; detail: string };
+export type ExtractedEntity = { name: string; description: string; aliases: string[]; tags: string[] };
 
 export function getBootstrapStatus() {
   return invoke<BootstrapStatus>("bootstrap_status");
@@ -348,6 +349,10 @@ export function testModelProfile(profileId: string) {
   return invoke<ModelConnectionResponse>("test_model_profile", { profileId });
 }
 
+export function extractEntitiesFromText(profileId: string, entityType: EntityType, entityName: string, briefSummary: string, applicabilityScope: string, sourceText: string) {
+  return invoke<ExtractedEntity[]>("extract_entities_from_text", { profileId, entityType, entityName, briefSummary, applicabilityScope, sourceText });
+}
+
 export function listAiProposals(chapterId: string) {
   return invoke<AiProposal[]>("list_ai_proposals", { chapterId });
 }
@@ -380,9 +385,15 @@ export function decideAiProposal(input: { id: string; status: Exclude<AiProposal
 }
 
 export function invalidateProjectQueries(queryClient: { invalidateQueries: (options: { queryKey: string[] }) => Promise<unknown> }) {
+  const projectKeys = [
+    ["current-project"], ["health"], ["entities"], ["entity-revisions"], ["summary-materials"],
+    ["writing-cards"], ["plan-nodes"], ["planning-sections"], ["current-facts"], ["evidence-anchors"],
+    ["relations"], ["events"], ["beliefs"], ["foreshadowings"], ["knowledge-candidates"],
+    ["knowledge-conflicts"], ["project-search"], ["jobs"], ["recovery-all"], ["manuscript"],
+    ["manuscript-history"], ["recovery-logs"], ["ai-proposals"],
+  ];
   return Promise.all([
-    queryClient.invalidateQueries({ queryKey: ["current-project"] }),
+    ...projectKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
     queryClient.invalidateQueries({ queryKey: ["recent-projects"] }),
-    queryClient.invalidateQueries({ queryKey: ["health"] }),
   ]);
 }

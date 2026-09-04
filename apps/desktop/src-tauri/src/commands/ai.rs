@@ -5,6 +5,52 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use tauri::Emitter;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExtractedEntity {
+    pub name: String,
+    pub description: String,
+    pub aliases: Vec<String>,
+    pub tags: Vec<String>,
+}
+
+#[tauri::command]
+pub(crate) async fn extract_entities_from_text(
+    state: tauri::State<'_, ProjectState>,
+    profile_id: uuid::Uuid,
+    entity_type: novel_infrastructure::EntityType,
+    entity_name: String,
+    brief_summary: String,
+    applicability_scope: String,
+    source_text: String,
+) -> Result<Vec<ExtractedEntity>, ApiError> {
+    let profile = {
+        let store = state.model_profiles.lock().map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+        store.get(profile_id).map_err(ApiError::from)?
+    };
+    if profile.capability != novel_infrastructure::ModelCapability::Chat {
+        return Err(ApiError { code: "INVALID_INPUT", message: "请选择聊天模型配置".to_owned() });
+    }
+    if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
+        return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
+    }
+    let secret = profile.secret_ref.as_deref().ok_or(novel_infrastructure::AiError::MissingSecret).map_err(ApiError::from)?;
+    let secret = novel_infrastructure::SecretStore::get(secret).map_err(ApiError::from)?;
+    if entity_name.trim().is_empty() || brief_summary.trim().is_empty() || applicability_scope.trim().is_empty() || source_text.trim().is_empty() {
+        return Err(ApiError { code: "INVALID_INPUT", message: "类型、名称、简要概述、适用范围和文件内容都不能为空".to_owned() });
+    }
+    let topic = format!("{entity_type:?}");
+    let mut context = novel_application::ContextPackage::connection_test();
+    context.system_prompt = "你是小说知识整理助手。只根据用户提供的文件提炼信息，不得补写文件外事实。".to_owned();
+    context.user_prompt = format!("请围绕以下四项定义，从文件中提炼与主题相关的事实和结构化信息。主题类型：{topic}；主题名称：{entity_name}；简要概述：{brief_summary}；适用范围：{applicability_scope}。只提炼文件中有依据的内容，不要扩写。输出严格 JSON 数组，每项包含 name、description、aliases(字符串数组)、tags(字符串数组)，不要 Markdown，不要解释。\n\n文件内容：\n{source_text}");
+    context.estimated_input_tokens = (source_text.len() as u32 / 4).min(profile.context_window.saturating_sub(profile.max_output_tokens));
+    let output = state.gateway.generate(&profile, Some(&secret), &context, false, true, Arc::new(AtomicBool::new(false)), |_| {}).await.map_err(ApiError::from)?;
+    let cleaned = output.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+    let json = cleaned.find('[').and_then(|start| cleaned.rfind(']').map(|end| &cleaned[start..=end])).unwrap_or(cleaned);
+    serde_json::from_str(json).map_err(|_| ApiError { code: "INVALID_RESPONSE", message: "AI 返回的提炼结果不是有效 JSON，请重试".to_owned() })
+}
 
 fn sync_model_profile(
     manager: &mut novel_infrastructure::ProjectManager,

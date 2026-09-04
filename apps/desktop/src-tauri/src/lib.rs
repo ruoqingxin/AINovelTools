@@ -12,7 +12,7 @@ mod state;
 
 use commands::ai::{
     assemble_context_with_project_knowledge, cancel_ai_task, decide_ai_proposal,
-    delete_model_secret, generate_ai_proposal, list_ai_proposals, list_model_profiles,
+    delete_model_secret, extract_entities_from_text, generate_ai_proposal, list_ai_proposals, list_model_profiles,
     save_model_secret, test_model_profile, upsert_model_profile,
 };
 use commands::core::{bootstrap_status, feature_catalog, health_query};
@@ -129,6 +129,7 @@ pub fn run() {
             list_ai_proposals,
             decide_ai_proposal,
             generate_ai_proposal,
+            extract_entities_from_text,
             cancel_ai_task,
             assemble_context_with_project_knowledge,
             list_summary_materials,

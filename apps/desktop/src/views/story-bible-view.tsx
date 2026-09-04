@@ -1,10 +1,12 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, Plus, RotateCcw, Save, Search } from "lucide-react";
+import { Archive, Check, FileUp, Plus, RotateCcw, Save, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   errorMessage,
+  extractEntitiesFromText,
   listEntities,
   listEntityRevisions,
+  listModelProfiles,
   setEntityArchived,
   upsertEntity,
   type Entity,
@@ -54,11 +56,18 @@ export function StoryBibleView() {
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "ARCHIVED">("ACTIVE");
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<EntityInput>(emptyForm);
-  const [aliasesText, setAliasesText] = useState("");
-  const [tagsText, setTagsText] = useState("");
+  const [summaryText, setSummaryText] = useState("");
+  const [scopeText, setScopeText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<"save" | "archive" | null>(null);
+  const [importFileName, setImportFileName] = useState("");
+  const [importItems, setImportItems] = useState<Array<{ name: string; description: string; aliases: string[]; tags: string[] }>>([]);
+  const [importSourceText, setImportSourceText] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const modelProfiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
+  const chatProfiles = (modelProfiles.data ?? []).filter((profile) => profile.capability === "CHAT" && profile.hasSecret);
+  const [importProfileId, setImportProfileId] = useState("");
   const selected = entities.data?.find((entity) => entity.id === selectedId) ?? null;
   const revisions = useQuery({
     queryKey: ["entity-revisions", selectedId],
@@ -93,15 +102,15 @@ export function StoryBibleView() {
       sourceVersion: revision.sourceVersion ?? undefined,
       expectedVersion: selected.version,
     });
-    setAliasesText(revision.aliases.join("、"));
-    setTagsText(revision.tags.join("、"));
+    setSummaryText(revision.aliases.join("、"));
+    setScopeText(revision.tags.join("、"));
   }, [revisions.data, selected]);
 
   function startNew() {
     setSelectedId(null);
     setForm(emptyForm);
-    setAliasesText("");
-    setTagsText("");
+    setSummaryText("");
+    setScopeText("");
     setError(null);
     setNotice(null);
   }
@@ -120,8 +129,8 @@ export function StoryBibleView() {
     const input: EntityInput = {
       ...form,
       name: form.name.trim(),
-      aliases: aliasesText.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
-      tags: tagsText.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
+      aliases: summaryText.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
+      tags: scopeText.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
     };
     try {
       const saved = await upsertEntity(input);
@@ -151,6 +160,65 @@ export function StoryBibleView() {
       setError(code === "VERSION_CONFLICT" ? "实体版本已变化，请重新载入后再操作。" : errorMessage(cause));
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function removeEntity() {
+    if (!selected || busy) return;
+    if (!window.confirm(`确定删除“${currentRevisionByEntity.get(selected.id)?.name ?? "此实体"}”吗？删除后可在“全部状态”中恢复。`)) return;
+    setError(null); setNotice(null); setBusy("archive");
+    try {
+      await setEntityArchived({ id: selected.id, archived: true, expectedVersion: selected.version });
+      await client.invalidateQueries({ queryKey: ["entities", true] });
+      setSelectedId(null); setForm(emptyForm); setSummaryText(""); setScopeText("");
+      setNotice("实体已删除（已移入归档，可恢复）");
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setBusy(null); }
+  }
+
+  async function readImportFile(file: File) {
+    setError(null);
+    setNotice(null);
+    try {
+      const text = await file.text();
+      setImportSourceText(text);
+      setImportFileName(file.name);
+      setImportItems([]);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  async function extractImportItems() {
+    if (!importSourceText || importBusy) return;
+    if (!importProfileId) { setError("请先在设置中配置并选择一个聊天模型"); return; }
+    setImportBusy(true); setError(null); setNotice(null);
+    try {
+      if (!form.name.trim() || !summaryText.trim() || !scopeText.trim()) { setError("AI 提炼前必须填写类型、名称、简要概述和适用范围"); return; }
+      const items = await extractEntitiesFromText(importProfileId, form.entityType, form.name.trim(), summaryText.trim(), scopeText.trim(), importSourceText);
+      setImportItems(items.slice(0, 200));
+      if (!items.length) setError("AI 没有提炼出符合主题的信息，请换一个主题或重试。");
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setImportBusy(false); }
+  }
+
+  async function importEntities() {
+    if (!importItems.length || importBusy) return;
+    setImportBusy(true);
+    setError(null);
+    try {
+      for (const item of importItems) {
+        await upsertEntity({ ...emptyForm, entityType: form.entityType, name: item.name, aliases: item.aliases, tags: item.tags, description: item.description, sourceVersion: importFileName });
+      }
+      await client.invalidateQueries({ queryKey: ["entities", true] });
+      setNotice(`已从“${importFileName}”导入 ${importItems.length} 条${typeLabels[form.entityType]}信息`);
+      setImportItems([]);
+      setImportSourceText("");
+      setImportFileName("");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setImportBusy(false);
     }
   }
 
@@ -192,16 +260,26 @@ export function StoryBibleView() {
 
         <div className="story-bible-editor">
           <div className="section-heading"><h2>{selected ? "实体详情" : "新建实体"}</h2>{selected ? <span>版本 {selected.version}</span> : <span>尚未保存</span>}</div>
+          {!selected ? <div className="knowledge-import-panel entity-import-panel">
+            <div className="section-heading"><h2>从文件批量导入</h2><span>主题跟随“类型”</span></div>
+            <div className="story-bible-toolbar import-toolbar">
+              <label>AI 模型<select value={importProfileId} onChange={(event) => setImportProfileId(event.target.value)}><option value="">选择聊天模型</option>{chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.modelId}</option>)}</select></label>
+              <label className="file-picker"><FileUp size={15} />{importFileName || "选择 TXT / Markdown 文件"}<input type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readImportFile(file); }} /></label>
+              <button type="button" className="primary-action" onClick={() => void extractImportItems()} disabled={!importSourceText || !importProfileId || !form.name.trim() || !summaryText.trim() || !scopeText.trim() || importBusy}><FileUp size={15} />{importBusy ? "AI 提炼中…" : "按四项条件提炼"}</button>
+              <button type="button" className="secondary-action" onClick={() => void importEntities()} disabled={!importItems.length || importBusy}>确认写入 {importItems.length || ""}</button>
+            </div>
+            {importItems.length ? <div className="import-preview" aria-label="导入预览"><p className="entity-form-hint">以下是 AI 候选内容，可直接修改；确认后才会进入正式知识库。</p>{importItems.map((item, index) => <div key={`${item.name}-${index}`}><input value={item.name} aria-label={`候选名称 ${index + 1}`} onChange={(event) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, name: event.target.value } : current))} /><textarea value={item.description} aria-label={`候选描述 ${index + 1}`} rows={2} onChange={(event) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, description: event.target.value } : current))} /></div>)}</div> : null}
+          </div> : null}
           <div className="entity-form-grid">
             <label>类型<select value={form.entityType} onChange={(event) => setForm((current) => ({ ...current, entityType: event.target.value as EntityType }))}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>名称<input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：林澈" /></label>
-            <label>别名<input value={aliasesText} onChange={(event) => setAliasesText(event.target.value)} placeholder="用顿号分隔" /></label>
-            <label>标签<input value={tagsText} onChange={(event) => setTagsText(event.target.value)} placeholder="用顿号分隔" /></label>
+            <label>简要概述<input value={summaryText} onChange={(event) => setSummaryText(event.target.value)} placeholder="例如：本书人物的力量体系" /></label>
+            <label>适用范围<input value={scopeText} onChange={(event) => setScopeText(event.target.value)} placeholder="例如：本书所有人物" /></label>
             <label className="entity-form-wide">描述<textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} rows={5} placeholder="记录稳定设定和使用边界" /></label>
             <label className="entity-form-wide">固定属性 JSON<textarea value={form.fixedAttributesJson} onChange={(event) => setForm((current) => ({ ...current, fixedAttributesJson: event.target.value }))} rows={4} spellCheck={false} /></label>
             <label className="entity-form-wide">来源版本<input value={form.sourceVersion ?? ""} onChange={(event) => setForm((current) => ({ ...current, sourceVersion: event.target.value || undefined }))} placeholder="例如：manuscript:2" /></label>
           </div>
-          <div className="inspector-actions"><button type="button" className="primary-action" onClick={() => void save()} disabled={!form.name.trim() || busy !== null}><Save size={15} />{busy === "save" ? "保存中…" : selected ? "保存为新修订" : "创建实体"}</button>{selected ? <button type="button" className="secondary-action" onClick={() => void toggleArchive()} disabled={busy !== null}>{selected.lifecycleStatus === "ACTIVE" ? <Archive size={15} /> : <RotateCcw size={15} />}{busy === "archive" ? "处理中…" : selected.lifecycleStatus === "ACTIVE" ? "归档实体" : "恢复实体"}</button> : null}</div>
+          <div className="inspector-actions"><button type="button" className="primary-action" onClick={() => void save()} disabled={!form.name.trim() || busy !== null}><Save size={15} />{busy === "save" ? "保存中…" : selected ? "保存为新修订" : "创建实体"}</button>{selected ? <><button type="button" className="secondary-action" onClick={() => void toggleArchive()} disabled={busy !== null}>{selected.lifecycleStatus === "ACTIVE" ? <Archive size={15} /> : <RotateCcw size={15} />}{busy === "archive" ? "处理中…" : selected.lifecycleStatus === "ACTIVE" ? "归档实体" : "恢复实体"}</button>{selected.lifecycleStatus === "ACTIVE" ? <button type="button" className="danger-action" onClick={() => void removeEntity()} disabled={busy !== null}><Trash2 size={14} />删除实体</button> : null}</> : null}</div>
 
           {selected ? <div className="entity-revisions"><div className="section-heading"><h2>修订历史</h2><span>{revisions.isPending ? "加载中…" : `${revisions.data?.length ?? 0} 条`}</span></div>{revisions.data?.map((revision) => <div className="entity-revision-row" key={revision.id}><span>修订 {revision.revision}</span><span>{revision.name}</span><span className={revision.sourceVersion ? "revision-source" : "revision-source revision-source-missing"}>{revision.sourceVersion ? "已有来源" : "暂无来源"}</span><code>{revision.sourceVersion ?? "无来源版本"}</code>{revision.id === selected.currentRevisionId ? <span className="revision-current"><Check size={13} />当前</span> : null}</div>)}</div> : <div className="entity-form-hint">保存后会生成第一个实体修订，后续编辑不会覆盖历史版本。</div>}
         </div>
