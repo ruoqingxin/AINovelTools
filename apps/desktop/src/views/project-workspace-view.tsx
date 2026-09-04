@@ -329,6 +329,7 @@ export function ProjectWorkspaceView() {
       {nodes.isPending ? <p className="plan-loading">正在加载规划…</p> : null}
       {hasPlanNodes && !showStarterChoices ? (
         <div className="plan-create-row">
+          <div className="plan-create-copy"><strong>快速创建</strong><span>选择类型和归属后，立即加入规划树</span></div>
           <select value={kind} onChange={(event) => { setKind(event.target.value as PlanNodeKind); setParentId(""); }} aria-label="节点类型">
             {Object.entries(kindLabels).map(([value, label]) => {
               const nodeKind = value as PlanNodeKind;
@@ -402,7 +403,7 @@ export function ProjectWorkspaceView() {
           </div>
           <div className="inspector-move-row"><label>调整归属<select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="" disabled={!canMoveToRoot}>{canMoveToRoot ? "移动到顶层" : "选择合法父节点"}</option>{moveCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select></label><button type="button" className="secondary-action" onClick={() => void moveSelected()} disabled={!canMoveToRoot && !moveParentId}>移动节点</button></div>
         </div>
-        {selected.kind === "WORK_DESIGN" ? <StoryPlanningWorkbench onCreateOutline={() => void createStarterNode("OUTLINE", "故事大纲")} onCreateChapter={() => void createStarterNode("CHAPTER", "第一章")} /> : null}
+        {selected.kind === "WORK_DESIGN" ? <StoryPlanningWorkbench contextChapterId={activeNodes.find((node) => node.kind === "CHAPTER")?.id} onCreateOutline={() => void createStarterNode("OUTLINE", "故事大纲")} onCreateChapter={() => void createStarterNode("CHAPTER", "第一章")} /> : null}
         {selected.kind === "CHAPTER" ? <div className="chapter-editor">
           <div className="section-heading"><h2>章节工作区</h2><span>{manuscript.data ? "已有修订" : "尚未保存"}</span></div>
           <ChapterWorkspaceTabs value={chapterTab} onChange={setChapterTab} recoveryCount={recovery.data?.length ?? 0} />
