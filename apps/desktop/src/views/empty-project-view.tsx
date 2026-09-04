@@ -1,4 +1,4 @@
-import { FilePlus2, FolderOpen, ListTree } from "lucide-react";
+import { ArrowRight, FilePlus2, FolderOpen, ListTree, Sparkles } from "lucide-react";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -95,6 +95,7 @@ export function EmptyProjectView() {
       <div className="workspace-heading">
         <p className="eyebrow">项目工作区</p>
         <h1>小说工程</h1>
+        <p className="workspace-lede">从一个念头开始，逐步整理设定、搭建大纲，再进入正文。你不需要一次想清楚整本小说。</p>
       </div>
 
       <div className="project-actions" aria-label="项目操作">
@@ -109,6 +110,19 @@ export function EmptyProjectView() {
       </div>
 
       {error ? <p className="project-error" role="alert">{error}</p> : null}
+
+      {!currentProject.data ? <div className="first-start-guide" aria-label="开始创作步骤">
+        <div className="first-start-guide-heading">
+          <div className="first-start-guide-icon" aria-hidden="true"><Sparkles size={18} /></div>
+          <div><strong>第一次使用？按这个顺序开始</strong><span>每一步都可以随时修改，不会锁死你的故事。</span></div>
+        </div>
+        <ol>
+          <li><b>01</b><span><strong>新建工程</strong>选择一个文件夹保存小说资料。</span></li>
+          <li><b>02</b><span><strong>写下故事核心</strong>先回答“谁想要什么，为什么现在必须行动”。</span></li>
+          <li><b>03</b><span><strong>创建第一章</strong>设定和大纲不完整也没关系，边写边补。</span></li>
+        </ol>
+        <p className="first-start-guide-tip"><ArrowRight size={14} />建议从“作品设定”开始，系统会给你可选择的候选，不用面对空白页。</p>
+      </div> : null}
 
       {currentProject.data ? (
         <div className="current-project-panel">

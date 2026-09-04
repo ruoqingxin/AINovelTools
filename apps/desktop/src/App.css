@@ -160,6 +160,49 @@ button:focus-visible {
   padding: 58px 0 80px;
 }
 
+.first-start-guide {
+  margin: 28px 0 30px;
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.first-start-guide-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.first-start-guide-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--accent-strong);
+  background: #e7f2ee;
+}
+
+.first-start-guide-heading div:last-child { display: grid; gap: 3px; }
+.first-start-guide-heading strong { color: #2d3731; font-size: 13px; }
+.first-start-guide-heading span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+.first-start-guide ol {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 18px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.first-start-guide li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.first-start-guide li b { color: #3f78f6; font-size: 11px; }
+.first-start-guide li span { display: grid; gap: 3px; }
+.first-start-guide li strong { color: #3c4c63; font-size: 12px; }
+.first-start-guide-tip { display: flex; align-items: center; gap: 6px; margin: 0; color: #567190; font-size: 11px; line-height: 1.5; }
+
 .project-workspace {
   width: min(1180px, calc(100% - 56px));
   margin: 0 auto;
@@ -219,6 +262,22 @@ button:focus-visible {
   font-size: 18px;
   font-weight: 700;
 }
+
+.planning-start-lede { max-width: 560px; margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+.planning-start-recommendation {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  border: 1px solid #cce0d9;
+  color: #4f6d67;
+  background: #f2f9f6;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.planning-start-recommendation strong { margin-right: 5px; color: #286c61; }
 
 .planning-start-close {
   flex: 0 0 auto;
@@ -1858,6 +1917,7 @@ button:focus-visible {
   .entity-revision-row .revision-source { display:none; }
   .entity-revision-row code { display:none; }
   .planning-start-actions { grid-template-columns:1fr; }
+  .first-start-guide ol { grid-template-columns: 1fr; gap: 12px; }
   .planning-start-actions button { min-height:104px; border-right:0; border-bottom:1px solid var(--line); }
   .planning-start-actions button:last-child { border-bottom:0; }
   .story-planning-layout { grid-template-columns: 1fr; }

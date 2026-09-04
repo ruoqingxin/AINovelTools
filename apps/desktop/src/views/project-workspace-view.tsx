@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, BookOpen, Check, Eye, EyeOff, FileText, ListTree, Plus, Trash2, X } from "lucide-react";
+import { ArchiveRestore, ArrowRight, BookOpen, Check, Eye, EyeOff, FileText, ListTree, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -351,10 +351,12 @@ export function ProjectWorkspaceView() {
           <div className="planning-start-heading">
             <div>
               <p className="eyebrow">{hasPlanNodes ? "新建规划" : "第一步"}</p>
-              <h2>{hasPlanNodes ? "选择一个新的规划起点" : "创建第一项规划"}</h2>
+              <h2>{hasPlanNodes ? "选择一个新的规划起点" : "先把故事的第一块骨架放下来"}</h2>
+              {!hasPlanNodes ? <p className="planning-start-lede">不确定从哪里开始？先选“作品设定”。你可以从一个模糊的想法开始，再逐步补全。</p> : null}
             </div>
             {hasPlanNodes ? <button type="button" className="icon-command planning-start-close" onClick={() => setShowStarterChoices(false)} aria-label="返回规划树" title="返回规划树"><X size={17} /></button> : null}
           </div>
+          {!hasPlanNodes ? <div className="planning-start-recommendation"><ArrowRight size={15} /><span><strong>推荐起点：作品设定</strong>先写主角、目标和核心冲突，后面的章节会更容易展开。</span></div> : null}
           <div className="planning-start-actions">
             <button type="button" onClick={() => void createStarterNode("WORK_DESIGN", "作品设定")}>
               <BookOpen size={20} /><strong>作品设定</strong><span>人物、世界观与写作规则</span>
