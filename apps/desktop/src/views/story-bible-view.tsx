@@ -260,16 +260,6 @@ export function StoryBibleView() {
 
         <div className="story-bible-editor">
           <div className="section-heading"><h2>{selected ? "实体详情" : "新建实体"}</h2>{selected ? <span>版本 {selected.version}</span> : <span>尚未保存</span>}</div>
-          {!selected ? <div className="knowledge-import-panel entity-import-panel">
-            <div className="section-heading"><h2>从文件批量导入</h2><span>主题跟随“类型”</span></div>
-            <div className="story-bible-toolbar import-toolbar">
-              <label>AI 模型<select value={importProfileId} onChange={(event) => setImportProfileId(event.target.value)}><option value="">选择聊天模型</option>{chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.modelId}</option>)}</select></label>
-              <label className="file-picker"><FileUp size={15} />{importFileName || "选择 TXT / Markdown 文件"}<input type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readImportFile(file); }} /></label>
-              <button type="button" className="primary-action" onClick={() => void extractImportItems()} disabled={!importSourceText || !importProfileId || !form.name.trim() || !summaryText.trim() || !scopeText.trim() || importBusy}><FileUp size={15} />{importBusy ? "AI 提炼中…" : "按四项条件提炼"}</button>
-              <button type="button" className="secondary-action" onClick={() => void importEntities()} disabled={!importItems.length || importBusy}>确认写入 {importItems.length || ""}</button>
-            </div>
-            {importItems.length ? <div className="import-preview" aria-label="导入预览"><p className="entity-form-hint">以下是 AI 候选内容，可直接修改；确认后才会进入正式知识库。</p>{importItems.map((item, index) => <div key={`${item.name}-${index}`}><input value={item.name} aria-label={`候选名称 ${index + 1}`} onChange={(event) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, name: event.target.value } : current))} /><textarea value={item.description} aria-label={`候选描述 ${index + 1}`} rows={2} onChange={(event) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, description: event.target.value } : current))} /></div>)}</div> : null}
-          </div> : null}
           <div className="entity-form-grid">
             <label>类型<select value={form.entityType} onChange={(event) => setForm((current) => ({ ...current, entityType: event.target.value as EntityType }))}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>名称<input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：林澈" /></label>
@@ -279,6 +269,21 @@ export function StoryBibleView() {
             <label className="entity-form-wide">固定属性 JSON<textarea value={form.fixedAttributesJson} onChange={(event) => setForm((current) => ({ ...current, fixedAttributesJson: event.target.value }))} rows={4} spellCheck={false} /></label>
             <label className="entity-form-wide">来源版本<input value={form.sourceVersion ?? ""} onChange={(event) => setForm((current) => ({ ...current, sourceVersion: event.target.value || undefined }))} placeholder="例如：manuscript:2" /></label>
           </div>
+          {!selected ? <div className="knowledge-import-panel entity-import-panel">
+            <div className="section-heading"><h2>从文件提炼候选</h2><span>先定义主题，再让 AI 提炼</span></div>
+            <div className="story-bible-toolbar import-toolbar">
+              <label>AI 模型<select value={importProfileId} onChange={(event) => setImportProfileId(event.target.value)}><option value="">选择聊天模型</option>{chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.modelId}</option>)}</select></label>
+              <label className="file-picker"><FileUp size={15} />{importFileName || "选择 TXT / Markdown 文件"}<input type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readImportFile(file); }} /></label>
+              <button type="button" className="primary-action" onClick={() => void extractImportItems()} disabled={!importSourceText || !importProfileId || !form.name.trim() || !summaryText.trim() || !scopeText.trim() || importBusy}><FileUp size={15} />{importBusy ? "AI 提炼中…" : "按主题提炼"}</button>
+            </div>
+            <p className="import-condition">提炼条件：{form.entityType ? typeLabels[form.entityType] : "未选择类型"} · {form.name || "未填写名称"} · {summaryText || "未填写简要概述"} · {scopeText || "未填写适用范围"}</p>
+          </div> : null}
+          {importItems.length ? <div className="import-review-panel" aria-label="导入候选审核">
+            <div className="section-heading"><h2>候选审核</h2><span>{importItems.length} 条待确认</span></div>
+            <p className="entity-form-hint">逐条检查并修改。点击“确认写入”后才会进入实体库。</p>
+            <div className="import-preview">{importItems.map((item, index) => <div className="import-candidate" key={`${item.name}-${index}`}><div className="import-candidate-index">{index + 1}</div><label>名称<input value={item.name} onChange={(event) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, name: event.target.value } : current))} /></label><label className="import-candidate-description">描述<textarea value={item.description} rows={3} onChange={(event) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, description: event.target.value } : current))} /></label></div>)}</div>
+            <div className="inspector-actions"><button type="button" className="primary-action" onClick={() => void importEntities()} disabled={importBusy}><Check size={15} />确认写入 {importItems.length} 条</button></div>
+          </div> : null}
           <div className="inspector-actions"><button type="button" className="primary-action" onClick={() => void save()} disabled={!form.name.trim() || busy !== null}><Save size={15} />{busy === "save" ? "保存中…" : selected ? "保存为新修订" : "创建实体"}</button>{selected ? <><button type="button" className="secondary-action" onClick={() => void toggleArchive()} disabled={busy !== null}>{selected.lifecycleStatus === "ACTIVE" ? <Archive size={15} /> : <RotateCcw size={15} />}{busy === "archive" ? "处理中…" : selected.lifecycleStatus === "ACTIVE" ? "归档实体" : "恢复实体"}</button>{selected.lifecycleStatus === "ACTIVE" ? <button type="button" className="danger-action" onClick={() => void removeEntity()} disabled={busy !== null}><Trash2 size={14} />删除实体</button> : null}</> : null}</div>
 
           {selected ? <div className="entity-revisions"><div className="section-heading"><h2>修订历史</h2><span>{revisions.isPending ? "加载中…" : `${revisions.data?.length ?? 0} 条`}</span></div>{revisions.data?.map((revision) => <div className="entity-revision-row" key={revision.id}><span>修订 {revision.revision}</span><span>{revision.name}</span><span className={revision.sourceVersion ? "revision-source" : "revision-source revision-source-missing"}>{revision.sourceVersion ? "已有来源" : "暂无来源"}</span><code>{revision.sourceVersion ?? "无来源版本"}</code>{revision.id === selected.currentRevisionId ? <span className="revision-current"><Check size={13} />当前</span> : null}</div>)}</div> : <div className="entity-form-hint">保存后会生成第一个实体修订，后续编辑不会覆盖历史版本。</div>}

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, ArrowRight, BookOpen, Check, Eye, EyeOff, FileText, ListTree, Plus, Trash2, X } from "lucide-react";
+import { ArchiveRestore, ArrowRight, BookOpen, Check, Eye, EyeOff, FileCheck2, FileText, ListTree, Plus, Sparkles, Trash2, UsersRound, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -174,6 +174,12 @@ export function ProjectWorkspaceView() {
     ? activeNodes.filter((node) => node.id !== selected.id && isValidParentKind(node.kind, selected.kind))
     : [];
   const canMoveToRoot = Boolean(selected && isRootKind(selected.kind) && !activeNodes.some((node) => node.id !== selected.id && node.parentId === null && node.kind === selected.kind));
+  const workDesignNode = activeNodes.find((node) => node.kind === "WORK_DESIGN");
+  const outlineNode = activeNodes.find((node) => node.kind === "OUTLINE");
+  const chapterNodes = activeNodes.filter((node) => node.kind === "CHAPTER");
+  const sceneCount = activeNodes.filter((node) => node.kind === "SCENE").length;
+  const planningProgress = [workDesignNode, outlineNode, chapterNodes.length ? chapterNodes[0] : null, sceneCount ? activeNodes.find((node) => node.kind === "SCENE") : null].filter(Boolean).length;
+  const nextPlanningNode = !workDesignNode ? null : !outlineNode ? workDesignNode : !chapterNodes.length ? outlineNode : chapterNodes[0];
   const manuscript = useQuery({
     queryKey: ["manuscript", selected?.id],
     queryFn: () => currentManuscript(selected!.id),
@@ -185,6 +191,15 @@ export function ProjectWorkspaceView() {
     enabled: selected?.kind === "CHAPTER",
   });
   const recovery = useQuery({ queryKey: ["recovery-logs", selected?.id], queryFn: () => listRecoveryLogs(selected!.id), enabled: selected?.kind === "CHAPTER" });
+
+  useEffect(() => {
+    if (!selectedId && activeNodes.length) {
+      const preferred = workDesignNode ?? outlineNode ?? activeNodes[0];
+      setSelectedId(preferred.id);
+      setEditTitle(preferred.title);
+      setMoveParentId(preferred.parentId ?? "");
+    }
+  }, [activeNodes, outlineNode, selectedId, workDesignNode]);
 
   useEffect(() => {
     if (selected?.kind === "CHAPTER") {
@@ -321,15 +336,29 @@ export function ProjectWorkspaceView() {
   return (
     <section className="project-workspace">
       <div className="workspace-heading">
-        <p className="eyebrow">规划工作区</p>
-        <h1>作品规划与创作</h1>
-        <p className="workspace-lede">左侧管理故事结构，右侧专注当前节点。规划、正文、AI 和修订彼此分开，工作状态保持连续。</p>
+        <p className="eyebrow">项目规划</p>
+        <h1>把想法推进成可写的故事</h1>
+        <p className="workspace-lede">规划只负责三件事：确定故事方向、拆出章节结构、为每个章节准备可执行的场景。知识库保存长期信息，正文区负责写作。</p>
+      </div>
+
+      <div className="planning-overview" aria-label="项目规划总览">
+        <div className="planning-overview-heading">
+          <div><span className="planning-kicker">当前项目状态</span><h2>{planningProgress < 4 ? `正在推进第 ${planningProgress + 1} 步` : "规划骨架已就绪"}</h2><p>{nextPlanningNode ? `建议继续：${kindLabels[nextPlanningNode.kind]}「${nextPlanningNode.title}」` : "从下方选择一个起点开始。"}</p></div>
+          {nextPlanningNode ? <button type="button" className="primary-action" onClick={() => { setSelectedId(nextPlanningNode.id); setEditTitle(nextPlanningNode.title); setMoveParentId(nextPlanningNode.parentId ?? ""); }}><ArrowRight size={15} />继续推进</button> : null}
+        </div>
+        <div className="planning-stage-grid">
+          <button type="button" className="planning-stage" data-active={planningProgress === 1 || undefined} onClick={() => workDesignNode && selectNode(workDesignNode)}><span className="planning-stage-index">01</span><div><strong>定方向</strong><small>主题、主角、世界规则</small></div><span className="planning-stage-count">{workDesignNode ? "已建立" : "待开始"}</span></button>
+          <button type="button" className="planning-stage" data-active={planningProgress === 2 || undefined} onClick={() => outlineNode && selectNode(outlineNode)}><span className="planning-stage-index">02</span><div><strong>搭主线</strong><small>冲突、转折、故事节奏</small></div><span className="planning-stage-count">{outlineNode ? "已建立" : "待开始"}</span></button>
+          <button type="button" className="planning-stage" data-active={planningProgress === 3 || undefined} onClick={() => chapterNodes[0] && selectNode(chapterNodes[0])}><span className="planning-stage-index">03</span><div><strong>拆章节</strong><small>{chapterNodes.length ? `${chapterNodes.length} 个章节` : "把主线拆成章节"}</small></div><span className="planning-stage-count">{chapterNodes.length ? "进行中" : "待开始"}</span></button>
+          <button type="button" className="planning-stage" data-active={planningProgress >= 4 || undefined} onClick={() => { const scene = activeNodes.find((node) => node.kind === "SCENE"); if (scene) selectNode(scene); }}><span className="planning-stage-index">04</span><div><strong>落到场景</strong><small>{sceneCount ? `${sceneCount} 个场景` : "明确每一场写什么"}</small></div><span className="planning-stage-count">{sceneCount ? "进行中" : "待开始"}</span></button>
+        </div>
+        <div className="planning-overview-links"><span><UsersRound size={14} />人物、地点和规则放在知识库</span><span><FileCheck2 size={14} />章节写完后再到审核区沉淀事实</span><span><Sparkles size={14} />AI 只负责提供候选，不替你定稿</span></div>
       </div>
 
       {nodes.isPending ? <p className="plan-loading">正在加载规划…</p> : null}
       {hasPlanNodes && !showStarterChoices ? (
         <div className="plan-create-row">
-          <div className="plan-create-copy"><strong>快速创建</strong><span>选择类型和归属后，立即加入规划树</span></div>
+          <div className="plan-create-copy"><strong>添加节点</strong><span>只添加当前阶段需要的一块</span></div>
           <select value={kind} onChange={(event) => { setKind(event.target.value as PlanNodeKind); setParentId(""); }} aria-label="节点类型">
             {Object.entries(kindLabels).map(([value, label]) => {
               const nodeKind = value as PlanNodeKind;
@@ -343,7 +372,6 @@ export function ProjectWorkspaceView() {
           </select>
           <input value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void addNode(); }} placeholder="例如：第一卷·启程" aria-label="节点标题" />
           <button type="button" className="primary-action" onClick={() => void addNode()} disabled={!canAddNode}><Plus size={16} />新建节点</button>
-          <button type="button" className="secondary-action" onClick={() => setShowStarterChoices(true)}><BookOpen size={16} />新建规划</button>
         </div>
       ) : null}
       {showPlanningStart ? (
@@ -375,7 +403,7 @@ export function ProjectWorkspaceView() {
 
       {hasPlanNodes && !showStarterChoices ? <div className="plan-layout">
       <div className="plan-tree" aria-label="规划树">
-        <div className="section-heading"><h2>规划树</h2><span>{activeNodes.length} 个节点</span><button type="button" className="icon-command plan-archive-toggle" onClick={() => setShowArchived((value) => !value)} aria-label={showArchived ? "隐藏已删除节点" : "显示已删除节点"} title={showArchived ? "隐藏已删除节点" : "显示已删除节点"}>{showArchived ? <EyeOff size={15} /> : <Eye size={15} />}</button></div>
+        <div className="section-heading"><div><h2>故事结构</h2><p className="section-subtitle">从作品设定到场景，按顺序逐层展开</p></div><span>{activeNodes.length} 个节点</span><button type="button" className="icon-command plan-archive-toggle" onClick={() => setShowArchived((value) => !value)} aria-label={showArchived ? "隐藏已删除节点" : "显示已删除节点"} title={showArchived ? "隐藏已删除节点" : "显示已删除节点"}>{showArchived ? <EyeOff size={15} /> : <Eye size={15} />}</button></div>
         <div className="plan-root-list">
           {rootDefinitions.map(({ kind: rootKind, label }) => {
             const root = rootNodeFor(rootKind);
@@ -398,12 +426,12 @@ export function ProjectWorkspaceView() {
       {selected ? <aside className="plan-inspector" aria-label="节点详情">
         <div className="plan-inspector-heading"><div><span>当前节点</span><h2>{kindLabels[selected.kind]}</h2><p>修订 {selected.revision}</p></div><span className="inspector-node-id">{selected.title}</span></div>
         <div className="inspector-node-settings">
-          <label>节点名称<input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} aria-label="编辑节点标题" /></label>
+          <label className="inspector-name-field">节点名称<input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} aria-label="编辑节点标题" /></label>
           <div className="inspector-actions">
-            <button type="button" className="primary-action" onClick={() => void saveSelected()} disabled={!editTitle.trim()}><Check size={15} />保存名称</button>
-            {selected.archived ? <button type="button" className="secondary-action" onClick={() => void toggleArchived(selected)}><ArchiveRestore size={15} />恢复节点</button> : <button type="button" className="secondary-action destructive-action" onClick={() => void deleteSelected()}><Trash2 size={15} />删除节点</button>}
+            <button type="button" className="primary-action" onClick={() => void saveSelected()} disabled={!editTitle.trim()}><Check size={15} />保存</button>
+            {selected.archived ? <button type="button" className="secondary-action" onClick={() => void toggleArchived(selected)}><ArchiveRestore size={15} />恢复</button> : <button type="button" className="secondary-action destructive-action" onClick={() => void deleteSelected()}><Trash2 size={15} />删除</button>}
           </div>
-          <div className="inspector-move-row"><label>调整归属<select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="" disabled={!canMoveToRoot}>{canMoveToRoot ? "移动到顶层" : "选择合法父节点"}</option>{moveCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select></label><button type="button" className="secondary-action" onClick={() => void moveSelected()} disabled={!canMoveToRoot && !moveParentId}>移动节点</button></div>
+          <div className="inspector-move-row"><label>归属<select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="" disabled={!canMoveToRoot}>{canMoveToRoot ? "顶层" : "选择父节点"}</option>{moveCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select></label><button type="button" className="secondary-action" onClick={() => void moveSelected()} disabled={!canMoveToRoot && !moveParentId}>移动</button></div>
         </div>
         {selected.kind === "WORK_DESIGN" ? <StoryPlanningWorkbench contextChapterId={activeNodes.find((node) => node.kind === "CHAPTER")?.id} onCreateOutline={() => void createStarterNode("OUTLINE", "故事大纲")} onCreateChapter={() => void createStarterNode("CHAPTER", "第一章")} /> : null}
         {selected.kind === "CHAPTER" ? <div className="chapter-editor">

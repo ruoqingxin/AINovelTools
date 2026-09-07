@@ -1,26 +1,38 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { BookMarked, Bot, Check, FileCheck2, FileText, ListTree, Save, Sparkles, UsersRound } from "lucide-react";
-import { useEffect, useState } from "react";
+import { BookMarked, Bot, Check, FileCheck2, FileText, FileUp, ListTree, Save, Search, Sparkles, UsersRound, PenLine } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import {
   errorMessage,
   generateAiProposal,
   listPlanningSections,
   listModelProfiles,
+  listEntities,
+  listEntityRevisions,
   listSummaryMaterials,
   savePlanningSection,
   type SummaryMaterial,
   type PlanningSection,
 } from "../lib/tauri-client";
 
-const sections = [
-  { id: "story-core", label: "故事核心", prompt: "题材、主题与核心矛盾" },
-  { id: "world-foundation", label: "世界基础", prompt: "起源、规则、空间、地理与资源" },
-  { id: "civilization", label: "文明社会", prompt: "种族、力量、生产、经济与阶级" },
-  { id: "politics-culture", label: "政治文化", prompt: "势力、制度、历史、信仰与习俗" },
-  { id: "story-engine", label: "故事发动机", prompt: "当前局势、主角、目标与反派" },
-] as const;
+type PlanningItem = { id: string; label: string; prompt: string };
+type PlanningGroup = { id: string; label: string; children: PlanningItem[] };
 
+const sectionGroups: PlanningGroup[] = [
+  { id: "story-core", label: "故事核心", children: [{ id: "story-theme", label: "主题与题材", prompt: "这部小说想讨论什么" }, { id: "story-protagonist", label: "主角与欲望", prompt: "主角想得到什么" }, { id: "story-conflict", label: "核心冲突", prompt: "什么力量阻碍主角" }] },
+  { id: "world-foundation", label: "世界基础", children: [{ id: "world-origin", label: "起源", prompt: "世界从何而来" }, { id: "world-rules", label: "规则", prompt: "世界如何运行" }, { id: "world-space", label: "空间", prompt: "故事发生在哪里" }, { id: "world-geography", label: "地理", prompt: "地点如何分布和连接" }, { id: "world-resources", label: "资源", prompt: "什么稀缺、谁掌握它" }] },
+  { id: "civilization", label: "文明社会", children: [{ id: "society-species", label: "种族与群体", prompt: "谁生活在这个世界" }, { id: "society-power", label: "力量体系", prompt: "力量从哪里来" }, { id: "society-production", label: "生产方式", prompt: "社会如何生产和交换" }, { id: "society-economy", label: "经济", prompt: "财富如何流动" }, { id: "society-class", label: "阶级关系", prompt: "谁获得机会、谁被排除" }] },
+  { id: "politics-culture", label: "政治文化", children: [{ id: "politics-factions", label: "势力", prompt: "谁在争夺决定权" }, { id: "politics-system", label: "制度", prompt: "权力如何被组织" }, { id: "politics-history", label: "历史", prompt: "过去留下了什么" }, { id: "politics-belief", label: "信仰", prompt: "人们相信什么" }, { id: "politics-custom", label: "习俗", prompt: "人们如何生活和表达" }] },
+  { id: "story-engine", label: "故事发动机", children: [{ id: "engine-situation", label: "当前局势", prompt: "故事从什么失衡状态开始" }, { id: "engine-goal", label: "阶段目标", prompt: "主角下一步要完成什么" }, { id: "engine-antagonist", label: "反派与阻力", prompt: "谁会持续制造代价" }, { id: "engine-time", label: "时间压力", prompt: "为什么必须现在行动" }] },
+] ;
+const sections = sectionGroups.flatMap((group) => group.children);
+const legacySectionByChild: Record<string, string> = {
+  "story-theme": "story-core",
+  "world-origin": "world-foundation",
+  "society-species": "civilization",
+  "politics-factions": "politics-culture",
+  "engine-situation": "story-engine",
+};
 type Candidate = { id: string; title: string; content: string; rationale: string; consequence: string; references: string[]; source: string };
 
 const starterCandidates: Record<string, Array<Omit<Candidate, "id">>> = {
@@ -64,23 +76,31 @@ export function StoryPlanningWorkbench(props: {
     queryFn: listPlanningSections,
   });
   const materials = useQuery({ queryKey: ["summary-materials"], queryFn: listSummaryMaterials });
+  const entities = useQuery({ queryKey: ["entities", true], queryFn: () => listEntities(true) });
+  const entityRevisionQueries = useQueries({ queries: (entities.data ?? []).map((entity) => ({ queryKey: ["entity-revisions", entity.id], queryFn: () => listEntityRevisions(entity.id) })) });
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
-  const [selectedId, setSelectedId] = useState<(typeof sections)[number]["id"]>("story-core");
-  const [form, setForm] = useState<PlanningSection>(emptySection("story-core"));
+  const [selectedId, setSelectedId] = useState<(typeof sections)[number]["id"]>("story-theme");
+  const [form, setForm] = useState<PlanningSection>(emptySection("story-theme"));
   const [referencesText, setReferencesText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
+  const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
+  const [knowledgeSearch, setKnowledgeSearch] = useState("");
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [showFineTune, setShowFineTune] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [aiCandidate, setAiCandidate] = useState<Candidate | null>(null);
   const selectedDefinition = sections.find((section) => section.id === selectedId) ?? sections[0];
+  const selectedGroup = sectionGroups.find((group) => group.children.some((item) => item.id === selectedId));
   const completedCount = (storedSections.data ?? []).filter((section) => section.content.trim()).length;
   const chatProfile = profiles.data?.find((profile) => profile.capability === "CHAT" && profile.hasSecret);
   const selectedMaterials = (materials.data ?? []).filter((item) => selectedMaterialIds.includes(item.id));
-  const stored = storedSections.data?.find((section) => section.id === selectedId);
+  const knowledgeRows = useMemo(() => (entities.data ?? []).map((entity, index) => ({ entity, revision: entityRevisionQueries[index]?.data?.find((item) => item.id === entity.currentRevisionId) ?? entityRevisionQueries[index]?.data?.[0] })).filter((item) => item.revision && item.entity.lifecycleStatus === "ACTIVE"), [entities.data, entityRevisionQueries]);
+  const filteredKnowledge = knowledgeRows.filter(({ revision }) => { const query = knowledgeSearch.trim().toLocaleLowerCase(); return !query || revision!.name.toLocaleLowerCase().includes(query) || revision!.description.toLocaleLowerCase().includes(query); });
+  const selectedKnowledge = knowledgeRows.filter(({ entity }) => selectedKnowledgeIds.includes(entity.id));
+  const stored = storedSections.data?.find((section) => section.id === selectedId) ?? (legacySectionByChild[selectedId] ? storedSections.data?.find((section) => section.id === legacySectionByChild[selectedId]) : undefined);
 
   function toCandidate(id: string, item: Omit<Candidate, "id">): Candidate {
     return { ...item, id };
@@ -99,7 +119,7 @@ export function StoryPlanningWorkbench(props: {
 
   const candidates = [
     ...(stored?.content.trim() ? [toCandidate("stored", { title: "继续使用当前设定", content: stored.content, rationale: stored.rationale, consequence: stored.consequence, references: stored.references, source: "已保存设定" })] : []),
-    ...(starterCandidates[selectedId] ?? []).map((item, index) => toCandidate(`starter-${selectedId}-${index}`, item)),
+    ...(starterCandidates[selectedId] ?? starterCandidates[selectedGroup?.id ?? ""] ?? []).map((item, index) => toCandidate(`starter-${selectedId}-${index}`, item)),
     ...materialCandidates(),
     ...(aiCandidate ? [aiCandidate] : []),
   ];
@@ -109,6 +129,7 @@ export function StoryPlanningWorkbench(props: {
     const next = stored ?? emptySection(selectedId);
     setForm(next);
     setReferencesText(next.references.join("\n"));
+    setSelectedKnowledgeIds(next.references.map((item) => item.match(/^知识库：.+（[^，]+，([^）]+)）$/)?.[1]).filter((id): id is string => Boolean(id)));
     setError(null);
     setNotice(null);
     setSelectedCandidateId(null);
@@ -121,10 +142,11 @@ export function StoryPlanningWorkbench(props: {
     setError(null);
     setNotice(null);
     try {
+      const knowledgeReferences = selectedKnowledge.map(({ entity, revision }) => `知识库：${revision!.name}（${entity.entityType}，${entity.id}）`);
       await savePlanningSection({
         ...form,
         id: selectedId,
-        references: referencesText.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+        references: [...referencesText.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).filter((item) => !item.startsWith("知识库：")), ...knowledgeReferences],
       });
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
       setNotice("设定已保存");
@@ -143,13 +165,32 @@ export function StoryPlanningWorkbench(props: {
     setNotice("已选中候选，可以继续细修");
   }
 
+  function startWriting() {
+    setSelectedCandidateId("manual");
+    setForm({ id: selectedId, content: stored?.content ?? "", rationale: stored?.rationale ?? "", consequence: stored?.consequence ?? "", references: stored?.references ?? [], updatedAt: "" });
+    setReferencesText((stored?.references ?? []).join("\n"));
+    setShowFineTune(true);
+    setNotice("已进入编写模式，可以直接记录你的想法");
+  }
+
+  async function importSectionFile(file: File) {
+    try {
+      const content = await file.text();
+      setSelectedCandidateId("imported");
+      setForm({ id: selectedId, content, rationale: "来自导入文件，请核对后保存。", consequence: "导入内容可继续补充为正式设定。", references: [file.name], updatedAt: "" });
+      setReferencesText(file.name);
+      setShowFineTune(true);
+      setNotice(`已导入“${file.name}”，请确认后保存`);
+    } catch (cause) { setError(errorMessage(cause)); }
+  }
+
   async function generateWithAi() {
     if (!chatProfile || !props.contextChapterId) return;
     setGenerating(true);
     setError(null);
     try {
       const existing = (storedSections.data ?? []).map((item) => `${item.id}: ${item.content}`).filter(Boolean).join("\n");
-      const source = selectedMaterials.map((item) => item.content).join("\n");
+      const source = [...selectedMaterials.map((item) => item.content), ...selectedKnowledge.map(({ revision }) => `知识库实体：${revision!.name}\n${revision!.description}\n固定属性：${revision!.fixedAttributesJson}`)].join("\n");
       const proposal = await generateAiProposal({
         profileId: chatProfile.id,
         chapterId: props.contextChapterId,
@@ -176,41 +217,35 @@ export function StoryPlanningWorkbench(props: {
       <div className="story-planning-titlebar">
         <div>
           <p className="eyebrow">作品设定</p>
-          <h2>把故事的基础设定整理清楚</h2>
+          <h2>逐项建立小说要素</h2>
+          <span className="story-planning-title-hint">每个细化节点都可以独立推导、编写或导入</span>
         </div>
         <span className="story-planning-progress">{completedCount} / {sections.length} 已完成</span>
       </div>
       <div className="story-planning-layout">
         <nav className="story-planning-sections" aria-label="设定模块">
-          <div className="story-planning-sections-heading"><strong>设定目录</strong><span>逐项完善</span></div>
-          {sections.map((section) => {
-            const completed = Boolean(storedSections.data?.find((item) => item.id === section.id)?.content.trim());
-            return (
-              <button
-                key={section.id}
-                type="button"
-                data-active={selectedId === section.id || undefined}
-                onClick={() => setSelectedId(section.id)}
-              >
-                <span className="story-planning-section-index">{String(sections.findIndex((item) => item.id === section.id) + 1).padStart(2, "0")}</span>
-                <span className="story-planning-section-copy"><strong>{section.label}</strong><small>{section.prompt}</small></span>
-                <span className="story-planning-section-status" data-complete={completed || undefined}>{completed ? "完成" : "待填写"}</span>
-              </button>
-            );
-          })}
+          <div className="story-planning-sections-heading"><strong>小说要素</strong><span>逐项完善</span></div>
+          {sectionGroups.map((group) => <div className="story-planning-group" key={group.id}><div className="story-planning-group-heading"><strong>{group.label}</strong><span>{group.children.filter((item) => storedSections.data?.find((storedItem) => storedItem.id === item.id)?.content.trim()).length}/{group.children.length}</span></div>{group.children.map((section) => { const completed = Boolean(storedSections.data?.find((item) => item.id === section.id)?.content.trim()); return <button key={section.id} type="button" data-active={selectedId === section.id || undefined} onClick={() => setSelectedId(section.id)}><span className="story-planning-section-index">{String(sections.findIndex((item) => item.id === section.id) + 1).padStart(2, "0")}</span><span className="story-planning-section-copy"><strong>{section.label}</strong><small>{section.prompt}</small></span><span className="story-planning-section-status" data-complete={completed || undefined}>{completed ? "完成" : "待填写"}</span></button>; })}</div>)}
         </nav>
         <div className="story-planning-editor">
           <div className="story-planning-editor-heading">
-            <div><span className="story-planning-current-label">当前设定</span><h3>{selectedDefinition.label}</h3><p>{selectedDefinition.prompt}</p></div>
+            <div><span className="story-planning-current-label">{selectedGroup?.label} / 当前节点</span><h3>{selectedDefinition.label}</h3><p>{selectedDefinition.prompt}</p></div>
+            <div className="story-planning-node-actions"><button type="button" className="secondary-action" onClick={() => void generateWithAi()} disabled={generating || !chatProfile || !props.contextChapterId}><Sparkles size={14} />{generating ? "推导中…" : "AI 推导"}</button><button type="button" className="secondary-action" onClick={startWriting}><PenLine size={14} />直接编写</button><label className="secondary-action story-planning-import"><FileUp size={14} />导入<input type="file" accept=".txt,.md,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importSectionFile(file); event.currentTarget.value = ""; }} /></label></div>
           </div>
           <div className="story-planning-source-bar">
-            <div><strong>先选择一个候选</strong><span>系统会把材料和已有设定整理成可采用的方案</span></div>
-            <button type="button" className="secondary-action" onClick={() => void generateWithAi()} disabled={generating || !chatProfile || !props.contextChapterId}><Sparkles size={14} />{generating ? "AI 推导中…" : "AI 根据已有设定推导"}</button>
+            <div><strong>先建立当前节点</strong><span>可以使用 AI 推导、直接编写，或从文件导入</span></div>
+            <span className="story-planning-source-note">确认后再保存为正式设定</span>
           </div>
           {!chatProfile || !props.contextChapterId ? <p className="story-planning-ai-hint">配置聊天模型并创建章节后，可使用 AI 推导候选。</p> : null}
           <div className="story-planning-material-picker">
             <div className="story-planning-picker-heading"><strong>项目材料</strong><span>勾选后可从材料提炼</span></div>
             {materials.data?.length ? materials.data.map((item: SummaryMaterial) => <label key={item.id}><input type="checkbox" checked={selectedMaterialIds.includes(item.id)} onChange={(event) => setSelectedMaterialIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span>{item.kind} · {item.precision}</span><small>{item.content.slice(0, 70)}{item.content.length > 70 ? "…" : ""}</small></label>) : <p>还没有可用材料，可先到资料库添加摘要。</p>}
+          </div>
+          <div className="story-planning-material-picker story-planning-knowledge-picker">
+            <div className="story-planning-picker-heading"><strong>知识库</strong><span>把已积累的人物、地点和概念带入当前设定</span></div>
+            <label className="knowledge-picker-search"><Search size={13} /><input value={knowledgeSearch} onChange={(event) => setKnowledgeSearch(event.target.value)} placeholder="搜索知识实体" aria-label="搜索知识实体" /></label>
+            {filteredKnowledge.length ? filteredKnowledge.slice(0, 30).map(({ entity, revision }) => <label key={entity.id}><input type="checkbox" checked={selectedKnowledgeIds.includes(entity.id)} onChange={(event) => setSelectedKnowledgeIds((ids) => event.target.checked ? [...ids, entity.id] : ids.filter((id) => id !== entity.id))} /><span>{revision!.name}</span><small>{revision!.description || "暂无描述"}</small></label>) : <p>知识库还没有匹配实体，可先在知识页随时新增。</p>}
+            {selectedKnowledge.length ? <div className="knowledge-picker-selected">已选 {selectedKnowledge.length} 项：{selectedKnowledge.map(({ revision }) => revision!.name).join("、")}</div> : null}
           </div>
           <div className="story-planning-candidates">
             {candidates.map((candidate) => <button type="button" className="story-planning-candidate" data-selected={selectedCandidateId === candidate.id || undefined} key={candidate.id} onClick={() => chooseCandidate(candidate)}><span className="story-planning-candidate-meta"><strong>{candidate.title}</strong><small>{candidate.source}</small></span><span>{candidate.content.slice(0, 130)}{candidate.content.length > 130 ? "…" : ""}</span><Check size={16} className="story-planning-candidate-check" /></button>)}
