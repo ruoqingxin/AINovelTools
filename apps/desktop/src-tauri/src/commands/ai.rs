@@ -25,6 +25,7 @@ pub(crate) async fn generate_planning_content(
     section_prompt: String,
     existing_context: String,
     reference_content: String,
+    user_guidance: String,
 ) -> Result<String, ApiError> {
     let profile = {
         let store = state
@@ -80,12 +81,22 @@ pub(crate) async fn generate_planning_content(
     };
     context.user_prompt = if extract_mode {
         format!(
-            "当前规划节点：{section_title}\n节点目标：{section_prompt}\n\n文件原文：\n{}\n\n只提取与当前节点直接相关的内容，并整理成连贯、可编辑的设定正文。保留原文事实和限定条件，忽略无关内容，不得补充文件中没有的信息。如果完全没有相关内容，只回复：未提取到相关内容。",
+            "当前规划节点：{section_title}\n节点目标：{section_prompt}\n作者补充的提取要求：{}\n\n文件原文：\n{}\n\n只提取与当前节点直接相关的内容，并整理成连贯、可编辑的设定正文。作者的补充要求只能作为筛选和组织规则，不能作为文件事实写入结果。保留原文事实和限定条件，忽略无关内容，不得补充文件中没有的信息。如果完全没有相关内容，只回复：未提取到相关内容。",
+            if user_guidance.trim().is_empty() {
+                "无"
+            } else {
+                user_guidance.trim()
+            },
             reference_content.trim()
         )
     } else {
         format!(
-            "当前规划节点：{section_title}\n节点目标：{section_prompt}\n\n已有项目设定：\n{}\n\n作者选择的参考内容：\n{}\n\n请只输出当前节点的设定正文。内容应具体、内部一致，并为后续人物、冲突和情节规划提供可用约束。",
+            "当前规划节点：{section_title}\n节点目标：{section_prompt}\n作者的补充意见：{}\n\n已有项目设定：\n{}\n\n作者选择的参考内容：\n{}\n\n请遵循作者的补充意见，只输出当前节点的设定正文。内容应具体、内部一致，并为后续人物、冲突和情节规划提供可用约束。",
+            if user_guidance.trim().is_empty() {
+                "无"
+            } else {
+                user_guidance.trim()
+            },
             if existing_context.trim().is_empty() {
                 "暂无"
             } else {

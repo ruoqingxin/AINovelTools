@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, FileUp, Save, Search, Sparkles, PenLine } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, FileUp, PenLine, RotateCcw, Save, Search, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   errorMessage,
@@ -67,6 +67,10 @@ export function StoryPlanningWorkbench(props: {
   const [showEditor, setShowEditor] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"AI" | "IMPORT" | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [operationGuidance, setOperationGuidance] = useState("");
+  const [previousForm, setPreviousForm] = useState<PlanningSection | null>(null);
   const selectedDefinition = sections.find((section) => section.id === selectedId) ?? sections[0];
   const selectedGroup = planningSectionGroups.find((group) => group.children.some((item) => item.id === selectedId));
   const completedCount = (storedSections.data ?? []).filter((section) => section.content.trim()).length;
@@ -75,8 +79,6 @@ export function StoryPlanningWorkbench(props: {
   const knowledgeRows = useMemo(() => (entities.data ?? []).map((entity, index) => ({ entity, revision: entityRevisionQueries[index]?.data?.find((item) => item.id === entity.currentRevisionId) ?? entityRevisionQueries[index]?.data?.[0] })).filter((item) => item.revision && item.entity.lifecycleStatus === "ACTIVE"), [entities.data, entityRevisionQueries]);
   const filteredKnowledge = knowledgeRows.filter(({ revision }) => { const query = knowledgeSearch.trim().toLocaleLowerCase(); return !query || revision!.name.toLocaleLowerCase().includes(query) || revision!.description.toLocaleLowerCase().includes(query); });
   const selectedKnowledge = knowledgeRows.filter(({ entity }) => selectedKnowledgeIds.includes(entity.id));
-  const stored = storedSections.data?.find((section) => section.id === selectedId) ?? (legacySectionByChild[selectedId] ? storedSections.data?.find((section) => section.id === legacySectionByChild[selectedId]) : undefined);
-
   useEffect(() => {
     const stored = storedSections.data?.find((section) => section.id === selectedId) ?? (legacySectionByChild[selectedId] ? storedSections.data?.find((section) => section.id === legacySectionByChild[selectedId]) : undefined);
     const next = stored ?? emptySection(selectedId);
@@ -85,6 +87,10 @@ export function StoryPlanningWorkbench(props: {
     setError(null);
     setNotice(null);
     setShowEditor(Boolean(next.content.trim()));
+    setPendingAction(null);
+    setPendingFile(null);
+    setOperationGuidance("");
+    setPreviousForm(null);
   }, [selectedId, storedSections.data]);
 
   async function save() {
@@ -100,6 +106,7 @@ export function StoryPlanningWorkbench(props: {
       });
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
       setNotice("设定已保存");
+      setPreviousForm(null);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -108,21 +115,27 @@ export function StoryPlanningWorkbench(props: {
   }
 
   function startWriting() {
-    setForm({ id: selectedId, content: stored?.content ?? "", rationale: stored?.rationale ?? "", consequence: stored?.consequence ?? "", references: stored?.references ?? [], updatedAt: "" });
     setShowEditor(true);
+    setPendingAction(null);
     setNotice("已进入编写模式，可以直接记录你的想法");
   }
 
-  async function importSectionFile(file: File) {
+  async function importSectionFile() {
+    const file = pendingFile;
+    if (!file) return;
     if (!chatProfile) { setError("请先在设置中配置一个可用的聊天模型"); return; }
     setImporting(true);
     setError(null);
     setNotice(null);
     try {
       const content = await file.text();
-      const extracted = await generatePlanningContent({ profileId: chatProfile.id, mode: "EXTRACT", sectionTitle: selectedDefinition.label, sectionPrompt: selectedDefinition.prompt, existingContext: "", referenceContent: content });
+      const extracted = await generatePlanningContent({ profileId: chatProfile.id, mode: "EXTRACT", sectionTitle: selectedDefinition.label, sectionPrompt: selectedDefinition.prompt, existingContext: "", referenceContent: content, userGuidance: operationGuidance });
+      setPreviousForm(form);
       setForm({ id: selectedId, content: extracted, rationale: "", consequence: "", references: [file.name], updatedAt: "" });
       setShowEditor(true);
+      setPendingAction(null);
+      setPendingFile(null);
+      setOperationGuidance("");
       setNotice(`已从“${file.name}”提取与“${selectedDefinition.label}”相关的内容，请确认后保存`);
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setImporting(false); }
@@ -142,12 +155,32 @@ export function StoryPlanningWorkbench(props: {
         sectionPrompt: selectedDefinition.prompt,
         existingContext: existing,
         referenceContent: source,
+        userGuidance: operationGuidance,
       });
+      setPreviousForm(form);
       setForm({ id: selectedId, content: output, rationale: "", consequence: "", references: selectedMaterials.map((item) => item.sourceVersion ?? "项目材料"), updatedAt: "" });
       setShowEditor(true);
+      setPendingAction(null);
+      setOperationGuidance("");
       setNotice("AI 内容已生成，可以直接修改并保存");
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setGenerating(false); }
+  }
+
+  function restoreContent() {
+    if (!previousForm) return;
+    setForm(previousForm);
+    setPreviousForm(null);
+    setShowEditor(true);
+    setNotice("已还原到操作前的内容");
+  }
+
+  function clearContent() {
+    if (!form.content.trim() || !window.confirm("确定清除当前编辑内容吗？清除后仍可点击“还原”撤回。")) return;
+    setPreviousForm(form);
+    setForm((current) => ({ ...current, content: "", references: [] }));
+    setShowEditor(true);
+    setNotice("当前内容已清除，可以还原或重新生成");
   }
 
   return (
@@ -169,16 +202,19 @@ export function StoryPlanningWorkbench(props: {
             <div className="story-planning-action-heading"><div><strong>建立当前节点</strong><span>选择一种开始方式</span></div><small>内容确认后再保存</small></div>
             <div className="story-planning-action-choices">
               <button type="button" className="story-planning-action-choice action-choice-primary" onClick={startWriting}><PenLine size={17} /><span><strong>直接编写</strong><small>从自己的想法开始</small></span></button>
-              <button type="button" className="story-planning-action-choice" onClick={() => void generateWithAi()} disabled={generating || !chatProfile}><Sparkles size={17} /><span><strong>{generating ? "正在推导" : "AI 推导"}</strong><small>结合已有设定生成内容</small></span></button>
-              <label className="story-planning-action-choice story-planning-import" data-disabled={importing || !chatProfile || undefined}><FileUp size={17} /><span><strong>{importing ? "正在提取" : "AI 提取文件"}</strong><small>仅保留符合当前节点的内容</small></span><input type="file" accept=".txt,.md,.json" disabled={importing || !chatProfile} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importSectionFile(file); event.currentTarget.value = ""; }} /></label>
+              <button type="button" className="story-planning-action-choice" onClick={() => { setPendingAction("AI"); setPendingFile(null); setOperationGuidance(""); }} disabled={generating || importing || !chatProfile}><Sparkles size={17} /><span><strong>{generating ? "正在推导" : "AI 推导"}</strong><small>结合已有设定生成内容</small></span></button>
+              <label className="story-planning-action-choice story-planning-import" data-disabled={generating || importing || !chatProfile || undefined}><FileUp size={17} /><span><strong>{importing ? "正在提取" : "AI 提取文件"}</strong><small>仅保留符合当前节点的内容</small></span><input type="file" accept=".txt,.md,.json" disabled={generating || importing || !chatProfile} onChange={(event) => { const file = event.target.files?.[0]; if (file) { setPendingFile(file); setPendingAction("IMPORT"); setOperationGuidance(""); } event.currentTarget.value = ""; }} /></label>
             </div>
+            {pendingAction ? <div className="story-planning-confirmation" role="status"><div className="story-planning-confirmation-summary">{pendingAction === "AI" ? <Sparkles size={16} /> : <FileUp size={16} />}<span><strong>{pendingAction === "AI" ? "确认进行 AI 推导？" : `确认提取“${pendingFile?.name ?? "所选文件"}”？`}</strong><small>{pendingAction === "AI" ? `将结合当前项目设定和已选的 ${selectedMaterialIds.length + selectedKnowledgeIds.length} 项参考内容生成结果${form.content.trim() ? "，并替换编辑区当前内容" : ""}。` : `AI 只会提取与“${selectedDefinition.label}”相关的内容${form.content.trim() ? "，并替换编辑区当前内容" : ""}。`}</small></span></div><label className="story-planning-guidance"><span>{pendingAction === "AI" ? "补充你的意见（可选）" : "补充提取要求（可选）"}</span><textarea rows={3} value={operationGuidance} onChange={(event) => setOperationGuidance(event.target.value)} placeholder={pendingAction === "AI" ? "例如：更偏现实主义，保留现有力量限制，不要加入穿越设定" : "例如：重点提取力量来源和使用代价，忽略人物外貌描写"} /></label><div className="story-planning-confirmation-actions"><button type="button" className="primary-action" onClick={() => pendingAction === "AI" ? void generateWithAi() : void importSectionFile()} disabled={generating || importing || (pendingAction === "IMPORT" && !pendingFile)}><Check size={14} />{pendingAction === "AI" ? "确认推导" : "开始提取"}</button><button type="button" className="secondary-action" onClick={() => { setPendingAction(null); setPendingFile(null); setOperationGuidance(""); }} disabled={generating || importing}><X size={14} />取消</button></div></div> : null}
           </div>
           {!chatProfile ? <p className="story-planning-ai-hint">请先在设置中配置一个可用的聊天模型。</p> : null}
           <div className="story-planning-references">
             <button type="button" className="story-planning-references-toggle" aria-expanded={showReferences} onClick={() => setShowReferences((value) => !value)}>{showReferences ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<span><strong>参考内容</strong><small>选择项目材料和知识库内容，供 AI 推导或编写时参考</small></span><em>{selectedMaterialIds.length + selectedKnowledgeIds.length ? `已选 ${selectedMaterialIds.length + selectedKnowledgeIds.length} 项` : "可选"}</em></button>
             {showReferences ? <div className="story-planning-reference-content"><div className="story-planning-material-picker"><div className="story-planning-picker-heading"><strong>项目材料</strong><span>勾选后可从材料提炼</span></div>{materials.data?.length ? materials.data.map((item: SummaryMaterial) => <label key={item.id}><input type="checkbox" checked={selectedMaterialIds.includes(item.id)} onChange={(event) => setSelectedMaterialIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span>{item.kind} · {item.precision}</span><small>{item.content.slice(0, 70)}{item.content.length > 70 ? "…" : ""}</small></label>) : <p>还没有可用材料，可先到资料库添加摘要。</p>}</div><div className="story-planning-material-picker story-planning-knowledge-picker"><div className="story-planning-picker-heading"><strong>知识库</strong><span>选择人物、地点和概念</span></div><label className="knowledge-picker-search"><Search size={13} /><input value={knowledgeSearch} onChange={(event) => setKnowledgeSearch(event.target.value)} placeholder="搜索知识实体" aria-label="搜索知识实体" /></label>{filteredKnowledge.length ? filteredKnowledge.slice(0, 30).map(({ entity, revision }) => <label key={entity.id}><input type="checkbox" checked={selectedKnowledgeIds.includes(entity.id)} onChange={(event) => setSelectedKnowledgeIds((ids) => event.target.checked ? [...ids, entity.id] : ids.filter((id) => id !== entity.id))} /><span>{revision!.name}</span><small>{revision!.description || "暂无描述"}</small></label>) : <p>知识库还没有匹配实体。</p>}{selectedKnowledge.length ? <div className="knowledge-picker-selected">已选：{selectedKnowledge.map(({ revision }) => revision!.name).join("、")}</div> : null}</div></div> : null}
           </div>
-          {showEditor ? <div className="story-planning-content-editor"><label><span>设定内容</span><small>把当前要素写清楚即可，之后随时可以继续修改</small><textarea rows={12} autoFocus value={form.content} onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))} placeholder={`填写${selectedDefinition.label}…`} /></label><div className="story-planning-actions"><button type="button" className="primary-action" onClick={() => void save()} disabled={saving || !form.content.trim()}><Save size={15} />{saving ? "保存中…" : "保存设定"}</button>{notice ? <span className="project-notice">{notice}</span> : null}{error ? <span className="project-error" role="alert">{error}</span> : null}</div></div> : null}
+          {showEditor ? <div className="story-planning-content-editor"><label><span>设定内容</span><small>把当前要素写清楚即可，之后随时可以继续修改</small><textarea rows={12} autoFocus value={form.content} onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))} placeholder={`填写${selectedDefinition.label}…`} /></label><div className="story-planning-actions"><button type="button" className="primary-action" onClick={() => void save()} disabled={saving || !form.content.trim()}><Save size={15} />{saving ? "保存中…" : "保存设定"}</button><button type="button" className="secondary-action" onClick={restoreContent} disabled={!previousForm}><RotateCcw size={14} />还原</button><button type="button" className="secondary-action destructive-action" onClick={clearContent} disabled={!form.content.trim()}><Trash2 size={14} />清除内容</button></div></div> : null}
+          {notice ? <p className="project-notice story-planning-status">{notice}</p> : null}
+          {error ? <p className="project-error story-planning-status" role="alert">{error}</p> : null}
         </div>
       </div>
     </section>

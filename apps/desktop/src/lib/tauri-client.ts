@@ -364,7 +364,7 @@ export function generateAiProposal(input: {
   return invoke<AiProposal>("generate_ai_proposal", input);
 }
 
-export function generatePlanningContent(input: { profileId: string; mode: "GENERATE" | "EXTRACT"; sectionTitle: string; sectionPrompt: string; existingContext: string; referenceContent: string }) {
+export function generatePlanningContent(input: { profileId: string; mode: "GENERATE" | "EXTRACT"; sectionTitle: string; sectionPrompt: string; existingContext: string; referenceContent: string; userGuidance: string }) {
   return invoke<string>("generate_planning_content", input);
 }
 
