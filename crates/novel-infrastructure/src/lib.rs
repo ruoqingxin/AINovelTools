@@ -2080,8 +2080,10 @@ mod tests {
 
     #[test]
     fn planning_sections_preserve_content_reasoning_and_references() {
-        let root = std::path::PathBuf::from("target")
-            .join(format!("ainovel-planning-sections-{}", uuid::Uuid::new_v4()));
+        let root = std::path::PathBuf::from("target").join(format!(
+            "ainovel-planning-sections-{}",
+            uuid::Uuid::new_v4()
+        ));
         let mut manager = super::ProjectManager::new();
         manager.create(&root, "设定测试").expect("create project");
         let saved = manager

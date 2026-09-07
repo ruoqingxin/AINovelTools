@@ -12,8 +12,9 @@ mod state;
 
 use commands::ai::{
     assemble_context_with_project_knowledge, cancel_ai_task, decide_ai_proposal,
-    delete_model_secret, extract_entities_from_text, generate_ai_proposal, list_ai_proposals, list_model_profiles,
-    save_model_secret, test_model_profile, upsert_model_profile,
+    delete_model_secret, extract_entities_from_text, generate_ai_proposal,
+    generate_planning_content, list_ai_proposals, list_model_profiles, save_model_secret,
+    test_model_profile, upsert_model_profile,
 };
 use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::entities::{
@@ -42,8 +43,8 @@ use commands::materials::{
     upsert_writing_card,
 };
 use commands::planning::{
-    create_plan_node, list_plan_nodes, list_planning_sections, move_plan_node, save_planning_section,
-    update_plan_node, update_plan_node_checked,
+    create_plan_node, list_plan_nodes, list_planning_sections, move_plan_node,
+    save_planning_section, update_plan_node, update_plan_node_checked,
 };
 use commands::project::{
     close_project, create_project, current_project, list_recent_projects, open_project,
@@ -129,6 +130,7 @@ pub fn run() {
             list_ai_proposals,
             decide_ai_proposal,
             generate_ai_proposal,
+            generate_planning_content,
             extract_entities_from_text,
             cancel_ai_task,
             assemble_context_with_project_knowledge,

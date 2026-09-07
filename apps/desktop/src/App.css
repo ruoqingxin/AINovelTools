@@ -1740,6 +1740,7 @@ button:focus-visible {
 .story-planning-action-choice { display:grid !important; grid-template-columns:auto minmax(0,1fr) !important; min-width:0; min-height:64px !important; align-items:center !important; gap:10px !important; padding:10px 12px !important; border:1px solid #d8e3f2 !important; border-radius:7px !important; color:#587090 !important; background:#fff !important; text-align:left; cursor:pointer; }
 .story-planning-action-choice:hover { border-color:#9ebcf6 !important; background:#f5f8ff !important; }
 .story-planning-action-choice:disabled { cursor:not-allowed; opacity:.55; }
+.story-planning-action-choice[data-disabled] { cursor:not-allowed; opacity:.55; }
 .story-planning-action-choice.action-choice-primary { border-color:#a9c2f5 !important; color:#2f68d1 !important; background:#f2f6ff !important; }
 .story-planning-action-choice > span { display:grid; min-width:0; gap:3px; }
 .story-planning-action-choice strong { color:inherit; font-size:12px; }

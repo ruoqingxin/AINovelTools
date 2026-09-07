@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, FileUp, Save, Search, Sparkles, PenLine } fr
 import { useEffect, useMemo, useState } from "react";
 import {
   errorMessage,
-  generateAiProposal,
+  generatePlanningContent,
   listPlanningSections,
   listModelProfiles,
   listEntities,
@@ -44,7 +44,6 @@ function emptySection(id: string): PlanningSection {
 }
 
 export function StoryPlanningWorkbench(props: {
-  contextChapterId?: string;
   selectedSectionId?: string;
 }) {
   const client = useQueryClient();
@@ -67,6 +66,7 @@ export function StoryPlanningWorkbench(props: {
   const [showReferences, setShowReferences] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const selectedDefinition = sections.find((section) => section.id === selectedId) ?? sections[0];
   const selectedGroup = planningSectionGroups.find((group) => group.children.some((item) => item.id === selectedId));
   const completedCount = (storedSections.data ?? []).filter((section) => section.content.trim()).length;
@@ -114,32 +114,36 @@ export function StoryPlanningWorkbench(props: {
   }
 
   async function importSectionFile(file: File) {
+    if (!chatProfile) { setError("请先在设置中配置一个可用的聊天模型"); return; }
+    setImporting(true);
+    setError(null);
+    setNotice(null);
     try {
       const content = await file.text();
-      setForm({ id: selectedId, content, rationale: "", consequence: "", references: [file.name], updatedAt: "" });
+      const extracted = await generatePlanningContent({ profileId: chatProfile.id, mode: "EXTRACT", sectionTitle: selectedDefinition.label, sectionPrompt: selectedDefinition.prompt, existingContext: "", referenceContent: content });
+      setForm({ id: selectedId, content: extracted, rationale: "", consequence: "", references: [file.name], updatedAt: "" });
       setShowEditor(true);
-      setNotice(`已导入“${file.name}”，请确认后保存`);
+      setNotice(`已从“${file.name}”提取与“${selectedDefinition.label}”相关的内容，请确认后保存`);
     } catch (cause) { setError(errorMessage(cause)); }
+    finally { setImporting(false); }
   }
 
   async function generateWithAi() {
-    if (!chatProfile || !props.contextChapterId) return;
+    if (!chatProfile) return;
     setGenerating(true);
     setError(null);
     try {
       const existing = (storedSections.data ?? []).map((item) => `${item.id}: ${item.content}`).filter(Boolean).join("\n");
       const source = [...selectedMaterials.map((item) => item.content), ...selectedKnowledge.map(({ revision }) => `知识库实体：${revision!.name}\n${revision!.description}\n固定属性：${revision!.fixedAttributesJson}`)].join("\n");
-      const proposal = await generateAiProposal({
+      const output = await generatePlanningContent({
         profileId: chatProfile.id,
-        chapterId: props.contextChapterId,
-        action: "SUMMARIZE",
-        chapterTitle: selectedDefinition.label,
-        chapterPlan: existing || "暂无已保存设定",
-        documentJson: JSON.stringify({ type: "doc", content: [] }),
-        instruction: `请为“${selectedDefinition.label}”生成一份清晰、可直接修改的小说设定内容。只能根据已有设定和材料工作，不要编造已确认事实。只输出设定正文，不要添加形成原因、产生结果或来源说明。已有材料：${source || "暂无，主要依据已有设定"}`,
-        stream: true,
+        mode: "GENERATE",
+        sectionTitle: selectedDefinition.label,
+        sectionPrompt: selectedDefinition.prompt,
+        existingContext: existing,
+        referenceContent: source,
       });
-      setForm({ id: selectedId, content: proposal.outputText, rationale: "", consequence: "", references: selectedMaterials.map((item) => item.sourceVersion ?? "项目材料"), updatedAt: "" });
+      setForm({ id: selectedId, content: output, rationale: "", consequence: "", references: selectedMaterials.map((item) => item.sourceVersion ?? "项目材料"), updatedAt: "" });
       setShowEditor(true);
       setNotice("AI 内容已生成，可以直接修改并保存");
     } catch (cause) { setError(errorMessage(cause)); }
@@ -165,11 +169,11 @@ export function StoryPlanningWorkbench(props: {
             <div className="story-planning-action-heading"><div><strong>建立当前节点</strong><span>选择一种开始方式</span></div><small>内容确认后再保存</small></div>
             <div className="story-planning-action-choices">
               <button type="button" className="story-planning-action-choice action-choice-primary" onClick={startWriting}><PenLine size={17} /><span><strong>直接编写</strong><small>从自己的想法开始</small></span></button>
-              <button type="button" className="story-planning-action-choice" onClick={() => void generateWithAi()} disabled={generating || !chatProfile || !props.contextChapterId}><Sparkles size={17} /><span><strong>{generating ? "正在推导" : "AI 推导"}</strong><small>结合已有设定生成候选</small></span></button>
-              <label className="story-planning-action-choice story-planning-import"><FileUp size={17} /><span><strong>导入文件</strong><small>支持 TXT、Markdown、JSON</small></span><input type="file" accept=".txt,.md,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importSectionFile(file); event.currentTarget.value = ""; }} /></label>
+              <button type="button" className="story-planning-action-choice" onClick={() => void generateWithAi()} disabled={generating || !chatProfile}><Sparkles size={17} /><span><strong>{generating ? "正在推导" : "AI 推导"}</strong><small>结合已有设定生成内容</small></span></button>
+              <label className="story-planning-action-choice story-planning-import" data-disabled={importing || !chatProfile || undefined}><FileUp size={17} /><span><strong>{importing ? "正在提取" : "AI 提取文件"}</strong><small>仅保留符合当前节点的内容</small></span><input type="file" accept=".txt,.md,.json" disabled={importing || !chatProfile} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importSectionFile(file); event.currentTarget.value = ""; }} /></label>
             </div>
           </div>
-          {!chatProfile || !props.contextChapterId ? <p className="story-planning-ai-hint">配置聊天模型并创建章节后，可使用 AI 推导候选。</p> : null}
+          {!chatProfile ? <p className="story-planning-ai-hint">请先在设置中配置一个可用的聊天模型。</p> : null}
           <div className="story-planning-references">
             <button type="button" className="story-planning-references-toggle" aria-expanded={showReferences} onClick={() => setShowReferences((value) => !value)}>{showReferences ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<span><strong>参考内容</strong><small>选择项目材料和知识库内容，供 AI 推导或编写时参考</small></span><em>{selectedMaterialIds.length + selectedKnowledgeIds.length ? `已选 ${selectedMaterialIds.length + selectedKnowledgeIds.length} 项` : "可选"}</em></button>
             {showReferences ? <div className="story-planning-reference-content"><div className="story-planning-material-picker"><div className="story-planning-picker-heading"><strong>项目材料</strong><span>勾选后可从材料提炼</span></div>{materials.data?.length ? materials.data.map((item: SummaryMaterial) => <label key={item.id}><input type="checkbox" checked={selectedMaterialIds.includes(item.id)} onChange={(event) => setSelectedMaterialIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span>{item.kind} · {item.precision}</span><small>{item.content.slice(0, 70)}{item.content.length > 70 ? "…" : ""}</small></label>) : <p>还没有可用材料，可先到资料库添加摘要。</p>}</div><div className="story-planning-material-picker story-planning-knowledge-picker"><div className="story-planning-picker-heading"><strong>知识库</strong><span>选择人物、地点和概念</span></div><label className="knowledge-picker-search"><Search size={13} /><input value={knowledgeSearch} onChange={(event) => setKnowledgeSearch(event.target.value)} placeholder="搜索知识实体" aria-label="搜索知识实体" /></label>{filteredKnowledge.length ? filteredKnowledge.slice(0, 30).map(({ entity, revision }) => <label key={entity.id}><input type="checkbox" checked={selectedKnowledgeIds.includes(entity.id)} onChange={(event) => setSelectedKnowledgeIds((ids) => event.target.checked ? [...ids, entity.id] : ids.filter((id) => id !== entity.id))} /><span>{revision!.name}</span><small>{revision!.description || "暂无描述"}</small></label>) : <p>知识库还没有匹配实体。</p>}{selectedKnowledge.length ? <div className="knowledge-picker-selected">已选：{selectedKnowledge.map(({ revision }) => revision!.name).join("、")}</div> : null}</div></div> : null}

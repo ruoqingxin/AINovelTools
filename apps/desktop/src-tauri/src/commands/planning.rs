@@ -32,7 +32,9 @@ pub(crate) fn save_planning_section(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager.save_planning_section(section).map_err(ApiError::from)
+    manager
+        .save_planning_section(section)
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
