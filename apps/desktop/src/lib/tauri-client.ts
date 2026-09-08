@@ -165,12 +165,24 @@ export type AiProposal = {
   contextVersion: string; promptVersion: string; outputText: string; acceptedText: string | null;
   status: AiProposalStatus; createdAt: string; decidedAt: string | null;
 };
-export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX";
+export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX" | "AI_PLANNING_GENERATE" | "AI_PLANNING_EXTRACT";
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
 export type Job = {
   id: string; jobType: JobType; payload: string; status: JobStatus; progress: number;
   attemptCount: number; cancelRequested: boolean; errorSummary: string | null;
   createdAt: string; updatedAt: string;
+};
+export type JobEvent = {
+  id: string; jobId: string; stage: string; message: string; progress: number; createdAt: string;
+};
+export type PlanningAiJobInput = {
+  profileId: string; mode: "GENERATE" | "EXTRACT"; sectionId: string; sectionTitle: string;
+  sectionPrompt: string; existingContext: string; referenceContent: string; userGuidance: string;
+  allowRewrite: boolean; sourceName?: string; systemPromptSnapshot?: string; userPromptSnapshot?: string;
+  finalRequestEndpoint?: string; finalRequestBody?: string; finalRequestEstimatedInputTokens?: number;
+};
+export type PlanningAiRequestPreview = {
+  endpoint: string | null; requestBody: string | null; estimatedInputTokens: number | null;
 };
 export type HealthScanReport = { status: "HEALTHY" | "WARNING" | "ERROR"; schemaVersion: number; sqliteIntegrity: string; ftsRows: number; warnings: string[]; errors: string[] };
 export type StartupRecoveryReport = { crashMarkerPresent: boolean; recoveryLogCount: number; unfinishedJobCount: number; walPresent: boolean; tempFileCount: number; migrationInterrupted: boolean; actions: string[] };
@@ -369,11 +381,19 @@ export function generatePlanningContent(input: { profileId: string; mode: "GENER
   return invoke<string>("generate_planning_content", input);
 }
 
+export function enqueuePlanningAiJob(input: PlanningAiJobInput) {
+  return invoke<Job>("enqueue_planning_ai_job", { input });
+}
+export function getPlanningAiJobRequest(jobId: string) {
+  return invoke<PlanningAiRequestPreview>("get_planning_ai_job_request", { jobId });
+}
+
 export function cancelAiTask(taskId: string) {
   return invoke<void>("cancel_ai_task", { taskId });
 }
 
 export function listJobs() { return invoke<Job[]>("list_jobs"); }
+export function listJobEvents(jobId: string) { return invoke<JobEvent[]>("list_job_events", { jobId }); }
 export function enqueueJob(jobType: JobType, payload = "{}") {
   return invoke<Job>("enqueue_job", { jobType, payload });
 }

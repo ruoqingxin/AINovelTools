@@ -63,6 +63,8 @@ pub enum JobType {
     RestoreVerify,
     HealthScan,
     RebuildSearchIndex,
+    AiPlanningGenerate,
+    AiPlanningExtract,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,6 +80,17 @@ pub struct Job {
     pub error_summary: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct JobEvent {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub stage: String,
+    pub message: String,
+    pub progress: u8,
+    pub created_at: String,
 }
 
 #[derive(Debug, Error)]
@@ -155,7 +168,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 26;
+pub const CURRENT_SCHEMA_VERSION: i64 = 29;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -586,6 +599,8 @@ fn job_type_str(value: JobType) -> &'static str {
         JobType::RestoreVerify => "RESTORE_VERIFY",
         JobType::HealthScan => "HEALTH_SCAN",
         JobType::RebuildSearchIndex => "REBUILD_SEARCH_INDEX",
+        JobType::AiPlanningGenerate => "AI_PLANNING_GENERATE",
+        JobType::AiPlanningExtract => "AI_PLANNING_EXTRACT",
     }
 }
 
@@ -594,6 +609,8 @@ fn parse_job_type(value: &str) -> JobType {
         "RESTORE_VERIFY" => JobType::RestoreVerify,
         "HEALTH_SCAN" => JobType::HealthScan,
         "REBUILD_SEARCH_INDEX" => JobType::RebuildSearchIndex,
+        "AI_PLANNING_GENERATE" => JobType::AiPlanningGenerate,
+        "AI_PLANNING_EXTRACT" => JobType::AiPlanningExtract,
         _ => JobType::Backup,
     }
 }
@@ -648,6 +665,29 @@ fn read_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
         error_summary: row.get(7)?,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
+    })
+}
+
+fn read_job_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobEvent> {
+    Ok(JobEvent {
+        id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        job_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        stage: row.get(2)?,
+        message: row.get(3)?,
+        progress: row.get::<_, i64>(4)?.clamp(0, 100) as u8,
+        created_at: row.get(5)?,
     })
 }
 
@@ -788,17 +828,20 @@ impl ProjectManager {
             .map_err(DatabaseError::from)
     }
 
-    /// Atomically claims the oldest queued job for a runner.
-    pub fn claim_next_job(&mut self) -> Result<Option<Job>, DatabaseError> {
+    fn claim_next_job_by_category(&mut self, ai_job: bool) -> Result<Option<Job>, DatabaseError> {
         let session = self
             .current
             .as_mut()
             .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         let tx = session.database.connection.transaction()?;
+        let category = if ai_job { 1 } else { 0 };
         let id: Option<String> = tx
             .query_row(
-                "SELECT id FROM jobs WHERE status='QUEUED' AND cancel_requested=0 ORDER BY created_at, rowid LIMIT 1",
-                [],
+                "SELECT id FROM jobs
+                 WHERE status='QUEUED' AND cancel_requested=0
+                   AND CASE WHEN job_type IN ('AI_PLANNING_GENERATE','AI_PLANNING_EXTRACT') THEN 1 ELSE 0 END = ?1
+                 ORDER BY created_at, rowid LIMIT 1",
+                [category],
                 |row| row.get(0),
             )
             .optional()?;
@@ -819,6 +862,16 @@ impl ProjectManager {
         Ok(Some(job))
     }
 
+    /// Atomically claims the oldest queued maintenance job.
+    pub fn claim_next_job(&mut self) -> Result<Option<Job>, DatabaseError> {
+        self.claim_next_job_by_category(false)
+    }
+
+    /// Atomically claims the oldest queued AI planning job.
+    pub fn claim_next_ai_job(&mut self) -> Result<Option<Job>, DatabaseError> {
+        self.claim_next_job_by_category(true)
+    }
+
     /// Executes one queued job synchronously. The operation is restart-safe:
     /// claiming is atomic and every outcome is persisted as a terminal status.
     pub fn run_next_job(&mut self) -> Result<Option<Job>, DatabaseError> {
@@ -835,6 +888,9 @@ impl ProjectManager {
             JobType::HealthScan => self.health_scan().map(|_| ()).map_err(|e| e.to_string()),
             JobType::Backup => self.perform_backup(&job).map_err(|e| e.to_string()),
             JobType::RestoreVerify => self.perform_restore_verify(&job).map_err(|e| e.to_string()),
+            JobType::AiPlanningGenerate | JobType::AiPlanningExtract => {
+                Err("AI planning jobs require the asynchronous runner".to_owned())
+            }
         };
         if self.is_job_cancel_requested(job.id)? {
             self.update_job_status(job.id, JobStatus::Cancelled, job.progress, None)
@@ -851,7 +907,7 @@ impl ProjectManager {
         }
     }
 
-    fn is_job_cancel_requested(&self, id: Uuid) -> Result<bool, DatabaseError> {
+    pub fn is_job_cancel_requested(&self, id: Uuid) -> Result<bool, DatabaseError> {
         let session = self
             .current
             .as_ref()
@@ -1115,6 +1171,98 @@ impl ProjectManager {
             .map_err(DatabaseError::from)
     }
 
+    pub fn get_job(&self, id: Uuid) -> Result<Job, DatabaseError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        session.database.connection.query_row(
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            [id.to_string()],
+            read_job,
+        ).map_err(DatabaseError::from)
+    }
+
+    pub fn update_job_payload(&mut self, id: Uuid, payload: String) -> Result<Job, DatabaseError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        let payload_value: serde_json::Value = serde_json::from_str(&payload).map_err(|_| {
+            rusqlite::Error::InvalidParameterName("job payload must be valid JSON".into())
+        })?;
+        if !payload_value.is_object() {
+            return Err(DatabaseError::Sqlite(
+                rusqlite::Error::InvalidParameterName("job payload must be a JSON object".into()),
+            ));
+        }
+        session.database.connection.execute(
+            "UPDATE jobs SET payload=?1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?2",
+            rusqlite::params![payload, id.to_string()],
+        )?;
+        session.database.connection.query_row(
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            [id.to_string()],
+            read_job,
+        ).map_err(DatabaseError::from)
+    }
+
+    pub fn list_job_events(&self, job_id: Uuid) -> Result<Vec<JobEvent>, DatabaseError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        let mut statement = session.database.connection.prepare(
+            "SELECT id, job_id, stage, message, progress, created_at
+             FROM job_events WHERE job_id=?1 ORDER BY created_at, rowid",
+        )?;
+        let rows = statement.query_map([job_id.to_string()], read_job_event)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
+    }
+
+    pub fn append_job_event(
+        &mut self,
+        job_id: Uuid,
+        stage: impl Into<String>,
+        message: impl Into<String>,
+        progress: u8,
+    ) -> Result<JobEvent, DatabaseError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        let event = JobEvent {
+            id: Uuid::new_v4(),
+            job_id,
+            stage: stage.into(),
+            message: message.into(),
+            progress: progress.min(100),
+            created_at: now_timestamp(),
+        };
+        session.database.connection.execute(
+            "INSERT INTO job_events (id, job_id, stage, message, progress) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![event.id.to_string(), event.job_id.to_string(), &event.stage, &event.message, event.progress],
+        )?;
+        Ok(event)
+    }
+
+    pub fn update_job_progress(&mut self, id: Uuid, progress: u8) -> Result<Job, DatabaseError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        session.database.connection.execute(
+            "UPDATE jobs SET progress=?1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?2 AND status='RUNNING'",
+            rusqlite::params![progress.min(99), id.to_string()],
+        )?;
+        session.database.connection.query_row(
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            [id.to_string()],
+            read_job,
+        ).map_err(DatabaseError::from)
+    }
+
     pub fn update_job_status(
         &mut self,
         id: Uuid,
@@ -1155,7 +1303,7 @@ impl ProjectManager {
             .as_mut()
             .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         session.database.connection.execute(
-            "UPDATE jobs SET cancel_requested=1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status IN ('QUEUED','RUNNING')",
+            "UPDATE jobs SET cancel_requested=1, status=CASE WHEN status='QUEUED' THEN 'CANCELLED' ELSE status END, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status IN ('QUEUED','RUNNING')",
             [id.to_string()],
         )?;
         session.database.connection.query_row(
@@ -2269,10 +2417,43 @@ mod tests {
         );
         let cancelled = manager.request_job_cancel(job.id).expect("cancel");
         assert!(cancelled.cancel_requested);
-        let cancelled = manager
-            .update_job_status(job.id, super::JobStatus::Cancelled, 0, None)
-            .expect("cancelled");
         assert_eq!(cancelled.status, super::JobStatus::Cancelled);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ai_jobs_use_a_separate_queue_and_persist_stage_events() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-ai-jobs-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "AI 任务测试").expect("create");
+        let ai_job = manager
+            .enqueue_job(super::JobType::AiPlanningExtract, "{}".into())
+            .expect("enqueue ai");
+        let system_job = manager
+            .enqueue_job(super::JobType::HealthScan, "{}".into())
+            .expect("enqueue system");
+        manager
+            .append_job_event(ai_job.id, "QUEUED", "任务已排队", 0)
+            .expect("append event");
+        manager
+            .update_job_payload(ai_job.id, r#"{"finalRequestBody":"{}"}"#.into())
+            .expect("update payload");
+        assert_eq!(
+            manager.get_job(ai_job.id).expect("get updated job").payload,
+            r#"{"finalRequestBody":"{}"}"#
+        );
+        assert_eq!(
+            manager.claim_next_job().expect("claim system").unwrap().id,
+            system_job.id
+        );
+        assert_eq!(
+            manager.claim_next_ai_job().expect("claim ai").unwrap().id,
+            ai_job.id
+        );
+        let events = manager.list_job_events(ai_job.id).expect("list events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].message, "任务已排队");
         let _ = std::fs::remove_dir_all(root);
     }
 

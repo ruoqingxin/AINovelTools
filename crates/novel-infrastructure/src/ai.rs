@@ -222,23 +222,14 @@ impl Default for ModelGateway {
 }
 
 impl ModelGateway {
-    #[allow(clippy::too_many_arguments)]
-    pub async fn generate<F>(
+    #[must_use]
+    pub fn request_preview(
         &self,
         profile: &ModelProfile,
-        secret: Option<&str>,
         context: &ContextPackage,
         stream: bool,
         disable_thinking: bool,
-        cancelled: Arc<AtomicBool>,
-        mut on_chunk: F,
-    ) -> Result<String, AiError>
-    where
-        F: FnMut(&str) + Send,
-    {
-        if profile.capability != ModelCapability::Chat {
-            return Err(AiContractError::InvalidProviderCapability.into());
-        }
+    ) -> (String, serde_json::Value) {
         let endpoint = format!(
             "{}/chat/completions",
             profile.base_url.trim_end_matches('/')
@@ -260,6 +251,27 @@ impl ModelGateway {
         if profile.provider == ModelProvider::DeepSeek && disable_thinking {
             body["thinking"] = serde_json::json!({ "type": "disabled" });
         }
+        (endpoint, body)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn generate<F>(
+        &self,
+        profile: &ModelProfile,
+        secret: Option<&str>,
+        context: &ContextPackage,
+        stream: bool,
+        disable_thinking: bool,
+        cancelled: Arc<AtomicBool>,
+        mut on_chunk: F,
+    ) -> Result<String, AiError>
+    where
+        F: FnMut(&str) + Send,
+    {
+        if profile.capability != ModelCapability::Chat {
+            return Err(AiContractError::InvalidProviderCapability.into());
+        }
+        let (endpoint, body) = self.request_preview(profile, context, stream, disable_thinking);
         let attempts = usize::from(profile.retry_limit) + 1;
         for attempt in 0..attempts {
             if cancelled.load(Ordering::Relaxed) {

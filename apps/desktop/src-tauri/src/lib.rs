@@ -12,17 +12,17 @@ mod state;
 
 use commands::ai::{
     assemble_context_with_project_knowledge, cancel_ai_task, decide_ai_proposal,
-    delete_model_secret, extract_entities_from_text, generate_ai_proposal,
-    generate_planning_content, list_ai_proposals, list_model_profiles, save_model_secret,
-    test_model_profile, upsert_model_profile,
+    delete_model_secret, enqueue_planning_ai_job, extract_entities_from_text, generate_ai_proposal,
+    generate_planning_content, get_planning_ai_job_request, list_ai_proposals, list_model_profiles,
+    run_next_planning_ai_job, save_model_secret, test_model_profile, upsert_model_profile,
 };
 use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::entities::{
     list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
 };
 use commands::jobs::{
-    cancel_job, claim_next_job, create_diagnostic_package, enqueue_job, health_scan, list_jobs,
-    retry_job, run_next_job, startup_recovery_report,
+    cancel_job, claim_next_job, create_diagnostic_package, enqueue_job, health_scan,
+    list_job_events, list_jobs, retry_job, run_next_job, startup_recovery_report,
 };
 use commands::knowledge::{
     create_belief, create_event, create_evidence_anchor, create_foreshadowing,
@@ -91,6 +91,15 @@ pub fn run() {
                     std::thread::sleep(Duration::from_millis(500));
                 }
             });
+            let ai_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let ran_job = run_next_planning_ai_job(&ai_handle).await;
+                    if !ran_job {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -131,6 +140,8 @@ pub fn run() {
             decide_ai_proposal,
             generate_ai_proposal,
             generate_planning_content,
+            enqueue_planning_ai_job,
+            get_planning_ai_job_request,
             extract_entities_from_text,
             cancel_ai_task,
             assemble_context_with_project_knowledge,
@@ -144,6 +155,7 @@ pub fn run() {
             rebuild_search_index,
             search_project,
             list_jobs,
+            list_job_events,
             enqueue_job,
             cancel_job,
             retry_job,

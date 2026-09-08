@@ -639,6 +639,36 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (28, 'planning_sections_pending_content');",
             )?;
         }
+        if applied.unwrap_or(0) < 29 {
+            self.connection.execute_batch(
+                "ALTER TABLE jobs RENAME TO jobs_before_ai;
+                CREATE TABLE jobs (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    job_type TEXT NOT NULL CHECK(job_type IN ('BACKUP','RESTORE_VERIFY','HEALTH_SCAN','REBUILD_SEARCH_INDEX','AI_PLANNING_GENERATE','AI_PLANNING_EXTRACT')),
+                    payload TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload)),
+                    status TEXT NOT NULL CHECK(status IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELLED')),
+                    progress INTEGER NOT NULL DEFAULT 0 CHECK(progress BETWEEN 0 AND 100),
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    error_summary TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT INTO jobs SELECT * FROM jobs_before_ai;
+                DROP TABLE jobs_before_ai;
+                CREATE INDEX idx_jobs_status_updated ON jobs(status, updated_at);
+                CREATE TABLE job_events (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    stage TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    progress INTEGER NOT NULL CHECK(progress BETWEEN 0 AND 100),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX idx_job_events_job_created ON job_events(job_id, created_at);
+                INSERT INTO schema_migrations (version, name) VALUES (29, 'ai_planning_jobs_and_events');",
+            )?;
+        }
         Ok(())
     }
 

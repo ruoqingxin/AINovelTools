@@ -1,4 +1,5 @@
 use crate::{ApiError, ProjectState};
+use std::sync::atomic::Ordering;
 
 #[tauri::command]
 pub(crate) fn list_jobs(
@@ -8,9 +9,35 @@ pub(crate) fn list_jobs(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
+    let mut jobs = manager
         .list_jobs()
-        .map_err(|error| ApiError::internal(error.to_string()))
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    for job in &mut jobs {
+        if matches!(
+            job.job_type,
+            novel_infrastructure::JobType::AiPlanningGenerate
+                | novel_infrastructure::JobType::AiPlanningExtract
+        ) && let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(&job.payload)
+        {
+            if let Some(content) = payload.get_mut("referenceContent") {
+                let length = content.as_str().map_or(0, |value| value.chars().count());
+                *content = serde_json::Value::String(format!("[任务输入已省略，共 {length} 字符]"));
+            }
+            for key in [
+                "systemPromptSnapshot",
+                "userPromptSnapshot",
+                "finalRequestBody",
+            ] {
+                if let Some(prompt) = payload.get_mut(key) {
+                    let length = prompt.as_str().map_or(0, |value| value.chars().count());
+                    *prompt =
+                        serde_json::Value::String(format!("[提示词快照已省略，共 {length} 字符]"));
+                }
+            }
+            job.payload = payload.to_string();
+        }
+    }
+    Ok(jobs)
 }
 
 #[tauri::command]
@@ -29,17 +56,46 @@ pub(crate) fn enqueue_job(
 }
 
 #[tauri::command]
-pub(crate) fn cancel_job(
+pub(crate) fn list_job_events(
     state: tauri::State<'_, ProjectState>,
-    id: uuid::Uuid,
-) -> Result<novel_infrastructure::Job, ApiError> {
-    let mut manager = state
+    job_id: uuid::Uuid,
+) -> Result<Vec<novel_infrastructure::JobEvent>, ApiError> {
+    let manager = state
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
-        .request_job_cancel(id)
+        .list_job_events(job_id)
         .map_err(|error| ApiError::internal(error.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn cancel_job(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+) -> Result<novel_infrastructure::Job, ApiError> {
+    if let Some(cancelled) = state
+        .ai_cancellations
+        .lock()
+        .map_err(|_| ApiError::internal("AI cancellation mutex poisoned"))?
+        .get(&id)
+    {
+        cancelled.store(true, Ordering::Relaxed);
+    }
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    let job = manager
+        .request_job_cancel(id)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let (stage, message) = if job.status == novel_infrastructure::JobStatus::Cancelled {
+        ("CANCELLED", "排队中的任务已取消")
+    } else {
+        ("CANCEL_REQUESTED", "已发送取消请求，等待当前模型请求结束")
+    };
+    let _ = manager.append_job_event(id, stage, message, job.progress);
+    Ok(job)
 }
 
 #[tauri::command]
@@ -51,9 +107,11 @@ pub(crate) fn retry_job(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
+    let job = manager
         .retry_job(id)
-        .map_err(|error| ApiError::internal(error.to_string()))
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let _ = manager.append_job_event(id, "RETRY", "失败任务已重新进入队列", 0);
+    Ok(job)
 }
 
 #[tauri::command]
