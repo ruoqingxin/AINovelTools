@@ -96,9 +96,9 @@ export function ProjectWorkspaceView() {
   const [title, setTitle] = useState("");
   const [parentId, setParentId] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedPlanningSectionId, setSelectedPlanningSectionId] = useState("story-theme");
+  const [selectedPlanningSectionId, setSelectedPlanningSectionId] = useState("positioning-genre");
   const [workDesignExpanded, setWorkDesignExpanded] = useState(true);
-  const [expandedPlanningGroups, setExpandedPlanningGroups] = useState<Set<string>>(() => new Set(["story-core"]));
+  const [expandedPlanningGroups, setExpandedPlanningGroups] = useState<Set<string>>(() => new Set(["creative-positioning"]));
   const [editTitle, setEditTitle] = useState("");
   const [moveParentId, setMoveParentId] = useState("");
   const [draft, setDraft] = useState("");

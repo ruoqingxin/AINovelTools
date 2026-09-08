@@ -18,20 +18,82 @@ type PlanningItem = { id: string; label: string; prompt: string };
 type PlanningGroup = { id: string; label: string; children: PlanningItem[] };
 
 export const planningSectionGroups: PlanningGroup[] = [
-  { id: "story-core", label: "故事核心", children: [{ id: "story-theme", label: "主题与题材", prompt: "这部小说想讨论什么" }, { id: "story-protagonist", label: "主角与欲望", prompt: "主角想得到什么" }, { id: "story-conflict", label: "核心冲突", prompt: "什么力量阻碍主角" }] },
-  { id: "world-foundation", label: "世界基础", children: [{ id: "world-origin", label: "起源", prompt: "世界从何而来" }, { id: "world-rules", label: "规则", prompt: "世界如何运行" }, { id: "world-space", label: "空间", prompt: "故事发生在哪里" }, { id: "world-geography", label: "地理", prompt: "地点如何分布和连接" }, { id: "world-resources", label: "资源", prompt: "什么稀缺、谁掌握它" }] },
-  { id: "civilization", label: "文明社会", children: [{ id: "society-species", label: "种族与群体", prompt: "谁生活在这个世界" }, { id: "society-power", label: "力量体系", prompt: "力量从哪里来" }, { id: "society-production", label: "生产方式", prompt: "社会如何生产和交换" }, { id: "society-economy", label: "经济", prompt: "财富如何流动" }, { id: "society-class", label: "阶级关系", prompt: "谁获得机会、谁被排除" }] },
-  { id: "politics-culture", label: "政治文化", children: [{ id: "politics-factions", label: "势力", prompt: "谁在争夺决定权" }, { id: "politics-system", label: "制度", prompt: "权力如何被组织" }, { id: "politics-history", label: "历史", prompt: "过去留下了什么" }, { id: "politics-belief", label: "信仰", prompt: "人们相信什么" }, { id: "politics-custom", label: "习俗", prompt: "人们如何生活和表达" }] },
-  { id: "story-engine", label: "故事发动机", children: [{ id: "engine-situation", label: "当前局势", prompt: "故事从什么失衡状态开始" }, { id: "engine-goal", label: "阶段目标", prompt: "主角下一步要完成什么" }, { id: "engine-antagonist", label: "反派与阻力", prompt: "谁会持续制造代价" }, { id: "engine-time", label: "时间压力", prompt: "为什么必须现在行动" }] },
-] ;
+  {
+    id: "creative-positioning",
+    label: "作品定位",
+    children: [
+      { id: "positioning-genre", label: "类型与题材", prompt: "作品的主类型、辅助类型和核心题材元素分别是什么" },
+      { id: "positioning-promise", label: "读者与阅读承诺", prompt: "作品主要写给谁，承诺持续提供怎样的情绪和类型满足" },
+      { id: "positioning-selling-point", label: "核心卖点", prompt: "与同类作品相比，最值得读者记住的独特吸引力是什么" },
+      { id: "positioning-tone", label: "基调与尺度", prompt: "作品的整体气质、内容尺度和不会越过的表达边界是什么" },
+      { id: "positioning-scale", label: "篇幅与体量", prompt: "预计采用怎样的篇幅、时间跨度、空间范围和叙事规模" },
+    ],
+  },
+  {
+    id: "story-core",
+    label: "故事内核",
+    children: [
+      { id: "core-premise", label: "一句话梗概", prompt: "用主角、目标、阻力和失败风险准确概括整个故事" },
+      { id: "core-situation", label: "核心情境", prompt: "哪个具有持续张力的特殊处境让这个故事值得展开" },
+      { id: "core-theme", label: "主题命题", prompt: "作品借人物的选择探讨什么问题，不同人物代表哪些答案" },
+      { id: "core-dramatic-question", label: "核心戏剧问题", prompt: "读者会持续追问哪个贯穿全书、直到结局才真正回答的问题" },
+      { id: "core-emotion", label: "情感内核", prompt: "作品最想让读者经历和带走的核心情感是什么" },
+      { id: "core-ending", label: "结局落点", prompt: "故事最终如何回答戏剧问题，并兑现主题、人物和情感承诺" },
+    ],
+  },
+  {
+    id: "character-system",
+    label: "人物系统",
+    children: [
+      { id: "character-motivation", label: "主角目标与需求", prompt: "主角外在想达成什么，内在真正需要面对或获得什么" },
+      { id: "character-flaw", label: "主角缺陷与困境", prompt: "什么认知、创伤、欲望或处境让主角不断作出困难选择" },
+      { id: "character-antagonist", label: "对抗者", prompt: "谁或什么力量与主角争夺同一结果，其立场为何自洽且有威胁" },
+      { id: "character-relationship", label: "核心关系", prompt: "哪段关系承载主要情感变化，双方彼此需要又彼此伤害什么" },
+      { id: "character-supporting", label: "关键配角", prompt: "配角分别承担帮助、阻碍、映照、诱惑或见证中的什么功能" },
+      { id: "character-arcs", label: "人物弧光", prompt: "主要人物的信念和行为如何因连续选择而改变或固化" },
+      { id: "character-secrets", label: "秘密与信息差", prompt: "谁隐瞒了什么，真相揭露时会改变什么" },
+    ],
+  },
+  {
+    id: "story-world",
+    label: "故事世界",
+    children: [
+      { id: "world-stage", label: "时空舞台", prompt: "故事发生在怎样的时代与地域，环境如何直接影响人物行动" },
+      { id: "world-rules", label: "核心规则", prompt: "哪些不可随意打破的规则决定了人物能做什么、不能做什么" },
+      { id: "world-history", label: "历史与现状", prompt: "哪些过去事件造成当前矛盾，并仍在影响人物和势力" },
+      { id: "world-power", label: "力量、技术与代价", prompt: "特殊能力或技术如何获得和使用，其限制、代价与反制是什么" },
+      { id: "world-society", label: "权力与社会运行", prompt: "组织、阶层、法律和资源如何分配权力并制造现实阻力" },
+      { id: "world-culture", label: "文化与日常生活", prompt: "信仰、习俗、禁忌和生活方式如何进入人物选择与具体场景" },
+    ],
+  },
+  {
+    id: "plot-system",
+    label: "情节系统",
+    children: [
+      { id: "plot-opening", label: "开局状态", prompt: "故事开始时主角处于怎样的常态，潜在矛盾为何已无法长久维持" },
+      { id: "plot-trigger", label: "触发事件", prompt: "什么事件打破现状，迫使主角卷入故事并作出选择" },
+      { id: "plot-goal", label: "主线目标", prompt: "主角采取什么持续行动追求哪个可以明确判断成败的结果" },
+      { id: "plot-obstacles", label: "阻力系统", prompt: "外部对抗、环境限制和主角自身问题如何共同阻止目标实现" },
+      { id: "plot-stakes", label: "赌注与代价", prompt: "成功、失败和拒绝行动分别会让主角及相关人物失去什么" },
+      { id: "plot-escalation", label: "升级与转折", prompt: "新信息、失败和选择如何改变局势，使后续行动越来越困难" },
+      { id: "plot-climax", label: "高潮抉择", prompt: "最终对抗将迫使主角作出什么不可回避、能够证明人物变化的选择" },
+    ],
+  },
+  {
+    id: "narrative-strategy",
+    label: "叙事方案",
+    children: [
+      { id: "narrative-perspective", label: "视角与叙述距离", prompt: "由谁感知和讲述故事，叙述贴近人物到什么程度，有哪些盲区" },
+      { id: "narrative-time", label: "时间与结构", prompt: "故事如何安排时间顺序、多线切换和章节结构以获得最佳效果" },
+      { id: "narrative-information", label: "信息与悬念", prompt: "角色和读者分别在何时知道什么，真相如何铺垫、误导与揭示" },
+      { id: "narrative-rhythm", label: "节奏曲线", prompt: "紧张、舒缓、信息、行动和情感段落如何形成整体起伏" },
+      { id: "narrative-style", label: "文风与语言", prompt: "叙述语言、描写密度、对话气质和需要长期保持的表达规范是什么" },
+      { id: "narrative-motifs", label: "意象与母题", prompt: "哪些反复出现的意象、场景或动作能够强化主题与情感" },
+    ],
+  },
+];
 const sections = planningSectionGroups.flatMap((group) => group.children);
-const legacySectionByChild: Record<string, string> = {
-  "story-theme": "story-core",
-  "world-origin": "world-foundation",
-  "society-species": "civilization",
-  "politics-factions": "politics-culture",
-  "engine-situation": "story-engine",
-};
+const sectionIds = new Set(sections.map((section) => section.id));
 function emptySection(id: string): PlanningSection {
   return {
     id,
@@ -63,7 +125,7 @@ export function StoryPlanningWorkbench(props: {
   });
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
-  const selectedId = props.selectedSectionId ?? "story-theme";
+  const selectedId = props.selectedSectionId ?? "positioning-genre";
   const [form, setForm] = useState<PlanningSection>(emptySection(selectedId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +141,7 @@ export function StoryPlanningWorkbench(props: {
   const [previousForm, setPreviousForm] = useState<PlanningSection | null>(null);
   const selectedDefinition = sections.find((section) => section.id === selectedId) ?? sections[0];
   const selectedGroup = planningSectionGroups.find((group) => group.children.some((item) => item.id === selectedId));
-  const completedCount = (storedSections.data ?? []).filter((section) => section.content.trim()).length;
+  const completedCount = (storedSections.data ?? []).filter((section) => sectionIds.has(section.id) && section.content.trim()).length;
   const chatProfile = profiles.data?.find((profile) => profile.capability === "CHAT" && profile.hasSecret);
   const sectionJobs = (jobs.data ?? []).filter((job) => planningJobInput(job)?.sectionId === selectedId);
   const activeJob = sectionJobs.find((job) => job.status === "QUEUED" || job.status === "RUNNING");
@@ -87,7 +149,7 @@ export function StoryPlanningWorkbench(props: {
   const aiBusy = generating || importing || Boolean(activeJob);
   const visibleJob = activeJob ?? (latestJob?.status === "FAILED" || latestJob?.status === "CANCELLED" ? latestJob : null);
   useEffect(() => {
-    const stored = storedSections.data?.find((section) => section.id === selectedId) ?? (legacySectionByChild[selectedId] ? storedSections.data?.find((section) => section.id === legacySectionByChild[selectedId]) : undefined);
+    const stored = storedSections.data?.find((section) => section.id === selectedId);
     const next = stored ?? emptySection(selectedId);
     setForm(next);
     setError(null);
@@ -156,7 +218,10 @@ export function StoryPlanningWorkbench(props: {
     setGenerating(true);
     setError(null);
     try {
-      const existing = (storedSections.data ?? []).map((item) => `${item.id}: ${item.content}`).filter(Boolean).join("\n");
+      const existing = (storedSections.data ?? [])
+        .filter((item) => sectionIds.has(item.id) && item.content.trim())
+        .map((item) => `${item.id}: ${item.content}`)
+        .join("\n");
       await enqueuePlanningAiJob({
         profileId: chatProfile.id,
         mode: "GENERATE",
