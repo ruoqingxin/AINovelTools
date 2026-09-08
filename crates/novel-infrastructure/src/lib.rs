@@ -471,6 +471,7 @@ pub struct PlanNode {
 pub struct PlanningSection {
     pub id: String,
     pub content: String,
+    pub pending_content: String,
     pub rationale: String,
     pub consequence: String,
     pub references: Vec<String>,
@@ -2090,6 +2091,7 @@ mod tests {
             .save_planning_section(super::PlanningSection {
                 id: "story-core".to_owned(),
                 content: "修仙题材，主题是反抗既定命运。".to_owned(),
+                pending_content: "保留作为候选的另一版主题。".to_owned(),
                 rationale: "灵根等级决定资源分配。".to_owned(),
                 consequence: "主角会与宗门秩序发生冲突。".to_owned(),
                 references: vec!["planning.txt:1-3".to_owned()],
@@ -2104,6 +2106,7 @@ mod tests {
             .find(|section| section.id == "story-core")
             .expect("saved section");
         assert_eq!(restored.content, saved.content);
+        assert_eq!(restored.pending_content, saved.pending_content);
         assert_eq!(restored.rationale, saved.rationale);
         assert_eq!(restored.consequence, saved.consequence);
         assert_eq!(restored.references, saved.references);

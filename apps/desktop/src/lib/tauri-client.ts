@@ -48,6 +48,7 @@ export type PlanNode = {
 export type PlanningSection = {
   id: string;
   content: string;
+  pendingContent: string;
   rationale: string;
   consequence: string;
   references: string[];
@@ -364,7 +365,7 @@ export function generateAiProposal(input: {
   return invoke<AiProposal>("generate_ai_proposal", input);
 }
 
-export function generatePlanningContent(input: { profileId: string; mode: "GENERATE" | "EXTRACT"; sectionTitle: string; sectionPrompt: string; existingContext: string; referenceContent: string; userGuidance: string }) {
+export function generatePlanningContent(input: { profileId: string; mode: "GENERATE" | "EXTRACT"; sectionTitle: string; sectionPrompt: string; existingContext: string; referenceContent: string; userGuidance: string; allowRewrite: boolean }) {
   return invoke<string>("generate_planning_content", input);
 }
 

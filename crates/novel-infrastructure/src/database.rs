@@ -633,6 +633,12 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (27, 'planning_sections');",
             )?;
         }
+        if applied.unwrap_or(0) < 28 {
+            self.connection.execute_batch(
+                "ALTER TABLE planning_sections ADD COLUMN pending_content TEXT NOT NULL DEFAULT '';
+                INSERT INTO schema_migrations (version, name) VALUES (28, 'planning_sections_pending_content');",
+            )?;
+        }
         Ok(())
     }
 
@@ -690,15 +696,15 @@ impl Database {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, content, rationale, consequence, references_json, updated_at
+                "SELECT id, content, pending_content, rationale, consequence, references_json, updated_at
                  FROM planning_sections ORDER BY updated_at DESC, id",
             )
             .map_err(DatabaseError::from)?;
         let rows = statement.query_map([], |row| {
-            let references_json: String = row.get(4)?;
+            let references_json: String = row.get(5)?;
             let references = serde_json::from_str(&references_json).map_err(|error| {
                 rusqlite::Error::FromSqlConversionFailure(
-                    4,
+                    5,
                     rusqlite::types::Type::Text,
                     Box::new(error),
                 )
@@ -706,10 +712,11 @@ impl Database {
             Ok(PlanningSection {
                 id: row.get(0)?,
                 content: row.get(1)?,
-                rationale: row.get(2)?,
-                consequence: row.get(3)?,
+                pending_content: row.get(2)?,
+                rationale: row.get(3)?,
+                consequence: row.get(4)?,
                 references,
-                updated_at: row.get(5)?,
+                updated_at: row.get(6)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()
@@ -725,10 +732,11 @@ impl Database {
         })?;
         self.connection
             .execute(
-                "INSERT INTO planning_sections (id, content, rationale, consequence, references_json, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                "INSERT INTO planning_sections (id, content, pending_content, rationale, consequence, references_json, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
                  ON CONFLICT(id) DO UPDATE SET
                    content = excluded.content,
+                   pending_content = excluded.pending_content,
                    rationale = excluded.rationale,
                    consequence = excluded.consequence,
                    references_json = excluded.references_json,
@@ -736,6 +744,7 @@ impl Database {
                 rusqlite::params![
                     section.id,
                     section.content,
+                    section.pending_content,
                     section.rationale,
                     section.consequence,
                     references_json

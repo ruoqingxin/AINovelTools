@@ -26,6 +26,7 @@ pub(crate) async fn generate_planning_content(
     existing_context: String,
     reference_content: String,
     user_guidance: String,
+    allow_rewrite: bool,
 ) -> Result<String, ApiError> {
     let profile = {
         let store = state
@@ -74,12 +75,24 @@ pub(crate) async fn generate_planning_content(
             message: "导入文件内容为空".to_owned(),
         });
     }
-    context.system_prompt = if extract_mode {
+    context.system_prompt = if extract_mode && allow_rewrite {
+        "你是小说设定改写助手。以用户提供的文件为核心依据，围绕当前规划节点筛选信息，并允许重新组织、改写、归纳和合理补全，使结果完整且符合节点范围。补全内容必须与文件事实和已有约束一致，不得引入冲突设定。不要输出解释、标题或分析过程。".to_owned()
+    } else if extract_mode {
         "你是小说资料提取助手。只允许从用户提供的文件原文中提取与当前规划节点直接相关的信息。不得补写、推测、扩展或引入文件外知识。不要输出解释、标题或分析过程。".to_owned()
     } else {
         "你是小说项目规划助手。你的职责是帮助作者把当前小说要素写成清晰、具体、可继续修改的设定。不得把推测写成已经确认的事实，不要输出解释、标题或分析过程。".to_owned()
     };
-    context.user_prompt = if extract_mode {
+    context.user_prompt = if extract_mode && allow_rewrite {
+        format!(
+            "当前规划节点：{section_title}\n节点目标：{section_prompt}\n作者补充要求：{}\n\n文件原文：\n{}\n\n请以文件内容为依据，生成只属于当前节点范围的设定正文。可以改写表达、重组结构，并补足必要的逻辑连接或缺失细节；补全必须合理、克制，且不能违背文件中的事实和限制。忽略与当前节点无关的内容，只输出连贯、可编辑的正文。",
+            if user_guidance.trim().is_empty() {
+                "无"
+            } else {
+                user_guidance.trim()
+            },
+            reference_content.trim()
+        )
+    } else if extract_mode {
         format!(
             "当前规划节点：{section_title}\n节点目标：{section_prompt}\n作者补充的提取要求：{}\n\n文件原文：\n{}\n\n只提取与当前节点直接相关的内容，并整理成连贯、可编辑的设定正文。作者的补充要求只能作为筛选和组织规则，不能作为文件事实写入结果。保留原文事实和限定条件，忽略无关内容，不得补充文件中没有的信息。如果完全没有相关内容，只回复：未提取到相关内容。",
             if user_guidance.trim().is_empty() {
@@ -116,21 +129,32 @@ pub(crate) async fn generate_planning_content(
                 .saturating_sub(profile.max_output_tokens),
         );
     context.task_contract.role = novel_application::AiTaskRole::ChapterSummarizer;
-    context.task_contract.goal = if extract_mode {
+    context.task_contract.goal = if extract_mode && allow_rewrite {
+        format!("根据文件改写并补全小说规划节点“{section_title}”的内容")
+    } else if extract_mode {
         format!("从文件中提取与小说规划节点“{section_title}”相关的内容")
     } else {
         format!("生成小说规划节点“{section_title}”的可编辑设定正文")
     };
     context.task_contract.target_type = "PLANNING_SECTION".to_owned();
-    context.task_contract.permissions = if extract_mode {
+    context.task_contract.permissions = if extract_mode && allow_rewrite {
+        vec!["依据文件改写、重组并合理补全当前节点的设定内容。".to_owned()]
+    } else if extract_mode {
         vec!["提取并整理文件中与当前节点直接相关的内容。".to_owned()]
     } else {
         vec!["根据已有设定和参考内容提出规划文本。".to_owned()]
     };
-    context.task_contract.forbidden_actions = vec![
-        "不得修改项目数据。".to_owned(),
-        "不得把不确定内容表述为已确认事实。".to_owned(),
-    ];
+    context.task_contract.forbidden_actions = if extract_mode && allow_rewrite {
+        vec![
+            "不得修改项目数据。".to_owned(),
+            "不得引入与文件事实或已有设定冲突的内容。".to_owned(),
+        ]
+    } else {
+        vec![
+            "不得修改项目数据。".to_owned(),
+            "不得把不确定内容表述为已确认事实。".to_owned(),
+        ]
+    };
     context.task_contract.acceptance_criteria = vec!["输出可直接编辑的设定正文。".to_owned()];
     context.task_contract.output_contract = "只输出设定正文，不要 Markdown 标题或解释。".to_owned();
     state

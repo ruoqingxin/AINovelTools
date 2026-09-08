@@ -1,16 +1,12 @@
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, FileUp, PenLine, RotateCcw, Save, Search, Sparkles, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, FileUp, PenLine, RotateCcw, Save, Sparkles, Trash2, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import {
   errorMessage,
   generatePlanningContent,
   listPlanningSections,
   listModelProfiles,
-  listEntities,
-  listEntityRevisions,
-  listSummaryMaterials,
   savePlanningSection,
-  type SummaryMaterial,
   type PlanningSection,
 } from "../lib/tauri-client";
 
@@ -36,6 +32,7 @@ function emptySection(id: string): PlanningSection {
   return {
     id,
     content: "",
+    pendingContent: "",
     rationale: "",
     consequence: "",
     references: [],
@@ -51,45 +48,37 @@ export function StoryPlanningWorkbench(props: {
     queryKey: ["planning-sections"],
     queryFn: listPlanningSections,
   });
-  const materials = useQuery({ queryKey: ["summary-materials"], queryFn: listSummaryMaterials });
-  const entities = useQuery({ queryKey: ["entities", true], queryFn: () => listEntities(true) });
-  const entityRevisionQueries = useQueries({ queries: (entities.data ?? []).map((entity) => ({ queryKey: ["entity-revisions", entity.id], queryFn: () => listEntityRevisions(entity.id) })) });
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const selectedId = props.selectedSectionId ?? "story-theme";
   const [form, setForm] = useState<PlanningSection>(emptySection(selectedId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
-  const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
-  const [knowledgeSearch, setKnowledgeSearch] = useState("");
-  const [showReferences, setShowReferences] = useState(false);
+  const [editorTab, setEditorTab] = useState<"formal" | "pending">("formal");
   const [showEditor, setShowEditor] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [importing, setImporting] = useState(false);
   const [pendingAction, setPendingAction] = useState<"AI" | "IMPORT" | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [operationGuidance, setOperationGuidance] = useState("");
+  const [allowImportRewrite, setAllowImportRewrite] = useState(false);
   const [previousForm, setPreviousForm] = useState<PlanningSection | null>(null);
   const selectedDefinition = sections.find((section) => section.id === selectedId) ?? sections[0];
   const selectedGroup = planningSectionGroups.find((group) => group.children.some((item) => item.id === selectedId));
   const completedCount = (storedSections.data ?? []).filter((section) => section.content.trim()).length;
   const chatProfile = profiles.data?.find((profile) => profile.capability === "CHAT" && profile.hasSecret);
-  const selectedMaterials = (materials.data ?? []).filter((item) => selectedMaterialIds.includes(item.id));
-  const knowledgeRows = useMemo(() => (entities.data ?? []).map((entity, index) => ({ entity, revision: entityRevisionQueries[index]?.data?.find((item) => item.id === entity.currentRevisionId) ?? entityRevisionQueries[index]?.data?.[0] })).filter((item) => item.revision && item.entity.lifecycleStatus === "ACTIVE"), [entities.data, entityRevisionQueries]);
-  const filteredKnowledge = knowledgeRows.filter(({ revision }) => { const query = knowledgeSearch.trim().toLocaleLowerCase(); return !query || revision!.name.toLocaleLowerCase().includes(query) || revision!.description.toLocaleLowerCase().includes(query); });
-  const selectedKnowledge = knowledgeRows.filter(({ entity }) => selectedKnowledgeIds.includes(entity.id));
   useEffect(() => {
     const stored = storedSections.data?.find((section) => section.id === selectedId) ?? (legacySectionByChild[selectedId] ? storedSections.data?.find((section) => section.id === legacySectionByChild[selectedId]) : undefined);
     const next = stored ?? emptySection(selectedId);
     setForm(next);
-    setSelectedKnowledgeIds(next.references.map((item) => item.match(/^知识库：.+（[^，]+，([^）]+)）$/)?.[1]).filter((id): id is string => Boolean(id)));
     setError(null);
     setNotice(null);
-    setShowEditor(Boolean(next.content.trim()));
+    setShowEditor(Boolean(next.content.trim() || next.pendingContent.trim()));
+    setEditorTab(next.pendingContent.trim() ? "pending" : "formal");
     setPendingAction(null);
     setPendingFile(null);
     setOperationGuidance("");
+    setAllowImportRewrite(false);
     setPreviousForm(null);
   }, [selectedId, storedSections.data]);
 
@@ -98,14 +87,12 @@ export function StoryPlanningWorkbench(props: {
     setError(null);
     setNotice(null);
     try {
-      const knowledgeReferences = selectedKnowledge.map(({ entity, revision }) => `知识库：${revision!.name}（${entity.entityType}，${entity.id}）`);
       await savePlanningSection({
         ...form,
         id: selectedId,
-        references: [...form.references.filter((item) => !item.startsWith("知识库：")), ...knowledgeReferences],
       });
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
-      setNotice("设定已保存");
+      setNotice(editorTab === "pending" ? "待定内容已保存" : "正式设定已保存");
       setPreviousForm(null);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -116,6 +103,7 @@ export function StoryPlanningWorkbench(props: {
 
   function startWriting() {
     setShowEditor(true);
+    setEditorTab("formal");
     setPendingAction(null);
     setNotice("已进入编写模式，可以直接记录你的想法");
   }
@@ -129,14 +117,19 @@ export function StoryPlanningWorkbench(props: {
     setNotice(null);
     try {
       const content = await file.text();
-      const extracted = await generatePlanningContent({ profileId: chatProfile.id, mode: "EXTRACT", sectionTitle: selectedDefinition.label, sectionPrompt: selectedDefinition.prompt, existingContext: "", referenceContent: content, userGuidance: operationGuidance });
+      const extracted = await generatePlanningContent({ profileId: chatProfile.id, mode: "EXTRACT", sectionTitle: selectedDefinition.label, sectionPrompt: selectedDefinition.prompt, existingContext: "", referenceContent: content, userGuidance: operationGuidance, allowRewrite: allowImportRewrite });
+      const nextForm = { ...form, id: selectedId, pendingContent: extracted, references: [file.name], updatedAt: "" };
+      await savePlanningSection(nextForm);
       setPreviousForm(form);
-      setForm({ id: selectedId, content: extracted, rationale: "", consequence: "", references: [file.name], updatedAt: "" });
+      setForm(nextForm);
+      setEditorTab("pending");
       setShowEditor(true);
       setPendingAction(null);
       setPendingFile(null);
       setOperationGuidance("");
-      setNotice(`已从“${file.name}”提取与“${selectedDefinition.label}”相关的内容，请确认后保存`);
+      setAllowImportRewrite(false);
+      await client.invalidateQueries({ queryKey: ["planning-sections"] });
+      setNotice(allowImportRewrite ? `已结合“${file.name}”生成并改写内容，结果已放入待定区` : `已从“${file.name}”提取内容并放入待定区，请确认后同步`);
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setImporting(false); }
   }
@@ -147,22 +140,26 @@ export function StoryPlanningWorkbench(props: {
     setError(null);
     try {
       const existing = (storedSections.data ?? []).map((item) => `${item.id}: ${item.content}`).filter(Boolean).join("\n");
-      const source = [...selectedMaterials.map((item) => item.content), ...selectedKnowledge.map(({ revision }) => `知识库实体：${revision!.name}\n${revision!.description}\n固定属性：${revision!.fixedAttributesJson}`)].join("\n");
       const output = await generatePlanningContent({
         profileId: chatProfile.id,
         mode: "GENERATE",
         sectionTitle: selectedDefinition.label,
         sectionPrompt: selectedDefinition.prompt,
         existingContext: existing,
-        referenceContent: source,
+        referenceContent: "",
         userGuidance: operationGuidance,
+        allowRewrite: false,
       });
+      const nextForm = { ...form, id: selectedId, pendingContent: output, updatedAt: "" };
+      await savePlanningSection(nextForm);
       setPreviousForm(form);
-      setForm({ id: selectedId, content: output, rationale: "", consequence: "", references: selectedMaterials.map((item) => item.sourceVersion ?? "项目材料"), updatedAt: "" });
+      setForm(nextForm);
+      setEditorTab("pending");
       setShowEditor(true);
       setPendingAction(null);
       setOperationGuidance("");
-      setNotice("AI 内容已生成，可以直接修改并保存");
+      await client.invalidateQueries({ queryKey: ["planning-sections"] });
+      setNotice("AI 内容已生成并放入待定区，请确认后同步");
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setGenerating(false); }
   }
@@ -176,11 +173,32 @@ export function StoryPlanningWorkbench(props: {
   }
 
   function clearContent() {
-    if (!form.content.trim() || !window.confirm("确定清除当前编辑内容吗？清除后仍可点击“还原”撤回。")) return;
+    const currentContent = editorTab === "pending" ? form.pendingContent : form.content;
+    if (!currentContent.trim() || !window.confirm("确定清除当前编辑内容吗？清除后仍可点击“还原”撤回。")) return;
     setPreviousForm(form);
-    setForm((current) => ({ ...current, content: "", references: [] }));
+    setForm((current) => ({ ...current, [editorTab === "pending" ? "pendingContent" : "content"]: "", references: editorTab === "pending" ? current.references : [] }));
     setShowEditor(true);
     setNotice("当前内容已清除，可以还原或重新生成");
+  }
+
+  async function confirmPending() {
+    if (!form.pendingContent.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const nextForm = { ...form, content: form.pendingContent, pendingContent: "", references: [] };
+      const saved = await savePlanningSection(nextForm);
+      setPreviousForm(form);
+      setForm(saved);
+      setEditorTab("formal");
+      setShowEditor(true);
+      await client.invalidateQueries({ queryKey: ["planning-sections"] });
+      setNotice("待定内容已同步并保存为正式设定");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -203,16 +221,12 @@ export function StoryPlanningWorkbench(props: {
             <div className="story-planning-action-choices">
               <button type="button" className="story-planning-action-choice action-choice-primary" onClick={startWriting}><PenLine size={17} /><span><strong>直接编写</strong><small>从自己的想法开始</small></span></button>
               <button type="button" className="story-planning-action-choice" onClick={() => { setPendingAction("AI"); setPendingFile(null); setOperationGuidance(""); }} disabled={generating || importing || !chatProfile}><Sparkles size={17} /><span><strong>{generating ? "正在推导" : "AI 推导"}</strong><small>结合已有设定生成内容</small></span></button>
-              <label className="story-planning-action-choice story-planning-import" data-disabled={generating || importing || !chatProfile || undefined}><FileUp size={17} /><span><strong>{importing ? "正在提取" : "AI 提取文件"}</strong><small>仅保留符合当前节点的内容</small></span><input type="file" accept=".txt,.md,.json" disabled={generating || importing || !chatProfile} onChange={(event) => { const file = event.target.files?.[0]; if (file) { setPendingFile(file); setPendingAction("IMPORT"); setOperationGuidance(""); } event.currentTarget.value = ""; }} /></label>
+              <label className="story-planning-action-choice story-planning-import" data-disabled={generating || importing || !chatProfile || undefined}><FileUp size={17} /><span><strong>{importing ? "正在提取" : "AI 提取文件"}</strong><small>仅保留符合当前节点的内容</small></span><input type="file" accept=".txt,.md,.json" disabled={generating || importing || !chatProfile} onChange={(event) => { const file = event.target.files?.[0]; if (file) { setPendingFile(file); setPendingAction("IMPORT"); setOperationGuidance(""); setAllowImportRewrite(false); } event.currentTarget.value = ""; }} /></label>
             </div>
-            {pendingAction ? <div className="story-planning-confirmation" role="status"><div className="story-planning-confirmation-summary">{pendingAction === "AI" ? <Sparkles size={16} /> : <FileUp size={16} />}<span><strong>{pendingAction === "AI" ? "确认进行 AI 推导？" : `确认提取“${pendingFile?.name ?? "所选文件"}”？`}</strong><small>{pendingAction === "AI" ? `将结合当前项目设定和已选的 ${selectedMaterialIds.length + selectedKnowledgeIds.length} 项参考内容生成结果${form.content.trim() ? "，并替换编辑区当前内容" : ""}。` : `AI 只会提取与“${selectedDefinition.label}”相关的内容${form.content.trim() ? "，并替换编辑区当前内容" : ""}。`}</small></span></div><label className="story-planning-guidance"><span>{pendingAction === "AI" ? "补充你的意见（可选）" : "补充提取要求（可选）"}</span><textarea rows={3} value={operationGuidance} onChange={(event) => setOperationGuidance(event.target.value)} placeholder={pendingAction === "AI" ? "例如：更偏现实主义，保留现有力量限制，不要加入穿越设定" : "例如：重点提取力量来源和使用代价，忽略人物外貌描写"} /></label><div className="story-planning-confirmation-actions"><button type="button" className="primary-action" onClick={() => pendingAction === "AI" ? void generateWithAi() : void importSectionFile()} disabled={generating || importing || (pendingAction === "IMPORT" && !pendingFile)}><Check size={14} />{pendingAction === "AI" ? "确认推导" : "开始提取"}</button><button type="button" className="secondary-action" onClick={() => { setPendingAction(null); setPendingFile(null); setOperationGuidance(""); }} disabled={generating || importing}><X size={14} />取消</button></div></div> : null}
+            {pendingAction ? <div className="story-planning-confirmation" role="status"><div className="story-planning-confirmation-summary">{pendingAction === "AI" ? <Sparkles size={16} /> : <FileUp size={16} />}<span><strong>{pendingAction === "AI" ? "确认进行 AI 推导？" : `确认提取“${pendingFile?.name ?? "所选文件"}”？`}</strong><small>{pendingAction === "AI" ? `将结合已有正式设定生成“${selectedDefinition.label}”的候选内容，结果只会保存到待定区。` : allowImportRewrite ? `AI 将以文件为依据进行筛选、改写和合理补全，生成符合“${selectedDefinition.label}”范围的内容。` : `AI 只会严格提取与“${selectedDefinition.label}”直接相关的原文信息，不会补写。`}</small></span></div><label className="story-planning-guidance"><span>{pendingAction === "AI" ? "补充你的意见（可选）" : "补充提取要求（可选）"}</span><textarea rows={3} value={operationGuidance} onChange={(event) => setOperationGuidance(event.target.value)} placeholder={pendingAction === "AI" ? "例如：更偏现实主义，保留现有力量限制，不要加入穿越设定" : "例如：重点提取力量来源和使用代价，忽略人物外貌描写"} /></label>{pendingAction === "IMPORT" ? <label className="story-planning-rewrite-option"><input type="checkbox" checked={allowImportRewrite} onChange={(event) => setAllowImportRewrite(event.target.checked)} /><span><strong>允许 AI 改写并合理补全</strong><small>以文件内容为依据，重新组织表达并补足必要细节，使结果符合当前节点范围</small></span></label> : null}<div className="story-planning-confirmation-actions"><button type="button" className="primary-action" onClick={() => pendingAction === "AI" ? void generateWithAi() : void importSectionFile()} disabled={generating || importing || (pendingAction === "IMPORT" && !pendingFile)}><Check size={14} />{pendingAction === "AI" ? "确认推导" : allowImportRewrite ? "生成并改写" : "开始提取"}</button><button type="button" className="secondary-action" onClick={() => { setPendingAction(null); setPendingFile(null); setOperationGuidance(""); setAllowImportRewrite(false); }} disabled={generating || importing}><X size={14} />取消</button></div></div> : null}
           </div>
           {!chatProfile ? <p className="story-planning-ai-hint">请先在设置中配置一个可用的聊天模型。</p> : null}
-          <div className="story-planning-references">
-            <button type="button" className="story-planning-references-toggle" aria-expanded={showReferences} onClick={() => setShowReferences((value) => !value)}>{showReferences ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<span><strong>参考内容</strong><small>选择项目材料和知识库内容，供 AI 推导或编写时参考</small></span><em>{selectedMaterialIds.length + selectedKnowledgeIds.length ? `已选 ${selectedMaterialIds.length + selectedKnowledgeIds.length} 项` : "可选"}</em></button>
-            {showReferences ? <div className="story-planning-reference-content"><div className="story-planning-material-picker"><div className="story-planning-picker-heading"><strong>项目材料</strong><span>勾选后可从材料提炼</span></div>{materials.data?.length ? materials.data.map((item: SummaryMaterial) => <label key={item.id}><input type="checkbox" checked={selectedMaterialIds.includes(item.id)} onChange={(event) => setSelectedMaterialIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span>{item.kind} · {item.precision}</span><small>{item.content.slice(0, 70)}{item.content.length > 70 ? "…" : ""}</small></label>) : <p>还没有可用材料，可先到资料库添加摘要。</p>}</div><div className="story-planning-material-picker story-planning-knowledge-picker"><div className="story-planning-picker-heading"><strong>知识库</strong><span>选择人物、地点和概念</span></div><label className="knowledge-picker-search"><Search size={13} /><input value={knowledgeSearch} onChange={(event) => setKnowledgeSearch(event.target.value)} placeholder="搜索知识实体" aria-label="搜索知识实体" /></label>{filteredKnowledge.length ? filteredKnowledge.slice(0, 30).map(({ entity, revision }) => <label key={entity.id}><input type="checkbox" checked={selectedKnowledgeIds.includes(entity.id)} onChange={(event) => setSelectedKnowledgeIds((ids) => event.target.checked ? [...ids, entity.id] : ids.filter((id) => id !== entity.id))} /><span>{revision!.name}</span><small>{revision!.description || "暂无描述"}</small></label>) : <p>知识库还没有匹配实体。</p>}{selectedKnowledge.length ? <div className="knowledge-picker-selected">已选：{selectedKnowledge.map(({ revision }) => revision!.name).join("、")}</div> : null}</div></div> : null}
-          </div>
-          {showEditor ? <div className="story-planning-content-editor"><label><span>设定内容</span><small>把当前要素写清楚即可，之后随时可以继续修改</small><textarea rows={12} autoFocus value={form.content} onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))} placeholder={`填写${selectedDefinition.label}…`} /></label><div className="story-planning-actions"><button type="button" className="primary-action" onClick={() => void save()} disabled={saving || !form.content.trim()}><Save size={15} />{saving ? "保存中…" : "保存设定"}</button><button type="button" className="secondary-action" onClick={restoreContent} disabled={!previousForm}><RotateCcw size={14} />还原</button><button type="button" className="secondary-action destructive-action" onClick={clearContent} disabled={!form.content.trim()}><Trash2 size={14} />清除内容</button></div></div> : null}
+          {showEditor ? <div className="story-planning-content-editor"><div className="story-planning-content-tabs" role="tablist" aria-label="设定内容区域"><button type="button" role="tab" aria-selected={editorTab === "formal"} data-active={editorTab === "formal" || undefined} onClick={() => setEditorTab("formal")}><span>正式设定</span><small>{form.content.trim() ? "已建立" : "未填写"}</small></button><button type="button" role="tab" aria-selected={editorTab === "pending"} data-active={editorTab === "pending" || undefined} onClick={() => setEditorTab("pending")}><span>待定区</span><small>{form.pendingContent.trim() ? "有候选内容" : "暂无内容"}</small></button></div><label><span>{editorTab === "pending" ? "待定内容" : "正式设定"}</span><small>{editorTab === "pending" ? "AI 推导和文件提取的结果先保存在这里，可修改、对比后再确认采用" : "当前正式生效的设定内容，直接编写也会保存在这里"}</small><textarea rows={12} autoFocus value={editorTab === "pending" ? form.pendingContent : form.content} onChange={(event) => setForm((current) => ({ ...current, [editorTab === "pending" ? "pendingContent" : "content"]: event.target.value }))} placeholder={editorTab === "pending" ? `等待生成或填写${selectedDefinition.label}的候选内容…` : `填写${selectedDefinition.label}…`} /></label><div className="story-planning-actions">{editorTab === "pending" ? <><button type="button" className="primary-action" onClick={() => void confirmPending()} disabled={saving || !form.pendingContent.trim()}><Check size={15} />{saving ? "同步中…" : "确认采用"}</button><button type="button" className="secondary-action" onClick={() => void save()} disabled={saving || !form.pendingContent.trim()}><Save size={14} />保存待定内容</button></> : <button type="button" className="primary-action" onClick={() => void save()} disabled={saving || !form.content.trim()}><Save size={15} />{saving ? "保存中…" : "保存设定"}</button>}<button type="button" className="secondary-action" onClick={restoreContent} disabled={!previousForm}><RotateCcw size={14} />还原</button><button type="button" className="secondary-action destructive-action" onClick={clearContent} disabled={!(editorTab === "pending" ? form.pendingContent : form.content).trim()}><Trash2 size={14} />清除内容</button></div></div> : null}
           {notice ? <p className="project-notice story-planning-status">{notice}</p> : null}
           {error ? <p className="project-error story-planning-status" role="alert">{error}</p> : null}
         </div>
