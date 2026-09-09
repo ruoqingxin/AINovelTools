@@ -89,7 +89,11 @@ fn planning_context(
             } else {
                 input.user_guidance.trim()
             },
-            if input.existing_context.trim().is_empty() { "暂无" } else { input.existing_context.trim() },
+            if input.existing_context.trim().is_empty() {
+                "暂无"
+            } else {
+                input.existing_context.trim()
+            },
             input.reference_content.trim()
         )
     } else if extract_mode {
@@ -102,7 +106,11 @@ fn planning_context(
             } else {
                 input.user_guidance.trim()
             },
-            if input.existing_context.trim().is_empty() { "暂无" } else { input.existing_context.trim() },
+            if input.existing_context.trim().is_empty() {
+                "暂无"
+            } else {
+                input.existing_context.trim()
+            },
             input.reference_content.trim()
         )
     } else {

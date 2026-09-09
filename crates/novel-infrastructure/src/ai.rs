@@ -305,12 +305,7 @@ impl ModelGateway {
                             .json()
                             .await
                             .map_err(|_| AiError::InvalidResponse)?;
-                        value
-                            .pointer("/choices/0/message/content")
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|value| !value.trim().is_empty())
-                            .map(ToOwned::to_owned)
-                            .ok_or(AiError::InvalidResponse)
+                        message_content(&value).ok_or(AiError::InvalidResponse)
                     };
                 }
                 Err(error) => {
@@ -424,6 +419,29 @@ impl EmbeddingGateway {
     }
 }
 
+fn content_text(content: &serde_json::Value) -> Option<String> {
+    if let Some(text) = content.as_str() {
+        return (!text.trim().is_empty()).then(|| text.to_owned());
+    }
+    content
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+                .collect::<String>()
+        })
+        .filter(|text| !text.trim().is_empty())
+}
+
+fn message_content(value: &serde_json::Value) -> Option<String> {
+    content_text(value.pointer("/choices/0/message/content")?)
+}
+
+fn stream_delta_content(value: &serde_json::Value) -> Option<String> {
+    content_text(value.pointer("/choices/0/delta/content")?)
+}
+
 async fn read_stream<F>(
     response: reqwest::Response,
     cancelled: Arc<AtomicBool>,
@@ -433,8 +451,7 @@ where
     F: FnMut(&str),
 {
     let mut bytes = response.bytes_stream();
-    let mut buffer = String::new();
-    let mut output = String::new();
+    let mut raw = Vec::new();
     while let Some(chunk) = bytes.next().await {
         if cancelled.load(Ordering::Relaxed) {
             return Err(AiError::Cancelled);
@@ -446,25 +463,32 @@ where
                 AiError::Network
             }
         })?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(end) = buffer.find("\n\n") {
-            let event = buffer[..end].to_owned();
-            buffer.drain(..end + 2);
-            for line in event.lines().filter_map(|line| line.strip_prefix("data:")) {
-                let data = line.trim();
-                if data == "[DONE]" {
-                    continue;
-                }
-                let value: serde_json::Value =
-                    serde_json::from_str(data).map_err(|_| AiError::InvalidResponse)?;
-                if let Some(text) = value
-                    .pointer("/choices/0/delta/content")
-                    .and_then(serde_json::Value::as_str)
-                {
-                    output.push_str(text);
-                    on_chunk(text);
-                }
-            }
+        raw.extend_from_slice(&chunk);
+    }
+
+    let body = String::from_utf8_lossy(&raw);
+    let trimmed = body.trim();
+    if trimmed.starts_with('{') {
+        let value: serde_json::Value =
+            serde_json::from_str(trimmed).map_err(|_| AiError::InvalidResponse)?;
+        let output = message_content(&value).ok_or(AiError::InvalidResponse)?;
+        on_chunk(&output);
+        return Ok(output);
+    }
+
+    let mut output = String::new();
+    for line in body.lines() {
+        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
+            continue;
+        };
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(data).map_err(|_| AiError::InvalidResponse)?;
+        if let Some(text) = stream_delta_content(&value) {
+            output.push_str(&text);
+            on_chunk(&text);
         }
     }
     if output.trim().is_empty() {
@@ -1009,6 +1033,44 @@ mod tests {
             .await
             .expect("stream response");
         assert_eq!(output, "候选正文");
+
+        let json_stream_url = serve(
+            r#"{"choices":[{"message":{"content":"非流式候选"}}]}"#,
+            "application/json",
+            Duration::ZERO,
+        );
+        let output = gateway
+            .generate(
+                &profile(json_stream_url, 3),
+                None,
+                &context(),
+                true,
+                false,
+                Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .await
+            .expect("json fallback response");
+        assert_eq!(output, "非流式候选");
+
+        let unterminated_stream_url = serve(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"无结束空行\"}}]}",
+            "text/event-stream",
+            Duration::ZERO,
+        );
+        let output = gateway
+            .generate(
+                &profile(unterminated_stream_url, 3),
+                None,
+                &context(),
+                true,
+                false,
+                Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .await
+            .expect("unterminated stream response");
+        assert_eq!(output, "无结束空行");
     }
 
     #[tokio::test]
