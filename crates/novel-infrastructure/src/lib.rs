@@ -2208,15 +2208,22 @@ mod tests {
         let outline = manager
             .create_plan_node(None, super::PlanNodeKind::Outline, "故事总纲".to_owned())
             .expect("create outline");
-        let chapter = manager
+        let volume = manager
             .create_plan_node(
                 Some(outline.id),
+                super::PlanNodeKind::Volume,
+                "第一卷".to_owned(),
+            )
+            .expect("create volume");
+        let chapter = manager
+            .create_plan_node(
+                Some(volume.id),
                 super::PlanNodeKind::Chapter,
                 "第一章".to_owned(),
             )
             .expect("create chapter");
         let nodes = manager.list_plan_nodes().expect("list plan nodes");
-        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes.len(), 3);
         assert!(nodes.iter().any(|node| node.parent_id == Some(outline.id)));
         assert_eq!(chapter.revision, 1);
         let updated = manager

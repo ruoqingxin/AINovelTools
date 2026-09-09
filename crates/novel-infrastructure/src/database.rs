@@ -810,7 +810,7 @@ impl Database {
             let valid = matches!(
                 (parent_kind.as_str(), kind),
                 ("WORK_DESIGN", PlanNodeKind::Outline)
-                    | ("OUTLINE", PlanNodeKind::Volume | PlanNodeKind::Chapter)
+                    | ("OUTLINE", PlanNodeKind::Volume)
                     | ("VOLUME", PlanNodeKind::Chapter)
                     | ("CHAPTER", PlanNodeKind::Scene)
             );
