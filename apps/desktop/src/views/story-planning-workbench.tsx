@@ -350,7 +350,7 @@ export function StoryPlanningWorkbench(props: {
     <section className="story-planning-workbench" aria-label="作品设定工作台">
       <div className="story-planning-titlebar">
         <div>
-          <p className="eyebrow">作品设计</p>
+          <p className="eyebrow">作品设定</p>
           <h2>逐项建立小说要素</h2>
           <span className="story-planning-title-hint">每个细化节点都可以独立推导、编写或导入</span>
         </div>
