@@ -1876,6 +1876,10 @@ button:focus-visible {
 .story-planning-editor-heading h3 { font-size:16px; }
 .story-planning-editor-heading p { font-size:11px; }
 .story-planning-editor-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+.story-planning-fill-guide { display:grid; gap:4px; margin-top:10px; padding:9px 10px; border-left:3px solid #9ebcf6; color:#617694; background:#f5f8ff; font-size:10px; line-height:1.5; }
+.story-planning-fill-guide strong { color:#3c67b5; font-size:10px; }
+.story-planning-fill-guide span { color:#526b8e; }
+.story-planning-fill-guide small { color:#8798b2; font-size:9px; }
 .story-planning-node-actions { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
 .story-planning-node-actions button, .story-planning-import { min-height:34px !important; white-space:nowrap; }
 .story-planning-import { cursor:pointer; }

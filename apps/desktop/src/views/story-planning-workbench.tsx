@@ -14,48 +14,42 @@ import {
   type PlanningAiJobInput,
 } from "../lib/tauri-client";
 
-type PlanningItem = { id: string; label: string; prompt: string };
+type PlanningItem = { id: string; label: string; prompt: string; guidance: string };
 type PlanningGroup = { id: string; label: string; children: PlanningItem[] };
 type PlanningStartMode = "WRITE" | "AI" | "IMPORT";
 
 export const planningSectionGroups: PlanningGroup[] = [
   {
-    id: "story-seed",
-    label: "故事种子",
+    id: "story-foundation",
+    label: "开篇定位",
     children: [
-      { id: "seed-premise", label: "故事前提", prompt: "如果用一句话描述这个故事，主角、目标、阻力和失败风险分别是什么" },
-      { id: "seed-genre-promise", label: "类型与阅读期待", prompt: "作品属于什么类型，读者会持续获得什么样的情绪和阅读满足" },
-      { id: "seed-hook", label: "独特钩子", prompt: "这个故事最独特、最值得被记住的设定或冲突是什么" },
-      { id: "seed-tone", label: "基调与边界", prompt: "作品整体气质是什么，哪些表达尺度和内容边界需要长期保持" },
+      { id: "seed-premise", label: "核心前提与开局情境", prompt: "主角在什么异常局面中，必须完成什么高风险目标，否则会失去什么最重要的东西", guidance: "用 1—3 句话写清特殊世界或规则、突发事件、主角目标和失败后果。先回答“故事为什么现在开始”，不用展开背景百科。" },
+      { id: "seed-genre-promise", label: "类型、题材与阅读承诺", prompt: "这是什么类型的故事，写给谁看，读者会持续获得什么样的满足", guidance: "写明类型、题材和主要爽点或情绪体验，并给出大致兑现频率，例如每卷一次翻盘、每 20 章一次副本收获。" },
+      { id: "seed-hook", label: "核心卖点与独特钩子", prompt: "为什么读者要点开这本书，而不是同类作品", guidance: "提炼一个最独特的身份、能力、世界、关系或叙事钩子，最好浓缩成“谁利用什么，在什么世界对抗什么”的一句话。" },
+      { id: "seed-tone", label: "基调、尺度与篇幅体量", prompt: "作品整体气质、表达边界、感情线位置和预计篇幅是什么", guidance: "写清热血或压抑、轻松或严肃、主角底线、感情线占比、残酷程度，以及短篇、中篇、长篇或超长篇定位。" },
     ],
   },
   {
     id: "story-engine",
-    label: "故事引擎",
+    label: "故事驱动",
     children: [
-      { id: "engine-protagonist", label: "主角与内在缺口", prompt: "主角表面想得到什么，内心真正缺少什么，什么问题让他无法停留在原地" },
-      { id: "engine-antagonism", label: "对抗力量", prompt: "谁或什么力量阻止主角，它的目标和立场为何自洽且有威胁" },
-      { id: "engine-stakes", label: "赌注与代价", prompt: "成功、失败和拒绝行动分别会让主角及重要人物失去什么" },
-      { id: "engine-theme", label: "主题与情感", prompt: "人物的选择将探讨什么问题，读者最终应该经历并带走什么情感" },
-      { id: "engine-ending", label: "结局承诺", prompt: "结局如何回答核心戏剧问题，并兑现主线、人物和情感承诺" },
+      { id: "engine-protagonist", label: "主角目标与内在需求", prompt: "主角外在想完成什么，内在真正缺少或必须面对什么", guidance: "分开写外在目标和内在需求。外在目标推动情节，内在需求决定主角如何成长、改变或付出代价。" },
+      { id: "engine-antagonism", label: "对抗系统与升级机制", prompt: "主角靠什么变强，资源从哪里来，强化的门槛和代价是什么，敌人如何逐层升级", guidance: "用“资源 → 获得方式 → 成长转化 → 新能力 → 新敌人或新代价”写一条链。说明为什么敌人不能直接碾压主角。" },
+      { id: "engine-stakes", label: "赌注、代价与失败后果", prompt: "成功、失败和拒绝行动分别会让主角、同伴、阵营和世界失去什么", guidance: "至少写小、中、大三档赌注。失败应带来永久损失、关系破裂、身份暴露、角色死亡或规则恶化等真实后果，而不是简单重来。" },
+      { id: "engine-theme", label: "核心谜团与主题命题", prompt: "读者要追问什么真相，人物选择最终在讨论什么问题", guidance: "把“谜团（真相是什么）”和“主题（故事在说什么）”分开写。谜团负责追读，主题负责让结局有余味。" },
+      { id: "engine-ending", label: "结局状态与承诺兑现", prompt: "主角最终达成了什么、放弃了什么，开局问题和读者期待如何得到回答", guidance: "不用写死每个细节，但要确定主角最后成为怎样的人，以及主线、人物弧光、爽点、情感点和核心谜团如何收束。" },
     ],
   },
   {
-    id: "story-cast",
-    label: "人物与关系",
+    id: "story-growth",
+    label: "连载建设",
     children: [
-      { id: "cast-core-relationship", label: "核心关系", prompt: "哪段关系承载主要情感变化，双方彼此需要又彼此伤害什么" },
-      { id: "cast-supporting", label: "关键配角", prompt: "哪些配角承担帮助、阻碍、映照、诱惑或见证功能，他们各自推动什么变化" },
-      { id: "cast-arcs", label: "人物弧光", prompt: "主要人物的信念和行为如何因连续选择而改变或固化" },
-    ],
-  },
-  {
-    id: "story-frame",
-    label: "世界与叙事",
-    children: [
-      { id: "frame-setting", label: "舞台与核心规则", prompt: "故事发生在哪里，哪些世界规则、资源限制或代价会直接影响人物行动" },
-      { id: "frame-history", label: "矛盾由来", prompt: "哪些过去事件造成当前矛盾，并仍在影响人物、组织和资源分配" },
-      { id: "frame-narrative", label: "视角与节奏", prompt: "由谁讲述故事，如何安排信息揭示、多线切换和整体节奏" },
+      { id: "cast-core-relationship", label: "核心关系与关系变化", prompt: "哪段关系承载主要情感变化，它的起点、转折和终点是什么", guidance: "不要只写人物标签，按“关系起点 → 关键转折 → 最终状态”记录彼此需要、伤害、背叛、和解或选择。" },
+      { id: "cast-supporting", label: "关键角色与叙事功能", prompt: "重要配角想要什么、害怕失去什么、与主角冲突什么，以及他们为剧情提供什么功能", guidance: "每个关键角色至少写欲望、恐惧、冲突点和叙事功能。功能可以是镜像、助推、阻碍、见证、反转或牺牲。" },
+      { id: "cast-arcs", label: "人物弧光、秘密与信息差", prompt: "核心人物会如何变化，各自隐藏什么秘密，最终必须做出什么选择", guidance: "为核心角色写表面身份、真实欲望、不能说的秘密和最终选择。秘密应服务于反转，人物变化应由连续选择推动。" },
+      { id: "frame-setting", label: "舞台、硬规则与资源限制", prompt: "哪些世界规则、力量上限、资源限制和禁忌会直接影响人物行动", guidance: "只写会影响剧情的规则：力量上限、行动代价、稀缺资源、身份秩序和禁忌。每条规则都最好能限制主角、制造冲突并提供解法。" },
+      { id: "frame-history", label: "历史因果、势力与矛盾来源", prompt: "世界为何变成现在这样，哪些势力在争什么，主角卷入后会改变谁的利益", guidance: "先写当前矛盾的因果链和三层势力：近处、中层、顶层。无需编完整年史，只保留会影响当下冲突的历史。" },
+      { id: "frame-narrative", label: "视角、信息与叙事节奏", prompt: "由谁讲述故事，秘密何时揭示，一卷解决什么问题，高潮和章末钩子如何安排", guidance: "确定人称、视角数量、信息差策略、每卷阶段目标、大小高潮间隔和章末钩子。升级流可采用贴近主角的第三人称，辅以少量配角视角。" },
     ],
   },
 ]; 
@@ -153,13 +147,14 @@ export function StoryPlanningWorkbench(props: {
   const nextSection = selectedIndex >= 0 && selectedIndex < sections.length - 1 ? sections[selectedIndex + 1] : null;
   const nextIncompleteId = nextIncompletePlanningSectionId(selectedId, completedIds);
   const nextIncompleteSection = sections.find((section) => section.id === nextIncompleteId) ?? null;
-  const phaseDescriptions = ["先把故事说清楚", "确定冲突、赌注与结局", "让人物关系推动剧情", "补足世界规则和叙事方式"];
+  const phaseDescriptions = ["先确定故事入口", "建立持续推进的引擎", "连载中逐步补齐"];
   const chatProfile = profiles.data?.find((profile) => profile.capability === "CHAT" && profile.hasSecret);
   const sectionJobs = (jobs.data ?? []).filter((job) => planningJobInput(job)?.sectionId === selectedId);
   const activeJob = sectionJobs.find((job) => job.status === "QUEUED" || job.status === "RUNNING");
   const latestJob = sectionJobs[0];
   const aiBusy = generating || importing || Boolean(activeJob);
   const visibleJob = activeJob ?? (latestJob?.status === "FAILED" || latestJob?.status === "CANCELLED" ? latestJob : null);
+  const selectedAiPrompt = `${selectedDefinition.prompt}。填写参考：${selectedDefinition.guidance}`;
   useEffect(() => {
     const stored = storedSections.data?.find((section) => section.id === selectedId);
     const next = stored ?? emptySection(selectedId);
@@ -256,7 +251,7 @@ export function StoryPlanningWorkbench(props: {
     setNotice(null);
     try {
       const content = (await Promise.all(files.map(async (file) => `===== 文件：${file.name} =====\n${await file.text()}`))).join("\n\n");
-      await enqueuePlanningAiJob({ profileId: chatProfile.id, mode: "EXTRACT", sectionId: selectedId, sectionTitle: selectedDefinition.label, sectionPrompt: selectedDefinition.prompt, existingContext: "", referenceContent: content, userGuidance: operationGuidance, allowRewrite: allowImportRewrite, sourceName: files.map((file) => file.name) });
+      await enqueuePlanningAiJob({ profileId: chatProfile.id, mode: "EXTRACT", sectionId: selectedId, sectionTitle: selectedDefinition.label, sectionPrompt: selectedAiPrompt, existingContext: "", referenceContent: content, userGuidance: operationGuidance, allowRewrite: allowImportRewrite, sourceName: files.map((file) => file.name) });
       setPendingAction(null);
       setStartMode(null);
       setPendingFiles([]);
@@ -283,7 +278,7 @@ export function StoryPlanningWorkbench(props: {
         mode: "GENERATE",
         sectionId: selectedId,
         sectionTitle: selectedDefinition.label,
-        sectionPrompt: selectedDefinition.prompt,
+        sectionPrompt: selectedAiPrompt,
         existingContext: existing,
         referenceContent: "",
         userGuidance: operationGuidance,
@@ -372,7 +367,7 @@ export function StoryPlanningWorkbench(props: {
       <div className="story-planning-layout story-planning-layout-editor-only">
         <div className="story-planning-editor">
           <div className="story-planning-editor-heading">
-            <div><span className="story-planning-current-label">{selectedGroup?.label} / 当前节点</span><h3>{selectedDefinition.label}</h3><p>{selectedDefinition.prompt}</p></div>
+            <div><span className="story-planning-current-label">{selectedGroup?.label} / 当前节点</span><h3>{selectedDefinition.label}</h3><p>{selectedDefinition.prompt}</p><div className="story-planning-fill-guide"><strong>填写提示</strong><span>{selectedDefinition.guidance}</span><small>提示和示例只用于帮助你填写，不会自动成为作品事实；不确定的内容可以先留空，连载中再补。</small></div></div>
           </div>
           <div className="story-planning-action-panel">
             <div className="story-planning-action-heading"><div><strong>建立当前节点</strong><span>选择一种开始方式</span></div><small>内容确认后再保存</small></div>

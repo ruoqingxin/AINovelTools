@@ -6,14 +6,13 @@ describe("planningSectionGroups", () => {
     const sections = planningSectionGroups.flatMap((group) => group.children);
 
     expect(planningSectionGroups.map((group) => group.label)).toEqual([
-      "故事种子",
-      "故事引擎",
-      "人物与关系",
-      "世界与叙事",
+      "开篇定位",
+      "故事驱动",
+      "连载建设",
     ]);
     expect(sections).toHaveLength(15);
     expect(new Set(sections.map((section) => section.id)).size).toBe(sections.length);
-    expect(sections.every((section) => section.label.trim() && section.prompt.trim())).toBe(true);
+    expect(sections.every((section) => section.label.trim() && section.prompt.trim() && section.guidance.trim())).toBe(true);
   });
 
   it("keeps a small essential set and advances to the next unfinished item", () => {
