@@ -32,7 +32,12 @@ function planningInput(job: Job): PlanningAiJobInput | null {
 function jobSummary(job: Job) {
   const input = planningInput(job);
   if (!input) return job.errorSummary ?? "系统维护任务";
-  return input.sourceName ? `${input.sectionTitle} · ${input.sourceName}` : input.sectionTitle;
+  const sourceNames = Array.isArray(input.sourceName)
+    ? input.sourceName.filter((name): name is string => typeof name === "string" && name.length > 0)
+    : typeof input.sourceName === "string" && input.sourceName.length > 0
+      ? [input.sourceName]
+      : [];
+  return sourceNames.length ? `${input.sectionTitle} · ${sourceNames.join("、")}` : input.sectionTitle;
 }
 
 export function JobsView() {

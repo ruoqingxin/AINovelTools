@@ -178,7 +178,7 @@ export type JobEvent = {
 export type PlanningAiJobInput = {
   profileId: string; mode: "GENERATE" | "EXTRACT"; sectionId: string; sectionTitle: string;
   sectionPrompt: string; existingContext: string; referenceContent: string; userGuidance: string;
-  allowRewrite: boolean; sourceName?: string; systemPromptSnapshot?: string; userPromptSnapshot?: string;
+  allowRewrite: boolean; sourceName?: string[] | string; systemPromptSnapshot?: string; userPromptSnapshot?: string;
   finalRequestEndpoint?: string; finalRequestBody?: string; finalRequestEstimatedInputTokens?: number;
 };
 export type PlanningAiRequestPreview = {

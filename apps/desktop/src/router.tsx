@@ -16,6 +16,25 @@ import { KnowledgeRecordsView } from "./views/knowledge-records-view";
 import { useQuery } from "@tanstack/react-query";
 import { getCurrentProject } from "./lib/tauri-client";
 
+function RouteErrorView({ error, reset }: { error: Error; reset: () => void }) {
+  const goBack = () => {
+    reset();
+    if (window.history.length > 1) {
+      window.history.back();
+    } else {
+      window.location.assign("/");
+    }
+  };
+
+  return (
+    <main className="fatal-error" role="alert">
+      <h1>页面遇到问题</h1>
+      <p>{error.message}</p>
+      <button type="button" className="secondary-action" onClick={goBack}>返回</button>
+    </main>
+  );
+}
+
 function ProjectEntryView() {
   return <EmptyProjectView />;
 }
@@ -26,9 +45,16 @@ function PlanningEntryView() {
   return project.data ? <ProjectWorkspaceView /> : <EmptyProjectView />;
 }
 
+function WritingEntryView() {
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
+  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
+  return project.data ? <ProjectWorkspaceView mode="writing" /> : <EmptyProjectView />;
+}
+
 const rootRoute = createRootRoute({
   component: AppShell,
   notFoundComponent: EmptyProjectView,
+  errorComponent: RouteErrorView,
 });
 
 const indexRoute = createRoute({
@@ -43,6 +69,12 @@ const planningRoute = createRoute({
   component: PlanningEntryView,
 });
 
+const writingRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/writing",
+  component: WritingEntryView,
+});
+
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/knowledge",
@@ -55,7 +87,7 @@ const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/searc
 const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: JobsView });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsView });
 
-const routeTree = rootRoute.addChildren([indexRoute, planningRoute, knowledgeRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, planningRoute, writingRoute, knowledgeRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
 
 export const router = createRouter({ routeTree });
 

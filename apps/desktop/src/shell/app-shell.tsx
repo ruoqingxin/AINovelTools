@@ -16,7 +16,7 @@ import { getBootstrapStatus, getCurrentProject, getHealth, listAllRecoveryLogs }
 const navigation = [
   { label: "项目", icon: LibraryBig, path: "/" as const },
   { label: "规划", icon: ListTree, path: "/planning" as const },
-  { label: "正文", icon: BookOpenText },
+  { label: "正文", icon: BookOpenText, path: "/writing" as const },
   { label: "知识", icon: FileSearch, path: "/knowledge" as const },
   { label: "AI", icon: Bot },
   { label: "审核", icon: ShieldCheck, path: "/knowledge/review" as const },

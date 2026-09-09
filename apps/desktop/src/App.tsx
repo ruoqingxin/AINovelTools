@@ -28,10 +28,20 @@ class AppErrorBoundary extends Component<
 
   render() {
     if (this.state.failed) {
+      const goBack = () => {
+        this.setState({ failed: false });
+        if (window.history.length > 1) {
+          window.history.back();
+        } else {
+          window.location.assign("/");
+        }
+      };
+
       return (
         <main className="fatal-error" role="alert">
           <h1>工作台无法显示</h1>
-          <p>请重新启动应用。</p>
+          <p>请返回上一页重试。</p>
+          <button type="button" className="secondary-action" onClick={goBack}>返回</button>
         </main>
       );
     }

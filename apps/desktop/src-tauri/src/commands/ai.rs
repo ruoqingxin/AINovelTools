@@ -28,7 +28,7 @@ pub(crate) struct PlanningAiJobInput {
     pub(crate) reference_content: String,
     pub(crate) user_guidance: String,
     pub(crate) allow_rewrite: bool,
-    pub(crate) source_name: Option<String>,
+    pub(crate) source_name: Option<Vec<String>>,
     pub(crate) system_prompt_snapshot: Option<String>,
     pub(crate) user_prompt_snapshot: Option<String>,
     pub(crate) final_request_endpoint: Option<String>,
@@ -488,7 +488,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                 updated_at: String::new(),
             });
             section.pending_content = output;
-            section.references = input.source_name.clone().into_iter().collect();
+            section.references = input.source_name.clone().unwrap_or_default();
             if let Err(error) = manager.save_planning_section(section) {
                 drop(manager);
                 fail_planning_job(&state, job.id, error.to_string());
