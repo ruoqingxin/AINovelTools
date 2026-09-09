@@ -33,7 +33,7 @@ export type RecentProject = {
   lastOpenedAt: string;
 };
 
-export type PlanNodeKind = "WORK_DESIGN" | "OUTLINE" | "VOLUME" | "CHAPTER" | "SCENE";
+  export type PlanNodeKind = "WORK_DESIGN" | "OUTLINE" | "VOLUME_MANAGER" | "VOLUME" | "CHAPTER" | "SCENE";
 
 export type PlanNode = {
   id: string;

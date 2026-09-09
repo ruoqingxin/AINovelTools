@@ -1634,7 +1634,7 @@ button:focus-visible {
   }
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1400px) {
   .plan-create-row { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
   .plan-create-copy, .plan-create-row input, .plan-create-row .primary-action { grid-column: 1 / -1; }
   .plan-create-row .primary-action { justify-self: start; }
@@ -1947,6 +1947,10 @@ button:focus-visible {
 .story-planning-reference-field textarea { min-height:82px; }
 .story-planning-editor textarea { margin-top:2px; padding:11px 12px; border-radius:7px; border-color:#cbd9eb; background:#fff; font-size:12px; line-height:1.65; }
 .story-planning-actions { min-height:58px; padding-top:16px; }
+.story-planning-state { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; margin-top:10px; padding:9px 11px; border:1px solid #dbe5f3; border-radius:6px; color:#7183a0; background:#f8fbff; font-size:10px; }
+.story-planning-state strong { color:#46658f; font-size:11px; }
+.story-planning-state[data-dirty] { border-color:#e1c68e; color:#8a6c35; background:#fffaf0; }
+.story-planning-state[data-dirty] strong { color:#8a6523; }
 .story-planning-actions .primary-action { min-height:38px; padding:0 16px; }
 .story-planning-next { grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 22px; margin-top:22px; padding-top:14px; }
 .story-planning-next-heading { grid-column:1/-1; display:flex !important; align-items:baseline; gap:9px; min-height:28px !important; border-bottom:0 !important; color:#334d78 !important; }
@@ -2338,4 +2342,17 @@ button:focus-visible {
       "status" 28px
       / minmax(0, 1fr);
   }
+}
+
+/* Keep the node composer inside the viewport at laptop and phone widths. */
+@media (max-width: 1400px) {
+  .plan-create-row { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+  .plan-create-copy, .plan-create-row input, .plan-create-row .primary-action { grid-column: 1 / -1; }
+  .plan-create-row .primary-action { justify-self: start; }
+}
+
+@media (max-width: 780px) {
+  .plan-create-row { grid-template-columns: 1fr; }
+  .plan-create-copy, .plan-create-row input, .plan-create-row .primary-action { grid-column: auto; }
+  .plan-create-row .primary-action { width: 100%; justify-content: center; }
 }

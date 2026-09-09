@@ -452,6 +452,7 @@ pub struct RecentProject {
 pub enum PlanNodeKind {
     WorkDesign,
     Outline,
+    VolumeManager,
     Volume,
     Chapter,
     Scene,
@@ -461,6 +462,7 @@ impl PlanNodeKind {
         match self {
             Self::WorkDesign => "WORK_DESIGN",
             Self::Outline => "OUTLINE",
+            Self::VolumeManager => "VOLUME_MANAGER",
             Self::Volume => "VOLUME",
             Self::Chapter => "CHAPTER",
             Self::Scene => "SCENE",
@@ -2205,12 +2207,19 @@ mod tests {
             .join(format!("ainovel-plan-{}", uuid::Uuid::new_v4()));
         let mut manager = super::ProjectManager::new();
         manager.create(&root, "测试作品").expect("create project");
-        let outline = manager
+        let _outline = manager
             .create_plan_node(None, super::PlanNodeKind::Outline, "故事总纲".to_owned())
             .expect("create outline");
+        let volume_manager = manager
+            .create_plan_node(
+                None,
+                super::PlanNodeKind::VolumeManager,
+                "分卷管理".to_owned(),
+            )
+            .expect("create volume manager");
         let volume = manager
             .create_plan_node(
-                Some(outline.id),
+                Some(volume_manager.id),
                 super::PlanNodeKind::Volume,
                 "第一卷".to_owned(),
             )
@@ -2223,8 +2232,8 @@ mod tests {
             )
             .expect("create chapter");
         let nodes = manager.list_plan_nodes().expect("list plan nodes");
-        assert_eq!(nodes.len(), 3);
-        assert!(nodes.iter().any(|node| node.parent_id == Some(outline.id)));
+        assert_eq!(nodes.len(), 4);
+        assert!(nodes.iter().any(|node| node.parent_id == Some(volume_manager.id)));
         assert_eq!(chapter.revision, 1);
         let updated = manager
             .update_plan_node(chapter.id, "第一章（修订）".to_owned(), true)

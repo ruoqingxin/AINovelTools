@@ -684,6 +684,7 @@ impl Database {
             let kind = match row.get::<_, String>(2)?.as_str() {
                 "WORK_DESIGN" => PlanNodeKind::WorkDesign,
                 "OUTLINE" => PlanNodeKind::Outline,
+                "VOLUME_MANAGER" => PlanNodeKind::VolumeManager,
                 "VOLUME" => PlanNodeKind::Volume,
                 "CHAPTER" => PlanNodeKind::Chapter,
                 "SCENE" => PlanNodeKind::Scene,
@@ -810,7 +811,7 @@ impl Database {
             let valid = matches!(
                 (parent_kind.as_str(), kind),
                 ("WORK_DESIGN", PlanNodeKind::Outline)
-                    | ("OUTLINE", PlanNodeKind::Volume)
+                    | ("VOLUME_MANAGER", PlanNodeKind::Volume)
                     | ("VOLUME", PlanNodeKind::Chapter)
                     | ("CHAPTER", PlanNodeKind::Scene)
             );
@@ -971,10 +972,7 @@ impl Database {
             let valid = matches!(
                 (parent_node.kind, current.kind),
                 (PlanNodeKind::WorkDesign, PlanNodeKind::Outline)
-                    | (
-                        PlanNodeKind::Outline,
-                        PlanNodeKind::Volume | PlanNodeKind::Chapter
-                    )
+                    | (PlanNodeKind::VolumeManager, PlanNodeKind::Volume)
                     | (PlanNodeKind::Volume, PlanNodeKind::Chapter)
                     | (PlanNodeKind::Chapter, PlanNodeKind::Scene)
             );

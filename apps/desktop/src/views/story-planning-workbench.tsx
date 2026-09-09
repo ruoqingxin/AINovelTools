@@ -127,8 +127,22 @@ export function StoryPlanningWorkbench(props: {
   const selectedDefinition = sections.find((section) => section.id === selectedId) ?? sections[0];
   const selectedGroup = planningSectionGroups.find((group) => group.children.some((item) => item.id === selectedId));
   const storedSelected = storedSections.data?.find((section) => section.id === selectedId) ?? emptySection(selectedId);
+  const pendingDirty = form.pendingContent !== storedSelected.pendingContent;
+  const sectionStatus = pendingDirty
+    ? { label: "候选有未保存修改", hint: "点击“保存待定内容”后，修改才会保留" }
+    : form.content.trim() && form.pendingContent.trim()
+      ? { label: "已有正式设定 · 候选待确认", hint: "候选可以继续修改，确认后才会替换正式设定" }
+      : form.content.trim()
+        ? { label: "正式设定已确认", hint: "正式区只读，如需修改请转为待定内容" }
+        : form.pendingContent.trim()
+          ? { label: "候选已保存 · 尚未确认", hint: "可以继续修改，或设为正式设定" }
+          : { label: "尚未建立", hint: "可以直接编写，或让 AI 先生成候选" };
   const dirty = form.content !== storedSelected.content
     || form.pendingContent !== storedSelected.pendingContent
+    || form.rationale !== storedSelected.rationale
+    || form.consequence !== storedSelected.consequence
+    || JSON.stringify(form.references) !== JSON.stringify(storedSelected.references);
+  const formalDirty = form.content !== storedSelected.content
     || form.rationale !== storedSelected.rationale
     || form.consequence !== storedSelected.consequence
     || JSON.stringify(form.references) !== JSON.stringify(storedSelected.references);
@@ -163,7 +177,10 @@ export function StoryPlanningWorkbench(props: {
   }, [selectedId, storedSections.data]);
 
   useEffect(() => {
-    if (latestJob?.status === "SUCCEEDED") void client.invalidateQueries({ queryKey: ["planning-sections"] });
+    if (latestJob?.status === "SUCCEEDED") {
+      void client.invalidateQueries({ queryKey: ["planning-sections"] });
+      setNotice("AI 内容已生成并自动保存到候选区");
+    }
   }, [client, latestJob?.id, latestJob?.status]);
 
   useEffect(() => {
@@ -172,11 +189,36 @@ export function StoryPlanningWorkbench(props: {
   }, [dirty, props.onDirtyChange]);
 
   function selectSection(sectionId: string) {
-    if (dirty && !window.confirm("当前设定有未保存修改，确定切换吗？")) return;
+    if (pendingDirty) restoreUnsavedPending();
+    if (formalDirty && !window.confirm("当前正式设定有未保存修改，确定切换吗？")) return;
     props.onSelectSection?.(sectionId);
   }
 
-  async function save(advance = false) {
+  function restoreUnsavedPending() {
+    if (!pendingDirty) return;
+    setForm((current) => ({ ...current, pendingContent: storedSelected.pendingContent }));
+    setNotice("未保存的候选修改已恢复，当前显示的是上次保存的候选内容");
+  }
+
+  function switchEditorTab(tab: "formal" | "pending") {
+    if (tab === editorTab) return;
+    if (editorTab === "pending") restoreUnsavedPending();
+    setEditorTab(tab);
+  }
+
+  function appendImportFiles(files: File[]) {
+    if (!files.length) return;
+    setStartMode("IMPORT");
+    setPendingAction("IMPORT");
+    setPendingFiles((current) => {
+      const existing = new Set(current.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
+      return [...current, ...files.filter((file) => !existing.has(`${file.name}:${file.size}:${file.lastModified}`))];
+    });
+    setOperationGuidance("");
+    setAllowImportRewrite(false);
+  }
+
+  async function save() {
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -188,10 +230,6 @@ export function StoryPlanningWorkbench(props: {
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
       setNotice(editorTab === "pending" ? "待定内容已保存" : "正式设定已保存");
       setPreviousForm(null);
-      if (advance) {
-        const nextId = nextIncompletePlanningSectionId(selectedId, new Set([...completedIds, ...(form.content.trim() ? [selectedId] : [])]));
-        if (nextId) props.onSelectSection?.(nextId);
-      }
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -200,6 +238,7 @@ export function StoryPlanningWorkbench(props: {
   }
 
   function startWriting() {
+    restoreUnsavedPending();
     setShowEditor(true);
     setEditorTab("formal");
     setStartMode("WRITE");
@@ -208,6 +247,7 @@ export function StoryPlanningWorkbench(props: {
   }
 
   async function importSectionFile() {
+    restoreUnsavedPending();
     const files = pendingFiles;
     if (!files.length) return;
     if (!chatProfile) { setError("请先在设置中配置一个可用的聊天模型"); return; }
@@ -229,6 +269,7 @@ export function StoryPlanningWorkbench(props: {
   }
 
   async function generateWithAi() {
+    restoreUnsavedPending();
     if (!chatProfile) return;
     setGenerating(true);
     setError(null);
@@ -252,7 +293,7 @@ export function StoryPlanningWorkbench(props: {
       setStartMode(null);
       setOperationGuidance("");
       await client.invalidateQueries({ queryKey: ["jobs"] });
-      setNotice("AI 推导任务已提交，可切换页面继续工作");
+      setNotice("AI 推导任务已提交，完成后会自动保存到候选区");
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setGenerating(false); }
   }
@@ -285,7 +326,7 @@ export function StoryPlanningWorkbench(props: {
     setNotice("当前内容已清除，可以还原或重新生成");
   }
 
-  async function confirmPending(advance = false) {
+  async function confirmPending() {
     if (!form.pendingContent.trim()) return;
     setSaving(true);
     setError(null);
@@ -297,11 +338,7 @@ export function StoryPlanningWorkbench(props: {
       setEditorTab("formal");
       setShowEditor(true);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
-      setNotice("待定内容已同步并保存为正式设定");
-      if (advance) {
-        const nextId = nextIncompletePlanningSectionId(selectedId, new Set([...completedIds, selectedId]));
-        if (nextId) props.onSelectSection?.(nextId);
-      }
+      setNotice("已将候选内容设为正式设定");
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -342,13 +379,14 @@ export function StoryPlanningWorkbench(props: {
             <div className="story-planning-action-choices">
               <button type="button" className="story-planning-action-choice" data-selected={startMode === "WRITE" || undefined} aria-pressed={startMode === "WRITE"} onClick={startWriting}><PenLine size={17} /><span><strong>直接编写</strong><small>从自己的想法开始</small></span></button>
               <button type="button" className="story-planning-action-choice" data-selected={startMode === "AI" || undefined} aria-pressed={startMode === "AI"} onClick={() => { setStartMode("AI"); setPendingAction("AI"); setPendingFiles([]); setOperationGuidance(""); }} disabled={aiBusy || !chatProfile}><Sparkles size={17} /><span><strong>{activeJob?.jobType === "AI_PLANNING_GENERATE" ? "正在后台推导" : "AI 推导"}</strong><small>结合已有设定生成内容</small></span></button>
-              <label className="story-planning-action-choice story-planning-import" data-selected={startMode === "IMPORT" || undefined} data-disabled={aiBusy || !chatProfile || undefined}><FileUp size={17} /><span><strong>{activeJob?.jobType === "AI_PLANNING_EXTRACT" ? "正在后台处理" : "AI 提取文件"}</strong><small>支持同时选择多个文件</small></span><input type="file" accept=".txt,.md,.json" multiple disabled={aiBusy || !chatProfile} onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) { setStartMode("IMPORT"); setPendingFiles(files); setPendingAction("IMPORT"); setOperationGuidance(""); setAllowImportRewrite(false); } event.currentTarget.value = ""; }} /></label>
+              <label className="story-planning-action-choice story-planning-import" data-selected={startMode === "IMPORT" || undefined} data-disabled={aiBusy || !chatProfile || undefined}><FileUp size={17} /><span><strong>{activeJob?.jobType === "AI_PLANNING_EXTRACT" ? "正在后台处理" : pendingFiles.length ? "继续添加文件" : "AI 提取文件"}</strong><small>{pendingFiles.length ? `已选 ${pendingFiles.length} 个文件，可继续添加` : "支持同时选择多个文件"}</small></span><input type="file" accept=".txt,.md,.json" multiple disabled={aiBusy || !chatProfile} onChange={(event) => { appendImportFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} /></label>
             </div>
             {pendingAction ? <div className="story-planning-confirmation" role="status"><div className="story-planning-confirmation-summary">{pendingAction === "AI" ? <Sparkles size={16} /> : <FileUp size={16} />}<span><strong>{pendingAction === "AI" ? "确认进行 AI 推导？" : `确认提取 ${pendingFiles.length} 个文件？`}</strong><small>{pendingAction === "AI" ? `将结合已有正式设定生成“${selectedDefinition.label}”的候选内容，结果只会保存到待定区。` : allowImportRewrite ? `AI 将以所选文件为依据进行筛选、改写和合理补全，生成符合“${selectedDefinition.label}”范围的内容。` : `AI 只会严格提取所选文件中与“${selectedDefinition.label}”直接相关的原文信息，不会补写。`}</small>{pendingAction === "IMPORT" && pendingFiles.length ? <small className="story-planning-file-list">{pendingFiles.map((file) => file.name).join("、")}</small> : null}</span></div><label className="story-planning-guidance"><span>{pendingAction === "AI" ? "补充你的意见（可选）" : "补充提取要求（可选）"}</span><textarea rows={3} value={operationGuidance} onChange={(event) => setOperationGuidance(event.target.value)} placeholder={pendingAction === "AI" ? "例如：更偏现实主义，保留现有力量限制，不要加入穿越设定" : "例如：重点提取力量来源和使用代价，忽略人物外貌描写"} /></label>{pendingAction === "IMPORT" ? <label className="story-planning-rewrite-option"><input type="checkbox" checked={allowImportRewrite} onChange={(event) => setAllowImportRewrite(event.target.checked)} /><span><strong>允许 AI 改写并合理补全</strong><small>以文件内容为依据，重新组织表达并补足必要细节，使结果符合当前节点范围</small></span></label> : null}<div className="story-planning-confirmation-actions"><button type="button" className="primary-action" onClick={() => pendingAction === "AI" ? void generateWithAi() : void importSectionFile()} disabled={aiBusy || (pendingAction === "IMPORT" && !pendingFiles.length)}><Check size={14} />{pendingAction === "AI" ? "提交推导任务" : allowImportRewrite ? "提交生成改写" : "提交提取任务"}</button><button type="button" className="secondary-action" onClick={() => { setStartMode(null); setPendingAction(null); setPendingFiles([]); setOperationGuidance(""); setAllowImportRewrite(false); }} disabled={generating || importing}><X size={14} />取消</button></div></div> : null}
             {visibleJob ? <div className="story-planning-job-status" data-status={visibleJob.status.toLowerCase()}><div><strong>{visibleJob.jobType === "AI_PLANNING_EXTRACT" ? "文件处理任务" : "AI 推导任务"}</strong><span>{visibleJob.status === "QUEUED" ? "等待后台执行" : visibleJob.status === "RUNNING" ? "后台执行中，可安全切换页面" : visibleJob.status === "FAILED" ? visibleJob.errorSummary ?? "执行失败" : "任务已取消"}</span></div><div className="story-planning-job-progress"><span style={{ width: `${visibleJob.progress}%` }} /></div><small>{visibleJob.progress}%</small><div className="story-planning-job-actions"><a href="/jobs">查看任务日志</a>{activeJob ? <button type="button" onClick={() => void cancelActiveJob()}>取消任务</button> : null}</div></div> : null}
           </div>
           {!chatProfile ? <p className="story-planning-ai-hint">请先在设置中配置一个可用的聊天模型。</p> : null}
-          {showEditor ? <div className="story-planning-content-editor"><div className="story-planning-content-tabs" role="tablist" aria-label="设定内容区域"><button type="button" role="tab" aria-selected={editorTab === "formal"} data-active={editorTab === "formal" || undefined} onClick={() => setEditorTab("formal")}><span>正式设定</span><small>{form.content.trim() ? "已建立" : "未填写"}</small></button><button type="button" role="tab" aria-selected={editorTab === "pending"} data-active={editorTab === "pending" || undefined} onClick={() => setEditorTab("pending")}><span>待定区</span><small>{form.pendingContent.trim() ? "有候选内容" : "暂无内容"}</small></button></div><label><span>{editorTab === "pending" ? "待定内容" : "正式设定"}</span><small>{editorTab === "pending" ? "AI 推导和文件提取的结果先保存在这里，可修改、对比后再确认采用" : "当前正式生效的设定内容，直接编写也会保存在这里"}</small><textarea rows={12} autoFocus value={editorTab === "pending" ? form.pendingContent : form.content} onChange={(event) => setForm((current) => ({ ...current, [editorTab === "pending" ? "pendingContent" : "content"]: event.target.value }))} placeholder={editorTab === "pending" ? `等待生成或填写${selectedDefinition.label}的候选内容…` : `填写${selectedDefinition.label}…`} /></label><div className="story-planning-actions">{editorTab === "pending" ? <><button type="button" className="primary-action" onClick={() => void confirmPending(true)} disabled={saving || !form.pendingContent.trim()}><Check size={15} />{saving ? "同步中…" : "采用并继续"}</button><button type="button" className="secondary-action" onClick={() => void confirmPending()} disabled={saving || !form.pendingContent.trim()}>仅确认采用</button><button type="button" className="secondary-action" onClick={() => void save()} disabled={saving || !form.pendingContent.trim()}><Save size={14} />保存待定内容</button></> : <><button type="button" className="primary-action" onClick={() => void save(true)} disabled={saving || !form.content.trim()}><Save size={15} />{saving ? "保存中…" : "保存并继续"}</button><button type="button" className="secondary-action" onClick={() => void save()} disabled={saving || !form.content.trim()}>仅保存</button></>}<button type="button" className="secondary-action" onClick={restoreContent} disabled={!previousForm}><RotateCcw size={14} />还原</button><button type="button" className="secondary-action destructive-action" onClick={clearContent} disabled={!(editorTab === "pending" ? form.pendingContent : form.content).trim()}><Trash2 size={14} />清除内容</button></div></div> : null}
+          {showEditor ? <div className="story-planning-content-editor"><div className="story-planning-content-tabs" role="tablist" aria-label="设定内容区域"><button type="button" role="tab" aria-selected={editorTab === "formal"} data-active={editorTab === "formal" || undefined} onClick={() => switchEditorTab("formal")}><span>正式设定</span><small>{form.content.trim() ? "已建立" : "未填写"}</small></button><button type="button" role="tab" aria-selected={editorTab === "pending"} data-active={editorTab === "pending" || undefined} onClick={() => switchEditorTab("pending")}><span>待定区</span><small>{form.pendingContent.trim() ? "有候选内容" : "暂无内容"}</small></button></div><label><span>{editorTab === "pending" ? "待定内容" : "正式设定"}</span><small>{editorTab === "pending" ? "AI 生成后会自动保存；手动修改后需点击“保存待定内容”，否则切换操作会恢复到已保存版本" : "正式设定只读。如需修改，请先转为待定内容，修改后再设为正式设定"}</small><textarea rows={12} autoFocus readOnly={editorTab === "formal"} value={editorTab === "pending" ? form.pendingContent : form.content} onChange={(event) => setForm((current) => ({ ...current, pendingContent: event.target.value }))} placeholder={editorTab === "pending" ? `等待生成或填写${selectedDefinition.label}的候选内容…` : `尚未建立${selectedDefinition.label}…`} /></label><div className="story-planning-actions">{editorTab === "pending" ? <><button type="button" className="primary-action" onClick={() => void confirmPending()} disabled={saving || !form.pendingContent.trim()}><Check size={15} />{saving ? "同步中…" : "设为正式设定"}</button><button type="button" className="secondary-action" onClick={() => void save()} disabled={saving || !pendingDirty}><Save size={14} />保存待定内容</button></> : <button type="button" className="primary-action" onClick={() => { setForm((current) => ({ ...current, pendingContent: current.content })); setEditorTab("pending"); setNotice("已转为待定内容，请修改后保存"); }} disabled={!form.content.trim()}>转为待定内容</button>}{previousForm ? <button type="button" className="secondary-action" onClick={restoreContent}><RotateCcw size={14} />还原本次操作</button> : null}{editorTab === "pending" ? <button type="button" className="secondary-action destructive-action" onClick={clearContent} disabled={!form.pendingContent.trim()}><Trash2 size={14} />清除内容</button> : null}</div></div> : null}
+          <div className="story-planning-state" data-dirty={pendingDirty || undefined}><strong>{sectionStatus.label}</strong><span>{sectionStatus.hint}</span></div>
           {notice ? <p className="project-notice story-planning-status">{notice}</p> : null}
           {error ? <p className="project-error story-planning-status" role="alert">{error}</p> : null}
         </div>
