@@ -375,6 +375,15 @@ button:focus-visible {
 .node-plan-editor .section-heading small { color:#7183a0; font-size:10px; white-space:nowrap; }
 .node-plan-editor textarea { min-height:120px; padding:11px 12px; border:1px solid #c6d5eb; border-radius:7px; background:#fff; color:#405a7f; font-size:12px; line-height:1.65; resize:vertical; }
 .node-plan-editor .primary-action { justify-self:start; min-height:34px; }
+.node-plan-tabs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); border-bottom:1px solid #cfdced; }
+.node-plan-tabs button { display:grid; gap:3px; min-height:43px; padding:8px 12px; border:0; border-bottom:2px solid transparent; color:#7184a2; background:transparent; font-size:11px; text-align:left; cursor:pointer; }
+.node-plan-tabs button[data-active] { border-bottom-color:#4f7fe0; color:#2f68d1; background:#f3f7ff; font-weight:700; }
+.node-plan-tabs small { color:#8a9bb7; font-size:9px; font-weight:400; }
+.node-plan-actions { display:flex; flex-wrap:wrap; gap:7px; }
+.node-plan-locked { display:grid; gap:6px; padding:16px 14px; border:1px dashed #cbd9eb; border-radius:7px; color:#8294b1; background:#fbfdff; }
+.node-plan-locked strong { color:#50698f; font-size:12px; }
+.node-plan-locked span { font-size:10px; line-height:1.5; }
+.node-plan-locked button { justify-self:start; min-height:30px; }
 .outline-plan-editor { background:#fff; border-color:#d4e0f0; }
 .outline-context-panel { display:grid; gap:9px; padding:12px; border:1px solid #dbe5f3; border-radius:8px; background:#fbfdff; }
 .outline-context-heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
@@ -382,13 +391,12 @@ button:focus-visible {
 .outline-context-heading span { color:#7184a2; font-size:10px; }
 .outline-context-heading strong { color:#30496f; font-size:12px; }
 .outline-context-heading small { color:#8294b1; font-size:10px; }
-.outline-context-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
-.outline-context-item { display:grid; grid-template-columns:17px minmax(0,1fr); gap:6px; min-width:0; padding:7px 8px; border:1px solid #e3eaf4; border-radius:6px; background:#fff; }
-.outline-context-item > span { color:#9aa9bc; font-size:11px; }
-.outline-context-item[data-complete] > span { color:#2d8b6c; }
-.outline-context-item > div { display:grid; gap:2px; min-width:0; }
-.outline-context-item strong { overflow:hidden; color:#4b6386; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
-.outline-context-item small { overflow:hidden; color:#8a9bb3; font-size:9px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
+.outline-context-summary { display:flex; flex-wrap:wrap; gap:6px; }
+.outline-context-summary span { display:inline-flex; align-items:center; gap:5px; max-width:260px; padding:6px 8px; border:1px solid #e3eaf4; border-radius:5px; color:#7183a0; background:#fff; font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.outline-context-summary b { color:#4b6386; font-size:10px; }
+.outline-context-empty { display:grid; gap:4px; padding:10px 11px; border:1px dashed #cbd9eb; border-radius:6px; color:#8294b1; background:#fff; }
+.outline-context-empty strong { color:#50698f; font-size:11px; }
+.outline-context-empty span { font-size:10px; line-height:1.45; }
 .outline-context-panel > button { justify-self:start; min-height:30px; }
 .outline-next-step { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:13px 14px; border:1px solid #b9cdf4; border-radius:8px; background:#f4f7ff; }
 .outline-next-copy { display:grid; min-width:0; gap:4px; }
@@ -416,6 +424,8 @@ button:focus-visible {
 .outline-volume-empty strong { color:#50698f; font-size:11px; }
 .outline-volume-empty span { font-size:10px; line-height:1.5; }
 .node-plan-ai-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 11px; border:1px solid #cbdaf3; border-radius:7px; background:#f3f7ff; }
+.node-plan-guidance { display:grid; gap:5px; color:#526b91; font-size:10px; }
+.node-plan-guidance textarea { min-height:54px; padding:8px 9px; font-size:11px; }
 .node-plan-ai-bar > div { display:flex; min-width:0; align-items:center; gap:8px; color:#3d6fca; }
 .node-plan-ai-bar > div > span { display:grid; gap:2px; }
 .node-plan-ai-bar strong { color:#315dba; font-size:11px; }
@@ -1538,6 +1548,7 @@ button:focus-visible {
 }
 
 @media (max-width: 780px) {
+  .planning-phase-strip { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .outline-next-step { align-items:flex-start; flex-direction:column; }
   .outline-next-actions { width:100%; }
   .outline-next-actions button { flex:1 1 auto; }
@@ -1805,6 +1816,13 @@ button:focus-visible {
 .story-planning-titlebar h2 { margin:0; color:#243b62; font-size:18px; }
 .story-planning-title-hint { display:block; margin-top:5px; color:#8294b1; font-size:10px; }
 .story-planning-progress { color:#7387a8; font-size:11px; white-space:nowrap; }
+.planning-phase-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:7px; margin-top:12px; }
+.planning-phase-strip button { display:grid; grid-template-columns:26px minmax(0,1fr); gap:2px 7px; min-width:0; padding:10px 11px; border:1px solid #dbe5f3; border-radius:7px; color:#647995; background:#fff; text-align:left; cursor:pointer; }
+.planning-phase-strip button:hover, .planning-phase-strip button[data-active] { border-color:#9ebcf6; background:#f3f7ff; }
+.planning-phase-strip button[data-complete] { border-color:#b8dfce; background:#f4fbf7; }
+.planning-phase-strip span { grid-row:1 / span 2; color:#9aabc2; font-size:10px; }
+.planning-phase-strip strong { overflow:hidden; color:#3d557e; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.planning-phase-strip small { overflow:hidden; color:#8495ad; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
 .story-planning-flowbar { display:grid; grid-template-columns:32px minmax(0,1fr) 32px; align-items:center; gap:10px; min-height:48px; margin-top:12px; padding:7px 9px; border:1px solid #dbe5f3; border-radius:7px; background:#f8fbff; }
 .story-planning-flowbar .icon-command { width:32px; height:32px; border:1px solid #cfdbed; color:#4d6f9e; background:#fff; }
 .story-planning-flowbar > div { display:flex; min-width:0; align-items:baseline; justify-content:space-between; gap:12px; }

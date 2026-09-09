@@ -20,88 +20,54 @@ type PlanningStartMode = "WRITE" | "AI" | "IMPORT";
 
 export const planningSectionGroups: PlanningGroup[] = [
   {
-    id: "creative-positioning",
-    label: "作品定位",
+    id: "story-seed",
+    label: "故事种子",
     children: [
-      { id: "positioning-genre", label: "类型与题材", prompt: "作品的主类型、辅助类型和核心题材元素分别是什么" },
-      { id: "positioning-promise", label: "读者与阅读承诺", prompt: "作品主要写给谁，承诺持续提供怎样的情绪和类型满足" },
-      { id: "positioning-selling-point", label: "核心卖点", prompt: "与同类作品相比，最值得读者记住的独特吸引力是什么" },
-      { id: "positioning-tone", label: "基调与尺度", prompt: "作品的整体气质、内容尺度和不会越过的表达边界是什么" },
-      { id: "positioning-scale", label: "篇幅与体量", prompt: "预计采用怎样的篇幅、时间跨度、空间范围和叙事规模" },
+      { id: "seed-premise", label: "故事前提", prompt: "如果用一句话描述这个故事，主角、目标、阻力和失败风险分别是什么" },
+      { id: "seed-genre-promise", label: "类型与阅读期待", prompt: "作品属于什么类型，读者会持续获得什么样的情绪和阅读满足" },
+      { id: "seed-hook", label: "独特钩子", prompt: "这个故事最独特、最值得被记住的设定或冲突是什么" },
+      { id: "seed-tone", label: "基调与边界", prompt: "作品整体气质是什么，哪些表达尺度和内容边界需要长期保持" },
     ],
   },
   {
-    id: "story-core",
-    label: "故事内核",
+    id: "story-engine",
+    label: "故事引擎",
     children: [
-      { id: "core-premise", label: "一句话梗概", prompt: "用主角、目标、阻力和失败风险准确概括整个故事" },
-      { id: "core-situation", label: "核心情境", prompt: "哪个具有持续张力的特殊处境让这个故事值得展开" },
-      { id: "core-theme", label: "主题命题", prompt: "作品借人物的选择探讨什么问题，不同人物代表哪些答案" },
-      { id: "core-dramatic-question", label: "核心戏剧问题", prompt: "读者会持续追问哪个贯穿全书、直到结局才真正回答的问题" },
-      { id: "core-emotion", label: "情感内核", prompt: "作品最想让读者经历和带走的核心情感是什么" },
-      { id: "core-ending", label: "结局落点", prompt: "故事最终如何回答戏剧问题，并兑现主题、人物和情感承诺" },
+      { id: "engine-protagonist", label: "主角与内在缺口", prompt: "主角表面想得到什么，内心真正缺少什么，什么问题让他无法停留在原地" },
+      { id: "engine-antagonism", label: "对抗力量", prompt: "谁或什么力量阻止主角，它的目标和立场为何自洽且有威胁" },
+      { id: "engine-stakes", label: "赌注与代价", prompt: "成功、失败和拒绝行动分别会让主角及重要人物失去什么" },
+      { id: "engine-theme", label: "主题与情感", prompt: "人物的选择将探讨什么问题，读者最终应该经历并带走什么情感" },
+      { id: "engine-ending", label: "结局承诺", prompt: "结局如何回答核心戏剧问题，并兑现主线、人物和情感承诺" },
     ],
   },
   {
-    id: "character-system",
-    label: "人物系统",
+    id: "story-cast",
+    label: "人物与关系",
     children: [
-      { id: "character-motivation", label: "主角目标与需求", prompt: "主角外在想达成什么，内在真正需要面对或获得什么" },
-      { id: "character-flaw", label: "主角缺陷与困境", prompt: "什么认知、创伤、欲望或处境让主角不断作出困难选择" },
-      { id: "character-antagonist", label: "对抗者", prompt: "谁或什么力量与主角争夺同一结果，其立场为何自洽且有威胁" },
-      { id: "character-relationship", label: "核心关系", prompt: "哪段关系承载主要情感变化，双方彼此需要又彼此伤害什么" },
-      { id: "character-supporting", label: "关键配角", prompt: "配角分别承担帮助、阻碍、映照、诱惑或见证中的什么功能" },
-      { id: "character-arcs", label: "人物弧光", prompt: "主要人物的信念和行为如何因连续选择而改变或固化" },
-      { id: "character-secrets", label: "秘密与信息差", prompt: "谁隐瞒了什么，真相揭露时会改变什么" },
+      { id: "cast-core-relationship", label: "核心关系", prompt: "哪段关系承载主要情感变化，双方彼此需要又彼此伤害什么" },
+      { id: "cast-supporting", label: "关键配角", prompt: "哪些配角承担帮助、阻碍、映照、诱惑或见证功能，他们各自推动什么变化" },
+      { id: "cast-arcs", label: "人物弧光", prompt: "主要人物的信念和行为如何因连续选择而改变或固化" },
     ],
   },
   {
-    id: "story-world",
-    label: "故事世界",
+    id: "story-frame",
+    label: "世界与叙事",
     children: [
-      { id: "world-stage", label: "时空舞台", prompt: "故事发生在怎样的时代与地域，环境如何直接影响人物行动" },
-      { id: "world-rules", label: "核心规则", prompt: "哪些不可随意打破的规则决定了人物能做什么、不能做什么" },
-      { id: "world-history", label: "历史与现状", prompt: "哪些过去事件造成当前矛盾，并仍在影响人物和势力" },
-      { id: "world-power", label: "力量、技术与代价", prompt: "特殊能力或技术如何获得和使用，其限制、代价与反制是什么" },
-      { id: "world-society", label: "权力与社会运行", prompt: "组织、阶层、法律和资源如何分配权力并制造现实阻力" },
-      { id: "world-culture", label: "文化与日常生活", prompt: "信仰、习俗、禁忌和生活方式如何进入人物选择与具体场景" },
+      { id: "frame-setting", label: "舞台与核心规则", prompt: "故事发生在哪里，哪些世界规则、资源限制或代价会直接影响人物行动" },
+      { id: "frame-history", label: "矛盾由来", prompt: "哪些过去事件造成当前矛盾，并仍在影响人物、组织和资源分配" },
+      { id: "frame-narrative", label: "视角与节奏", prompt: "由谁讲述故事，如何安排信息揭示、多线切换和整体节奏" },
     ],
   },
-  {
-    id: "plot-system",
-    label: "情节系统",
-    children: [
-      { id: "plot-opening", label: "开局状态", prompt: "故事开始时主角处于怎样的常态，潜在矛盾为何已无法长久维持" },
-      { id: "plot-trigger", label: "触发事件", prompt: "什么事件打破现状，迫使主角卷入故事并作出选择" },
-      { id: "plot-goal", label: "主线目标", prompt: "主角采取什么持续行动追求哪个可以明确判断成败的结果" },
-      { id: "plot-obstacles", label: "阻力系统", prompt: "外部对抗、环境限制和主角自身问题如何共同阻止目标实现" },
-      { id: "plot-stakes", label: "赌注与代价", prompt: "成功、失败和拒绝行动分别会让主角及相关人物失去什么" },
-      { id: "plot-escalation", label: "升级与转折", prompt: "新信息、失败和选择如何改变局势，使后续行动越来越困难" },
-      { id: "plot-climax", label: "高潮抉择", prompt: "最终对抗将迫使主角作出什么不可回避、能够证明人物变化的选择" },
-    ],
-  },
-  {
-    id: "narrative-strategy",
-    label: "叙事方案",
-    children: [
-      { id: "narrative-perspective", label: "视角与叙述距离", prompt: "由谁感知和讲述故事，叙述贴近人物到什么程度，有哪些盲区" },
-      { id: "narrative-time", label: "时间与结构", prompt: "故事如何安排时间顺序、多线切换和章节结构以获得最佳效果" },
-      { id: "narrative-information", label: "信息与悬念", prompt: "角色和读者分别在何时知道什么，真相如何铺垫、误导与揭示" },
-      { id: "narrative-rhythm", label: "节奏曲线", prompt: "紧张、舒缓、信息、行动和情感段落如何形成整体起伏" },
-      { id: "narrative-style", label: "文风与语言", prompt: "叙述语言、描写密度、对话气质和需要长期保持的表达规范是什么" },
-      { id: "narrative-motifs", label: "意象与母题", prompt: "哪些反复出现的意象、场景或动作能够强化主题与情感" },
-    ],
-  },
-];
+]; 
 const sections = planningSectionGroups.flatMap((group) => group.children);
 const sectionIds = new Set(sections.map((section) => section.id));
 export const essentialPlanningSectionIds = [
-  "positioning-genre",
-  "positioning-promise",
-  "core-premise",
-  "plot-goal",
-  "plot-stakes",
-  "core-ending",
+  "seed-premise",
+  "seed-genre-promise",
+  "engine-protagonist",
+  "engine-antagonism",
+  "engine-stakes",
+  "engine-ending",
 ] as const;
 
 export function nextIncompletePlanningSectionId(currentId: string, completedIds: ReadonlySet<string>) {
@@ -143,7 +109,7 @@ export function StoryPlanningWorkbench(props: {
   });
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
-  const selectedId = props.selectedSectionId ?? "positioning-genre";
+  const selectedId = props.selectedSectionId ?? "seed-premise";
   const [form, setForm] = useState<PlanningSection>(emptySection(selectedId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +139,7 @@ export function StoryPlanningWorkbench(props: {
   const nextSection = selectedIndex >= 0 && selectedIndex < sections.length - 1 ? sections[selectedIndex + 1] : null;
   const nextIncompleteId = nextIncompletePlanningSectionId(selectedId, completedIds);
   const nextIncompleteSection = sections.find((section) => section.id === nextIncompleteId) ?? null;
+  const phaseDescriptions = ["先把故事说清楚", "确定冲突、赌注与结局", "让人物关系推动剧情", "补足世界规则和叙事方式"];
   const chatProfile = profiles.data?.find((profile) => profile.capability === "CHAT" && profile.hasSecret);
   const sectionJobs = (jobs.data ?? []).filter((job) => planningJobInput(job)?.sectionId === selectedId);
   const activeJob = sectionJobs.find((job) => job.status === "QUEUED" || job.status === "RUNNING");
@@ -351,6 +318,14 @@ export function StoryPlanningWorkbench(props: {
           <span className="story-planning-title-hint">每个细化节点都可以独立推导、编写或导入</span>
         </div>
         <span className="story-planning-progress">{completedCount} / {sections.length} 已完成</span>
+      </div>
+      <div className="planning-phase-strip" aria-label="作品设定流程">
+        {planningSectionGroups.map((group, index) => {
+          const complete = group.children.every((item) => completedIds.has(item.id));
+          const active = selectedGroup?.id === group.id;
+          const firstIncomplete = group.children.find((item) => !completedIds.has(item.id)) ?? group.children[0];
+          return <button type="button" key={group.id} data-active={active || undefined} data-complete={complete || undefined} onClick={() => selectSection(firstIncomplete.id)}><span>{String(index + 1).padStart(2, "0")}</span><strong>{group.label}</strong><small>{complete ? "已完成" : phaseDescriptions[index]}</small></button>;
+        })}
       </div>
       <div className="story-planning-flowbar" aria-label="设定节点导航">
         <button type="button" className="icon-command" onClick={() => previousSection && selectSection(previousSection.id)} disabled={!previousSection} aria-label="上一项" title="上一项"><ChevronLeft size={16} /></button>
