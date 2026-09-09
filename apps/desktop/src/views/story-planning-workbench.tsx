@@ -154,7 +154,11 @@ export function StoryPlanningWorkbench(props: {
   const latestJob = sectionJobs[0];
   const aiBusy = generating || importing || Boolean(activeJob);
   const visibleJob = activeJob ?? (latestJob?.status === "FAILED" || latestJob?.status === "CANCELLED" ? latestJob : null);
-  const selectedAiPrompt = `${selectedDefinition.prompt}。填写参考：${selectedDefinition.guidance}`;
+  const existingFormalContext = (storedSections.data ?? [])
+    .filter((item) => sectionIds.has(item.id) && item.content.trim() && item.id !== selectedId)
+    .map((item) => `${item.id}: ${item.content}`)
+    .join("\n");
+  const selectedAiPrompt = `当前节点“${selectedDefinition.label}”：${selectedDefinition.prompt}。填写参考：${selectedDefinition.guidance}`;
   useEffect(() => {
     const stored = storedSections.data?.find((section) => section.id === selectedId);
     const next = stored ?? emptySection(selectedId);
@@ -251,7 +255,7 @@ export function StoryPlanningWorkbench(props: {
     setNotice(null);
     try {
       const content = (await Promise.all(files.map(async (file) => `===== 文件：${file.name} =====\n${await file.text()}`))).join("\n\n");
-      await enqueuePlanningAiJob({ profileId: chatProfile.id, mode: "EXTRACT", sectionId: selectedId, sectionTitle: selectedDefinition.label, sectionPrompt: selectedAiPrompt, existingContext: "", referenceContent: content, userGuidance: operationGuidance, allowRewrite: allowImportRewrite, sourceName: files.map((file) => file.name) });
+      await enqueuePlanningAiJob({ profileId: chatProfile.id, mode: "EXTRACT", sectionId: selectedId, sectionTitle: selectedDefinition.label, sectionPrompt: selectedAiPrompt, existingContext: existingFormalContext, referenceContent: content, userGuidance: operationGuidance, allowRewrite: allowImportRewrite, sourceName: files.map((file) => file.name) });
       setPendingAction(null);
       setStartMode(null);
       setPendingFiles([]);
@@ -269,17 +273,13 @@ export function StoryPlanningWorkbench(props: {
     setGenerating(true);
     setError(null);
     try {
-      const existing = (storedSections.data ?? [])
-        .filter((item) => sectionIds.has(item.id) && item.content.trim())
-        .map((item) => `${item.id}: ${item.content}`)
-        .join("\n");
       await enqueuePlanningAiJob({
         profileId: chatProfile.id,
         mode: "GENERATE",
         sectionId: selectedId,
         sectionTitle: selectedDefinition.label,
         sectionPrompt: selectedAiPrompt,
-        existingContext: existing,
+        existingContext: existingFormalContext,
         referenceContent: "",
         userGuidance: operationGuidance,
         allowRewrite: false,
@@ -367,7 +367,7 @@ export function StoryPlanningWorkbench(props: {
       <div className="story-planning-layout story-planning-layout-editor-only">
         <div className="story-planning-editor">
           <div className="story-planning-editor-heading">
-            <div><span className="story-planning-current-label">{selectedGroup?.label} / 当前节点</span><h3>{selectedDefinition.label}</h3><p>{selectedDefinition.prompt}</p><div className="story-planning-fill-guide"><strong>填写提示</strong><span>{selectedDefinition.guidance}</span><small>提示和示例只用于帮助你填写，不会自动成为作品事实；不确定的内容可以先留空，连载中再补。</small></div></div>
+            <div><span className="story-planning-current-label">{selectedGroup?.label} / 当前节点</span><h3>{selectedDefinition.label}</h3><p>{selectedDefinition.prompt}</p><div className="story-planning-fill-guide"><strong>填写提示</strong><span>{selectedDefinition.guidance}</span></div></div>
           </div>
           <div className="story-planning-action-panel">
             <div className="story-planning-action-heading"><div><strong>建立当前节点</strong><span>选择一种开始方式</span></div><small>内容确认后再保存</small></div>

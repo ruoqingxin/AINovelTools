@@ -81,7 +81,7 @@ fn planning_context(
     };
     context.user_prompt = if extract_mode && input.allow_rewrite {
         format!(
-            "当前规划节点：{}\n节点目标：{}\n作者补充要求：{}\n\n文件原文：\n{}\n\n请以文件内容为依据，生成只属于当前节点范围的设定正文。可以改写表达、重组结构，并补足必要的逻辑连接或缺失细节；补全必须合理、克制，且不能违背文件中的事实和限制。忽略与当前节点无关的内容，只输出连贯、可编辑的正文。",
+            "当前规划节点：{}\n节点目标：{}\n作者补充要求：{}\n\n已有正式作品设定（仅用于理解范围和保持一致，不得当作文件事实写入）：\n{}\n\n文件原文：\n{}\n\n请以文件内容为核心依据，生成只属于当前节点范围的设定正文。可以改写表达、重组结构，并补足必要的逻辑连接或缺失细节；补全必须合理、克制，且不能违背文件事实、已有设定和当前节点填写提示。忽略与当前节点无关的内容，只输出连贯、可编辑的正文。",
             input.section_title,
             input.section_prompt,
             if input.user_guidance.trim().is_empty() {
@@ -89,11 +89,12 @@ fn planning_context(
             } else {
                 input.user_guidance.trim()
             },
+            if input.existing_context.trim().is_empty() { "暂无" } else { input.existing_context.trim() },
             input.reference_content.trim()
         )
     } else if extract_mode {
         format!(
-            "当前规划节点：{}\n节点目标：{}\n作者补充的提取要求：{}\n\n文件原文：\n{}\n\n只提取与当前节点直接相关的内容，并整理成连贯、可编辑的设定正文。作者的补充要求只能作为筛选和组织规则，不能作为文件事实写入结果。保留原文事实和限定条件，忽略无关内容，不得补充文件中没有的信息。如果完全没有相关内容，只回复：未提取到相关内容。",
+            "当前规划节点：{}\n节点目标：{}\n作者补充的提取要求：{}\n\n已有正式作品设定（仅用于理解范围和保持一致，不得当作文件事实写入）：\n{}\n\n文件原文：\n{}\n\n只提取与当前节点直接相关的内容，并整理成连贯、可编辑的设定正文。已有正式设定和作者补充要求只能作为筛选、组织和一致性检查规则，不能作为文件事实写入结果。保留原文事实和限定条件，忽略无关内容，不得补充文件中没有的信息。如果完全没有相关内容，只回复：未提取到相关内容。",
             input.section_title,
             input.section_prompt,
             if input.user_guidance.trim().is_empty() {
@@ -101,6 +102,7 @@ fn planning_context(
             } else {
                 input.user_guidance.trim()
             },
+            if input.existing_context.trim().is_empty() { "暂无" } else { input.existing_context.trim() },
             input.reference_content.trim()
         )
     } else {
