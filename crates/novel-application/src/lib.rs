@@ -161,7 +161,7 @@ mod tests {
             input_token_budget: 1_024,
         };
         let package = super::ContextAssembler::assemble(&input).expect("assemble contract");
-        assert_eq!(package.prompt_version, "r3-writing-v2");
+        assert_eq!(package.prompt_version, "r3-writing-v3");
         assert_eq!(package.task_contract.role, super::AiTaskRole::DraftWriter);
         assert!(
             package
@@ -207,5 +207,64 @@ mod tests {
                 super::ContextAssembler::assemble(&action_input).expect("assemble action role");
             assert_eq!(action_package.task_contract.role, expected_role);
         }
+    }
+
+    #[test]
+    fn context_planner_spreads_available_kinds_before_filling_same_kind() {
+        let make_candidate = |kind, relevance, content: &str| {
+            super::ContextCandidate::new(
+                kind,
+                novel_domain::RetrievalEvidence {
+                    chunk: novel_domain::KnowledgeChunk {
+                        id: uuid::Uuid::new_v4(),
+                        source_id: uuid::Uuid::new_v4(),
+                        source_revision: "test:1".into(),
+                        source_hash: "sha256:test".into(),
+                        chunk_index: 0,
+                        chunking_version: "test-v1".into(),
+                        content: content.into(),
+                        embedding: None,
+                    },
+                    method: novel_domain::RetrievalMethod::Structured,
+                    authority: novel_domain::ContextAuthority::TaskMaterial,
+                    relevance,
+                },
+            )
+        };
+        let candidates = vec![
+            make_candidate(super::ContextCandidateKind::Keyword, 10_000, "高相关关键词"),
+            make_candidate(super::ContextCandidateKind::Entity, 4_000, "当前人物卡"),
+            make_candidate(
+                super::ContextCandidateKind::AuthoritativeFact,
+                9_000,
+                "林澈不饮酒。",
+            ),
+            make_candidate(
+                super::ContextCandidateKind::AuthoritativeFact,
+                8_000,
+                "林澈左臂受伤。",
+            ),
+            make_candidate(super::ContextCandidateKind::CurrentState, 800, "当前状态"),
+            make_candidate(
+                super::ContextCandidateKind::Foreshadowing,
+                750,
+                "未回收伏笔",
+            ),
+            make_candidate(super::ContextCandidateKind::Summary, 700, "章节摘要"),
+            make_candidate(super::ContextCandidateKind::Event, 650, "历史事件"),
+            make_candidate(super::ContextCandidateKind::Keyword, 600, "参考片段"),
+        ];
+
+        let selected = super::ContextPlanner::plan(&candidates, 24, 8);
+        assert_eq!(selected.len(), 8);
+        assert_eq!(selected[0].chunk.content, "林澈不饮酒。");
+        assert_eq!(selected[1].chunk.content, "当前状态");
+        assert_eq!(selected[2].chunk.content, "当前人物卡");
+        assert_eq!(selected[3].chunk.content, "未回收伏笔");
+        assert_eq!(selected[4].chunk.content, "章节摘要");
+        assert_eq!(selected[5].chunk.content, "历史事件");
+        assert_eq!(selected[6].chunk.content, "高相关关键词");
+        assert_eq!(selected[7].chunk.content, "林澈左臂受伤。");
+        assert!(selected.iter().all(|item| item.chunk.content != "参考片段"));
     }
 }

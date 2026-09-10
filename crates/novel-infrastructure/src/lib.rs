@@ -25,6 +25,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod ai;
+mod context_store;
 mod database;
 mod entity_store;
 mod knowledge_store;
@@ -848,7 +849,7 @@ impl ProjectManager {
             .as_mut()
             .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         let tx = session.database.connection.transaction()?;
-        let category = if ai_job { 1 } else { 0 };
+        let category = i32::from(ai_job);
         let id: Option<String> = tx
             .query_row(
                 "SELECT id FROM jobs
@@ -1355,43 +1356,21 @@ impl ProjectManager {
         input: &novel_application::AssembleContextInput,
         object_ids: &[Uuid],
     ) -> Result<novel_application::ContextPackage, novel_application::ContextError> {
-        let query = input
-            .instruction
-            .as_deref()
-            .unwrap_or(input.chapter_title.as_str())
-            .trim()
-            .to_owned();
-        let mut results = self.search_project_objects(object_ids).unwrap_or_default();
-        results.extend(self.search_project(query, None, 8, 0).unwrap_or_default());
-        let mut seen = std::collections::HashSet::new();
-        results.retain(|item| seen.insert(item.object_id));
-        let evidence = results
-            .into_iter()
-            .enumerate()
-            .map(|(index, result)| {
-                let source_hash = format!("{:x}", Sha256::digest(result.snippet.as_bytes()));
-                RetrievalEvidence {
-                    chunk: KnowledgeChunk {
-                        id: Uuid::new_v4(),
-                        source_id: result.object_id,
-                        source_revision: result
-                            .source_version
-                            .unwrap_or_else(|| "search:current".to_owned()),
-                        source_hash,
-                        chunk_index: u32::try_from(index).unwrap_or(u32::MAX),
-                        chunking_version: "r4-search-v1".to_owned(),
-                        content: result.snippet,
-                        embedding: None,
-                    },
-                    method: RetrievalMethod::Keyword,
-                    authority: match result.object_type.as_str() {
-                        "ENTITY" | "PLAN" | "MANUSCRIPT" => ContextAuthority::TaskMaterial,
-                        _ => ContextAuthority::Reference,
-                    },
-                    relevance: 5_000,
-                }
-            })
-            .collect::<Vec<_>>();
+        let availability = novel_application::RetrievalAvailability {
+            knowledge_available: self.current.is_some(),
+            keyword_index_ready: true,
+            semantic_index_ready: false,
+        };
+        let plan = novel_application::RetrievalPlanner::plan(
+            novel_application::RetrievalIntent::ProjectKnowledge,
+            &availability,
+        );
+        let candidates = self.collect_context_candidates(input, object_ids);
+        let evidence = novel_application::ContextPlanner::plan(
+            &candidates,
+            plan.max_candidates,
+            plan.max_attached_chunks,
+        );
         novel_application::ContextAssembler::assemble_with_retrieval(input, &evidence)
     }
 }
@@ -1553,9 +1532,11 @@ impl ProjectManager {
         };
         match self.open(&recent.root) {
             Ok(manifest) => Ok(Some(manifest)),
-            Err(ProjectError::NotInitialized(_))
-            | Err(ProjectError::Manifest(_))
-            | Err(ProjectError::Database(_)) => Ok(None),
+            Err(
+                ProjectError::NotInitialized(_)
+                | ProjectError::Manifest(_)
+                | ProjectError::Database(_),
+            ) => Ok(None),
             Err(error) => Err(error),
         }
     }
@@ -2442,6 +2423,110 @@ mod tests {
             assert_eq!(package.entity_source_status, "RETRIEVAL_ATTACHED");
             assert_eq!(package.action, action);
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn context_assembly_promotes_finalized_facts_into_authoritative_section() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-context-facts-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        let manifest = manager.create(&root, "上下文事实").expect("create project");
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
+        let revision = manager
+            .save_manuscript(
+                chapter.id,
+                r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"林澈不饮酒。"}]}]}"#
+                    .into(),
+                "TEST".into(),
+            )
+            .expect("save revision");
+        let anchor = super::EvidenceAnchor {
+            id: uuid::Uuid::new_v4(),
+            project_id: manifest.project_id,
+            chapter_id: chapter.id,
+            source_revision_id: revision.id,
+            block_id: "paragraph-1".into(),
+            start_offset: 0,
+            end_offset: 6,
+            source_version: revision.id.to_string(),
+            source_hash: revision.content_hash.clone(),
+            lifecycle_status: super::KnowledgeLifecycleStatus::Active,
+            created_by: "tester".into(),
+            created_at: super::now_timestamp(),
+            updated_at: super::now_timestamp(),
+        };
+        manager
+            .create_evidence_anchor(anchor.clone())
+            .expect("create anchor");
+        let candidate = super::KnowledgeCandidate {
+            id: uuid::Uuid::new_v4(),
+            project_id: manifest.project_id,
+            chapter_id: chapter.id,
+            proposal_id: None,
+            candidate_status: super::CandidateStatus::Pending,
+            review_decision: None,
+            reviewer: None,
+            reviewed_at: None,
+            fact: super::Fact {
+                knowledge_id: uuid::Uuid::new_v4(),
+                project_id: manifest.project_id,
+                knowledge_version: 1,
+                subject: "林澈".into(),
+                predicate: "不饮酒".into(),
+                object: "保持".into(),
+                source_revision_id: revision.id,
+                evidence_anchor_ids: vec![anchor.id],
+                lifecycle_status: super::KnowledgeLifecycleStatus::NeedsReview,
+                created_by: "tester".into(),
+                created_at: super::now_timestamp(),
+                updated_at: super::now_timestamp(),
+            },
+            created_at: super::now_timestamp(),
+            updated_at: super::now_timestamp(),
+        };
+        manager
+            .create_knowledge_candidate(candidate.clone())
+            .expect("create candidate");
+        manager
+            .review_knowledge_candidate(
+                candidate.id,
+                super::CandidateStatus::Pending,
+                super::ReviewDecision::Approve,
+                "reviewer".into(),
+            )
+            .expect("approve candidate");
+        manager
+            .finalize_knowledge_candidates(chapter.id, vec![candidate.id], "tester".into())
+            .expect("finalize candidate");
+        manager
+            .rebuild_world_state("tester".into())
+            .expect("rebuild world state");
+
+        let package = manager
+            .assemble_context_with_project_knowledge(
+                &novel_application::AssembleContextInput {
+                    chapter_id: chapter.id,
+                    target_revision_id: Some(revision.id),
+                    action: super::AiAction::Continue,
+                    chapter_title: "第一章".into(),
+                    chapter_plan: "林澈拒绝饮酒".into(),
+                    document_json: r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"林澈接过茶盏。"}]}]}"#.into(),
+                    selection: None,
+                    instruction: Some("续写林澈拒绝饮酒的场面".into()),
+                    input_token_budget: 4096,
+                },
+            )
+            .expect("context package");
+
+        assert!(package.user_prompt.contains("[P1 已批准事实]"));
+        assert!(package.user_prompt.contains("林澈 不饮酒 保持"));
+        assert!(package.retrieval_evidence.iter().any(|item| {
+            item.authority == super::ContextAuthority::AuthoritativeFact
+                && item.source_revision.starts_with("fact:")
+        }));
         let _ = std::fs::remove_dir_all(root);
     }
 

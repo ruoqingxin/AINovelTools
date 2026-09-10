@@ -81,6 +81,16 @@ impl ProjectManager {
             .list_foreshadowings(session.manifest.project_id)
     }
 
+    pub fn latest_world_state(&self) -> Result<Option<WorldState>, KnowledgeStoreError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(KnowledgeStoreError::NoProject)?;
+        session
+            .database
+            .latest_world_state(session.manifest.project_id)
+    }
+
     pub fn create_relation(&mut self, relation: Relation) -> Result<Relation, KnowledgeStoreError> {
         relation.validate()?;
         let session = self
@@ -441,6 +451,38 @@ impl Database {
         let mut statement = self.connection.prepare("SELECT id, project_id, foreshadowing_version, title, target_chapter_id, status, evidence_anchor_ids_json, lifecycle_status, created_by, created_at, updated_at FROM foreshadowings value WHERE project_id = ?1 AND foreshadowing_version = (SELECT MAX(current.foreshadowing_version) FROM foreshadowings current WHERE current.id = value.id AND current.project_id = value.project_id) ORDER BY created_at DESC")?;
         let rows = statement.query_map([project_id.to_string()], map_foreshadowing)?;
         rows.collect::<Result<Vec<_>, _>>()
+            .map_err(KnowledgeStoreError::from)
+    }
+
+    fn latest_world_state(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Option<WorldState>, KnowledgeStoreError> {
+        self.connection
+            .query_row(
+                "SELECT id, project_id, knowledge_version_id, entries_json, created_at
+                 FROM world_states WHERE project_id = ?1
+                 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                [project_id.to_string()],
+                |row| {
+                    Ok(WorldState {
+                        id: parse_uuid_column(row, 0)?,
+                        project_id: parse_uuid_column(row, 1)?,
+                        knowledge_version_id: parse_uuid_column(row, 2)?,
+                        entries: serde_json::from_str(&row.get::<_, String>(3)?).map_err(
+                            |error| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    3,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(error),
+                                )
+                            },
+                        )?,
+                        created_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
             .map_err(KnowledgeStoreError::from)
     }
 

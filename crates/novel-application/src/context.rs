@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROMPT_VERSION: &str = "r3-writing-v2";
+pub const PROMPT_VERSION: &str = "r3-writing-v3";
 const TRUNCATION_MARKER: &str = "[已按 TokenBudget 截断]";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -38,6 +38,52 @@ pub struct RetrievalPlan {
     pub max_candidates: u16,
     pub max_attached_chunks: u16,
     pub reason: RetrievalPlanReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ContextCandidateKind {
+    AuthoritativeFact,
+    CurrentState,
+    Entity,
+    Foreshadowing,
+    Summary,
+    Event,
+    Keyword,
+}
+
+impl ContextCandidateKind {
+    const fn priority(self) -> u8 {
+        match self {
+            Self::AuthoritativeFact => 0,
+            Self::CurrentState => 1,
+            Self::Entity => 2,
+            Self::Foreshadowing => 3,
+            Self::Summary => 4,
+            Self::Event => 5,
+            Self::Keyword => 6,
+        }
+    }
+
+    const fn max_attached(self) -> usize {
+        match self {
+            Self::AuthoritativeFact | Self::Keyword => 4,
+            Self::CurrentState | Self::Entity => 2,
+            Self::Foreshadowing | Self::Summary | Self::Event => 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextCandidate {
+    pub kind: ContextCandidateKind,
+    pub evidence: RetrievalEvidence,
+}
+
+impl ContextCandidate {
+    #[must_use]
+    pub const fn new(kind: ContextCandidateKind, evidence: RetrievalEvidence) -> Self {
+        Self { kind, evidence }
+    }
 }
 
 pub struct RetrievalPlanner;
@@ -75,6 +121,74 @@ impl RetrievalPlanner {
             max_attached_chunks: 8,
             reason: RetrievalPlanReason::ProjectKnowledgeRequested,
         }
+    }
+}
+
+pub struct ContextPlanner;
+
+impl ContextPlanner {
+    #[must_use]
+    pub fn plan(
+        candidates: &[ContextCandidate],
+        max_candidates: u16,
+        max_attached_chunks: u16,
+    ) -> Vec<RetrievalEvidence> {
+        let candidate_limit = usize::from(max_candidates);
+        let attachment_limit = usize::from(max_attached_chunks);
+        if candidate_limit == 0 || attachment_limit == 0 {
+            return Vec::new();
+        }
+
+        let mut seen = HashSet::new();
+        let mut grouped = std::array::from_fn::<_, 7, _>(|_| Vec::new());
+        for candidate in candidates {
+            let normalized_content = candidate
+                .evidence
+                .chunk
+                .content
+                .split_whitespace()
+                .collect::<String>()
+                .to_lowercase();
+            if seen.insert((candidate.evidence.chunk.source_id, normalized_content)) {
+                grouped[usize::from(candidate.kind.priority())].push(candidate.clone());
+            }
+        }
+        for group in &mut grouped {
+            group.sort_by(|left, right| {
+                right
+                    .evidence
+                    .relevance
+                    .cmp(&left.evidence.relevance)
+                    .then_with(|| left.evidence.chunk.id.cmp(&right.evidence.chunk.id))
+            });
+        }
+
+        // Keep every available evidence kind visible before filling extra slots by priority.
+        let mut ordered = Vec::with_capacity(candidates.len());
+        for group in &grouped {
+            if let Some(candidate) = group.first() {
+                ordered.push(candidate.clone());
+            }
+        }
+        for group in &grouped {
+            ordered.extend(group.iter().skip(1).cloned());
+        }
+        ordered.truncate(candidate_limit);
+
+        let mut selected = Vec::with_capacity(attachment_limit);
+        let mut kind_counts = std::collections::HashMap::new();
+        for candidate in ordered {
+            if selected.len() == attachment_limit {
+                break;
+            }
+            let count = kind_counts.entry(candidate.kind).or_insert(0usize);
+            if *count >= candidate.kind.max_attached() {
+                continue;
+            }
+            *count += 1;
+            selected.push(candidate.evidence);
+        }
+        selected
     }
 }
 
@@ -390,7 +504,7 @@ fn build_prompt_sections(
             "已批准事实",
             non_empty_or(
                 retrieval.authoritative_facts.clone(),
-                "R4 尚未启用正式知识库，本次没有已批准事实来源。",
+                "本次没有已批准事实来源。",
             ),
             retrieval.authoritative_count,
         ),
@@ -405,10 +519,7 @@ fn build_prompt_sections(
             ContextSectionKind::CurrentState,
             3,
             "故事当前状态",
-            non_empty_or(
-                retrieval.task_materials.clone(),
-                "R4/R5 尚未启用状态快照，本次没有独立状态来源。",
-            ),
+            non_empty_or(retrieval.task_materials.clone(), "本次没有独立状态来源。"),
             retrieval.task_material_count,
         ),
         PromptSection::new(
