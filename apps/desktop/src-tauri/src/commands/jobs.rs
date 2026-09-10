@@ -89,12 +89,12 @@ pub(crate) fn cancel_job(
     let job = manager
         .request_job_cancel(id)
         .map_err(|error| ApiError::internal(error.to_string()))?;
-    let (stage, message) = if job.status == novel_infrastructure::JobStatus::Cancelled {
+    let (job_stage, message) = if job.status == novel_infrastructure::JobStatus::Cancelled {
         ("CANCELLED", "排队中的任务已取消")
     } else {
         ("CANCEL_REQUESTED", "已发送取消请求，等待当前模型请求结束")
     };
-    let _ = manager.append_job_event(id, stage, message, job.progress);
+    let _ = manager.append_job_event(id, job_stage, message, job.progress);
     Ok(job)
 }
 

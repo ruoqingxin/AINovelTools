@@ -683,6 +683,25 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (30, 'planning_embeddings');",
             )?;
         }
+        if applied.unwrap_or(0) < 31 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS planning_chunk_embeddings (
+                    chunk_id TEXT NOT NULL,
+                    section_id TEXT NOT NULL REFERENCES planning_sections(id) ON DELETE CASCADE,
+                    chunk_index INTEGER NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    dimensions INTEGER NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    vector_json TEXT NOT NULL CHECK(json_valid(vector_json)),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    PRIMARY KEY (chunk_id, profile_id, model_id, dimensions)
+                );
+                CREATE INDEX IF NOT EXISTS idx_planning_chunk_embeddings_section
+                    ON planning_chunk_embeddings(section_id, chunk_index);
+                INSERT INTO schema_migrations (version, name) VALUES (31, 'planning_chunk_embeddings');",
+            )?;
+        }
         Ok(())
     }
 
@@ -773,6 +792,15 @@ impl Database {
         section: PlanningSection,
     ) -> Result<PlanningSection, DatabaseError> {
         let content_hash = format!("sha256:{:x}", Sha256::digest(section.content.as_bytes()));
+        let previous_content: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT content FROM planning_sections WHERE id = ?1",
+                [section.id.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let content_changed = previous_content.as_deref() != Some(section.content.as_str());
         let previous_hash: Option<String> = self
             .connection
             .query_row(
@@ -785,6 +813,12 @@ impl Database {
             self.connection.execute(
                 "DELETE FROM planning_embeddings WHERE section_id = ?1 AND content_hash <> ?2",
                 rusqlite::params![section.id, content_hash],
+            )?;
+        }
+        if content_changed {
+            self.connection.execute(
+                "DELETE FROM planning_chunk_embeddings WHERE section_id = ?1",
+                [section.id.as_str()],
             )?;
         }
         let references_json = serde_json::to_string(&section.references).map_err(|error| {
@@ -887,6 +921,106 @@ impl Database {
     ) -> Result<(), DatabaseError> {
         self.connection.execute(
             "DELETE FROM planning_embeddings WHERE section_id = ?1",
+            [section_id],
+        )?;
+        Ok(())
+    }
+
+    pub(super) fn list_planning_chunk_embeddings(
+        &self,
+    ) -> Result<Vec<PlanningChunkEmbedding>, DatabaseError> {
+        let mut statement = self.connection.prepare(
+            "SELECT chunk_id, section_id, chunk_index, profile_id, model_id, dimensions,
+                    content_hash, vector_json, updated_at
+             FROM planning_chunk_embeddings
+             ORDER BY section_id, chunk_index, updated_at DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let profile_id = Uuid::parse_str(&row.get::<_, String>(3)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            let vector_json: String = row.get(7)?;
+            let vector = serde_json::from_str(&vector_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    7,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(PlanningChunkEmbedding {
+                chunk_id: row.get(0)?,
+                section_id: row.get(1)?,
+                chunk_index: row.get(2)?,
+                profile_id,
+                model_id: row.get(4)?,
+                dimensions: row.get(5)?,
+                content_hash: row.get(6)?,
+                vector,
+                updated_at: row.get(8)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
+    }
+
+    pub(super) fn save_planning_chunk_embedding(
+        &mut self,
+        embedding: PlanningChunkEmbedding,
+    ) -> Result<PlanningChunkEmbedding, DatabaseError> {
+        let vector_json = serde_json::to_string(&embedding.vector).map_err(|error| {
+            DatabaseError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+        })?;
+        self.connection.execute(
+            "INSERT INTO planning_chunk_embeddings (
+                chunk_id, section_id, chunk_index, profile_id, model_id, dimensions,
+                content_hash, vector_json, updated_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             )
+             ON CONFLICT(chunk_id, profile_id, model_id, dimensions) DO UPDATE SET
+               section_id=excluded.section_id,
+               chunk_index=excluded.chunk_index,
+               content_hash=excluded.content_hash,
+               vector_json=excluded.vector_json,
+               updated_at=excluded.updated_at",
+            rusqlite::params![
+                embedding.chunk_id,
+                embedding.section_id,
+                embedding.chunk_index,
+                embedding.profile_id.to_string(),
+                embedding.model_id,
+                embedding.dimensions,
+                embedding.content_hash,
+                vector_json
+            ],
+        )?;
+        let updated_at: String = self.connection.query_row(
+            "SELECT updated_at FROM planning_chunk_embeddings
+             WHERE chunk_id = ?1 AND profile_id = ?2 AND model_id = ?3 AND dimensions = ?4",
+            rusqlite::params![
+                embedding.chunk_id,
+                embedding.profile_id.to_string(),
+                embedding.model_id,
+                embedding.dimensions
+            ],
+            |row| row.get(0),
+        )?;
+        Ok(PlanningChunkEmbedding {
+            updated_at,
+            ..embedding
+        })
+    }
+
+    pub(super) fn delete_planning_chunk_embeddings(
+        &mut self,
+        section_id: &str,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "DELETE FROM planning_chunk_embeddings WHERE section_id = ?1",
             [section_id],
         )?;
         Ok(())

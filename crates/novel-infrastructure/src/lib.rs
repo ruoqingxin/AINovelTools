@@ -169,7 +169,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 30;
+pub const CURRENT_SCHEMA_VERSION: i64 = 31;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -498,6 +498,20 @@ pub struct PlanningSection {
 #[serde(rename_all = "camelCase")]
 pub struct PlanningEmbedding {
     pub section_id: String,
+    pub profile_id: Uuid,
+    pub model_id: String,
+    pub dimensions: i64,
+    pub content_hash: String,
+    pub vector: Vec<f32>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanningChunkEmbedding {
+    pub chunk_id: String,
+    pub section_id: String,
+    pub chunk_index: i64,
     pub profile_id: Uuid,
     pub model_id: String,
     pub dimensions: i64,
@@ -1634,6 +1648,44 @@ impl ProjectManager {
             .as_mut()
             .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
         session.database.delete_planning_embedding(section_id)?;
+        session
+            .database
+            .delete_planning_chunk_embeddings(section_id)?;
+        Ok(())
+    }
+
+    pub fn list_planning_chunk_embeddings(
+        &self,
+    ) -> Result<Vec<PlanningChunkEmbedding>, ProjectError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        Ok(session.database.list_planning_chunk_embeddings()?)
+    }
+
+    pub fn generate_planning_chunk_embedding(
+        &mut self,
+        embedding: PlanningChunkEmbedding,
+    ) -> Result<PlanningChunkEmbedding, ProjectError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        Ok(session.database.save_planning_chunk_embedding(embedding)?)
+    }
+
+    pub fn clear_planning_chunk_embeddings(
+        &mut self,
+        section_id: &str,
+    ) -> Result<(), ProjectError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        session
+            .database
+            .delete_planning_chunk_embeddings(section_id)?;
         Ok(())
     }
 
@@ -2299,6 +2351,74 @@ mod tests {
         assert_eq!(restored.rationale, saved.rationale);
         assert_eq!(restored.consequence, saved.consequence);
         assert_eq!(restored.references, saved.references);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn planning_chunk_embeddings_are_cached_until_section_content_changes() {
+        let root = std::path::PathBuf::from("target").join(format!(
+            "ainovel-planning-chunk-embeddings-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let mut manager = super::ProjectManager::new();
+        manager
+            .create(&root, "分块向量测试")
+            .expect("create project");
+        let mut section = super::PlanningSection {
+            id: "seed-premise".to_owned(),
+            content: "主角在灾后城市寻找失踪姐姐。".to_owned(),
+            pending_content: String::new(),
+            rationale: String::new(),
+            consequence: String::new(),
+            references: Vec::new(),
+            updated_at: String::new(),
+        };
+        manager
+            .save_planning_section(section.clone())
+            .expect("save section");
+        manager
+            .generate_planning_chunk_embedding(super::PlanningChunkEmbedding {
+                chunk_id: "seed-premise#chunk-1".to_owned(),
+                section_id: section.id.clone(),
+                chunk_index: 1,
+                profile_id: uuid::Uuid::new_v4(),
+                model_id: "embedding-test".to_owned(),
+                dimensions: 2,
+                content_hash: "sha256:test".to_owned(),
+                vector: vec![0.1, 0.2],
+                updated_at: String::new(),
+            })
+            .expect("save chunk embedding");
+        assert_eq!(
+            manager
+                .list_planning_chunk_embeddings()
+                .expect("list chunk embeddings")
+                .len(),
+            1
+        );
+
+        section.pending_content = "仅修改候选稿，不应让分块向量失效。".to_owned();
+        manager
+            .save_planning_section(section.clone())
+            .expect("save pending content");
+        assert_eq!(
+            manager
+                .list_planning_chunk_embeddings()
+                .expect("list cached chunk embeddings")
+                .len(),
+            1
+        );
+
+        section.content = "主角改为在沿海城市寻找失踪的导师。".to_owned();
+        manager
+            .save_planning_section(section)
+            .expect("save changed content");
+        assert!(
+            manager
+                .list_planning_chunk_embeddings()
+                .expect("list invalidated chunk embeddings")
+                .is_empty()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
