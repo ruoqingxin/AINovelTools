@@ -387,21 +387,8 @@ impl EmbeddingGateway {
                         .json()
                         .await
                         .map_err(|_| AiError::InvalidResponse)?;
-                    let vector = value
-                        .pointer("/data/0/embedding")
-                        .and_then(serde_json::Value::as_array)
-                        .ok_or(AiError::InvalidResponse)?
-                        .iter()
-                        .map(|item| {
-                            item.as_f64()
-                                .map(embedding_component)
-                                .ok_or(AiError::InvalidResponse)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    if vector.is_empty() {
-                        return Err(AiError::InvalidResponse);
-                    }
-                    return Ok(vector);
+                    let item = value.pointer("/data/0").ok_or(AiError::InvalidResponse)?;
+                    return parse_embedding_item(item);
                 }
                 Err(error) => {
                     let mapped = if error.is_timeout() {
@@ -419,6 +406,114 @@ impl EmbeddingGateway {
         }
         Err(AiError::ProviderUnavailable)
     }
+
+    pub async fn embed_many(
+        &self,
+        profile: &ModelProfile,
+        secret: &str,
+        inputs: &[String],
+    ) -> Result<Vec<Vec<f32>>, AiError> {
+        if profile.capability != ModelCapability::Embedding {
+            return Err(AiContractError::InvalidProviderCapability.into());
+        }
+        if secret.trim().is_empty() {
+            return Err(AiError::MissingSecret);
+        }
+        if inputs.is_empty() {
+            return Ok(Vec::new());
+        }
+        if inputs.iter().any(|input| input.trim().is_empty()) {
+            return Err(AiContractError::EmptyAcceptedText.into());
+        }
+        let endpoint = format!("{}/embeddings", profile.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({ "model": profile.model_id, "input": inputs });
+        let attempts = usize::from(profile.retry_limit) + 1;
+        for attempt in 0..attempts {
+            match self
+                .client
+                .post(&endpoint)
+                .timeout(Duration::from_secs(u64::from(profile.timeout_seconds)))
+                .bearer_auth(secret)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        let error = map_status(response.status());
+                        if attempt + 1 < attempts
+                            && matches!(error, AiError::RateLimited | AiError::ProviderUnavailable)
+                        {
+                            tokio::time::sleep(Duration::from_millis(250 * (attempt as u64 + 1)))
+                                .await;
+                            continue;
+                        }
+                        return Err(error);
+                    }
+                    let value: serde_json::Value = response
+                        .json()
+                        .await
+                        .map_err(|_| AiError::InvalidResponse)?;
+                    let data = value
+                        .get("data")
+                        .and_then(serde_json::Value::as_array)
+                        .ok_or(AiError::InvalidResponse)?;
+                    if data.len() != inputs.len() {
+                        return Err(AiError::InvalidResponse);
+                    }
+                    let mut vectors = vec![None; inputs.len()];
+                    for (position, item) in data.iter().enumerate() {
+                        let index = item
+                            .get("index")
+                            .and_then(serde_json::Value::as_u64)
+                            .map(|index| usize::try_from(index).unwrap_or(usize::MAX))
+                            .unwrap_or(position);
+                        let slot = vectors.get_mut(index).ok_or(AiError::InvalidResponse)?;
+                        if slot.is_some() {
+                            return Err(AiError::InvalidResponse);
+                        }
+                        *slot = Some(parse_embedding_item(item)?);
+                    }
+                    return vectors
+                        .into_iter()
+                        .map(|vector| vector.ok_or(AiError::InvalidResponse))
+                        .collect();
+                }
+                Err(error) => {
+                    let mapped = if error.is_timeout() {
+                        AiError::Timeout
+                    } else {
+                        AiError::Network
+                    };
+                    if attempt + 1 < attempts {
+                        tokio::time::sleep(Duration::from_millis(250 * (attempt as u64 + 1))).await;
+                        continue;
+                    }
+                    return Err(mapped);
+                }
+            }
+        }
+        Err(AiError::ProviderUnavailable)
+    }
+}
+
+fn parse_embedding_item(item: &serde_json::Value) -> Result<Vec<f32>, AiError> {
+    let vector = item
+        .get("embedding")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(AiError::InvalidResponse)?
+        .iter()
+        .map(|value| {
+            value
+                .as_f64()
+                .map(embedding_component)
+                .ok_or(AiError::InvalidResponse)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if vector.is_empty() {
+        return Err(AiError::InvalidResponse);
+    }
+    Ok(vector)
 }
 
 fn content_text(content: &serde_json::Value) -> Option<String> {
@@ -1175,6 +1270,22 @@ mod tests {
             .await
             .expect("embedding");
         assert_eq!(vector, vec![0.25, -0.5, 0.75]);
+
+        let batch_url = serve(
+            r#"{"data":[{"index":1,"embedding":[0,1]},{"index":0,"embedding":[1,0]}]}"#,
+            "application/json",
+            Duration::ZERO,
+        );
+        embedding_profile.base_url = batch_url;
+        let vectors = gateway
+            .embed_many(
+                &embedding_profile,
+                "test-key",
+                &["first".to_owned(), "second".to_owned()],
+            )
+            .await
+            .expect("batch embeddings");
+        assert_eq!(vectors, vec![vec![1.0, 0.0], vec![0.0, 1.0]]);
 
         assert!(matches!(
             gateway

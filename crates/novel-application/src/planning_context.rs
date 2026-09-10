@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-pub const PLANNING_PROMPT_VERSION: &str = "planning-v3";
+pub const PLANNING_PROMPT_VERSION: &str = "planning-v4";
 
 const CORE_PROJECT_SECTION_IDS: [&str; 6] = [
     "seed-premise",
@@ -33,6 +33,23 @@ pub struct PlanningContextPlan {
     pub omitted_reference_blocks: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanningContextBlock {
+    pub id: String,
+    pub heading: String,
+    pub content: String,
+}
+
+impl From<PlanningBlock> for PlanningContextBlock {
+    fn from(block: PlanningBlock) -> Self {
+        Self {
+            id: block.id,
+            heading: block.heading,
+            content: block.content,
+        }
+    }
+}
+
 pub struct PlanningContextPlanner;
 
 impl PlanningContextPlanner {
@@ -45,6 +62,27 @@ impl PlanningContextPlanner {
         max_project_chars: usize,
         max_reference_chars: usize,
     ) -> PlanningContextPlan {
+        Self::plan_with_reference_similarities(
+            project_context,
+            reference_content,
+            query,
+            mode,
+            max_project_chars,
+            max_reference_chars,
+            &HashMap::new(),
+        )
+    }
+
+    #[must_use]
+    pub fn plan_with_reference_similarities(
+        project_context: &str,
+        reference_content: &str,
+        query: &str,
+        mode: PlanningContextMode,
+        max_project_chars: usize,
+        max_reference_chars: usize,
+        reference_similarities: &HashMap<String, f32>,
+    ) -> PlanningContextPlan {
         let project_blocks = parse_project_context(project_context);
         let reference_blocks = parse_reference_context(reference_content);
         let (project_context, selected_project_sections) =
@@ -54,8 +92,12 @@ impl PlanningContextPlanner {
         } else {
             max_reference_chars
         };
-        let (rendered_reference, selected_reference_blocks) =
-            select_reference_context(&reference_blocks, query, reference_limit);
+        let (rendered_reference, selected_reference_blocks) = select_reference_context(
+            &reference_blocks,
+            query,
+            reference_limit,
+            reference_similarities,
+        );
 
         PlanningContextPlan {
             project_context,
@@ -69,6 +111,20 @@ impl PlanningContextPlanner {
             )
             .unwrap_or(u16::MAX),
         }
+    }
+
+    #[must_use]
+    pub fn reference_semantic_candidates(
+        reference_content: &str,
+        query: &str,
+        limit: usize,
+    ) -> Vec<PlanningContextBlock> {
+        let blocks = parse_reference_context(reference_content);
+        select_semantic_candidate_indexes(&blocks, query, limit)
+            .into_iter()
+            .filter_map(|index| blocks.get(index).cloned())
+            .map(PlanningContextBlock::from)
+            .collect()
     }
 }
 
@@ -269,28 +325,32 @@ fn select_reference_context(
     blocks: &[PlanningBlock],
     query: &str,
     max_chars: usize,
+    similarities: &HashMap<String, f32>,
 ) -> (String, u16) {
     if blocks.is_empty() || max_chars == 0 {
         return (String::new(), 0);
     }
 
-    let mut ranked = blocks
+    let keyword_scores = blocks
         .iter()
-        .enumerate()
-        .map(|(index, block)| (index, relevance_score(query, block)))
+        .map(|block| relevance_score(query, block))
         .collect::<Vec<_>>();
-    ranked.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    let ranked = if similarities.is_empty() {
+        rank_reference_blocks_by_keyword(blocks, &keyword_scores)
+    } else {
+        rank_reference_blocks_hybrid(blocks, query, &keyword_scores, similarities)
+    };
 
     let selection_limit = MAX_REFERENCE_BLOCKS
         .min((max_chars / MIN_BLOCK_BUDGET).max(1))
         .min(blocks.len());
     let mut selected_indexes = HashSet::new();
     selected_indexes.insert(0);
-    for (index, score) in ranked {
+    for (index, _score, relevant) in ranked {
         if selected_indexes.len() >= selection_limit {
             break;
         }
-        if score > 0 || selected_indexes.is_empty() {
+        if relevant {
             selected_indexes.insert(index);
         }
     }
@@ -303,6 +363,131 @@ fn select_reference_context(
         );
     }
     (rendered, selected_count)
+}
+
+fn rank_reference_blocks_by_keyword(
+    blocks: &[PlanningBlock],
+    keyword_scores: &[u32],
+) -> Vec<(usize, f64, bool)> {
+    let mut ranked = blocks
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            let score = keyword_scores.get(index).copied().unwrap_or_default();
+            (index, f64::from(score), score > 0)
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    ranked
+}
+
+fn rank_reference_blocks_hybrid(
+    blocks: &[PlanningBlock],
+    query: &str,
+    keyword_scores: &[u32],
+    similarities: &HashMap<String, f32>,
+) -> Vec<(usize, f64, bool)> {
+    let max_keyword = keyword_scores.iter().copied().max().unwrap_or_default();
+    let heading_scores = blocks
+        .iter()
+        .map(|block| heading_relevance_score(query, block))
+        .collect::<Vec<_>>();
+    let max_heading = heading_scores.iter().copied().max().unwrap_or_default();
+    let last_index = u32::try_from(blocks.len().saturating_sub(1).max(1)).unwrap_or(u32::MAX);
+    let mut ranked = blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| {
+            let keyword = keyword_scores.get(index).copied().unwrap_or_default();
+            let keyword_normalized = if max_keyword == 0 {
+                0.0
+            } else {
+                f64::from(keyword) / f64::from(max_keyword)
+            };
+            let heading = heading_scores.get(index).copied().unwrap_or_default();
+            let heading_normalized = if max_heading == 0 {
+                0.0
+            } else {
+                f64::from(heading) / f64::from(max_heading)
+            };
+            let index_number = u32::try_from(index).unwrap_or(u32::MAX);
+            let position = 1.0 - (f64::from(index_number) / f64::from(last_index));
+            let similarity = similarities.get(&block.id).copied();
+            let semantic = f64::from(similarity.unwrap_or_default().clamp(0.0, 1.0));
+            let score = semantic * 0.55
+                + keyword_normalized * 0.30
+                + heading_normalized * 0.10
+                + position * 0.05;
+            let relevant = similarity.is_some_and(|value| value >= 0.20) || keyword > 0;
+            (index, score, relevant)
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    ranked
+}
+
+fn select_semantic_candidate_indexes(
+    blocks: &[PlanningBlock],
+    query: &str,
+    limit: usize,
+) -> Vec<usize> {
+    if blocks.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    if blocks.len() <= limit {
+        return (0..blocks.len()).collect();
+    }
+
+    let scores = blocks
+        .iter()
+        .map(|block| relevance_score(query, block))
+        .collect::<Vec<_>>();
+    let mut ranked = blocks
+        .iter()
+        .enumerate()
+        .map(|(index, _)| (index, scores.get(index).copied().unwrap_or_default()))
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+
+    let mut selected = HashSet::new();
+    selected.insert(0);
+    let keyword_slots = limit.saturating_mul(2) / 3;
+    for (index, _) in ranked.iter().take(keyword_slots) {
+        selected.insert(*index);
+    }
+
+    let sample_slots = limit.saturating_sub(selected.len());
+    if sample_slots > 0 {
+        for sample in 0..sample_slots {
+            let index = if sample_slots == 1 {
+                blocks.len() / 2
+            } else {
+                sample.saturating_mul(blocks.len() - 1) / (sample_slots - 1)
+            };
+            selected.insert(index);
+        }
+    }
+    for (index, _) in ranked {
+        if selected.len() >= limit {
+            break;
+        }
+        selected.insert(index);
+    }
+
+    let mut indexes = selected.into_iter().collect::<Vec<_>>();
+    indexes.sort_unstable();
+    indexes.truncate(limit);
+    indexes
 }
 
 fn render_project_blocks(
@@ -461,24 +646,39 @@ fn first_match_char_offset(value: &str, query: &str) -> Option<usize> {
 }
 
 fn relevance_score(query: &str, block: &PlanningBlock) -> u32 {
+    heading_relevance_score(query, block)
+        .saturating_add(content_relevance_score(query, &block.content))
+}
+
+fn heading_relevance_score(query: &str, block: &PlanningBlock) -> u32 {
     let terms = query_terms(query);
     if terms.is_empty() {
         return 0;
     }
     let heading = normalize_for_match(&block.heading);
-    let content = normalize_for_match(&block.content);
     terms.into_iter().fold(0_u32, |score, term| {
         let weight = u32::try_from(term.chars().count().saturating_mul(term.chars().count()))
             .unwrap_or(u32::MAX);
-        let content_score = if content.contains(&term) { weight } else { 0 };
         let heading_score = if heading.contains(&term) {
             weight.saturating_mul(2)
         } else {
             0
         };
-        score
-            .saturating_add(content_score)
-            .saturating_add(heading_score)
+        score.saturating_add(heading_score)
+    })
+}
+
+fn content_relevance_score(query: &str, content: &str) -> u32 {
+    let terms = query_terms(query);
+    if terms.is_empty() {
+        return 0;
+    }
+    let content = normalize_for_match(content);
+    terms.into_iter().fold(0_u32, |score, term| {
+        let weight = u32::try_from(term.chars().count().saturating_mul(term.chars().count()))
+            .unwrap_or(u32::MAX);
+        let content_score = if content.contains(&term) { weight } else { 0 };
+        score.saturating_add(content_score)
     })
 }
 
@@ -590,5 +790,47 @@ mod tests {
         assert!(plan.reference_context.contains("隐瞒伤口"));
         assert!(plan.selected_reference_blocks >= 2);
         assert!(plan.reference_context.chars().count() <= 360);
+    }
+
+    #[test]
+    fn planning_plan_uses_semantic_scores_when_keywords_do_not_overlap() {
+        let reference = [
+            "文件开篇设定城市长期停电。",
+            "他每次靠近旧钟楼都会下意识遮住手腕，离开后才恢复平静。",
+            "北方学院每十年举办一次学术竞赛。",
+        ]
+        .join("\n\n");
+        let similarities = HashMap::from([("reference-2".to_owned(), 0.91_f32)]);
+
+        let plan = PlanningContextPlanner::plan_with_reference_similarities(
+            "",
+            &reference,
+            "创伤反应 隐藏身份 关键线索",
+            PlanningContextMode::Extract,
+            0,
+            300,
+            &similarities,
+        );
+
+        assert!(plan.reference_context.contains("旧钟楼"));
+        assert!(!plan.reference_context.contains("学术竞赛"));
+    }
+
+    #[test]
+    fn semantic_candidates_keep_document_coverage_outside_keyword_top_blocks() {
+        let reference = (0..30)
+            .map(|index| format!("第 {index} 段只有普通背景信息。"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let candidates =
+            PlanningContextPlanner::reference_semantic_candidates(&reference, "完全不同的查询", 8);
+
+        assert_eq!(candidates.len(), 8);
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.id == "reference-30")
+        );
     }
 }

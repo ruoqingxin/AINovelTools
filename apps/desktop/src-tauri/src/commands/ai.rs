@@ -1,7 +1,7 @@
 use crate::state::{AiStreamChunk, AiTaskStarted, ModelConnectionResponse};
 use crate::{ApiError, ProjectState};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -103,15 +103,16 @@ fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
     }
 }
 
-async fn semantic_planning_context(
+struct PlanningEmbeddingQuery {
+    profile: novel_domain::ModelProfile,
+    secret: String,
+    vector: Vec<f32>,
+}
+
+async fn planning_embedding_query(
     state: &ProjectState,
-    existing_context: &str,
     query: &str,
-) -> Option<String> {
-    let sections = planning_context_sections(existing_context);
-    if sections.len() < 2 {
-        return None;
-    }
+) -> Option<PlanningEmbeddingQuery> {
     let profile = {
         let store = state.model_profiles.lock().ok()?;
         store.list().ok()?.into_iter().find(|item| {
@@ -125,6 +126,22 @@ async fn semantic_planning_context(
         .embed(&profile, &secret, query)
         .await
         .ok()?;
+    Some(PlanningEmbeddingQuery {
+        profile,
+        secret,
+        vector: query_vector,
+    })
+}
+
+async fn semantic_planning_context(
+    state: &ProjectState,
+    existing_context: &str,
+    embedding: &PlanningEmbeddingQuery,
+) -> Option<String> {
+    let sections = planning_context_sections(existing_context);
+    if sections.len() < 2 {
+        return None;
+    }
     let persisted = state
         .manager
         .lock()
@@ -133,26 +150,43 @@ async fn semantic_planning_context(
         .ok()?
         .into_iter()
         .filter(|item| {
-            item.profile_id == profile.id
-                && item.model_id == profile.model_id
-                && item.dimensions == i64::try_from(query_vector.len()).unwrap_or_default()
+            item.profile_id == embedding.profile.id
+                && item.model_id == embedding.profile.model_id
+                && item.dimensions == i64::try_from(embedding.vector.len()).unwrap_or_default()
         })
         .map(|item| (item.section_id, item.vector))
-        .collect::<std::collections::HashMap<_, _>>();
-    let mut ranked = Vec::new();
-    for (index, (_id, content)) in sections.iter().enumerate() {
-        let vector = if let Some(vector) = persisted.get(_id) {
-            vector.clone()
+        .collect::<HashMap<_, _>>();
+    let mut vectors = Vec::with_capacity(sections.len());
+    let mut missing = Vec::new();
+    for (index, (id, content)) in sections.iter().enumerate() {
+        if let Some(vector) = persisted.get(id) {
+            vectors.push(vector.clone());
         } else {
-            let candidate = content.chars().take(4_000).collect::<String>();
-            state
-                .embedding_gateway
-                .embed(&profile, &secret, &candidate)
-                .await
-                .ok()?
-        };
-        ranked.push((index, cosine_similarity(&query_vector, &vector)));
+            vectors.push(Vec::new());
+            missing.push((index, content.chars().take(4_000).collect::<String>()));
+        }
     }
+    if !missing.is_empty() {
+        let inputs = missing
+            .iter()
+            .map(|(_, content)| content.clone())
+            .collect::<Vec<_>>();
+        let embedded = state
+            .embedding_gateway
+            .embed_many(&embedding.profile, &embedding.secret, &inputs)
+            .await
+            .ok()?;
+        for ((index, _), vector) in missing.into_iter().zip(embedded) {
+            if let Some(slot) = vectors.get_mut(index) {
+                *slot = vector;
+            }
+        }
+    }
+    let mut ranked = vectors
+        .iter()
+        .enumerate()
+        .map(|(index, vector)| (index, cosine_similarity(&embedding.vector, vector)))
+        .collect::<Vec<_>>();
     ranked.sort_by(|left, right| {
         right
             .1
@@ -183,6 +217,50 @@ async fn semantic_planning_context(
     )
 }
 
+async fn semantic_reference_similarities(
+    state: &ProjectState,
+    reference_content: &str,
+    query: &str,
+    embedding: &PlanningEmbeddingQuery,
+) -> HashMap<String, f32> {
+    const MAX_REFERENCE_EMBEDDING_CANDIDATES: usize = 24;
+    const MAX_REFERENCE_EMBEDDING_CHARS: usize = 4_000;
+
+    let candidates = novel_application::PlanningContextPlanner::reference_semantic_candidates(
+        reference_content,
+        query,
+        MAX_REFERENCE_EMBEDDING_CANDIDATES,
+    );
+    if candidates.is_empty() {
+        return HashMap::new();
+    }
+    let inputs = candidates
+        .iter()
+        .map(|candidate| {
+            candidate
+                .content
+                .chars()
+                .take(MAX_REFERENCE_EMBEDDING_CHARS)
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    let Ok(vectors) = state
+        .embedding_gateway
+        .embed_many(&embedding.profile, &embedding.secret, &inputs)
+        .await
+    else {
+        return HashMap::new();
+    };
+    if vectors.len() != candidates.len() {
+        return HashMap::new();
+    }
+    candidates
+        .into_iter()
+        .zip(vectors)
+        .map(|(candidate, vector)| (candidate.id, cosine_similarity(&embedding.vector, &vector)))
+        .collect()
+}
+
 fn planning_context_mode(
     mode: &str,
     allow_rewrite: bool,
@@ -204,6 +282,7 @@ fn build_planning_context_plan(
     query: &str,
     mode: novel_application::PlanningContextMode,
     input_token_budget: u32,
+    reference_similarities: &HashMap<String, f32>,
 ) -> novel_application::PlanningContextPlan {
     let available_chars = usize::try_from(
         input_token_budget
@@ -229,13 +308,14 @@ fn build_planning_context_plan(
             )
         }
     };
-    novel_application::PlanningContextPlanner::plan(
+    novel_application::PlanningContextPlanner::plan_with_reference_similarities(
         existing_context,
         reference_content,
         query,
         mode,
         project_budget,
         reference_budget,
+        reference_similarities,
     )
 }
 
@@ -455,7 +535,17 @@ pub(crate) async fn generate_planning_content(
         .saturating_sub(profile.max_output_tokens);
     let query = format!("{section_title} {section_prompt} {user_guidance}");
     let planning_mode = planning_context_mode(&mode, allow_rewrite)?;
-    let semantic_context = semantic_planning_context(&state, &existing_context, &query).await;
+    let embedding_query = planning_embedding_query(&state, &query).await;
+    let semantic_context = if let Some(embedding) = embedding_query.as_ref() {
+        semantic_planning_context(&state, &existing_context, embedding).await
+    } else {
+        None
+    };
+    let reference_similarities = if let Some(embedding) = embedding_query.as_ref() {
+        semantic_reference_similarities(&state, &reference_content, &query, embedding).await
+    } else {
+        HashMap::new()
+    };
     let existing_context = semantic_context.unwrap_or(existing_context);
     let planned_context = build_planning_context_plan(
         &existing_context,
@@ -463,6 +553,7 @@ pub(crate) async fn generate_planning_content(
         &query,
         planning_mode,
         input_token_budget,
+        &reference_similarities,
     );
     let input = PlanningAiJobInput {
         profile_id,
@@ -655,13 +746,37 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             return true;
         }
     };
-    if let Some(semantic_context) =
-        semantic_planning_context(&state, &input.existing_context, &query).await
-    {
+    let embedding_query = planning_embedding_query(&state, &query).await;
+    let semantic_context = if let Some(embedding) = embedding_query.as_ref() {
+        semantic_planning_context(&state, &input.existing_context, embedding).await
+    } else {
+        None
+    };
+    let reference_similarities = if let Some(embedding) = embedding_query.as_ref() {
+        semantic_reference_similarities(&state, &input.reference_content, &query, embedding).await
+    } else {
+        HashMap::new()
+    };
+    let used_project_retrieval = semantic_context.is_some();
+    if let Some(semantic_context) = semantic_context {
         input.existing_context = semantic_context;
-        if let Ok(mut manager) = state.manager.lock() {
-            let _ = manager.append_job_event(job.id, "RETRIEVAL", "已按向量相关度筛选正式设定", 10);
-        }
+    }
+    let mut retrieval_scopes = Vec::new();
+    if used_project_retrieval {
+        retrieval_scopes.push("正式设定");
+    }
+    if !reference_similarities.is_empty() {
+        retrieval_scopes.push("文件证据");
+    }
+    if !retrieval_scopes.is_empty()
+        && let Ok(mut manager) = state.manager.lock()
+    {
+        let _ = manager.append_job_event(
+            job.id,
+            "RETRIEVAL",
+            format!("已按向量相关度筛选{}", retrieval_scopes.join("和")),
+            10,
+        );
     }
     let planned_context = build_planning_context_plan(
         &input.existing_context,
@@ -669,6 +784,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         &query,
         planning_mode,
         input_token_budget,
+        &reference_similarities,
     );
     input.existing_context = planned_context.project_context;
     input.reference_content = planned_context.reference_context;
