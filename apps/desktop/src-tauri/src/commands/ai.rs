@@ -1,6 +1,7 @@
 use crate::state::{AiStreamChunk, AiTaskStarted, ModelConnectionResponse};
 use crate::{ApiError, ProjectState};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -34,6 +35,133 @@ pub(crate) struct PlanningAiJobInput {
     pub(crate) final_request_endpoint: Option<String>,
     pub(crate) final_request_body: Option<String>,
     pub(crate) final_request_estimated_input_tokens: Option<u32>,
+}
+
+const PLANNING_CONTEXT_RESERVE_TOKENS: u32 = 2_048;
+
+fn compact_planning_text(value: &str, max_chars: usize) -> String {
+    let normalized_source = value.replace("\r\n", "\n");
+    let lines = normalized_source
+        .split('\n')
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() || max_chars == 0 {
+        return String::new();
+    }
+    let mut seen = HashSet::new();
+    let text = lines
+        .into_iter()
+        .filter(|line| seen.insert((*line).to_owned()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let length = text.chars().count();
+    if length <= max_chars {
+        return text;
+    }
+    let head_chars = max_chars.saturating_mul(2) / 3;
+    let tail_chars = max_chars.saturating_sub(head_chars);
+    let head = text.chars().take(head_chars).collect::<String>();
+    let tail = text
+        .chars()
+        .skip(length.saturating_sub(tail_chars))
+        .collect::<String>();
+    format!("{head}\n\n[中间内容已按输入预算合并压缩]\n\n{tail}")
+}
+
+fn planning_context_score(section_id: &str, content: &str, query: &str) -> usize {
+    let core = [
+        "seed-premise",
+        "seed-genre-promise",
+        "engine-protagonist",
+        "engine-antagonism",
+        "engine-stakes",
+        "engine-ending",
+    ];
+    let core_score = if core.contains(&section_id) { 100 } else { 0 };
+    let query_chars = query
+        .chars()
+        .filter(|character| !character.is_whitespace() && !character.is_ascii_punctuation())
+        .collect::<Vec<_>>();
+    let keyword_score = query_chars
+        .iter()
+        .filter(|character| content.contains(**character))
+        .count();
+    core_score + keyword_score
+}
+
+fn select_relevant_planning_context(value: &str, query: &str) -> String {
+    let mut sections = Vec::<(String, String)>::new();
+    let mut current_id: Option<String> = None;
+    let mut current_content = String::new();
+    for line in value.lines() {
+        let candidate = line.split_once(':').and_then(|(id, _)| {
+            (!id.is_empty()
+                && id.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || character == '-' || character == '_'
+                }))
+            .then(|| id.to_owned())
+        });
+        if let Some(id) = candidate {
+            if let Some(previous_id) = current_id.replace(id) {
+                sections.push((previous_id, std::mem::take(&mut current_content)));
+            }
+            current_content.push_str(line.split_once(':').map(|(_, text)| text).unwrap_or_default());
+            current_content.push('\n');
+        } else if current_id.is_some() {
+            current_content.push_str(line);
+            current_content.push('\n');
+        }
+    }
+    if let Some(id) = current_id {
+        sections.push((id, current_content));
+    }
+    if sections.len() <= 8 {
+        return value.to_owned();
+    }
+    let mut ranked = sections
+        .iter()
+        .enumerate()
+        .map(|(index, (id, content))| (index, planning_context_score(id, content, query)))
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    let selected = ranked
+        .into_iter()
+        .take(8)
+        .map(|(index, _)| index)
+        .collect::<HashSet<_>>();
+    sections
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| selected.contains(index))
+        .map(|(_, (id, content))| format!("{id}:{}", content.trim()))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn compact_planning_inputs(
+    existing_context: &str,
+    reference_content: &str,
+    query: &str,
+    input_token_budget: u32,
+) -> (String, String) {
+    let available_chars = input_token_budget
+        .saturating_sub(PLANNING_CONTEXT_RESERVE_TOKENS)
+        .max(1) as usize
+        * 4;
+    let reference_present = !reference_content.trim().is_empty();
+    let existing_budget = if reference_present {
+        available_chars.saturating_mul(2) / 3
+    } else {
+        available_chars
+    };
+    (
+        compact_planning_text(
+            &select_relevant_planning_context(existing_context, query),
+            existing_budget,
+        ),
+        compact_planning_text(reference_content, available_chars.saturating_sub(existing_budget)),
+    )
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -208,6 +336,15 @@ pub(crate) async fn generate_planning_content(
         .ok_or(novel_infrastructure::AiError::MissingSecret)
         .map_err(ApiError::from)?;
     let secret = novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?;
+    let input_token_budget = profile
+        .context_window
+        .saturating_sub(profile.max_output_tokens);
+    let (existing_context, reference_content) = compact_planning_inputs(
+        &existing_context,
+        &reference_content,
+        &format!("{section_title} {section_prompt} {user_guidance}"),
+        input_token_budget,
+    );
     let input = PlanningAiJobInput {
         profile_id,
         mode,
@@ -239,7 +376,7 @@ pub(crate) async fn generate_planning_content(
             Some(&secret),
             &context,
             false,
-            false,
+            true,
             Arc::new(AtomicBool::new(false)),
             |_| {},
         )
@@ -385,6 +522,20 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             return true;
         }
     };
+    let input_token_budget = profile
+        .context_window
+        .saturating_sub(profile.max_output_tokens);
+    let (existing_context, reference_content) = compact_planning_inputs(
+        &input.existing_context,
+        &input.reference_content,
+        &format!("{} {} {}", input.section_title, input.section_prompt, input.user_guidance),
+        input_token_budget,
+    );
+    input.existing_context = existing_context;
+    input.reference_content = reference_content;
+    if let Ok(mut manager) = state.manager.lock() {
+        let _ = manager.append_job_event(job.id, "CONTEXT", "已有设定和文件内容已合并压缩", 12);
+    }
     let mut context = match planning_context(&input) {
         Ok(context) => context,
         Err(error) => {
@@ -400,7 +551,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         );
     let (endpoint, request_body) = state
         .gateway
-        .request_preview(&profile, &context, true, false);
+        .request_preview(&profile, &context, true, true);
     input.final_request_endpoint = Some(endpoint);
     input.final_request_estimated_input_tokens = Some(context.estimated_input_tokens);
     input.final_request_body = match serde_json::to_string_pretty(&request_body) {
@@ -442,7 +593,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             Some(&secret),
             &context,
             true,
-            false,
+            true,
             Arc::clone(&cancelled),
             move |chunk| {
                 received_chars += chunk.chars().count();
