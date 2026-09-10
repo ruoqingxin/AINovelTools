@@ -1,7 +1,9 @@
 //! Application use cases and infrastructure ports.
 
 mod context;
+mod planning_context;
 pub use context::*;
+pub use planning_context::*;
 
 /// Returns the ordered layers currently linked into the application core.
 #[must_use]

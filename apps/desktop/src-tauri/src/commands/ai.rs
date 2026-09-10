@@ -39,55 +39,16 @@ pub(crate) struct PlanningAiJobInput {
 
 const PLANNING_CONTEXT_RESERVE_TOKENS: u32 = 2_048;
 
-fn compact_planning_text(value: &str, max_chars: usize) -> String {
-    let normalized_source = value.replace("\r\n", "\n");
-    let lines = normalized_source
-        .split('\n')
-        .map(str::trim_end)
-        .filter(|line| !line.trim().is_empty())
-        .collect::<Vec<_>>();
-    if lines.is_empty() || max_chars == 0 {
-        return String::new();
-    }
-    let mut seen = HashSet::new();
-    let text = lines
-        .into_iter()
-        .filter(|line| seen.insert((*line).to_owned()))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let length = text.chars().count();
-    if length <= max_chars {
-        return text;
-    }
-    let head_chars = max_chars.saturating_mul(2) / 3;
-    let tail_chars = max_chars.saturating_sub(head_chars);
-    let head = text.chars().take(head_chars).collect::<String>();
-    let tail = text
-        .chars()
-        .skip(length.saturating_sub(tail_chars))
-        .collect::<String>();
-    format!("{head}\n\n[中间内容已按输入预算合并压缩]\n\n{tail}")
-}
-
-fn planning_context_score(section_id: &str, content: &str, query: &str) -> usize {
-    let core = [
-        "seed-premise",
-        "seed-genre-promise",
-        "engine-protagonist",
-        "engine-antagonism",
-        "engine-stakes",
-        "engine-ending",
-    ];
-    let core_score = if core.contains(&section_id) { 100 } else { 0 };
-    let query_chars = query
-        .chars()
-        .filter(|character| !character.is_whitespace() && !character.is_ascii_punctuation())
-        .collect::<Vec<_>>();
-    let keyword_score = query_chars
-        .iter()
-        .filter(|character| content.contains(**character))
-        .count();
-    core_score + keyword_score
+fn is_core_planning_section(section_id: &str) -> bool {
+    matches!(
+        section_id,
+        "seed-premise"
+            | "seed-genre-promise"
+            | "engine-protagonist"
+            | "engine-antagonism"
+            | "engine-stakes"
+            | "engine-ending"
+    )
 }
 
 fn planning_context_sections(value: &str) -> Vec<(String, String)> {
@@ -121,31 +82,6 @@ fn planning_context_sections(value: &str) -> Vec<(String, String)> {
         sections.push((id, current_content));
     }
     sections
-}
-
-fn select_relevant_planning_context(value: &str, query: &str) -> String {
-    let sections = planning_context_sections(value);
-    if sections.len() <= 8 {
-        return value.to_owned();
-    }
-    let mut ranked = sections
-        .iter()
-        .enumerate()
-        .map(|(index, (id, content))| (index, planning_context_score(id, content, query)))
-        .collect::<Vec<_>>();
-    ranked.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
-    let selected = ranked
-        .into_iter()
-        .take(8)
-        .map(|(index, _)| index)
-        .collect::<HashSet<_>>();
-    sections
-        .into_iter()
-        .enumerate()
-        .filter(|(index, _)| selected.contains(index))
-        .map(|(_, (id, content))| format!("{id}:{}", content.trim()))
-        .collect::<Vec<_>>()
-        .join("\n\n")
 }
 
 fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
@@ -223,11 +159,19 @@ async fn semantic_planning_context(
             .total_cmp(&left.1)
             .then_with(|| left.0.cmp(&right.0))
     });
-    let selected = ranked
-        .into_iter()
-        .take(8)
+    let mut selected = sections
+        .iter()
+        .enumerate()
+        .filter(|(_, (id, _))| is_core_planning_section(id))
         .map(|(index, _)| index)
+        .take(8)
         .collect::<HashSet<_>>();
+    for (index, _) in ranked {
+        if selected.len() >= 8 {
+            break;
+        }
+        selected.insert(index);
+    }
     Some(
         sections
             .into_iter()
@@ -239,31 +183,59 @@ async fn semantic_planning_context(
     )
 }
 
-fn compact_planning_inputs(
+fn planning_context_mode(
+    mode: &str,
+    allow_rewrite: bool,
+) -> Result<novel_application::PlanningContextMode, ApiError> {
+    match (mode, allow_rewrite) {
+        ("GENERATE", _) => Ok(novel_application::PlanningContextMode::Generate),
+        ("EXTRACT", true) => Ok(novel_application::PlanningContextMode::ExtractRewrite),
+        ("EXTRACT", false) => Ok(novel_application::PlanningContextMode::Extract),
+        _ => Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "不支持的规划 AI 模式".to_owned(),
+        }),
+    }
+}
+
+fn build_planning_context_plan(
     existing_context: &str,
     reference_content: &str,
     query: &str,
+    mode: novel_application::PlanningContextMode,
     input_token_budget: u32,
-) -> (String, String) {
-    let available_chars = input_token_budget
-        .saturating_sub(PLANNING_CONTEXT_RESERVE_TOKENS)
-        .max(1) as usize
-        * 4;
-    let reference_present = !reference_content.trim().is_empty();
-    let existing_budget = if reference_present {
-        available_chars.saturating_mul(2) / 3
-    } else {
-        available_chars
+) -> novel_application::PlanningContextPlan {
+    let available_chars = usize::try_from(
+        input_token_budget
+            .saturating_sub(PLANNING_CONTEXT_RESERVE_TOKENS)
+            .max(1),
+    )
+    .unwrap_or(usize::MAX)
+    .saturating_mul(4);
+    let (project_budget, reference_budget) = match mode {
+        novel_application::PlanningContextMode::Generate => (available_chars, available_chars / 4),
+        novel_application::PlanningContextMode::Extract => {
+            let project_budget = available_chars / 3;
+            (
+                project_budget,
+                available_chars.saturating_sub(project_budget),
+            )
+        }
+        novel_application::PlanningContextMode::ExtractRewrite => {
+            let project_budget = available_chars.saturating_mul(2) / 5;
+            (
+                project_budget,
+                available_chars.saturating_sub(project_budget),
+            )
+        }
     };
-    (
-        compact_planning_text(
-            &select_relevant_planning_context(existing_context, query),
-            existing_budget,
-        ),
-        compact_planning_text(
-            reference_content,
-            available_chars.saturating_sub(existing_budget),
-        ),
+    novel_application::PlanningContextPlanner::plan(
+        existing_context,
+        reference_content,
+        query,
+        mode,
+        project_budget,
+        reference_budget,
     )
 }
 
@@ -275,9 +247,7 @@ pub(crate) struct PlanningAiRequestPreview {
     pub(crate) estimated_input_tokens: Option<u32>,
 }
 
-fn planning_context(
-    input: &PlanningAiJobInput,
-) -> Result<novel_application::ContextPackage, ApiError> {
+fn validate_planning_input(input: &PlanningAiJobInput) -> Result<bool, ApiError> {
     if input.section_title.trim().is_empty() || input.section_prompt.trim().is_empty() {
         return Err(ApiError {
             code: "INVALID_INPUT",
@@ -300,19 +270,26 @@ fn planning_context(
             message: "导入文件内容为空".to_owned(),
         });
     }
+    Ok(extract_mode)
+}
+
+fn planning_context(
+    input: &PlanningAiJobInput,
+) -> Result<novel_application::ContextPackage, ApiError> {
+    let extract_mode = validate_planning_input(input)?;
     let mut context = novel_application::ContextPackage::connection_test();
-    context.context_version = "planning-v2".to_owned();
-    context.prompt_version = "planning-v2".to_owned();
+    novel_application::PLANNING_PROMPT_VERSION.clone_into(&mut context.context_version);
+    novel_application::PLANNING_PROMPT_VERSION.clone_into(&mut context.prompt_version);
     context.system_prompt = if extract_mode && input.allow_rewrite {
         "你是小说设定改写助手。以用户提供的文件为核心依据，围绕当前规划节点筛选信息，并允许重新组织、改写、归纳和合理补全，使结果完整且符合节点范围。补全内容必须与文件事实和已有约束一致，不得引入冲突设定。不要输出解释、标题或分析过程。".to_owned()
     } else if extract_mode {
-        "你是小说资料提取助手。只允许从用户提供的文件原文中提取与当前规划节点直接相关的信息。不得补写、推测、扩展或引入文件外知识。不要输出解释、标题或分析过程。".to_owned()
+        "你是小说资料提取助手。只允许从用户提供的文件证据片段中提取与当前规划节点直接相关的信息。不得补写、推测、扩展或引入文件外知识。不要输出解释、标题或分析过程。".to_owned()
     } else {
         "你是小说项目规划助手。你的职责是帮助作者把当前小说要素写成清晰、具体、可继续修改的设定。不得把推测写成已经确认的事实，不要输出解释、标题或分析过程。".to_owned()
     };
     context.user_prompt = if extract_mode && input.allow_rewrite {
         format!(
-            "当前规划节点：{}\n节点目标：{}\n作者补充要求：{}\n\n已有正式作品设定（仅用于理解范围和保持一致，不得当作文件事实写入）：\n{}\n\n文件原文：\n{}\n\n请以文件内容为核心依据，生成只属于当前节点范围的设定正文。可以改写表达、重组结构，并补足必要的逻辑连接或缺失细节；补全必须合理、克制，且不能违背文件事实、已有设定和当前节点填写提示。忽略与当前节点无关的内容，只输出连贯、可编辑的正文。",
+            "当前规划节点：{}\n节点目标：{}\n作者补充要求：{}\n\n已有正式作品设定（仅用于理解范围和保持一致，不得当作文件事实写入）：\n{}\n\n文件证据片段（均来自用户选择的文件，已按节点相关度和输入预算筛选）：\n{}\n\n请以文件证据为核心依据，生成只属于当前节点范围的设定正文。可以改写表达、重组结构，并补足必要的逻辑连接或缺失细节；补全必须合理、克制，且不能违背文件事实、已有设定和当前节点填写提示。忽略与当前节点无关的内容，只输出连贯、可编辑的正文。",
             input.section_title,
             input.section_prompt,
             if input.user_guidance.trim().is_empty() {
@@ -329,7 +306,7 @@ fn planning_context(
         )
     } else if extract_mode {
         format!(
-            "当前规划节点：{}\n节点目标：{}\n作者补充的提取要求：{}\n\n已有正式作品设定（仅用于理解范围和保持一致，不得当作文件事实写入）：\n{}\n\n文件原文：\n{}\n\n只提取与当前节点直接相关的内容，并整理成连贯、可编辑的设定正文。已有正式设定和作者补充要求只能作为筛选、组织和一致性检查规则，不能作为文件事实写入结果。保留原文事实和限定条件，忽略无关内容，不得补充文件中没有的信息。如果完全没有相关内容，只回复：未提取到相关内容。",
+            "当前规划节点：{}\n节点目标：{}\n作者补充的提取要求：{}\n\n已有正式作品设定（仅用于理解范围和保持一致，不得当作文件事实写入）：\n{}\n\n文件证据片段（均来自用户选择的文件，已按节点相关度和输入预算筛选）：\n{}\n\n只提取与当前节点直接相关的内容，并整理成连贯、可编辑的设定正文。已有正式设定和作者补充要求只能作为筛选、组织和一致性检查规则，不能作为文件事实写入结果。保留文件证据中的事实和限定条件，忽略无关内容，不得补充文件中没有的信息。如果完全没有相关内容，只回复：未提取到相关内容。",
             input.section_title,
             input.section_prompt,
             if input.user_guidance.trim().is_empty() {
@@ -405,6 +382,40 @@ fn planning_context(
     Ok(context)
 }
 
+#[cfg(test)]
+mod planning_context_tests {
+    use super::*;
+
+    #[test]
+    fn planning_context_marks_selected_file_evidence() {
+        let context = planning_context(&PlanningAiJobInput {
+            profile_id: uuid::Uuid::new_v4(),
+            mode: "EXTRACT".to_owned(),
+            section_id: "seed-premise".to_owned(),
+            section_title: "核心前提与开局情境".to_owned(),
+            section_prompt: "提取主角开局遭遇。".to_owned(),
+            existing_context: "seed-genre-promise: 都市悬疑。".to_owned(),
+            reference_content: "[文件片段 1] 主角在停电城市寻找失踪姐姐。".to_owned(),
+            user_guidance: String::new(),
+            allow_rewrite: false,
+            source_name: None,
+            system_prompt_snapshot: None,
+            user_prompt_snapshot: None,
+            final_request_endpoint: None,
+            final_request_body: None,
+            final_request_estimated_input_tokens: None,
+        })
+        .expect("planning context");
+
+        assert_eq!(
+            context.prompt_version,
+            novel_application::PLANNING_PROMPT_VERSION
+        );
+        assert!(context.user_prompt.contains("文件证据片段"));
+        assert!(context.user_prompt.contains("主角在停电城市寻找失踪姐姐"));
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn generate_planning_content(
     state: tauri::State<'_, ProjectState>,
@@ -443,12 +454,14 @@ pub(crate) async fn generate_planning_content(
         .context_window
         .saturating_sub(profile.max_output_tokens);
     let query = format!("{section_title} {section_prompt} {user_guidance}");
+    let planning_mode = planning_context_mode(&mode, allow_rewrite)?;
     let semantic_context = semantic_planning_context(&state, &existing_context, &query).await;
     let existing_context = semantic_context.unwrap_or(existing_context);
-    let (existing_context, reference_content) = compact_planning_inputs(
+    let planned_context = build_planning_context_plan(
         &existing_context,
         &reference_content,
         &query,
+        planning_mode,
         input_token_budget,
     );
     let input = PlanningAiJobInput {
@@ -457,8 +470,8 @@ pub(crate) async fn generate_planning_content(
         section_id: String::new(),
         section_title,
         section_prompt,
-        existing_context,
-        reference_content,
+        existing_context: planned_context.project_context,
+        reference_content: planned_context.reference_context,
         user_guidance,
         allow_rewrite,
         source_name: None,
@@ -495,9 +508,9 @@ pub(crate) fn enqueue_planning_ai_job(
     state: tauri::State<'_, ProjectState>,
     mut input: PlanningAiJobInput,
 ) -> Result<novel_infrastructure::Job, ApiError> {
-    let context = planning_context(&input)?;
-    input.system_prompt_snapshot = Some(context.system_prompt);
-    input.user_prompt_snapshot = Some(context.user_prompt);
+    validate_planning_input(&input)?;
+    input.system_prompt_snapshot = None;
+    input.user_prompt_snapshot = None;
     let job_type = match input.mode.as_str() {
         "GENERATE" => novel_infrastructure::JobType::AiPlanningGenerate,
         "EXTRACT" => novel_infrastructure::JobType::AiPlanningExtract,
@@ -635,26 +648,44 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         "{} {} {}",
         input.section_title, input.section_prompt, input.user_guidance
     );
+    let planning_mode = match planning_context_mode(&input.mode, input.allow_rewrite) {
+        Ok(mode) => mode,
+        Err(error) => {
+            fail_planning_job(&state, job.id, error.message);
+            return true;
+        }
+    };
     if let Some(semantic_context) =
         semantic_planning_context(&state, &input.existing_context, &query).await
     {
         input.existing_context = semantic_context;
         if let Ok(mut manager) = state.manager.lock() {
-            let _ =
-                manager.append_job_event(job.id, "RETRIEVAL", "已完成向量召回并合并关键词结果", 10);
+            let _ = manager.append_job_event(job.id, "RETRIEVAL", "已按向量相关度筛选正式设定", 10);
         }
     }
-    let (existing_context, reference_content) = compact_planning_inputs(
+    let planned_context = build_planning_context_plan(
         &input.existing_context,
         &input.reference_content,
         &query,
+        planning_mode,
         input_token_budget,
     );
-    input.existing_context = existing_context;
-    input.reference_content = reference_content;
+    input.existing_context = planned_context.project_context;
+    input.reference_content = planned_context.reference_context;
     if let Ok(mut manager) = state.manager.lock() {
-        let _ = manager.append_job_event(job.id, "CONTEXT", "已有设定和文件内容已合并压缩", 12);
+        let _ = manager.append_job_event(
+            job.id,
+            "CONTEXT",
+            format!(
+                "已保留 {} 个正式设定节点和 {} 个文件片段",
+                planned_context.selected_project_sections,
+                planned_context.selected_reference_blocks
+            ),
+            12,
+        );
     }
+    input.system_prompt_snapshot = None;
+    input.user_prompt_snapshot = None;
     let mut context = match planning_context(&input) {
         Ok(context) => context,
         Err(error) => {
@@ -662,6 +693,8 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             return true;
         }
     };
+    input.system_prompt_snapshot = Some(context.system_prompt.clone());
+    input.user_prompt_snapshot = Some(context.user_prompt.clone());
     context.estimated_input_tokens =
         ((context.system_prompt.len() + context.user_prompt.len()) as u32 / 4).min(
             profile
