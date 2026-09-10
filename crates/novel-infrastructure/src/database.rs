@@ -827,11 +827,19 @@ impl Database {
         )?;
         let rows = statement.query_map([], |row| {
             let profile_id = Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
             })?;
             let vector_json: String = row.get(5)?;
             let vector = serde_json::from_str(&vector_json).map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error))
+                rusqlite::Error::FromSqlConversionFailure(
+                    5,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
             })?;
             Ok(PlanningEmbedding {
                 section_id: row.get(0)?,
@@ -843,7 +851,8 @@ impl Database {
                 updated_at: row.get(6)?,
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
     }
 
     pub(super) fn save_planning_embedding(
@@ -866,11 +875,20 @@ impl Database {
             [embedding.section_id.as_str()],
             |row| row.get(0),
         )?;
-        Ok(PlanningEmbedding { updated_at, ..embedding })
+        Ok(PlanningEmbedding {
+            updated_at,
+            ..embedding
+        })
     }
 
-    pub(super) fn delete_planning_embedding(&mut self, section_id: &str) -> Result<(), DatabaseError> {
-        self.connection.execute("DELETE FROM planning_embeddings WHERE section_id = ?1", [section_id])?;
+    pub(super) fn delete_planning_embedding(
+        &mut self,
+        section_id: &str,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "DELETE FROM planning_embeddings WHERE section_id = ?1",
+            [section_id],
+        )?;
         Ok(())
     }
 

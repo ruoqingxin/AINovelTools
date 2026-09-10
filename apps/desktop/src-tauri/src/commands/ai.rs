@@ -106,7 +106,11 @@ fn planning_context_sections(value: &str) -> Vec<(String, String)> {
             if let Some(previous_id) = current_id.replace(id) {
                 sections.push((previous_id, std::mem::take(&mut current_content)));
             }
-            current_content.push_str(line.split_once(':').map(|(_, text)| text).unwrap_or_default());
+            current_content.push_str(
+                line.split_once(':')
+                    .map(|(_, text)| text)
+                    .unwrap_or_default(),
+            );
             current_content.push('\n');
         } else if current_id.is_some() {
             current_content.push_str(line);
@@ -174,11 +178,9 @@ async fn semantic_planning_context(
     }
     let profile = {
         let store = state.model_profiles.lock().ok()?;
-        store
-            .list()
-            .ok()?
-            .into_iter()
-            .find(|item| item.capability == novel_infrastructure::ModelCapability::Embedding && item.has_secret)?
+        store.list().ok()?.into_iter().find(|item| {
+            item.capability == novel_infrastructure::ModelCapability::Embedding && item.has_secret
+        })?
     };
     let secret_ref = profile.secret_ref.as_deref()?;
     let secret = novel_infrastructure::SecretStore::get(secret_ref).ok()?;
@@ -194,7 +196,11 @@ async fn semantic_planning_context(
         .list_planning_embeddings()
         .ok()?
         .into_iter()
-        .filter(|item| item.profile_id == profile.id && item.model_id == profile.model_id && item.dimensions == i64::try_from(query_vector.len()).unwrap_or_default())
+        .filter(|item| {
+            item.profile_id == profile.id
+                && item.model_id == profile.model_id
+                && item.dimensions == i64::try_from(query_vector.len()).unwrap_or_default()
+        })
         .map(|item| (item.section_id, item.vector))
         .collect::<std::collections::HashMap<_, _>>();
     let mut ranked = Vec::new();
@@ -203,11 +209,20 @@ async fn semantic_planning_context(
             vector.clone()
         } else {
             let candidate = content.chars().take(4_000).collect::<String>();
-            state.embedding_gateway.embed(&profile, &secret, &candidate).await.ok()?
+            state
+                .embedding_gateway
+                .embed(&profile, &secret, &candidate)
+                .await
+                .ok()?
         };
         ranked.push((index, cosine_similarity(&query_vector, &vector)));
     }
-    ranked.sort_by(|left, right| right.1.total_cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
     let selected = ranked
         .into_iter()
         .take(8)
@@ -245,7 +260,10 @@ fn compact_planning_inputs(
             &select_relevant_planning_context(existing_context, query),
             existing_budget,
         ),
-        compact_planning_text(reference_content, available_chars.saturating_sub(existing_budget)),
+        compact_planning_text(
+            reference_content,
+            available_chars.saturating_sub(existing_budget),
+        ),
     )
 }
 
@@ -464,7 +482,7 @@ pub(crate) async fn generate_planning_content(
             Some(&secret),
             &context,
             false,
-            true,
+            false,
             Arc::new(AtomicBool::new(false)),
             |_| {},
         )
@@ -622,7 +640,8 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
     {
         input.existing_context = semantic_context;
         if let Ok(mut manager) = state.manager.lock() {
-            let _ = manager.append_job_event(job.id, "RETRIEVAL", "已完成向量召回并合并关键词结果", 10);
+            let _ =
+                manager.append_job_event(job.id, "RETRIEVAL", "已完成向量召回并合并关键词结果", 10);
         }
     }
     let (existing_context, reference_content) = compact_planning_inputs(
@@ -651,7 +670,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         );
     let (endpoint, request_body) = state
         .gateway
-        .request_preview(&profile, &context, true, true);
+        .request_preview(&profile, &context, true, false);
     input.final_request_endpoint = Some(endpoint);
     input.final_request_estimated_input_tokens = Some(context.estimated_input_tokens);
     input.final_request_body = match serde_json::to_string_pretty(&request_body) {
@@ -693,7 +712,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             Some(&secret),
             &context,
             true,
-            true,
+            false,
             Arc::clone(&cancelled),
             move |chunk| {
                 received_chars += chunk.chars().count();
@@ -840,7 +859,7 @@ pub(crate) async fn extract_entities_from_text(
             Some(&secret),
             &context,
             false,
-            true,
+            false,
             Arc::new(AtomicBool::new(false)),
             |_| {},
         )
@@ -994,7 +1013,13 @@ pub(crate) async fn test_model_profile(
     };
     let detail = match profile.capability {
         novel_infrastructure::ModelCapability::Chat => {
-            profile.max_output_tokens = profile.max_output_tokens.min(16);
+            let connection_test_token_cap =
+                if profile.provider == novel_infrastructure::ModelProvider::DeepSeek {
+                    512
+                } else {
+                    16
+                };
+            profile.max_output_tokens = profile.max_output_tokens.min(connection_test_token_cap);
             let context = novel_application::ContextPackage::connection_test();
             state
                 .gateway
@@ -1003,7 +1028,7 @@ pub(crate) async fn test_model_profile(
                     Some(&secret),
                     &context,
                     false,
-                    true,
+                    false,
                     Arc::new(AtomicBool::new(false)),
                     |_| {},
                 )

@@ -2273,7 +2273,11 @@ mod tests {
             .expect("create chapter");
         let nodes = manager.list_plan_nodes().expect("list plan nodes");
         assert_eq!(nodes.len(), 4);
-        assert!(nodes.iter().any(|node| node.parent_id == Some(volume_manager.id)));
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node.parent_id == Some(volume_manager.id))
+        );
         assert_eq!(chapter.revision, 1);
         let updated = manager
             .update_plan_node(chapter.id, "第一章（修订）".to_owned(), true)

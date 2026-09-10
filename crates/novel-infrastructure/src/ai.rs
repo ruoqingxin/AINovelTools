@@ -248,8 +248,10 @@ impl ModelGateway {
             "max_tokens"
         };
         body[token_field] = serde_json::json!(profile.max_output_tokens);
-        if profile.provider == ModelProvider::DeepSeek && disable_thinking {
-            body["thinking"] = serde_json::json!({ "type": "disabled" });
+        if profile.provider == ModelProvider::DeepSeek {
+            body["thinking"] = serde_json::json!({
+                "type": if disable_thinking { "disabled" } else { "enabled" }
+            });
         }
         (endpoint, body)
     }
@@ -1074,7 +1076,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deepseek_connection_tests_can_disable_thinking() {
+    async fn deepseek_requests_enable_thinking_mode() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock provider");
         let address = listener.local_addr().expect("mock address");
         let request = Arc::new(Mutex::new(String::new()));
@@ -1103,7 +1105,7 @@ mod tests {
                 Some("test-key"),
                 &context(),
                 false,
-                true,
+                false,
                 Arc::new(AtomicBool::new(false)),
                 |_| {},
             )
@@ -1115,7 +1117,7 @@ mod tests {
             request
                 .lock()
                 .expect("request lock")
-                .contains(r#""thinking":{"type":"disabled"}"#)
+                .contains(r#""thinking":{"type":"enabled"}"#)
         );
     }
 
