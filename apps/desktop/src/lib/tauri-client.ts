@@ -54,6 +54,15 @@ export type PlanningSection = {
   references: string[];
   updatedAt: string;
 };
+export type PlanningEmbedding = {
+  sectionId: string;
+  profileId: string;
+  modelId: string;
+  dimensions: number;
+  contentHash: string;
+  vector?: number[];
+  updatedAt: string;
+};
 
 export type ManuscriptRevision = {
   id: string;
@@ -284,6 +293,15 @@ export function listPlanningSections() {
 
 export function savePlanningSection(section: PlanningSection) {
   return invoke<PlanningSection>("save_planning_section", { section });
+}
+export function listPlanningEmbeddings() {
+  return invoke<PlanningEmbedding[]>("list_planning_embeddings");
+}
+export function generatePlanningEmbedding(profileId: string, sectionId: string) {
+  return invoke<PlanningEmbedding>("generate_planning_embedding", { profileId, sectionId });
+}
+export function clearPlanningEmbedding(sectionId: string) {
+  return invoke<void>("clear_planning_embedding", { sectionId });
 }
 
 export function createPlanNode(input: {

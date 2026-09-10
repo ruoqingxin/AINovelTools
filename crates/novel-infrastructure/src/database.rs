@@ -669,6 +669,20 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (29, 'ai_planning_jobs_and_events');",
             )?;
         }
+        if applied.unwrap_or(0) < 30 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS planning_embeddings (
+                    section_id TEXT PRIMARY KEY NOT NULL REFERENCES planning_sections(id) ON DELETE CASCADE,
+                    profile_id TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    dimensions INTEGER NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    vector_json TEXT NOT NULL CHECK(json_valid(vector_json)),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT INTO schema_migrations (version, name) VALUES (30, 'planning_embeddings');",
+            )?;
+        }
         Ok(())
     }
 
@@ -758,6 +772,21 @@ impl Database {
         &mut self,
         section: PlanningSection,
     ) -> Result<PlanningSection, DatabaseError> {
+        let content_hash = format!("sha256:{:x}", Sha256::digest(section.content.as_bytes()));
+        let previous_hash: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT content_hash FROM planning_embeddings WHERE section_id = ?1",
+                [section.id.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if previous_hash.is_some() {
+            self.connection.execute(
+                "DELETE FROM planning_embeddings WHERE section_id = ?1 AND content_hash <> ?2",
+                rusqlite::params![section.id, content_hash],
+            )?;
+        }
         let references_json = serde_json::to_string(&section.references).map_err(|error| {
             DatabaseError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
         })?;
@@ -789,6 +818,60 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok(saved)
+    }
+
+    pub(super) fn list_planning_embeddings(&self) -> Result<Vec<PlanningEmbedding>, DatabaseError> {
+        let mut statement = self.connection.prepare(
+            "SELECT section_id, profile_id, model_id, dimensions, content_hash, vector_json, updated_at
+             FROM planning_embeddings ORDER BY updated_at DESC, section_id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let profile_id = Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+            })?;
+            let vector_json: String = row.get(5)?;
+            let vector = serde_json::from_str(&vector_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error))
+            })?;
+            Ok(PlanningEmbedding {
+                section_id: row.get(0)?,
+                profile_id,
+                model_id: row.get(2)?,
+                dimensions: row.get(3)?,
+                content_hash: row.get(4)?,
+                vector,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
+    }
+
+    pub(super) fn save_planning_embedding(
+        &mut self,
+        embedding: PlanningEmbedding,
+    ) -> Result<PlanningEmbedding, DatabaseError> {
+        let vector_json = serde_json::to_string(&embedding.vector).map_err(|error| {
+            DatabaseError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+        })?;
+        self.connection.execute(
+            "INSERT INTO planning_embeddings (section_id, profile_id, model_id, dimensions, content_hash, vector_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+             ON CONFLICT(section_id) DO UPDATE SET profile_id=excluded.profile_id, model_id=excluded.model_id,
+               dimensions=excluded.dimensions, content_hash=excluded.content_hash, vector_json=excluded.vector_json,
+               updated_at=excluded.updated_at",
+            rusqlite::params![embedding.section_id, embedding.profile_id.to_string(), embedding.model_id, embedding.dimensions, embedding.content_hash, vector_json],
+        )?;
+        let updated_at: String = self.connection.query_row(
+            "SELECT updated_at FROM planning_embeddings WHERE section_id = ?1",
+            [embedding.section_id.as_str()],
+            |row| row.get(0),
+        )?;
+        Ok(PlanningEmbedding { updated_at, ..embedding })
+    }
+
+    pub(super) fn delete_planning_embedding(&mut self, section_id: &str) -> Result<(), DatabaseError> {
+        self.connection.execute("DELETE FROM planning_embeddings WHERE section_id = ?1", [section_id])?;
+        Ok(())
     }
 
     pub(super) fn create_plan_node(

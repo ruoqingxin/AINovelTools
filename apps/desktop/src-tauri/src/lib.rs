@@ -43,8 +43,9 @@ use commands::materials::{
     upsert_writing_card,
 };
 use commands::planning::{
-    create_plan_node, list_plan_nodes, list_planning_sections, move_plan_node,
-    save_planning_section, update_plan_node, update_plan_node_checked,
+    clear_planning_embedding, create_plan_node, generate_planning_embedding, list_plan_nodes,
+    list_planning_embeddings, list_planning_sections, move_plan_node, save_planning_section,
+    update_plan_node, update_plan_node_checked,
 };
 use commands::project::{
     close_project, create_project, current_project, list_recent_projects, open_project,
@@ -118,6 +119,9 @@ pub fn run() {
             list_plan_nodes,
             list_planning_sections,
             save_planning_section,
+            list_planning_embeddings,
+            generate_planning_embedding,
+            clear_planning_embedding,
             create_plan_node,
             update_plan_node,
             update_plan_node_checked,

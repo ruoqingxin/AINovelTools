@@ -90,7 +90,7 @@ fn planning_context_score(section_id: &str, content: &str, query: &str) -> usize
     core_score + keyword_score
 }
 
-fn select_relevant_planning_context(value: &str, query: &str) -> String {
+fn planning_context_sections(value: &str) -> Vec<(String, String)> {
     let mut sections = Vec::<(String, String)>::new();
     let mut current_id: Option<String> = None;
     let mut current_content = String::new();
@@ -116,6 +116,11 @@ fn select_relevant_planning_context(value: &str, query: &str) -> String {
     if let Some(id) = current_id {
         sections.push((id, current_content));
     }
+    sections
+}
+
+fn select_relevant_planning_context(value: &str, query: &str) -> String {
+    let sections = planning_context_sections(value);
     if sections.len() <= 8 {
         return value.to_owned();
     }
@@ -137,6 +142,86 @@ fn select_relevant_planning_context(value: &str, query: &str) -> String {
         .map(|(_, (id, content))| format!("{id}:{}", content.trim()))
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
+    if left.len() != right.len() || left.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0;
+    let mut left_norm = 0.0;
+    let mut right_norm = 0.0;
+    for (left_value, right_value) in left.iter().zip(right) {
+        dot += left_value * right_value;
+        left_norm += left_value * left_value;
+        right_norm += right_value * right_value;
+    }
+    if left_norm == 0.0 || right_norm == 0.0 {
+        0.0
+    } else {
+        dot / (left_norm.sqrt() * right_norm.sqrt())
+    }
+}
+
+async fn semantic_planning_context(
+    state: &ProjectState,
+    existing_context: &str,
+    query: &str,
+) -> Option<String> {
+    let sections = planning_context_sections(existing_context);
+    if sections.len() < 2 {
+        return None;
+    }
+    let profile = {
+        let store = state.model_profiles.lock().ok()?;
+        store
+            .list()
+            .ok()?
+            .into_iter()
+            .find(|item| item.capability == novel_infrastructure::ModelCapability::Embedding && item.has_secret)?
+    };
+    let secret_ref = profile.secret_ref.as_deref()?;
+    let secret = novel_infrastructure::SecretStore::get(secret_ref).ok()?;
+    let query_vector = state
+        .embedding_gateway
+        .embed(&profile, &secret, query)
+        .await
+        .ok()?;
+    let persisted = state
+        .manager
+        .lock()
+        .ok()?
+        .list_planning_embeddings()
+        .ok()?
+        .into_iter()
+        .filter(|item| item.profile_id == profile.id && item.model_id == profile.model_id && item.dimensions == i64::try_from(query_vector.len()).unwrap_or_default())
+        .map(|item| (item.section_id, item.vector))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut ranked = Vec::new();
+    for (index, (_id, content)) in sections.iter().enumerate() {
+        let vector = if let Some(vector) = persisted.get(_id) {
+            vector.clone()
+        } else {
+            let candidate = content.chars().take(4_000).collect::<String>();
+            state.embedding_gateway.embed(&profile, &secret, &candidate).await.ok()?
+        };
+        ranked.push((index, cosine_similarity(&query_vector, &vector)));
+    }
+    ranked.sort_by(|left, right| right.1.total_cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    let selected = ranked
+        .into_iter()
+        .take(8)
+        .map(|(index, _)| index)
+        .collect::<HashSet<_>>();
+    Some(
+        sections
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| selected.contains(index))
+            .map(|(_, (id, content))| format!("{id}:{}", content.trim()))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    )
 }
 
 fn compact_planning_inputs(
@@ -339,10 +424,13 @@ pub(crate) async fn generate_planning_content(
     let input_token_budget = profile
         .context_window
         .saturating_sub(profile.max_output_tokens);
+    let query = format!("{section_title} {section_prompt} {user_guidance}");
+    let semantic_context = semantic_planning_context(&state, &existing_context, &query).await;
+    let existing_context = semantic_context.unwrap_or(existing_context);
     let (existing_context, reference_content) = compact_planning_inputs(
         &existing_context,
         &reference_content,
-        &format!("{section_title} {section_prompt} {user_guidance}"),
+        &query,
         input_token_budget,
     );
     let input = PlanningAiJobInput {
@@ -525,10 +613,22 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
     let input_token_budget = profile
         .context_window
         .saturating_sub(profile.max_output_tokens);
+    let query = format!(
+        "{} {} {}",
+        input.section_title, input.section_prompt, input.user_guidance
+    );
+    if let Some(semantic_context) =
+        semantic_planning_context(&state, &input.existing_context, &query).await
+    {
+        input.existing_context = semantic_context;
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.append_job_event(job.id, "RETRIEVAL", "已完成向量召回并合并关键词结果", 10);
+        }
+    }
     let (existing_context, reference_content) = compact_planning_inputs(
         &input.existing_context,
         &input.reference_content,
-        &format!("{} {} {}", input.section_title, input.section_prompt, input.user_guidance),
+        &query,
         input_token_budget,
     );
     input.existing_context = existing_context;

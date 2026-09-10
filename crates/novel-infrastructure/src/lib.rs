@@ -168,7 +168,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 29;
+pub const CURRENT_SCHEMA_VERSION: i64 = 30;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -490,6 +490,18 @@ pub struct PlanningSection {
     pub rationale: String,
     pub consequence: String,
     pub references: Vec<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanningEmbedding {
+    pub section_id: String,
+    pub profile_id: Uuid,
+    pub model_id: String,
+    pub dimensions: i64,
+    pub content_hash: String,
+    pub vector: Vec<f32>,
     pub updated_at: String,
 }
 #[derive(Debug, Error)]
@@ -1614,6 +1626,34 @@ impl ProjectManager {
             .as_mut()
             .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
         Ok(session.database.save_planning_section(section)?)
+    }
+
+    pub fn list_planning_embeddings(&self) -> Result<Vec<PlanningEmbedding>, ProjectError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        Ok(session.database.list_planning_embeddings()?)
+    }
+
+    pub fn generate_planning_embedding(
+        &mut self,
+        embedding: PlanningEmbedding,
+    ) -> Result<PlanningEmbedding, ProjectError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        Ok(session.database.save_planning_embedding(embedding)?)
+    }
+
+    pub fn clear_planning_embedding(&mut self, section_id: &str) -> Result<(), ProjectError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
+        session.database.delete_planning_embedding(section_id)?;
+        Ok(())
     }
 
     pub fn create_plan_node(
