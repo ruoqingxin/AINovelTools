@@ -53,6 +53,14 @@ pub enum AiError {
     Cancelled,
     #[error("AI provider returned an invalid response")]
     InvalidResponse,
+    #[error("AI provider stopped at the output length limit")]
+    OutputLengthLimit,
+    #[error("AI provider filtered the generated content")]
+    ContentFiltered,
+    #[error("AI provider stream ended before completion")]
+    StreamInterrupted,
+    #[error("AI provider returned content with an incomplete ending")]
+    OutputIncomplete,
     #[error("AI provider is unavailable")]
     ProviderUnavailable,
     #[error("AI provider network request failed")]
@@ -78,6 +86,10 @@ impl AiError {
             Self::Timeout => "PROVIDER_TIMEOUT",
             Self::Cancelled => "TASK_CANCELLED",
             Self::InvalidResponse => "PROVIDER_INVALID_RESPONSE",
+            Self::OutputLengthLimit => "AI_OUTPUT_LENGTH_LIMIT",
+            Self::ContentFiltered => "AI_CONTENT_FILTERED",
+            Self::StreamInterrupted => "AI_STREAM_INTERRUPTED",
+            Self::OutputIncomplete => "AI_OUTPUT_INCOMPLETE",
             Self::ProviderUnavailable => "PROVIDER_UNAVAILABLE",
             Self::Network => "PROVIDER_NETWORK",
             Self::ContextSerialization => "CONTEXT_SERIALIZATION",
@@ -908,6 +920,29 @@ pub struct GenerationOptions {
     pub max_output_tokens: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationCompletion {
+    Complete,
+    LengthLimit,
+    ContentFiltered,
+    Interrupted,
+    LikelyTruncated,
+}
+
+impl GenerationCompletion {
+    #[must_use]
+    pub const fn is_complete(self) -> bool {
+        matches!(self, Self::Complete)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenerationOutput {
+    pub output: String,
+    pub completion: GenerationCompletion,
+    pub finish_reason: Option<String>,
+}
+
 impl ModelGateway {
     #[must_use]
     pub fn request_preview(
@@ -996,6 +1031,33 @@ impl ModelGateway {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub async fn generate_detailed<F>(
+        &self,
+        profile: &ModelProfile,
+        secret: Option<&str>,
+        context: &ContextPackage,
+        stream: bool,
+        disable_thinking: bool,
+        cancelled: Arc<AtomicBool>,
+        on_chunk: F,
+    ) -> Result<GenerationOutput, AiError>
+    where
+        F: FnMut(&str) + Send,
+    {
+        self.generate_with_options_detailed(
+            profile,
+            secret,
+            context,
+            GenerationOptions::default(),
+            stream,
+            disable_thinking,
+            cancelled,
+            on_chunk,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub async fn generate_with_options<F>(
         &self,
         profile: &ModelProfile,
@@ -1005,8 +1067,37 @@ impl ModelGateway {
         stream: bool,
         disable_thinking: bool,
         cancelled: Arc<AtomicBool>,
-        mut on_chunk: F,
+        on_chunk: F,
     ) -> Result<String, AiError>
+    where
+        F: FnMut(&str) + Send,
+    {
+        self.generate_with_options_detailed(
+            profile,
+            secret,
+            context,
+            options,
+            stream,
+            disable_thinking,
+            cancelled,
+            on_chunk,
+        )
+        .await
+        .map(|generation| generation.output)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn generate_with_options_detailed<F>(
+        &self,
+        profile: &ModelProfile,
+        secret: Option<&str>,
+        context: &ContextPackage,
+        options: GenerationOptions,
+        stream: bool,
+        disable_thinking: bool,
+        cancelled: Arc<AtomicBool>,
+        mut on_chunk: F,
+    ) -> Result<GenerationOutput, AiError>
     where
         F: FnMut(&str) + Send,
     {
@@ -1044,11 +1135,7 @@ impl ModelGateway {
                     return if stream {
                         read_stream(response, cancelled, &mut on_chunk).await
                     } else {
-                        let value: serde_json::Value = response
-                            .json()
-                            .await
-                            .map_err(|_| AiError::InvalidResponse)?;
-                        message_content(&value).ok_or(AiError::InvalidResponse)
+                        read_non_streaming(response, &mut on_chunk).await
                     };
                 }
                 Err(error) => {
@@ -1276,15 +1363,55 @@ fn message_content(value: &serde_json::Value) -> Option<String> {
     content_text(value.pointer("/choices/0/message/content")?)
 }
 
+fn response_finish_reason(value: &serde_json::Value) -> Option<&str> {
+    value
+        .pointer("/choices/0/finish_reason")
+        .and_then(serde_json::Value::as_str)
+        .filter(|reason| !reason.trim().is_empty())
+}
+
+fn classify_finish_reason(finish_reason: Option<&str>) -> Option<GenerationCompletion> {
+    match finish_reason {
+        Some("stop") => Some(GenerationCompletion::Complete),
+        Some("length" | "max_tokens") => Some(GenerationCompletion::LengthLimit),
+        Some("content_filter" | "content_filtered") => Some(GenerationCompletion::ContentFiltered),
+        Some(_) => Some(GenerationCompletion::Interrupted),
+        None => None,
+    }
+}
+
 fn stream_delta_content(value: &serde_json::Value) -> Option<String> {
     content_text(value.pointer("/choices/0/delta/content")?)
+}
+
+async fn read_non_streaming<F>(
+    response: reqwest::Response,
+    on_chunk: &mut F,
+) -> Result<GenerationOutput, AiError>
+where
+    F: FnMut(&str),
+{
+    let value: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| AiError::InvalidResponse)?;
+    let output = message_content(&value).ok_or(AiError::InvalidResponse)?;
+    let finish_reason = response_finish_reason(&value).map(ToOwned::to_owned);
+    let completion =
+        classify_finish_reason(finish_reason.as_deref()).unwrap_or(GenerationCompletion::Complete);
+    on_chunk(&output);
+    Ok(GenerationOutput {
+        output,
+        completion,
+        finish_reason,
+    })
 }
 
 async fn read_stream<F>(
     response: reqwest::Response,
     cancelled: Arc<AtomicBool>,
     on_chunk: &mut F,
-) -> Result<String, AiError>
+) -> Result<GenerationOutput, AiError>
 where
     F: FnMut(&str),
 {
@@ -1310,30 +1437,56 @@ where
         let value: serde_json::Value =
             serde_json::from_str(trimmed).map_err(|_| AiError::InvalidResponse)?;
         let output = message_content(&value).ok_or(AiError::InvalidResponse)?;
+        let finish_reason = response_finish_reason(&value).map(ToOwned::to_owned);
+        let completion = classify_finish_reason(finish_reason.as_deref())
+            .unwrap_or(GenerationCompletion::Complete);
         on_chunk(&output);
-        return Ok(output);
+        return Ok(GenerationOutput {
+            output,
+            completion,
+            finish_reason,
+        });
     }
 
     let mut output = String::new();
+    let mut finish_reason = None;
+    let mut saw_done = false;
     for line in body.lines() {
         let Some(data) = line.strip_prefix("data:").map(str::trim) else {
             continue;
         };
-        if data.is_empty() || data == "[DONE]" {
+        if data.is_empty() {
+            continue;
+        }
+        if data == "[DONE]" {
+            saw_done = true;
             continue;
         }
         let value: serde_json::Value =
             serde_json::from_str(data).map_err(|_| AiError::InvalidResponse)?;
+        if finish_reason.is_none() {
+            finish_reason = response_finish_reason(&value).map(ToOwned::to_owned);
+        }
         if let Some(text) = stream_delta_content(&value) {
             output.push_str(&text);
             on_chunk(&text);
         }
     }
     if output.trim().is_empty() {
-        Err(AiError::InvalidResponse)
-    } else {
-        Ok(output)
+        return Err(AiError::InvalidResponse);
     }
+    let completion = classify_finish_reason(finish_reason.as_deref()).unwrap_or({
+        if saw_done {
+            GenerationCompletion::Complete
+        } else {
+            GenerationCompletion::Interrupted
+        }
+    });
+    Ok(GenerationOutput {
+        output,
+        completion,
+        finish_reason,
+    })
 }
 
 fn map_status(status: StatusCode) -> AiError {
@@ -3564,6 +3717,91 @@ mod tests {
             .await
             .expect("unterminated stream response");
         assert_eq!(output, "无结束空行");
+    }
+
+    #[tokio::test]
+    async fn gateway_reports_length_limits_and_interrupted_streams() {
+        let gateway = super::ModelGateway::default();
+        let length_url = serve(
+            r#"{"choices":[{"message":{"content":"正文只写到一半"},"finish_reason":"length"}]}"#,
+            "application/json",
+            Duration::ZERO,
+        );
+        let output = gateway
+            .generate_detailed(
+                &profile(length_url, 3),
+                None,
+                &context(),
+                false,
+                false,
+                Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .await
+            .expect("length-limited response");
+        assert_eq!(output.output, "正文只写到一半");
+        assert_eq!(output.completion, super::GenerationCompletion::LengthLimit);
+        assert_eq!(output.finish_reason.as_deref(), Some("length"));
+
+        let stream_length_url = serve(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"流式半截\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n",
+            "text/event-stream",
+            Duration::ZERO,
+        );
+        let output = gateway
+            .generate_detailed(
+                &profile(stream_length_url, 3),
+                None,
+                &context(),
+                true,
+                false,
+                Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .await
+            .expect("stream length limit");
+        assert_eq!(output.output, "流式半截");
+        assert_eq!(output.completion, super::GenerationCompletion::LengthLimit);
+
+        let interrupted_url = serve(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"连接中断\"}}]}\n\n",
+            "text/event-stream",
+            Duration::ZERO,
+        );
+        let output = gateway
+            .generate_detailed(
+                &profile(interrupted_url, 3),
+                None,
+                &context(),
+                true,
+                false,
+                Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .await
+            .expect("interrupted stream");
+        assert_eq!(output.output, "连接中断");
+        assert_eq!(output.completion, super::GenerationCompletion::Interrupted);
+
+        let stopped_without_done_url = serve(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"已正常结束\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "text/event-stream",
+            Duration::ZERO,
+        );
+        let output = gateway
+            .generate_detailed(
+                &profile(stopped_without_done_url, 3),
+                None,
+                &context(),
+                true,
+                false,
+                Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .await
+            .expect("stopped stream without DONE");
+        assert_eq!(output.output, "已正常结束");
+        assert_eq!(output.completion, super::GenerationCompletion::Complete);
     }
 
     #[tokio::test]

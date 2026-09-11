@@ -38,8 +38,9 @@ pub use ai::{
     AiRunSource, AiRunStart, AiTaskContextPreference, AiTaskKind, AiTaskPreference,
     AiTaskPreferences, AiTaskPromptPreference, AiUsageCurrencySummary, AiUsageDailySummary,
     AiUsageSummary, AiUsageTaskSummary, ConsistencyReviewFreshness, EmbeddingGateway,
-    GenerationOptions, ModelGateway, ModelProfileStore, ProjectAiTaskOverrides, SecretStore,
-    WritingAdmission, apply_task_prompt_preferences, render_prompt_template,
+    GenerationCompletion, GenerationOptions, GenerationOutput, ModelGateway, ModelProfileStore,
+    ProjectAiTaskOverrides, SecretStore, WritingAdmission, apply_task_prompt_preferences,
+    render_prompt_template,
 };
 pub use entity_store::EntityStoreError;
 pub use knowledge_store::KnowledgeStoreError;

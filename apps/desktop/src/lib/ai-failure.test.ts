@@ -10,6 +10,7 @@ describe("classifyAiFailure", () => {
     ["content policy rejected the request", "CONTENT_POLICY"],
     ["failed to parse JSON response", "INVALID_RESPONSE"],
     ["network connection reset", "NETWORK"],
+    ["模型达到最大输出长度，返回内容未写完", "OUTPUT_TRUNCATED"],
     ["任务已取消", "CANCELLED"],
   ])("classifies %s as %s", (message, kind) => {
     expect(classifyAiFailure(message).kind).toBe(kind);

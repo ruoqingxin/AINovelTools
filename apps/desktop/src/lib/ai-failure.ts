@@ -5,6 +5,7 @@ export type AiFailureKind =
   | "CONTEXT_LIMIT"
   | "INVALID_RESPONSE"
   | "NETWORK"
+  | "OUTPUT_TRUNCATED"
   | "RATE_LIMIT"
   | "TIMEOUT"
   | "UNKNOWN";
@@ -44,6 +45,12 @@ const classifications: Array<{
     label: "密钥或权限不可用",
     hint: "重试前请先在“模型 API”中检查密钥、地址和模型权限。",
     patterns: ["401", "403", "unauthorized", "forbidden", "invalid api key", "api key", "鉴权", "密钥", "权限"],
+  },
+  {
+    kind: "OUTPUT_TRUNCATED",
+    label: "生成内容不完整",
+    hint: "已保留的部分内容仍在待定区；可提高最大输出后重试，或继续补写后再确认。",
+    patterns: ["达到最大输出", "输出长度", "结束前中断", "返回不完整", "结束标记", "停在半句"],
   },
   {
     kind: "CONTEXT_LIMIT",

@@ -196,8 +196,13 @@ export function StoryPlanningWorkbench(props: {
     if (latestJob?.status === "SUCCEEDED") {
       void client.invalidateQueries({ queryKey: ["planning-sections"] });
       setNotice("AI 内容已生成并自动保存到候选区");
+    } else if (latestJob?.status === "FAILED") {
+      void client.invalidateQueries({ queryKey: ["planning-sections"] });
+      if (latestJob.errorSummary?.includes("保留到待定区")) {
+        setNotice("AI 返回不完整，已保留部分内容到待定区，可检查任务提示后重试");
+      }
     }
-  }, [client, latestJob?.id, latestJob?.status]);
+  }, [client, latestJob?.errorSummary, latestJob?.id, latestJob?.status]);
 
   useEffect(() => {
     props.onDirtyChange?.(dirty);

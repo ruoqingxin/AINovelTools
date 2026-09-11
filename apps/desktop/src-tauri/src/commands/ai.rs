@@ -270,6 +270,8 @@ fn current_consistency_review_context_version(
 
 struct AiGenerationOutcome {
     output: String,
+    completion: novel_infrastructure::GenerationCompletion,
+    finish_reason: Option<String>,
     fallback_profile: Option<novel_infrastructure::ModelProfile>,
     fallback_reason: Option<String>,
 }
@@ -303,7 +305,7 @@ where
 {
     match state
         .gateway
-        .generate_with_options(
+        .generate_with_options_detailed(
             primary,
             primary_secret,
             context,
@@ -315,8 +317,10 @@ where
         )
         .await
     {
-        Ok(output) => Ok(AiGenerationOutcome {
-            output,
+        Ok(generation) => Ok(AiGenerationOutcome {
+            output: generation.output,
+            completion: generation.completion,
+            finish_reason: generation.finish_reason,
             fallback_profile: None,
             fallback_reason: None,
         }),
@@ -349,9 +353,9 @@ where
                 .ok_or(novel_infrastructure::AiError::MissingSecret)
                 .and_then(novel_infrastructure::SecretStore::get)?;
             let fallback_reason = primary_error.code().to_owned();
-            let output = state
+            let generation = state
                 .gateway
-                .generate_with_options(
+                .generate_with_options_detailed(
                     &fallback,
                     Some(&fallback_secret),
                     context,
@@ -363,7 +367,9 @@ where
                 )
                 .await?;
             Ok(AiGenerationOutcome {
-                output,
+                output: generation.output,
+                completion: generation.completion,
+                finish_reason: generation.finish_reason,
                 fallback_profile: Some(fallback),
                 fallback_reason: Some(fallback_reason),
             })
@@ -409,6 +415,18 @@ mod task_generation_options_tests {
     fn truncates_text_with_a_visible_budget_marker() {
         let truncated = super::truncate_text_to_char_budget("一二三四五六七八九十", 8, "[截断]");
         assert_eq!(truncated, "一二三四[截断]");
+    }
+
+    #[test]
+    fn detects_obviously_incomplete_planning_endings() {
+        assert!(super::planning_output_looks_truncated("以同一章内可"));
+        assert!(super::planning_output_looks_truncated("叙事视角包括："));
+        assert!(!super::planning_output_looks_truncated(
+            "第一卷以主角觉醒结束。"
+        ));
+        assert!(!super::planning_output_looks_truncated(
+            "每卷保留一个核心冲突"
+        ));
     }
 }
 
@@ -1312,6 +1330,60 @@ fn append_planning_job_event(
     }
 }
 
+fn incomplete_generation_failure(
+    completion: novel_infrastructure::GenerationCompletion,
+    output_chars: usize,
+    finish_reason: Option<&str>,
+) -> (novel_infrastructure::AiError, String) {
+    let finish_detail = finish_reason
+        .filter(|reason| !reason.trim().is_empty())
+        .map(|reason| format!("（finish_reason: {reason}）"))
+        .unwrap_or_default();
+    match completion {
+        novel_infrastructure::GenerationCompletion::LengthLimit => (
+            novel_infrastructure::AiError::OutputLengthLimit,
+            format!(
+                "模型达到最大输出长度，返回内容未写完。已将已生成的 {output_chars} 字保留到待定区；请提高“作品设定”的最大输出 tokens 后重试。{finish_detail}"
+            ),
+        ),
+        novel_infrastructure::GenerationCompletion::ContentFiltered => (
+            novel_infrastructure::AiError::ContentFiltered,
+            format!(
+                "模型因内容安全策略停止生成，已将已生成的 {output_chars} 字保留到待定区；请调整设定或补充意见后重试。{finish_detail}"
+            ),
+        ),
+        novel_infrastructure::GenerationCompletion::Interrupted => (
+            novel_infrastructure::AiError::StreamInterrupted,
+            format!(
+                "模型响应在完整结束前中断，已将已生成的 {output_chars} 字保留到待定区；请检查网络后重试。{finish_detail}"
+            ),
+        ),
+        novel_infrastructure::GenerationCompletion::LikelyTruncated => (
+            novel_infrastructure::AiError::OutputIncomplete,
+            format!(
+                "模型虽然结束了响应，但正文结尾停在半句，已将已生成的 {output_chars} 字保留到待定区；请检查结尾并重试或继续补写。{finish_detail}"
+            ),
+        ),
+        novel_infrastructure::GenerationCompletion::Complete => {
+            unreachable!("complete generations are handled before incomplete failure")
+        }
+    }
+}
+
+fn planning_output_looks_truncated(output: &str) -> bool {
+    let trimmed = output.trim();
+    let Some(last) = trimmed.chars().last() else {
+        return false;
+    };
+    if "。！？!?；;…".contains(last) {
+        return false;
+    }
+    if "：:".contains(last) {
+        return true;
+    }
+    "的地得和与及或但而因在为从把被将以可能要会是有对向让使".contains(last)
+}
+
 pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
     let state = app.state::<ProjectState>();
     let job = {
@@ -1716,12 +1788,19 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
     }
     match result {
         Ok(outcome) => {
-            if let Some(fallback) = outcome.fallback_profile.as_ref() {
+            let AiGenerationOutcome {
+                output,
+                completion,
+                finish_reason,
+                fallback_profile,
+                fallback_reason,
+            } = outcome;
+            if let Some(fallback) = fallback_profile.as_ref() {
                 if let Ok(mut manager) = state.manager.lock() {
                     let _ = manager.record_ai_run_fallback(
                         run_id,
                         fallback.id,
-                        outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+                        fallback_reason.as_deref().unwrap_or("UNKNOWN"),
                     );
                     let (endpoint, request_body) = state.gateway.request_preview_with_options(
                         fallback,
@@ -1744,7 +1823,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                     "FALLBACK",
                     format!(
                         "主模型调用失败（{}），已切换到备用模型“{}”",
-                        outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+                        fallback_reason.as_deref().unwrap_or("UNKNOWN"),
                         fallback.name
                     ),
                     35,
@@ -1779,7 +1858,9 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                 references: Vec::new(),
                 updated_at: String::new(),
             });
-            section.pending_content = outcome.output;
+            let output_chars = output.chars().count();
+            let likely_truncated = planning_output_looks_truncated(&output);
+            section.pending_content = output;
             section.references = input.source_name.clone().unwrap_or_default();
             let output_tokens = u32::try_from(section.pending_content.chars().count().div_ceil(4))
                 .unwrap_or(u32::MAX);
@@ -1792,14 +1873,35 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                 fail_planning_job(&state, job.id, error.to_string());
                 return true;
             }
-            let _ = manager.complete_ai_run(run_id, output_tokens);
-            let _ = manager.append_job_event(job.id, "COMPLETED", "结果已保存到待定区", 100);
-            let _ = manager.update_job_status(
-                job.id,
-                novel_infrastructure::JobStatus::Succeeded,
-                100,
-                None,
-            );
+            let completion = if completion.is_complete() && likely_truncated {
+                novel_infrastructure::GenerationCompletion::LikelyTruncated
+            } else {
+                completion
+            };
+            if completion.is_complete() {
+                let _ = manager.complete_ai_run(run_id, output_tokens);
+                let _ = manager.append_job_event(job.id, "COMPLETED", "结果已保存到待定区", 100);
+                let _ = manager.update_job_status(
+                    job.id,
+                    novel_infrastructure::JobStatus::Succeeded,
+                    100,
+                    None,
+                );
+            } else {
+                let (error, message) = incomplete_generation_failure(
+                    completion,
+                    output_chars,
+                    finish_reason.as_deref(),
+                );
+                let _ = manager.fail_ai_run(run_id, &error);
+                let _ = manager.append_job_event(job.id, "INCOMPLETE", &message, 100);
+                let _ = manager.update_job_status(
+                    job.id,
+                    novel_infrastructure::JobStatus::Failed,
+                    100,
+                    Some(message),
+                );
+            }
         }
         Err(novel_infrastructure::AiError::Cancelled) => {
             if let Ok(mut manager) = state.manager.lock() {
