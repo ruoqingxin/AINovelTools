@@ -160,7 +160,7 @@ export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
 export type ModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
 export type ModelCapability = "CHAT" | "EMBEDDING";
 export type PrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
-export type AiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE";
+export type AiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE" | "CONSISTENCY_CHECK";
 export type AiProposalStatus = "PENDING" | "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED";
 export type ModelProfile = {
   id: string; name: string; provider: ModelProvider; capability: ModelCapability; baseUrl: string; modelId: string;
@@ -197,6 +197,7 @@ export type AiTaskPreferences = {
   volumePlanning: AiTaskPreference;
   chapterSplit: AiTaskPreference;
   chapterPlan: AiTaskPreference;
+  consistencyReview: AiTaskPreference;
   writing: AiTaskPreference;
   knowledgeExtraction: AiTaskPreference;
 };
@@ -207,6 +208,7 @@ export type ProjectAiTaskOverrides = {
   volumePlanning: AiTaskPreference | null;
   chapterSplit: AiTaskPreference | null;
   chapterPlan: AiTaskPreference | null;
+  consistencyReview: AiTaskPreference | null;
   writing: AiTaskPreference | null;
   knowledgeExtraction: AiTaskPreference | null;
 };
@@ -269,6 +271,21 @@ export type AiProposalFeedback = {
   proposalId: string; rating: "HELPFUL" | "NOT_HELPFUL"; note: string | null;
   createdAt: string; updatedAt: string;
 };
+export type AiConsistencyVerdict = "PASS" | "REVIEW" | "BLOCKED" | "NEEDS_INPUT" | "UNPARSED";
+export type AiConsistencySeverity = "BLOCKER" | "MAJOR" | "MINOR" | "INFO";
+export type AiConsistencyFinding = {
+  severity: AiConsistencySeverity;
+  problem: string;
+  evidence: string;
+  suggestion: string;
+};
+export type AiConsistencyReport = {
+  verdict: AiConsistencyVerdict;
+  summary: string;
+  findings: AiConsistencyFinding[];
+  parseWarnings: string[];
+};
+export type ConsistencyReviewFreshness = "MISSING" | "FRESH" | "STALE";
 export type AiProposalReview = {
   proposal: AiProposal;
   validation: {
@@ -276,6 +293,8 @@ export type AiProposalReview = {
     paragraphCount: number; estimatedOutputTokens: number;
   };
   feedback: AiProposalFeedback | null;
+  consistency: AiConsistencyReport | null;
+  consistencyFreshness: ConsistencyReviewFreshness | null;
 };
 export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX" | "AI_PLANNING_GENERATE" | "AI_PLANNING_EXTRACT";
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
@@ -514,8 +533,14 @@ export function extractEntitiesFromText(profileId: string, entityType: EntityTyp
   return invoke<ExtractedEntity[]>("extract_entities_from_text", { input: { profileId, entityType, entityName, briefSummary, applicabilityScope, sourceText, userGuidance, temperature, maxOutputTokens } });
 }
 
-export function listAiProposals(chapterId: string) {
-  return invoke<AiProposalReview[]>("list_ai_proposals", { chapterId });
+export function listAiProposals(input: {
+  chapterId: string;
+  chapterTitle: string;
+  chapterPlan: string;
+  documentJson: string;
+  instruction?: string;
+}) {
+  return invoke<AiProposalReview[]>("list_ai_proposals", input);
 }
 export function listAiRuns(limit = 20) {
   return invoke<AiRun[]>("list_ai_runs", { limit });

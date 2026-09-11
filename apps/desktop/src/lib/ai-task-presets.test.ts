@@ -3,7 +3,7 @@ import { AI_TASK_DEFINITIONS, emptyAiTaskPreferences } from "./ai-task-preferenc
 import { AI_TASK_PRESETS, applyAiTaskPreset } from "./ai-task-presets";
 
 describe("AI task presets", () => {
-  it("covers all seven tasks with bounded generation and context settings", () => {
+  it("covers all eight tasks with bounded generation and context settings", () => {
     for (const preset of AI_TASK_PRESETS) {
       for (const { key } of AI_TASK_DEFINITIONS) {
         const task = preset.tasks[key];

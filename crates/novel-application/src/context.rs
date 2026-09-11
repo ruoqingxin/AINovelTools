@@ -214,6 +214,7 @@ pub enum AiTaskRole {
     DraftWriter,
     SelectionReviser,
     ChapterSummarizer,
+    ContinuityAuditor,
     ApiConnectionTester,
 }
 
@@ -565,77 +566,106 @@ fn build_prompt_sections(
     ]
 }
 
+struct TaskContractDefinition {
+    role: AiTaskRole,
+    goal: &'static str,
+    target_type: &'static str,
+    acceptance_criteria: &'static [&'static str],
+    output_contract: &'static str,
+}
+
+fn task_contract_definition(action: AiAction) -> TaskContractDefinition {
+    match action {
+        AiAction::Draft => TaskContractDefinition {
+            role: AiTaskRole::DraftWriter,
+            goal: "依据章节执行卡、项目上下文和作者要求创作本章完整初稿。",
+            target_type: "CHAPTER",
+            acceptance_criteria: &[
+                "完整覆盖章节执行卡中的目标、关键行动、冲突变化和结尾钩子。",
+                "正文内部的场景、人物行动和因果推进连贯，可直接进入候选审核。",
+                "叙述人称和视角边界必须与正式设定一致；同一章节多次生成不得随机切换人称。",
+                "只输出完整章节正文。",
+            ],
+            output_contract: "纯文本完整章节候选正文；不得附带分析、标题、JSON、变更声明或写作说明。",
+        },
+        AiAction::Continue => TaskContractDefinition {
+            role: AiTaskRole::DraftWriter,
+            goal: "从当前草稿结尾继续写作，不复述已有内容。",
+            target_type: "CHAPTER",
+            acceptance_criteria: &[
+                "输出能与当前草稿结尾自然衔接。",
+                "不改变已提供事实、章节目标和人物知识边界。",
+                "延续当前章节既定的叙述人称和视角边界，不得改成另一人称。",
+                "只输出新增候选正文。",
+            ],
+            output_contract: "纯文本候选正文；不得附带分析、标题、JSON 或变更声明。",
+        },
+        AiAction::Rewrite => TaskContractDefinition {
+            role: AiTaskRole::SelectionReviser,
+            goal: "在给定选区范围内重写内容。",
+            target_type: "SELECTION",
+            acceptance_criteria: &[
+                "新文本可完整替换选区。",
+                "不得修改选区之外的情节和事实。",
+                "只输出替换选区的候选正文。",
+            ],
+            output_contract: "纯文本替换候选；不得附带分析、标题、JSON 或变更声明。",
+        },
+        AiAction::Polish => TaskContractDefinition {
+            role: AiTaskRole::SelectionReviser,
+            goal: "润色给定选区并保持原意。",
+            target_type: "SELECTION",
+            acceptance_criteria: &[
+                "保持选区事实、视角、情节结果和人物意图不变。",
+                "改善语言表达但不扩大修改范围。",
+                "只输出润色后的候选正文。",
+            ],
+            output_contract: "纯文本润色候选；不得附带分析、标题、JSON 或变更声明。",
+        },
+        AiAction::Summarize => TaskContractDefinition {
+            role: AiTaskRole::ChapterSummarizer,
+            goal: "总结当前章节，供后续上下文使用。",
+            target_type: "CHAPTER",
+            acceptance_criteria: &[
+                "覆盖章节中已发生的关键事件和状态变化。",
+                "区分正文事实与无法确认的信息。",
+                "保持简洁，不引入正文之外的新事实。",
+            ],
+            output_contract: "纯文本章节摘要；不得附带分析、标题、JSON 或变更声明。",
+        },
+        AiAction::ConsistencyCheck => TaskContractDefinition {
+            role: AiTaskRole::ContinuityAuditor,
+            goal: "审核章节执行卡、当前草稿、正式设定和已批准事实之间是否存在会影响正文写作的冲突。",
+            target_type: "CHAPTER",
+            acceptance_criteria: &[
+                "分别检查人物身份与动机、能力或境界边界、世界规则、时间线、既定事实和叙述人称。",
+                "每条问题必须给出严重程度、冲突内容和正式依据；没有依据时不得判为冲突。",
+                "只输出审核结论和修改建议，不得改写正文，不得声称已修改任何项目数据。",
+            ],
+            output_contract: "纯文本审核报告；第一行输出“审核结论：通过 / 需复核 / 阻断 / [上下文不足]”，后续每条问题严格按“[阻断|严重|一般|提示] 问题｜依据｜建议”列出；没有问题时明确说明“审核结论：通过（未发现冲突）”。",
+        },
+    }
+}
+
 fn build_task_contract(input: &AssembleContextInput) -> AiTaskContract {
-    let (role, goal, target_type, acceptance_criteria, output_contract) = match input.action {
-        AiAction::Draft => (
-            AiTaskRole::DraftWriter,
-            "依据章节执行卡、项目上下文和作者要求创作本章完整初稿。",
-            "CHAPTER",
-            vec![
-                "完整覆盖章节执行卡中的目标、关键行动、冲突变化和结尾钩子。".to_owned(),
-                "正文内部的场景、人物行动和因果推进连贯，可直接进入候选审核。".to_owned(),
-                "叙述人称和视角边界必须与正式设定一致；同一章节多次生成不得随机切换人称。"
-                    .to_owned(),
-                "只输出完整章节正文。".to_owned(),
-            ],
-            "纯文本完整章节候选正文；不得附带分析、标题、JSON、变更声明或写作说明。",
-        ),
-        AiAction::Continue => (
-            AiTaskRole::DraftWriter,
-            "从当前草稿结尾继续写作，不复述已有内容。",
-            "CHAPTER",
-            vec![
-                "输出能与当前草稿结尾自然衔接。".to_owned(),
-                "不改变已提供事实、章节目标和人物知识边界。".to_owned(),
-                "延续当前章节既定的叙述人称和视角边界，不得改成另一人称。".to_owned(),
-                "只输出新增候选正文。".to_owned(),
-            ],
-            "纯文本候选正文；不得附带分析、标题、JSON 或变更声明。",
-        ),
-        AiAction::Rewrite => (
-            AiTaskRole::SelectionReviser,
-            "在给定选区范围内重写内容。",
-            "SELECTION",
-            vec![
-                "新文本可完整替换选区。".to_owned(),
-                "不得修改选区之外的情节和事实。".to_owned(),
-                "只输出替换选区的候选正文。".to_owned(),
-            ],
-            "纯文本替换候选；不得附带分析、标题、JSON 或变更声明。",
-        ),
-        AiAction::Polish => (
-            AiTaskRole::SelectionReviser,
-            "润色给定选区并保持原意。",
-            "SELECTION",
-            vec![
-                "保持选区事实、视角、情节结果和人物意图不变。".to_owned(),
-                "改善语言表达但不扩大修改范围。".to_owned(),
-                "只输出润色后的候选正文。".to_owned(),
-            ],
-            "纯文本润色候选；不得附带分析、标题、JSON 或变更声明。",
-        ),
-        AiAction::Summarize => (
-            AiTaskRole::ChapterSummarizer,
-            "总结当前章节，供后续上下文使用。",
-            "CHAPTER",
-            vec![
-                "覆盖章节中已发生的关键事件和状态变化。".to_owned(),
-                "区分正文事实与无法确认的信息。".to_owned(),
-                "保持简洁，不引入正文之外的新事实。".to_owned(),
-            ],
-            "纯文本章节摘要；不得附带分析、标题、JSON 或变更声明。",
-        ),
-    };
-    let uncertainty_policy = if input.action == AiAction::Summarize {
-        "只依据当前草稿和已提供的章节材料总结；无法确认的信息标为不确定，不得补写正文之外的事实。"
-            .to_owned()
-    } else {
-        "生成前先检查 [P1 作品正式设定与生成前判断]；仅当其中“缺失项”直接影响本章人物动机、主角能力、境界/力量规则、世界限制或失败后果时，才停止推断并只输出“[上下文不足]”，逐项列出缺失的正式设定及补齐位置；未列为缺失项的一般规划不得作为停止创作的理由；不得自行补全项目事实。".to_owned()
+    let definition = task_contract_definition(input.action);
+    let uncertainty_policy = match input.action {
+        AiAction::Summarize => {
+            "只依据当前草稿和已提供的章节材料总结；无法确认的信息标为不确定，不得补写正文之外的事实。"
+                .to_owned()
+        }
+        AiAction::ConsistencyCheck => {
+            "只使用本次提供的正式设定、已批准事实、章节执行卡和当前草稿；证据不足时标记“无法确认”，不得把推测写成冲突。若关键正式设定缺失到无法判断准入，只输出“[上下文不足]”并列出缺失项。"
+                .to_owned()
+        }
+        _ => {
+            "生成前先检查 [P1 作品正式设定与生成前判断]；仅当其中“缺失项”直接影响本章人物动机、主角能力、境界/力量规则、世界限制或失败后果时，才停止推断并只输出“[上下文不足]”，逐项列出缺失的正式设定及补齐位置；未列为缺失项的一般规划不得作为停止创作的理由；不得自行补全项目事实。".to_owned()
+        }
     };
     AiTaskContract {
-        role,
-        goal: goal.to_owned(),
-        target_type: target_type.to_owned(),
+        role: definition.role,
+        goal: definition.goal.to_owned(),
+        target_type: definition.target_type.to_owned(),
         target_id: input.chapter_id,
         target_revision_id: input.target_revision_id,
         permissions: vec![
@@ -647,9 +677,13 @@ fn build_task_contract(input: &AssembleContextInput) -> AiTaskContract {
             "不得把模型记忆、推测或新生成细节当作项目事实。".to_owned(),
             "不得越过本次目标对象和修改范围。".to_owned(),
         ],
-        acceptance_criteria,
+        acceptance_criteria: definition
+            .acceptance_criteria
+            .iter()
+            .map(|criterion| (*criterion).to_owned())
+            .collect(),
         uncertainty_policy,
-        output_contract: output_contract.to_owned(),
+        output_contract: definition.output_contract.to_owned(),
     }
 }
 
@@ -658,6 +692,7 @@ fn role_label(role: AiTaskRole) -> &'static str {
         AiTaskRole::DraftWriter => "小说候选正文执行器",
         AiTaskRole::SelectionReviser => "小说选区修订执行器",
         AiTaskRole::ChapterSummarizer => "小说章节摘要执行器",
+        AiTaskRole::ContinuityAuditor => "小说连续性与生成准入审核器",
         AiTaskRole::ApiConnectionTester => "API 连接测试器",
     }
 }

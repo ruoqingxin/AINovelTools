@@ -22,20 +22,21 @@ export const AI_TASK_DEFINITIONS: Array<{
   { key: "volumePlanning", label: "分卷规划", description: "生成分卷目标、阶段转折和卷末状态", defaultTemperature: 0.55, defaultMaxOutputTokens: 6144, promptVariables: ["sectionTitle", "sectionPrompt", "userGuidance", "existingContext"] },
   { key: "chapterSplit", label: "章节拆分", description: "把单卷规划拆成可独立执行的章节", defaultTemperature: 0.3, defaultMaxOutputTokens: 4096, promptVariables: ["sectionTitle", "sectionPrompt", "userGuidance", "existingContext"] },
   { key: "chapterPlan", label: "章节规划", description: "为已建立的章节生成可写正文的执行卡", defaultTemperature: 0.35, defaultMaxOutputTokens: 4096, promptVariables: ["sectionTitle", "sectionPrompt", "userGuidance", "existingContext"] },
+  { key: "consistencyReview", label: "一致性审核", description: "检查章节设定、人物能力、世界规则和叙述视角冲突", defaultTemperature: 0.2, defaultMaxOutputTokens: 4096, promptVariables: ["chapterTitle", "chapterPlan", "userInstruction", "currentDraft", "projectKnowledge"] },
   { key: "writing", label: "正文书写", description: "整章创作、续写、重写、润色和摘要", defaultTemperature: 0.9, defaultMaxOutputTokens: 8192, promptVariables: ["chapterTitle", "chapterPlan", "userInstruction", "selection", "currentDraft", "projectKnowledge"] },
   { key: "knowledgeExtraction", label: "知识提炼", description: "从导入文件中提炼人物、地点和设定条目", defaultTemperature: 0.1, defaultMaxOutputTokens: 4096, promptVariables: ["entityType", "entityName", "briefSummary", "applicabilityScope", "userGuidance", "sourceText"] },
 ];
 
 function recommendedContext(task: AiTaskKey): AiTaskContextPreference {
-  const projectPlanningTasks = new Set<AiTaskKey>(["workDesign", "outline", "volumePlanning", "chapterSplit", "chapterPlan"]);
+  const projectPlanningTasks = new Set<AiTaskKey>(["workDesign", "outline", "volumePlanning", "chapterSplit", "chapterPlan", "consistencyReview"]);
   const referenceTasks = new Set<AiTaskKey>(["workDesign", "knowledgeExtraction"]);
-  const knowledgeTasks = new Set<AiTaskKey>(["workDesign", "outline", "volumePlanning", "chapterSplit", "chapterPlan", "writing"]);
+  const knowledgeTasks = new Set<AiTaskKey>(["workDesign", "outline", "volumePlanning", "chapterSplit", "chapterPlan", "consistencyReview", "writing"]);
   return {
     includeProjectContext: projectPlanningTasks.has(task),
     includeReferenceContent: referenceTasks.has(task),
     includeProjectKnowledge: knowledgeTasks.has(task),
-    includeCurrentDraft: task === "writing",
-    includeChapterPlan: task === "writing",
+    includeCurrentDraft: task === "writing" || task === "consistencyReview",
+    includeChapterPlan: task === "writing" || task === "consistencyReview",
     inputTokenBudget: task === "writing" ? 49_152 : task === "workDesign" || task === "chapterSplit" || task === "chapterPlan" ? 24_576 : 32_768,
   };
 }
@@ -62,6 +63,7 @@ export const emptyAiTaskPreferences: AiTaskPreferences = {
   volumePlanning: recommendedTaskPreference("volumePlanning"),
   chapterSplit: recommendedTaskPreference("chapterSplit"),
   chapterPlan: recommendedTaskPreference("chapterPlan"),
+  consistencyReview: recommendedTaskPreference("consistencyReview"),
   writing: recommendedTaskPreference("writing"),
   knowledgeExtraction: recommendedTaskPreference("knowledgeExtraction"),
 };

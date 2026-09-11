@@ -32,12 +32,14 @@ mod knowledge_store;
 mod materials_store;
 mod search_store;
 pub use ai::{
-    AiBudgetSettings, AiError, AiOutputValidation, AiProposalFeedback, AiProposalFeedbackRating,
-    AiProposalReview, AiQualityGroup, AiQualitySummary, AiRun, AiRunSource, AiRunStart,
-    AiTaskContextPreference, AiTaskKind, AiTaskPreference, AiTaskPreferences,
-    AiTaskPromptPreference, AiUsageCurrencySummary, AiUsageDailySummary, AiUsageSummary,
-    AiUsageTaskSummary, EmbeddingGateway, GenerationOptions, ModelGateway, ModelProfileStore,
-    ProjectAiTaskOverrides, SecretStore, apply_task_prompt_preferences, render_prompt_template,
+    AiBudgetSettings, AiConsistencyFinding, AiConsistencyReport, AiConsistencySeverity,
+    AiConsistencyVerdict, AiError, AiOutputValidation, AiProposalFeedback,
+    AiProposalFeedbackRating, AiProposalReview, AiQualityGroup, AiQualitySummary, AiRun,
+    AiRunSource, AiRunStart, AiTaskContextPreference, AiTaskKind, AiTaskPreference,
+    AiTaskPreferences, AiTaskPromptPreference, AiUsageCurrencySummary, AiUsageDailySummary,
+    AiUsageSummary, AiUsageTaskSummary, ConsistencyReviewFreshness, EmbeddingGateway,
+    GenerationOptions, ModelGateway, ModelProfileStore, ProjectAiTaskOverrides, SecretStore,
+    WritingAdmission, apply_task_prompt_preferences, render_prompt_template,
 };
 pub use entity_store::EntityStoreError;
 pub use knowledge_store::KnowledgeStoreError;
@@ -3327,6 +3329,147 @@ mod tests {
     }
 
     #[test]
+    fn consistency_review_proposals_are_read_only() {
+        let root = std::path::PathBuf::from("target").join(format!(
+            "ainovel-consistency-review-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "一致性审核测试").expect("create");
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
+        let profile = manager
+            .upsert_model_profile(super::ModelProfileInput {
+                id: None,
+                name: "审核模型".into(),
+                provider: super::ModelProvider::DeepSeek,
+                capability: super::ModelCapability::Chat,
+                base_url: "https://api.deepseek.com".into(),
+                model_id: "deepseek-chat".into(),
+                context_window: 32_768,
+                max_output_tokens: 4_096,
+                privacy_level: super::PrivacyLevel::AllowCloud,
+                timeout_seconds: 30,
+                retry_limit: 1,
+                input_price_micros_per_million: 1_000_000,
+                output_price_micros_per_million: 2_000_000,
+                price_currency: "CNY".into(),
+            })
+            .expect("profile");
+        let context = novel_application::ContextAssembler::assemble(
+            &novel_application::AssembleContextInput {
+                chapter_id: chapter.id,
+                target_revision_id: None,
+                action: super::AiAction::ConsistencyCheck,
+                chapter_title: chapter.title,
+                chapter_plan: "主角进入城市并寻找失踪的师父。".into(),
+                document_json:
+                    r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"主角抵达城门。"}]}]}"#
+                        .into(),
+                selection: None,
+                instruction: None,
+                input_token_budget: 4_096,
+            },
+        )
+        .expect("context");
+        let review_context_version = context.context_version.clone();
+        let task_id = manager.create_ai_task(profile.id, &context).expect("task");
+        let proposal = manager
+            .complete_ai_task(
+                task_id,
+                &context,
+                "审核结论：阻断\n[阻断] 主角姓名未确定｜主角卡未建立｜先确定主角姓名并建立主角卡。"
+                    .into(),
+            )
+            .expect("proposal");
+
+        assert_eq!(proposal.action, super::AiAction::ConsistencyCheck);
+        let review = manager
+            .list_ai_proposal_reviews(chapter.id)
+            .expect("review")
+            .into_iter()
+            .find(|item| item.proposal.id == proposal.id)
+            .expect("review item");
+        assert_eq!(
+            review.consistency.expect("consistency report").verdict,
+            super::AiConsistencyVerdict::Blocked
+        );
+        let mut fresh_reviews = manager
+            .list_ai_proposal_reviews(chapter.id)
+            .expect("fresh reviews");
+        super::ProjectManager::mark_consistency_review_freshness(
+            &mut fresh_reviews,
+            Some(&review_context_version),
+        );
+        assert_eq!(
+            fresh_reviews[0].consistency_freshness,
+            Some(super::ConsistencyReviewFreshness::Fresh)
+        );
+        let mut stale_reviews = manager
+            .list_ai_proposal_reviews(chapter.id)
+            .expect("stale reviews");
+        super::ProjectManager::mark_consistency_review_freshness(
+            &mut stale_reviews,
+            Some("changed-context-version"),
+        );
+        assert_eq!(
+            stale_reviews[0].consistency_freshness,
+            Some(super::ConsistencyReviewFreshness::Stale)
+        );
+        let admission = manager
+            .chapter_writing_admission(chapter.id, Some(&review_context_version))
+            .expect("admission");
+        assert!(!admission.allowed);
+        assert_eq!(admission.blocker_count, 1);
+        assert!(admission.reason.is_some());
+        assert_eq!(
+            admission.review_freshness,
+            super::ConsistencyReviewFreshness::Fresh
+        );
+        let stale_admission = manager
+            .chapter_writing_admission(chapter.id, Some("changed-context-version"))
+            .expect("stale admission");
+        assert!(stale_admission.allowed);
+        assert_eq!(
+            stale_admission.review_freshness,
+            super::ConsistencyReviewFreshness::Stale
+        );
+        assert!(
+            manager
+                .decide_ai_proposal(proposal.id, super::AiProposalStatus::Accepted, None)
+                .is_err()
+        );
+        assert!(
+            manager
+                .decide_ai_proposal(
+                    proposal.id,
+                    super::AiProposalStatus::PartiallyAccepted,
+                    Some("审核报告不能写入正文。".into()),
+                )
+                .is_err()
+        );
+        assert_eq!(
+            manager
+                .decide_ai_proposal(proposal.id, super::AiProposalStatus::Rejected, None)
+                .expect("close review")
+                .status,
+            super::AiProposalStatus::Rejected
+        );
+        assert!(
+            manager
+                .chapter_writing_admission(chapter.id, Some(&review_context_version))
+                .expect("admission after close")
+                .allowed
+        );
+        assert_eq!(
+            manager.list_ai_runs(10).expect("runs")[0].task_key,
+            "consistencyReview"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn project_ai_task_overrides_can_be_saved_as_a_batch() {
         let root = std::path::PathBuf::from("target")
             .join(format!("ainovel-ai-batch-{}", uuid::Uuid::new_v4()));
@@ -3360,6 +3503,7 @@ mod tests {
             volume_planning: preference.clone(),
             chapter_split: preference.clone(),
             chapter_plan: preference.clone(),
+            consistency_review: preference.clone(),
             writing: preference.clone(),
             knowledge_extraction: preference,
         };
@@ -3377,6 +3521,7 @@ mod tests {
             super::AiTaskKind::VolumePlanning,
             super::AiTaskKind::ChapterSplit,
             super::AiTaskKind::ChapterPlan,
+            super::AiTaskKind::ConsistencyReview,
             super::AiTaskKind::Writing,
             super::AiTaskKind::KnowledgeExtraction,
         ] {

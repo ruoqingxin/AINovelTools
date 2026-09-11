@@ -36,6 +36,15 @@ mod tests {
         let first = super::ContextAssembler::assemble(&input).expect("assemble");
         let second = super::ContextAssembler::assemble(&input).expect("assemble again");
         assert_eq!(first.context_version, second.context_version);
+        let mut changed_plan = input.clone();
+        changed_plan.chapter_plan = "主角改在码头下车".into();
+        let changed_plan = super::ContextAssembler::assemble(&changed_plan).expect("changed plan");
+        assert_ne!(first.context_version, changed_plan.context_version);
+        let mut changed_document = input.clone();
+        changed_document.document_json = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"雨又下起来了。"}]}]}"#.into();
+        let changed_document =
+            super::ContextAssembler::assemble(&changed_document).expect("changed document");
+        assert_ne!(first.context_version, changed_document.context_version);
         let mut rewrite = input;
         rewrite.action = novel_domain::AiAction::Rewrite;
         assert!(matches!(
@@ -220,6 +229,10 @@ mod tests {
                 novel_domain::AiAction::Summarize,
                 super::AiTaskRole::ChapterSummarizer,
             ),
+            (
+                novel_domain::AiAction::ConsistencyCheck,
+                super::AiTaskRole::ContinuityAuditor,
+            ),
         ] {
             let mut action_input = input.clone();
             action_input.action = action;
@@ -228,6 +241,38 @@ mod tests {
                 super::ContextAssembler::assemble(&action_input).expect("assemble action role");
             assert_eq!(action_package.task_contract.role, expected_role);
         }
+    }
+
+    #[test]
+    fn consistency_review_contract_is_read_only_and_evidence_bound() {
+        let review = super::ContextAssembler::assemble(&super::AssembleContextInput {
+            chapter_id: uuid::Uuid::new_v4(),
+            target_revision_id: None,
+            action: novel_domain::AiAction::ConsistencyCheck,
+            chapter_title: "第三章".into(),
+            chapter_plan: "主角必须在雨夜抵达码头。".into(),
+            document_json: r#"{"type":"doc","content":[]}"#.into(),
+            selection: None,
+            instruction: None,
+            input_token_budget: 4_096,
+        })
+        .expect("assemble review contract");
+        assert!(
+            review
+                .task_contract
+                .acceptance_criteria
+                .iter()
+                .any(|item| item.contains("能力或境界边界"))
+        );
+        assert!(review.task_contract.uncertainty_policy.contains("无法确认"));
+        assert!(review.task_contract.output_contract.contains("审核报告"));
+        assert!(
+            review
+                .task_contract
+                .forbidden_actions
+                .iter()
+                .any(|item| item.contains("正式正文"))
+        );
     }
 
     #[test]

@@ -28,11 +28,13 @@ const RUN_ACTION_LABELS: Record<string, string> = {
   REWRITE: "重写",
   POLISH: "润色",
   SUMMARIZE: "摘要",
+  CONSISTENCY_CHECK: "一致性审核",
   workDesign: "作品设定",
   outline: "大纲主线",
   volumePlanning: "分卷规划",
   chapterSplit: "章节拆分",
   chapterPlan: "章节规划",
+  consistencyReview: "一致性审核",
   writing: "正文书写",
   knowledgeExtraction: "知识提炼",
 };

@@ -132,6 +132,142 @@ fn context_option(value: Option<bool>, default: bool) -> bool {
     value.unwrap_or(default)
 }
 
+fn resolve_task_profile(
+    state: &ProjectState,
+    preference: &novel_infrastructure::AiTaskPreference,
+) -> Result<Option<novel_infrastructure::ModelProfile>, ApiError> {
+    let store = state
+        .model_profiles
+        .lock()
+        .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+    let profiles = store
+        .list()
+        .map_err(ApiError::from)?
+        .into_iter()
+        .filter(|profile| profile.capability == novel_infrastructure::ModelCapability::Chat)
+        .collect::<Vec<_>>();
+    Ok(preference
+        .profile_id
+        .and_then(|profile_id| {
+            profiles
+                .iter()
+                .find(|profile| profile.id == profile_id)
+                .cloned()
+        })
+        .or_else(|| profiles.iter().find(|profile| profile.has_secret).cloned())
+        .or_else(|| profiles.into_iter().next()))
+}
+
+fn normalized_document_json(document_json: String) -> String {
+    if document_json.trim().is_empty() {
+        r#"{"type":"doc","content":[]}"#.to_owned()
+    } else {
+        document_json
+    }
+}
+
+fn assemble_task_context(
+    state: &ProjectState,
+    input: &novel_application::AssembleContextInput,
+    include_project_knowledge: bool,
+    preference: &novel_infrastructure::AiTaskPreference,
+) -> Result<novel_application::ContextPackage, ApiError> {
+    let mut context = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        let result = if include_project_knowledge {
+            manager.assemble_context_with_project_knowledge(input)
+        } else {
+            novel_application::ContextAssembler::assemble(input)
+        };
+        result.map_err(|error| ApiError {
+            code: "INVALID_INPUT",
+            message: error.to_string(),
+        })?
+    };
+    let current_draft = novel_application::document_text(&input.document_json).unwrap_or_default();
+    let project_knowledge = context.user_prompt.clone();
+    novel_infrastructure::apply_task_prompt_preferences(
+        &mut context,
+        preference,
+        &[
+            ("chapterTitle", input.chapter_title.as_str()),
+            ("chapterPlan", input.chapter_plan.as_str()),
+            (
+                "userInstruction",
+                input.instruction.as_deref().unwrap_or(""),
+            ),
+            ("selection", input.selection.as_deref().unwrap_or("")),
+            ("currentDraft", current_draft.as_str()),
+            ("projectKnowledge", project_knowledge.as_str()),
+        ],
+    );
+    Ok(context)
+}
+
+fn current_consistency_review_context_version(
+    state: &ProjectState,
+    chapter_id: uuid::Uuid,
+    target_revision_id: Option<uuid::Uuid>,
+    chapter_title: String,
+    chapter_plan: String,
+    document_json: String,
+    instruction: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    let preference =
+        load_ai_task_preference(state, novel_infrastructure::AiTaskKind::ConsistencyReview)?;
+    let Some(profile) = resolve_task_profile(state, &preference)? else {
+        return Ok(None);
+    };
+    let Ok(generation_options) = task_generation_options(
+        Some(novel_infrastructure::AiTaskKind::ConsistencyReview),
+        preference.temperature,
+        preference.max_output_tokens,
+    ) else {
+        return Ok(None);
+    };
+    let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
+    let input_token_budget = effective_task_input_budget(&profile, max_output_tokens, &preference);
+    let include_project_knowledge = context_option(
+        preference.prompt.context.include_project_knowledge,
+        novel_infrastructure::AiTaskKind::ConsistencyReview.default_include_project_knowledge(),
+    );
+    let include_current_draft = context_option(
+        preference.prompt.context.include_current_draft,
+        novel_infrastructure::AiTaskKind::ConsistencyReview.default_include_current_draft(),
+    );
+    let include_chapter_plan = context_option(
+        preference.prompt.context.include_chapter_plan,
+        novel_infrastructure::AiTaskKind::ConsistencyReview.default_include_chapter_plan(),
+    );
+    let input = novel_application::AssembleContextInput {
+        chapter_id,
+        target_revision_id,
+        action: novel_infrastructure::AiAction::ConsistencyCheck,
+        chapter_title,
+        chapter_plan: if include_chapter_plan {
+            chapter_plan
+        } else {
+            String::new()
+        },
+        document_json: if include_current_draft {
+            normalized_document_json(document_json)
+        } else {
+            r#"{"type":"doc","content":[]}"#.to_owned()
+        },
+        selection: None,
+        instruction,
+        input_token_budget,
+    };
+    let Ok(context) = assemble_task_context(state, &input, include_project_knowledge, &preference)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(context.context_version))
+}
+
 struct AiGenerationOutcome {
     output: String,
     fallback_profile: Option<novel_infrastructure::ModelProfile>,
@@ -2222,14 +2358,47 @@ pub(crate) async fn test_model_profile(
 pub(crate) fn list_ai_proposals(
     state: tauri::State<'_, ProjectState>,
     chapter_id: uuid::Uuid,
+    chapter_title: String,
+    chapter_plan: String,
+    document_json: String,
+    instruction: Option<String>,
 ) -> Result<Vec<novel_infrastructure::AiProposalReview>, ApiError> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
-        .list_ai_proposal_reviews(chapter_id)
-        .map_err(ApiError::from)
+    let (mut reviews, target_revision_id) = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        let reviews = manager
+            .list_ai_proposal_reviews(chapter_id)
+            .map_err(ApiError::from)?;
+        let target_revision_id = manager
+            .current_manuscript(chapter_id)
+            .map_err(ApiError::from)?
+            .map(|revision| revision.id);
+        (reviews, target_revision_id)
+    };
+    let needs_freshness = reviews.iter().any(|review| {
+        review.proposal.action == novel_infrastructure::AiAction::ConsistencyCheck
+            && review.proposal.status == novel_infrastructure::AiProposalStatus::Pending
+    });
+    if needs_freshness {
+        let current_context_version = current_consistency_review_context_version(
+            &state,
+            chapter_id,
+            target_revision_id,
+            chapter_title,
+            chapter_plan,
+            document_json,
+            instruction,
+        )
+        .ok()
+        .flatten();
+        novel_infrastructure::ProjectManager::mark_consistency_review_freshness(
+            &mut reviews,
+            current_context_version.as_deref(),
+        );
+    }
+    Ok(reviews)
 }
 
 #[tauri::command]
@@ -2353,15 +2522,19 @@ pub(crate) async fn generate_ai_proposal(
             .manager
             .lock()
             .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-        let revision = manager
+        manager
             .current_manuscript(chapter_id)
-            .map_err(ApiError::from)?;
-        revision.map(|value| value.id)
+            .map_err(ApiError::from)?
+            .map(|value| value.id)
     };
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
-    let task_kind = novel_infrastructure::AiTaskKind::Writing;
+    let task_kind = if action == novel_infrastructure::AiAction::ConsistencyCheck {
+        novel_infrastructure::AiTaskKind::ConsistencyReview
+    } else {
+        novel_infrastructure::AiTaskKind::Writing
+    };
     let task_preference = load_ai_task_preference(&state, task_kind)?;
     let include_project_knowledge = context_option(
         task_preference.prompt.context.include_project_knowledge,
@@ -2384,64 +2557,69 @@ pub(crate) async fn generate_ai_proposal(
         if !include_current_draft && action == novel_infrastructure::AiAction::Draft {
             r#"{"type":"doc","content":[]}"#.to_owned()
         } else {
-            document_json
+            normalized_document_json(document_json.clone())
         };
     let context_input = novel_application::AssembleContextInput {
         chapter_id,
         target_revision_id,
         action,
-        chapter_title,
+        chapter_title: chapter_title.clone(),
         chapter_plan: if include_chapter_plan {
-            chapter_plan
+            chapter_plan.clone()
         } else {
             String::new()
         },
         document_json: effective_document_json,
-        selection,
-        instruction,
+        selection: if action == novel_infrastructure::AiAction::ConsistencyCheck {
+            None
+        } else {
+            selection.clone()
+        },
+        instruction: instruction.clone(),
         input_token_budget,
     };
-    let mut context = {
-        let manager = state
-            .manager
-            .lock()
-            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-        let result = if include_project_knowledge {
-            manager.assemble_context_with_project_knowledge(&context_input)
-        } else {
-            novel_application::ContextAssembler::assemble(&context_input)
-        };
-        result.map_err(|error| ApiError {
-            code: "INVALID_INPUT",
-            message: error.to_string(),
-        })?
-    };
-    let current_draft =
-        novel_application::document_text(&context_input.document_json).unwrap_or_default();
-    let project_knowledge = context.user_prompt.clone();
-    novel_infrastructure::apply_task_prompt_preferences(
-        &mut context,
+    let mut context = assemble_task_context(
+        &state,
+        &context_input,
+        include_project_knowledge,
         &task_preference,
-        &[
-            ("chapterTitle", context_input.chapter_title.as_str()),
-            ("chapterPlan", context_input.chapter_plan.as_str()),
-            (
-                "userInstruction",
-                context_input.instruction.as_deref().unwrap_or(""),
-            ),
-            (
-                "selection",
-                context_input.selection.as_deref().unwrap_or(""),
-            ),
-            ("currentDraft", current_draft.as_str()),
-            ("projectKnowledge", project_knowledge.as_str()),
-        ],
-    );
+    )?;
     context.estimated_input_tokens = u32::try_from(
         (context.system_prompt.chars().count() + context.user_prompt.chars().count()).div_ceil(4),
     )
     .unwrap_or(u32::MAX)
     .min(profile.context_window.saturating_sub(max_output_tokens));
+    if matches!(
+        action,
+        novel_infrastructure::AiAction::Draft | novel_infrastructure::AiAction::Continue
+    ) {
+        let current_review_context_version = current_consistency_review_context_version(
+            &state,
+            chapter_id,
+            target_revision_id,
+            chapter_title,
+            chapter_plan,
+            document_json,
+            instruction,
+        )?;
+        let admission = {
+            let manager = state
+                .manager
+                .lock()
+                .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+            manager
+                .chapter_writing_admission(chapter_id, current_review_context_version.as_deref())
+                .map_err(ApiError::from)?
+        };
+        if !admission.allowed {
+            return Err(ApiError {
+                code: "WRITING_BLOCKED",
+                message: admission
+                    .reason
+                    .unwrap_or_else(|| "最近一次一致性审核未通过，暂时不能生成正文。".to_owned()),
+            });
+        }
+    }
     let secret = match profile.secret_ref.as_deref() {
         Some(secret_ref) => {
             Some(novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?)

@@ -86,6 +86,7 @@ pub enum AiAction {
     Rewrite,
     Polish,
     Summarize,
+    ConsistencyCheck,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -790,6 +791,7 @@ mod tests {
         assert!(super::AiAction::Rewrite.requires_selection());
         assert!(!super::AiAction::Continue.requires_selection());
         assert!(!super::AiAction::Draft.requires_selection());
+        assert!(!super::AiAction::ConsistencyCheck.requires_selection());
     }
 
     #[test]

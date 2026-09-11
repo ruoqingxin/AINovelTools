@@ -48,6 +48,7 @@ const TASK_MODEL_HINTS: Record<AiTaskKey, string[]> = {
   volumePlanning: ["pro", "terra", "sol", "flash"],
   chapterSplit: ["sol", "pro", "terra", "flash"],
   chapterPlan: ["pro", "sol", "terra", "flash"],
+  consistencyReview: ["pro", "sol", "terra", "flash"],
   writing: ["pro", "sol", "terra", "flash"],
   knowledgeExtraction: ["flash", "luna", "terra", "pro"],
 };

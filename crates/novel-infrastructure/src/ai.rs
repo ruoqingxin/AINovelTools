@@ -96,6 +96,7 @@ pub enum AiTaskKind {
     VolumePlanning,
     ChapterSplit,
     ChapterPlan,
+    ConsistencyReview,
     Writing,
     KnowledgeExtraction,
 }
@@ -128,6 +129,7 @@ impl AiTaskKind {
             Self::VolumePlanning => "volumePlanning",
             Self::ChapterSplit => "chapterSplit",
             Self::ChapterPlan => "chapterPlan",
+            Self::ConsistencyReview => "consistencyReview",
             Self::Writing => "writing",
             Self::KnowledgeExtraction => "knowledgeExtraction",
         }
@@ -141,6 +143,7 @@ impl AiTaskKind {
             Self::VolumePlanning => 0.55,
             Self::ChapterSplit => 0.3,
             Self::ChapterPlan => 0.35,
+            Self::ConsistencyReview => 0.2,
             Self::Writing => 0.9,
             Self::KnowledgeExtraction => 0.1,
         }
@@ -152,6 +155,7 @@ impl AiTaskKind {
             Self::WorkDesign
             | Self::ChapterSplit
             | Self::ChapterPlan
+            | Self::ConsistencyReview
             | Self::KnowledgeExtraction => 4_096,
             Self::Outline | Self::VolumePlanning => 6_144,
             Self::Writing => 8_192,
@@ -162,7 +166,10 @@ impl AiTaskKind {
     pub const fn default_input_token_budget(self) -> u32 {
         match self {
             Self::WorkDesign | Self::ChapterSplit | Self::ChapterPlan => 24_576,
-            Self::Outline | Self::VolumePlanning | Self::KnowledgeExtraction => 32_768,
+            Self::Outline
+            | Self::VolumePlanning
+            | Self::ConsistencyReview
+            | Self::KnowledgeExtraction => 32_768,
             Self::Writing => 49_152,
         }
     }
@@ -176,6 +183,7 @@ impl AiTaskKind {
                 | Self::VolumePlanning
                 | Self::ChapterSplit
                 | Self::ChapterPlan
+                | Self::ConsistencyReview
         )
     }
 
@@ -191,12 +199,12 @@ impl AiTaskKind {
 
     #[must_use]
     pub const fn default_include_current_draft(self) -> bool {
-        matches!(self, Self::Writing)
+        matches!(self, Self::Writing | Self::ConsistencyReview)
     }
 
     #[must_use]
     pub const fn default_include_chapter_plan(self) -> bool {
-        matches!(self, Self::Writing)
+        matches!(self, Self::Writing | Self::ConsistencyReview)
     }
 }
 
@@ -381,12 +389,67 @@ pub struct AiOutputValidation {
     pub estimated_output_tokens: u32,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AiConsistencyVerdict {
+    Pass,
+    Review,
+    Blocked,
+    NeedsInput,
+    Unparsed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AiConsistencySeverity {
+    Blocker,
+    Major,
+    Minor,
+    Info,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConsistencyFinding {
+    pub severity: AiConsistencySeverity,
+    pub problem: String,
+    pub evidence: String,
+    pub suggestion: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConsistencyReport {
+    pub verdict: AiConsistencyVerdict,
+    pub summary: String,
+    pub findings: Vec<AiConsistencyFinding>,
+    pub parse_warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ConsistencyReviewFreshness {
+    Missing,
+    Fresh,
+    Stale,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProposalReview {
     pub proposal: AiProposal,
     pub validation: AiOutputValidation,
     pub feedback: Option<AiProposalFeedback>,
+    pub consistency: Option<AiConsistencyReport>,
+    pub consistency_freshness: Option<ConsistencyReviewFreshness>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WritingAdmission {
+    pub allowed: bool,
+    pub blocker_count: usize,
+    pub reason: Option<String>,
+    pub review_freshness: ConsistencyReviewFreshness,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -494,6 +557,7 @@ pub struct AiTaskPreferences {
     pub volume_planning: AiTaskPreference,
     pub chapter_split: AiTaskPreference,
     pub chapter_plan: AiTaskPreference,
+    pub consistency_review: AiTaskPreference,
     pub writing: AiTaskPreference,
     pub knowledge_extraction: AiTaskPreference,
 }
@@ -507,6 +571,7 @@ pub struct ProjectAiTaskOverrides {
     pub volume_planning: Option<AiTaskPreference>,
     pub chapter_split: Option<AiTaskPreference>,
     pub chapter_plan: Option<AiTaskPreference>,
+    pub consistency_review: Option<AiTaskPreference>,
     pub writing: Option<AiTaskPreference>,
     pub knowledge_extraction: Option<AiTaskPreference>,
 }
@@ -520,6 +585,7 @@ impl ProjectAiTaskOverrides {
             AiTaskKind::VolumePlanning => self.volume_planning.as_ref(),
             AiTaskKind::ChapterSplit => self.chapter_split.as_ref(),
             AiTaskKind::ChapterPlan => self.chapter_plan.as_ref(),
+            AiTaskKind::ConsistencyReview => self.consistency_review.as_ref(),
             AiTaskKind::Writing => self.writing.as_ref(),
             AiTaskKind::KnowledgeExtraction => self.knowledge_extraction.as_ref(),
         }
@@ -535,18 +601,20 @@ impl AiTaskPreferences {
             AiTaskKind::VolumePlanning => &self.volume_planning,
             AiTaskKind::ChapterSplit => &self.chapter_split,
             AiTaskKind::ChapterPlan => &self.chapter_plan,
+            AiTaskKind::ConsistencyReview => &self.consistency_review,
             AiTaskKind::Writing => &self.writing,
             AiTaskKind::KnowledgeExtraction => &self.knowledge_extraction,
         }
     }
 
-    fn entries(&self) -> [&AiTaskPreference; 7] {
+    fn entries(&self) -> [&AiTaskPreference; 8] {
         [
             &self.work_design,
             &self.outline,
             &self.volume_planning,
             &self.chapter_split,
             &self.chapter_plan,
+            &self.consistency_review,
             &self.writing,
             &self.knowledge_extraction,
         ]
@@ -562,6 +630,8 @@ impl AiTaskPreferences {
             .set_recommended_defaults(AiTaskKind::ChapterSplit);
         self.chapter_plan
             .set_recommended_defaults(AiTaskKind::ChapterPlan);
+        self.consistency_review
+            .set_recommended_defaults(AiTaskKind::ConsistencyReview);
         self.writing.set_recommended_defaults(AiTaskKind::Writing);
         self.knowledge_extraction
             .set_recommended_defaults(AiTaskKind::KnowledgeExtraction);
@@ -687,6 +757,7 @@ impl Default for AiTaskPreferences {
             volume_planning: AiTaskPreference::recommended(AiTaskKind::VolumePlanning),
             chapter_split: AiTaskPreference::recommended(AiTaskKind::ChapterSplit),
             chapter_plan: AiTaskPreference::recommended(AiTaskKind::ChapterPlan),
+            consistency_review: AiTaskPreference::recommended(AiTaskKind::ConsistencyReview),
             writing: AiTaskPreference::recommended(AiTaskKind::Writing),
             knowledge_extraction: AiTaskPreference::recommended(AiTaskKind::KnowledgeExtraction),
         }
@@ -1459,6 +1530,7 @@ impl ProjectManager {
                 "volumePlanning" => overrides.volume_planning = Some(preference),
                 "chapterSplit" => overrides.chapter_split = Some(preference),
                 "chapterPlan" => overrides.chapter_plan = Some(preference),
+                "consistencyReview" => overrides.consistency_review = Some(preference),
                 "writing" => overrides.writing = Some(preference),
                 "knowledgeExtraction" => overrides.knowledge_extraction = Some(preference),
                 _ => {}
@@ -1503,6 +1575,10 @@ impl ProjectManager {
             (AiTaskKind::VolumePlanning, &preferences.volume_planning),
             (AiTaskKind::ChapterSplit, &preferences.chapter_split),
             (AiTaskKind::ChapterPlan, &preferences.chapter_plan),
+            (
+                AiTaskKind::ConsistencyReview,
+                &preferences.consistency_review,
+            ),
             (AiTaskKind::Writing, &preferences.writing),
             (
                 AiTaskKind::KnowledgeExtraction,
@@ -1649,6 +1725,11 @@ impl ProjectManager {
             .map_err(|_| AiError::ContextSerialization)?;
         let context_section_audit_json = serde_json::to_string(&context.section_audit)
             .map_err(|_| AiError::ContextSerialization)?;
+        let task_kind = if context.action == AiAction::ConsistencyCheck {
+            AiTaskKind::ConsistencyReview
+        } else {
+            AiTaskKind::Writing
+        };
         let transaction = session
             .database
             .connection
@@ -1667,7 +1748,7 @@ impl ProjectManager {
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 rusqlite::params![
                     task_id.to_string(),
-                    AiTaskKind::Writing.storage_key(),
+                    task_kind.storage_key(),
                     AiRunSource::Writing.storage_key(),
                     context.chapter_id.to_string(),
                     chapter_title,
@@ -2248,12 +2329,115 @@ impl ProjectManager {
         }
         Ok(proposals
             .into_iter()
-            .map(|proposal| AiProposalReview {
-                validation: validate_ai_output(proposal.action, &proposal.output_text),
-                feedback: feedback.remove(&proposal.id),
-                proposal,
+            .map(|proposal| {
+                let consistency = (proposal.action == AiAction::ConsistencyCheck)
+                    .then(|| parse_consistency_report(&proposal.output_text));
+                AiProposalReview {
+                    validation: validate_ai_output(proposal.action, &proposal.output_text),
+                    feedback: feedback.remove(&proposal.id),
+                    consistency,
+                    consistency_freshness: None,
+                    proposal,
+                }
             })
             .collect())
+    }
+
+    pub fn mark_consistency_review_freshness(
+        reviews: &mut [AiProposalReview],
+        current_context_version: Option<&str>,
+    ) {
+        let Some(current_context_version) = current_context_version else {
+            return;
+        };
+        for review in reviews {
+            if review.proposal.action == AiAction::ConsistencyCheck
+                && review.proposal.status == AiProposalStatus::Pending
+            {
+                review.consistency_freshness = Some(
+                    if review.proposal.context_version == current_context_version {
+                        ConsistencyReviewFreshness::Fresh
+                    } else {
+                        ConsistencyReviewFreshness::Stale
+                    },
+                );
+            }
+        }
+    }
+
+    pub fn chapter_writing_admission(
+        &self,
+        chapter_id: Uuid,
+        current_context_version: Option<&str>,
+    ) -> Result<WritingAdmission, AiError> {
+        let Some(review) = self
+            .list_ai_proposal_reviews(chapter_id)?
+            .into_iter()
+            .find(|item| {
+                item.proposal.action == AiAction::ConsistencyCheck
+                    && item.proposal.status == AiProposalStatus::Pending
+            })
+        else {
+            return Ok(WritingAdmission {
+                allowed: true,
+                blocker_count: 0,
+                reason: None,
+                review_freshness: ConsistencyReviewFreshness::Missing,
+            });
+        };
+        if current_context_version.is_some_and(|version| version != review.proposal.context_version)
+        {
+            return Ok(WritingAdmission {
+                allowed: true,
+                blocker_count: 0,
+                reason: Some(
+                    "审核依据已经变化，原审核结果已过期，不再参与正文生成准入。".to_owned(),
+                ),
+                review_freshness: ConsistencyReviewFreshness::Stale,
+            });
+        }
+        let Some(report) = review.consistency else {
+            return Ok(WritingAdmission {
+                allowed: true,
+                blocker_count: 0,
+                reason: None,
+                review_freshness: ConsistencyReviewFreshness::Missing,
+            });
+        };
+        match report.verdict {
+            AiConsistencyVerdict::Blocked => {
+                let blocker_count = report
+                    .findings
+                    .iter()
+                    .filter(|finding| finding.severity == AiConsistencySeverity::Blocker)
+                    .count();
+                Ok(WritingAdmission {
+                    allowed: false,
+                    blocker_count,
+                    reason: Some(format!(
+                        "最近一次一致性审核发现 {blocker_count} 个阻断问题，请先处理并关闭审核后再生成正文。"
+                    )),
+                    review_freshness: ConsistencyReviewFreshness::Fresh,
+                })
+            }
+            AiConsistencyVerdict::NeedsInput => Ok(WritingAdmission {
+                allowed: false,
+                blocker_count: 0,
+                reason: Some(
+                    "最近一次一致性审核缺少判断准入所需的正式设定，请补齐并关闭审核后再生成正文。"
+                        .to_owned(),
+                ),
+                review_freshness: ConsistencyReviewFreshness::Fresh,
+            }),
+            AiConsistencyVerdict::Pass
+            | AiConsistencyVerdict::Review
+            | AiConsistencyVerdict::Unparsed => Ok(WritingAdmission {
+                allowed: true,
+                blocker_count: 0,
+                reason: None,
+                review_freshness: ConsistencyReviewFreshness::Fresh,
+            }),
+        }
     }
 
     pub fn rate_ai_proposal(
@@ -2315,6 +2499,9 @@ impl ProjectManager {
     ) -> Result<AiProposal, AiError> {
         let current = self.get_ai_proposal(id)?;
         if current.status != AiProposalStatus::Pending || status == AiProposalStatus::Pending {
+            return Err(AiContractError::InvalidProposalTransition.into());
+        }
+        if current.action == AiAction::ConsistencyCheck && status != AiProposalStatus::Rejected {
             return Err(AiContractError::InvalidProposalTransition.into());
         }
         if status != AiProposalStatus::Rejected
@@ -2588,6 +2775,120 @@ fn validate_ai_task_preference(
     }
     Ok(())
 }
+fn parse_consistency_report(output_text: &str) -> AiConsistencyReport {
+    let trimmed = output_text.trim();
+    if trimmed.contains("[上下文不足]") {
+        return AiConsistencyReport {
+            verdict: AiConsistencyVerdict::NeedsInput,
+            summary: first_report_line(trimmed)
+                .unwrap_or_else(|| "正式设定不足，无法判断生成准入。".to_owned()),
+            findings: Vec::new(),
+            parse_warnings: Vec::new(),
+        };
+    }
+
+    let mut summary = None;
+    let mut findings = Vec::new();
+    let mut parse_warnings = Vec::new();
+    for raw_line in trimmed.lines() {
+        let line = raw_line.trim().trim_start_matches(['-', '*']).trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some((severity, body)) = parse_consistency_finding_line(line) else {
+            if summary.is_none() {
+                summary = Some(
+                    line.trim_start_matches("审核结论：")
+                        .trim_start_matches("审核结论:")
+                        .to_owned(),
+                );
+            }
+            continue;
+        };
+        let parts = split_consistency_finding(body);
+        if parts.is_empty() {
+            parse_warnings.push(format!("忽略缺少问题内容的审核行：{line}"));
+            continue;
+        }
+        if parts.len() < 3 {
+            parse_warnings.push(format!("问题缺少“依据｜建议”字段：{}", parts[0]));
+        }
+        findings.push(AiConsistencyFinding {
+            severity,
+            problem: parts.first().cloned().unwrap_or_default(),
+            evidence: parts.get(1).cloned().unwrap_or_default(),
+            suggestion: parts.get(2..).unwrap_or_default().join("｜"),
+        });
+    }
+
+    let verdict = if findings
+        .iter()
+        .any(|finding| finding.severity == AiConsistencySeverity::Blocker)
+    {
+        AiConsistencyVerdict::Blocked
+    } else if !findings.is_empty() {
+        AiConsistencyVerdict::Review
+    } else if summary
+        .as_deref()
+        .is_some_and(|value| value.contains("未发现冲突") || value.contains("通过"))
+    {
+        AiConsistencyVerdict::Pass
+    } else {
+        AiConsistencyVerdict::Unparsed
+    };
+    AiConsistencyReport {
+        verdict,
+        summary: summary.unwrap_or_else(|| "审核报告未提供明确结论。".to_owned()),
+        findings,
+        parse_warnings,
+    }
+}
+
+fn first_report_line(output_text: &str) -> Option<String> {
+    output_text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn parse_consistency_finding_line(line: &str) -> Option<(AiConsistencySeverity, &str)> {
+    let rest = line.strip_prefix('[')?;
+    let marker_end = rest.find(']')?;
+    let severity = match rest[..marker_end].trim() {
+        "阻断" | "阻断级" | "BLOCKER" | "blocker" => AiConsistencySeverity::Blocker,
+        "严重" | "重要" | "MAJOR" | "major" => AiConsistencySeverity::Major,
+        "一般" | "MINOR" | "minor" => AiConsistencySeverity::Minor,
+        "提示" | "建议" | "INFO" | "info" => AiConsistencySeverity::Info,
+        _ => return None,
+    };
+    Some((
+        severity,
+        rest[marker_end + 1..]
+            .trim()
+            .trim_start_matches([':', '：'])
+            .trim(),
+    ))
+}
+
+fn split_consistency_finding(body: &str) -> Vec<String> {
+    let separator = if body.contains('｜') {
+        '｜'
+    } else if body.contains('|') {
+        '|'
+    } else {
+        return body
+            .trim()
+            .is_empty()
+            .then(Vec::new)
+            .unwrap_or_else(|| vec![body.trim().to_owned()]);
+    };
+    body.split(separator)
+        .map(str::trim)
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 fn validate_ai_output(action: AiAction, output_text: &str) -> AiOutputValidation {
     let trimmed = output_text.trim();
     let needs_input = trimmed.contains("[上下文不足]");
@@ -2598,7 +2899,7 @@ fn validate_ai_output(action: AiAction, output_text: &str) -> AiOutputValidation
         .count();
     let mut messages = Vec::new();
     if needs_input {
-        messages.push("模型没有生成正文，要求先补齐正式设定。".to_owned());
+        messages.push("模型没有生成可用结果，要求先补齐正式设定。".to_owned());
     } else if trimmed.is_empty() {
         messages.push("输出为空，不能形成候选。".to_owned());
     } else {
@@ -2659,6 +2960,7 @@ fn action_str(value: AiAction) -> &'static str {
         AiAction::Rewrite => "REWRITE",
         AiAction::Polish => "POLISH",
         AiAction::Summarize => "SUMMARIZE",
+        AiAction::ConsistencyCheck => "CONSISTENCY_CHECK",
     }
 }
 fn parse_action(value: &str) -> AiAction {
@@ -2667,6 +2969,7 @@ fn parse_action(value: &str) -> AiAction {
         "REWRITE" => AiAction::Rewrite,
         "POLISH" => AiAction::Polish,
         "SUMMARIZE" => AiAction::Summarize,
+        "CONSISTENCY_CHECK" => AiAction::ConsistencyCheck,
         _ => AiAction::Continue,
     }
 }
@@ -2754,6 +3057,7 @@ mod tests {
             novel_domain::AiAction::Rewrite,
             novel_domain::AiAction::Polish,
             novel_domain::AiAction::Summarize,
+            novel_domain::AiAction::ConsistencyCheck,
         ] {
             assert_eq!(super::parse_action(super::action_str(action)), action);
         }
@@ -2770,8 +3074,34 @@ mod tests {
             validation
                 .messages
                 .iter()
-                .any(|message| message.contains("没有生成正文"))
+                .any(|message| message.contains("没有生成可用结果"))
         );
+    }
+
+    #[test]
+    fn consistency_report_parser_classifies_findings_and_admission() {
+        let report = super::parse_consistency_report(
+            "审核结论：阻断\n[阻断] 主角姓名未确定｜主角卡未建立｜先确定主角姓名并建立主角卡。\n[提示] 开场动机可以更具体｜执行卡只写了寻找师父｜补充动机来源。",
+        );
+        assert_eq!(report.verdict, super::AiConsistencyVerdict::Blocked);
+        assert_eq!(report.findings.len(), 2);
+        assert_eq!(
+            report.findings[0].severity,
+            super::AiConsistencySeverity::Blocker
+        );
+        assert_eq!(report.findings[0].problem, "主角姓名未确定");
+        assert_eq!(report.findings[0].evidence, "主角卡未建立");
+        assert_eq!(
+            report.findings[0].suggestion,
+            "先确定主角姓名并建立主角卡。"
+        );
+
+        let passed = super::parse_consistency_report("审核结论：通过（未发现冲突）");
+        assert_eq!(passed.verdict, super::AiConsistencyVerdict::Pass);
+
+        let incomplete = super::parse_consistency_report("[严重] 境界边界冲突");
+        assert_eq!(incomplete.findings.len(), 1);
+        assert!(!incomplete.parse_warnings.is_empty());
     }
 
     #[test]
@@ -2792,12 +3122,13 @@ mod tests {
 
     #[test]
     fn ai_task_defaults_match_product_recommendations() {
-        let cases: [(super::AiTaskKind, f64, u32); 7] = [
+        let cases: [(super::AiTaskKind, f64, u32); 8] = [
             (super::AiTaskKind::WorkDesign, 0.45, 4_096),
             (super::AiTaskKind::Outline, 0.6, 6_144),
             (super::AiTaskKind::VolumePlanning, 0.55, 6_144),
             (super::AiTaskKind::ChapterSplit, 0.3, 4_096),
             (super::AiTaskKind::ChapterPlan, 0.35, 4_096),
+            (super::AiTaskKind::ConsistencyReview, 0.2, 4_096),
             (super::AiTaskKind::Writing, 0.9, 8_192),
             (super::AiTaskKind::KnowledgeExtraction, 0.1, 4_096),
         ];
@@ -2900,6 +3231,7 @@ mod tests {
             volume_planning: preference.clone(),
             chapter_split: preference.clone(),
             chapter_plan: preference.clone(),
+            consistency_review: preference.clone(),
             writing: preference.clone(),
             knowledge_extraction: preference,
         };
@@ -2981,6 +3313,11 @@ mod tests {
         assert_eq!(preferences.chapter_split.max_output_tokens, Some(4_096));
         assert_eq!(preferences.chapter_plan.temperature, Some(0.35));
         assert_eq!(preferences.chapter_plan.max_output_tokens, Some(4_096));
+        assert_eq!(preferences.consistency_review.temperature, Some(0.2));
+        assert_eq!(
+            preferences.consistency_review.max_output_tokens,
+            Some(4_096)
+        );
         assert_eq!(preferences.writing.temperature, Some(0.9));
         assert_eq!(preferences.writing.max_output_tokens, Some(8_192));
         assert_eq!(preferences.knowledge_extraction.temperature, Some(0.1));
@@ -2999,6 +3336,7 @@ mod tests {
             volume_planning: super::AiTaskPreference::default(),
             chapter_split: super::AiTaskPreference::default(),
             chapter_plan: super::AiTaskPreference::default(),
+            consistency_review: super::AiTaskPreference::default(),
             writing: super::AiTaskPreference::default(),
             knowledge_extraction: super::AiTaskPreference::default(),
         };
@@ -3024,6 +3362,8 @@ mod tests {
         );
         assert_eq!(saved.chapter_plan.temperature, Some(0.35));
         assert_eq!(saved.chapter_plan.max_output_tokens, Some(4_096));
+        assert_eq!(saved.consistency_review.temperature, Some(0.2));
+        assert_eq!(saved.consistency_review.max_output_tokens, Some(4_096));
         assert_eq!(saved.writing.temperature, Some(0.9));
         assert_eq!(saved.writing.max_output_tokens, Some(8_192));
         assert_eq!(
