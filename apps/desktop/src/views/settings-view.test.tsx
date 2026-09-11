@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   saveAiBudgetSettings: vi.fn(),
   listAiRuns: vi.fn(),
   getAiUsageSummary: vi.fn(),
+  getAiQualitySummary: vi.fn(),
   getProjectAiTaskOverrides: vi.fn(),
   saveProjectAiTaskOverride: vi.fn(),
   saveProjectAiTaskOverrides: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("../lib/tauri-client", async () => {
     saveAiBudgetSettings: mocks.saveAiBudgetSettings,
     listAiRuns: mocks.listAiRuns,
     getAiUsageSummary: mocks.getAiUsageSummary,
+    getAiQualitySummary: mocks.getAiQualitySummary,
     getProjectAiTaskOverrides: mocks.getProjectAiTaskOverrides,
     saveProjectAiTaskOverride: mocks.saveProjectAiTaskOverride,
     saveProjectAiTaskOverrides: mocks.saveProjectAiTaskOverrides,
@@ -65,6 +67,13 @@ describe("SettingsView", () => {
       total: [],
       daily: [],
       byTask: [],
+    });
+    mocks.getAiQualitySummary.mockResolvedValue({
+      totalProposals: 0,
+      totalRated: 0,
+      totalHelpful: 0,
+      totalWithIssues: 0,
+      groups: [],
     });
     mocks.getProjectAiTaskOverrides.mockResolvedValue({
       available: false,
@@ -469,5 +478,46 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
 
     expect(await screen.findByText("今日估算费用已达到每日预算的 80%")).toBeVisible();
+  });
+
+  it("shows model and prompt quality review metrics", async () => {
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        inputPriceMicrosPerMillion: 2500000, outputPriceMicrosPerMillion: 10000000,
+        priceCurrency: "USD", secretRef: "model-profile:deepseek-profile", hasSecret: true,
+        createdAt: "0", updatedAt: "0",
+      },
+    ]);
+    mocks.getAiQualitySummary.mockResolvedValue({
+      totalProposals: 3,
+      totalRated: 3,
+      totalHelpful: 2,
+      totalWithIssues: 1,
+      groups: [{
+        taskKey: "writing",
+        action: "DRAFT",
+        promptVersion: "r3-writing-v4+task-abc",
+        profileName: "DeepSeek 写作",
+        proposalCount: 3,
+        acceptedCount: 2,
+        ratedCount: 3,
+        helpfulCount: 2,
+        notHelpfulCount: 1,
+        validCount: 2,
+        warningCount: 1,
+        invalidCount: 0,
+      }],
+    });
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+
+    expect(await screen.findByText("整章创作 · DeepSeek 写作")).toBeVisible();
+    expect(screen.getByText("有帮助 67%")).toBeVisible();
+    expect(screen.getByText("校验问题 33%")).toBeVisible();
+    expect(screen.getByText("采用 67%")).toBeVisible();
   });
 });

@@ -13,6 +13,7 @@ import {
 import {
   errorMessage,
   getAiBudgetSettings,
+  getAiQualitySummary,
   getAiUsageSummary,
   getProjectAiTaskOverrides,
   listAiRuns,
@@ -179,6 +180,11 @@ function budgetState(costMicros: number | null | undefined, limitMicros: number 
   return "normal";
 }
 
+function percentage(value: number, total: number) {
+  if (!total) return null;
+  return Math.round((value / total) * 100);
+}
+
 function hasCustomGeneration(
   preference: AiTaskPreference,
   task: AiTaskKey,
@@ -285,6 +291,10 @@ export function AiTaskModelSettings() {
   const usage = useQuery({
     queryKey: ["ai-usage-summary", 30],
     queryFn: () => getAiUsageSummary(30),
+  });
+  const quality = useQuery({
+    queryKey: ["ai-quality-summary", 20],
+    queryFn: () => getAiQualitySummary(20),
   });
   const budget = useQuery({
     queryKey: ["ai-budget-settings"],
@@ -742,6 +752,20 @@ export function AiTaskModelSettings() {
           {projectBudgetState && projectBudgetState !== "normal" ? <span className="ai-budget-warning" data-state={projectBudgetState}>项目累计估算费用已达到项目预算的 {Math.round((projectBudgetCost! / budgetDraft.projectLimitMicros!) * 100)}%</span> : null}
         </div>
         <p className="ai-usage-note">费用按模型单价和估算 token 计算，仅用于预算参考，不代表服务商最终账单。</p>
+        <div className="ai-quality-review">
+          <div className="ai-task-routing-heading">
+            <div><strong>质量回顾</strong><span>按模型和提示词版本汇总正文候选；样本不足时不据此自动切换配置。</span></div>
+            <small>{quality.data ? `${quality.data.totalProposals} 条候选 · ${quality.data.totalRated} 条评价` : quality.isPending ? "统计中…" : "无数据"}</small>
+          </div>
+          {quality.isError ? <p className="project-error">质量统计加载失败：{errorMessage(quality.error)}</p> : quality.data?.groups.length ? <div className="ai-quality-list">
+            {quality.data.groups.map((group) => <article className="ai-quality-row" key={`${group.taskKey}:${group.action}:${group.promptVersion}:${group.profileName}`}>
+              <div><strong>{RUN_ACTION_LABELS[group.action] ?? group.taskKey} · {group.profileName}</strong><small>{group.promptVersion} · {group.proposalCount} 条候选</small></div>
+              <span>有帮助 {percentage(group.helpfulCount, group.ratedCount) ?? "—"}{percentage(group.helpfulCount, group.ratedCount) === null ? "" : "%"}</span>
+              <span data-warning={group.warningCount + group.invalidCount > 0 || undefined}>校验问题 {percentage(group.warningCount + group.invalidCount, group.proposalCount) ?? 0}%</span>
+              <span>采用 {percentage(group.acceptedCount, group.proposalCount) ?? 0}%</span>
+            </article>)}
+          </div> : <p className="plan-empty">生成并评价正文候选后，这里会显示质量对比。</p>}
+        </div>
         {runs.isPending ? <p className="plan-empty">正在加载运行记录…</p> : runs.isError ? <p className="project-error">运行记录加载失败：{errorMessage(runs.error)}</p> : runs.data?.length ? <div className="ai-run-list">
           {runs.data.map((run) => <article className="ai-run-row" key={run.id}>
             <div><strong>{RUN_ACTION_LABELS[run.action] ?? run.taskKey} · {run.chapterTitle}</strong><small>{new Date(run.createdAt).toLocaleString()} · {run.profileName} · {run.source === "PLANNING" ? "规划" : run.source === "KNOWLEDGE_EXTRACTION" ? "知识提炼" : "正文"}</small></div>

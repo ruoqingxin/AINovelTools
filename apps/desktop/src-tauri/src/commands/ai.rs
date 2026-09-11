@@ -2277,6 +2277,20 @@ pub(crate) fn get_ai_usage_summary(
 }
 
 #[tauri::command]
+pub(crate) fn get_ai_quality_summary(
+    state: tauri::State<'_, ProjectState>,
+    limit: Option<u32>,
+) -> Result<novel_infrastructure::AiQualitySummary, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .get_ai_quality_summary(limit.unwrap_or(20))
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn decide_ai_proposal(
     state: tauri::State<'_, ProjectState>,
     id: uuid::Uuid,

@@ -33,11 +33,11 @@ mod materials_store;
 mod search_store;
 pub use ai::{
     AiBudgetSettings, AiError, AiOutputValidation, AiProposalFeedback, AiProposalFeedbackRating,
-    AiProposalReview, AiRun, AiRunSource, AiRunStart, AiTaskContextPreference, AiTaskKind,
-    AiTaskPreference, AiTaskPreferences, AiTaskPromptPreference, AiUsageCurrencySummary,
-    AiUsageDailySummary, AiUsageSummary, AiUsageTaskSummary, EmbeddingGateway, GenerationOptions,
-    ModelGateway, ModelProfileStore, ProjectAiTaskOverrides, SecretStore,
-    apply_task_prompt_preferences, render_prompt_template,
+    AiProposalReview, AiQualityGroup, AiQualitySummary, AiRun, AiRunSource, AiRunStart,
+    AiTaskContextPreference, AiTaskKind, AiTaskPreference, AiTaskPreferences,
+    AiTaskPromptPreference, AiUsageCurrencySummary, AiUsageDailySummary, AiUsageSummary,
+    AiUsageTaskSummary, EmbeddingGateway, GenerationOptions, ModelGateway, ModelProfileStore,
+    ProjectAiTaskOverrides, SecretStore, apply_task_prompt_preferences, render_prompt_template,
 };
 pub use entity_store::EntityStoreError;
 pub use knowledge_store::KnowledgeStoreError;
@@ -341,6 +341,13 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
     FeatureDescriptor {
         id: "ai_usage_governance",
         display_name: "AI 用量估算与软预算",
+        stage: "AI",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "ai_quality_review",
+        display_name: "AI 质量回顾与提示词版本对比",
         stage: "AI",
         status: FeatureStatus::Implemented,
         unavailable_reason: None,
@@ -3115,6 +3122,14 @@ mod tests {
         manager
             .decide_ai_proposal(proposal.id, super::AiProposalStatus::Accepted, None)
             .expect("accept");
+        let quality = manager.get_ai_quality_summary(20).expect("quality summary");
+        assert_eq!(quality.total_proposals, 1);
+        assert_eq!(quality.total_rated, 1);
+        assert_eq!(quality.total_helpful, 1);
+        assert_eq!(quality.total_with_issues, 1);
+        assert_eq!(quality.groups.len(), 1);
+        assert_eq!(quality.groups[0].accepted_count, 1);
+        assert_eq!(quality.groups[0].warning_count, 1);
         assert!(
             manager
                 .current_manuscript(chapter.id)

@@ -241,6 +241,27 @@ export type AiBudgetSettings = {
   dailyLimitMicros: number | null;
   projectLimitMicros: number | null;
 };
+export type AiQualityGroup = {
+  taskKey: string;
+  action: string;
+  promptVersion: string;
+  profileName: string;
+  proposalCount: number;
+  acceptedCount: number;
+  ratedCount: number;
+  helpfulCount: number;
+  notHelpfulCount: number;
+  validCount: number;
+  warningCount: number;
+  invalidCount: number;
+};
+export type AiQualitySummary = {
+  totalProposals: number;
+  totalRated: number;
+  totalHelpful: number;
+  totalWithIssues: number;
+  groups: AiQualityGroup[];
+};
 export type AiProposalFeedback = {
   proposalId: string; rating: "HELPFUL" | "NOT_HELPFUL"; note: string | null;
   createdAt: string; updatedAt: string;
@@ -498,6 +519,9 @@ export function listAiRuns(limit = 20) {
 }
 export function getAiUsageSummary(days = 30) {
   return invoke<AiUsageSummary>("get_ai_usage_summary", { days });
+}
+export function getAiQualitySummary(limit = 20) {
+  return invoke<AiQualitySummary>("get_ai_quality_summary", { limit });
 }
 export function rateAiProposal(id: string, rating: "HELPFUL" | "NOT_HELPFUL", note?: string) {
   return invoke<AiProposalFeedback>("rate_ai_proposal", { id, rating, note });

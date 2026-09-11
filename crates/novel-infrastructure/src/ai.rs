@@ -284,6 +284,33 @@ pub struct AiUsageTaskSummary {
     pub usage: AiUsageCurrencySummary,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiQualitySummary {
+    pub total_proposals: u32,
+    pub total_rated: u32,
+    pub total_helpful: u32,
+    pub total_with_issues: u32,
+    pub groups: Vec<AiQualityGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiQualityGroup {
+    pub task_key: String,
+    pub action: String,
+    pub prompt_version: String,
+    pub profile_name: String,
+    pub proposal_count: u32,
+    pub accepted_count: u32,
+    pub rated_count: u32,
+    pub helpful_count: u32,
+    pub not_helpful_count: u32,
+    pub valid_count: u32,
+    pub warning_count: u32,
+    pub invalid_count: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiBudgetSettings {
@@ -2054,6 +2081,108 @@ impl ProjectManager {
         })
     }
 
+    pub fn get_ai_quality_summary(&self, limit: u32) -> Result<AiQualitySummary, AiError> {
+        let session = self.current.as_ref().ok_or(AiError::NoProject)?;
+        let mut statement = session
+            .database
+            .connection
+            .prepare(
+                "SELECT r.task_key, r.action, r.prompt_version,
+                        COALESCE(p.name, '已删除模型'), pr.status, pr.output_text,
+                        f.rating
+                 FROM ai_proposals pr
+                 INNER JOIN ai_run_records r ON r.id = pr.task_id
+                 LEFT JOIN model_profiles p ON p.id = r.profile_id
+                 LEFT JOIN ai_proposal_feedback f ON f.proposal_id = pr.id",
+            )
+            .map_err(DatabaseError::from)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
+            })
+            .map_err(DatabaseError::from)?;
+        let mut groups = HashMap::<(String, String, String, String), QualityAggregate>::new();
+        for row in rows {
+            let (task_key, action, prompt_version, profile_name, status, output_text, rating) =
+                row.map_err(DatabaseError::from)?;
+            let validation = validate_ai_output(parse_action(&action), &output_text);
+            let aggregate = groups
+                .entry((task_key, action, prompt_version, profile_name))
+                .or_default();
+            aggregate.proposals = aggregate.proposals.saturating_add(1);
+            if matches!(status.as_str(), "ACCEPTED" | "PARTIALLY_ACCEPTED") {
+                aggregate.accepted = aggregate.accepted.saturating_add(1);
+            }
+            match rating.as_deref() {
+                Some("HELPFUL") => {
+                    aggregate.rated = aggregate.rated.saturating_add(1);
+                    aggregate.helpful = aggregate.helpful.saturating_add(1);
+                }
+                Some("NOT_HELPFUL") => {
+                    aggregate.rated = aggregate.rated.saturating_add(1);
+                    aggregate.not_helpful = aggregate.not_helpful.saturating_add(1);
+                }
+                _ => {}
+            }
+            match validation.status.as_str() {
+                "VALID" => aggregate.valid = aggregate.valid.saturating_add(1),
+                "WARNING" => aggregate.warnings = aggregate.warnings.saturating_add(1),
+                _ => aggregate.invalid = aggregate.invalid.saturating_add(1),
+            }
+        }
+
+        let mut summary = AiQualitySummary {
+            total_proposals: 0,
+            total_rated: 0,
+            total_helpful: 0,
+            total_with_issues: 0,
+            groups: Vec::new(),
+        };
+        for ((task_key, action, prompt_version, profile_name), aggregate) in groups {
+            summary.total_proposals = summary.total_proposals.saturating_add(aggregate.proposals);
+            summary.total_rated = summary.total_rated.saturating_add(aggregate.rated);
+            summary.total_helpful = summary.total_helpful.saturating_add(aggregate.helpful);
+            summary.total_with_issues = summary
+                .total_with_issues
+                .saturating_add(aggregate.warnings)
+                .saturating_add(aggregate.invalid);
+            summary.groups.push(AiQualityGroup {
+                task_key,
+                action,
+                prompt_version,
+                profile_name,
+                proposal_count: aggregate.proposals,
+                accepted_count: aggregate.accepted,
+                rated_count: aggregate.rated,
+                helpful_count: aggregate.helpful,
+                not_helpful_count: aggregate.not_helpful,
+                valid_count: aggregate.valid,
+                warning_count: aggregate.warnings,
+                invalid_count: aggregate.invalid,
+            });
+        }
+        summary.groups.sort_by(|left, right| {
+            right
+                .proposal_count
+                .cmp(&left.proposal_count)
+                .then_with(|| left.task_key.cmp(&right.task_key))
+                .then_with(|| left.prompt_version.cmp(&right.prompt_version))
+                .then_with(|| left.profile_name.cmp(&right.profile_name))
+        });
+        summary
+            .groups
+            .truncate(usize::try_from(limit.clamp(1, 100)).unwrap_or(100));
+        Ok(summary)
+    }
+
     pub fn list_ai_proposals(&self, chapter_id: Uuid) -> Result<Vec<AiProposal>, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
         let mut statement = session.database.connection.prepare(
@@ -2257,6 +2386,18 @@ impl UsageAggregate {
             estimated_cost_micros: self.estimated_cost_micros,
         }
     }
+}
+
+#[derive(Default)]
+struct QualityAggregate {
+    proposals: u32,
+    accepted: u32,
+    rated: u32,
+    helpful: u32,
+    not_helpful: u32,
+    valid: u32,
+    warnings: u32,
+    invalid: u32,
 }
 
 fn estimate_run_cost_micros(
