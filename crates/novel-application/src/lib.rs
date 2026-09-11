@@ -1,7 +1,9 @@
 //! Application use cases and infrastructure ports.
 
+mod ai_evaluation;
 mod context;
 mod planning_context;
+pub use ai_evaluation::*;
 pub use context::*;
 pub use planning_context::*;
 

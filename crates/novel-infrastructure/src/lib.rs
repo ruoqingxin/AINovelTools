@@ -360,6 +360,13 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         unavailable_reason: None,
     },
     FeatureDescriptor {
+        id: "ai_evaluation_baseline",
+        display_name: "AI 脱敏评测样本与固定回归基线",
+        stage: "AI",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
         id: "r4_project_settings",
         display_name: "R4 项目设置基线",
         stage: "R4",
