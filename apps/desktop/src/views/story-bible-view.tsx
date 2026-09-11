@@ -287,7 +287,7 @@ export function StoryBibleView() {
           {!selected ? <div className="knowledge-import-panel entity-import-panel">
             <div className="section-heading"><h2>从文件提炼候选</h2><span>先定义主题，再让 AI 提炼</span></div>
             <div className="story-bible-toolbar import-toolbar">
-              <AiModelNote taskLabel="知识提炼" profile={extractionProfile} preference={extractionPreference} />
+              <AiModelNote taskLabel="知识提炼" taskKey="knowledgeExtraction" profile={extractionProfile} preference={extractionPreference} />
               <label className="file-picker"><FileUp size={15} />{importFileName || "选择 TXT / Markdown 文件"}<input type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readImportFile(file); }} /></label>
               <button type="button" className="primary-action" onClick={() => void extractImportItems()} disabled={!importSourceText || !extractionProfile?.hasSecret || !form.name.trim() || !summaryText.trim() || !scopeText.trim() || importBusy}><FileUp size={15} />{importBusy ? "AI 提炼中…" : extractionFailed ? "重试提炼" : "按主题提炼"}</button>
             </div>

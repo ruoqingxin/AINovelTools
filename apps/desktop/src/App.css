@@ -1122,6 +1122,31 @@ button:focus-visible {
   text-decoration: none;
 }
 
+.ai-model-note-preflight {
+  grid-column: 2 / -1;
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding-top: 5px;
+  border-top: 1px solid #e0e9f5;
+}
+
+.ai-model-note-preflight span {
+  color: #7183a0;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.ai-model-note-preflight span[data-custom] {
+  color: #8a6a31;
+}
+
+.ai-model-note-preflight span[data-warning] {
+  color: #aa5f28;
+  font-weight: 700;
+}
+
 .connection-status {
   margin: 9px 0 0;
   color: var(--accent-strong);
@@ -2295,6 +2320,17 @@ button:focus-visible {
 .ai-task-routing-heading > div { display:grid; gap:4px; }
 .ai-task-routing-heading strong { color:#30496f; font-size:13px; }
 .ai-task-routing-heading span,.ai-task-routing-heading small { color:#8294b1; font-size:10px; line-height:1.5; }
+.ai-task-presets { display:grid; gap:9px; padding:12px; border:1px solid #d9e4f3; border-radius:7px; background:#f8fbff; }
+.ai-task-presets-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+.ai-task-presets-heading > div { display:grid; gap:3px; }
+.ai-task-presets-heading strong { color:#344e76; font-size:11px; }
+.ai-task-presets-heading span,.ai-task-presets-heading small { color:#8294b1; font-size:9px; line-height:1.45; }
+.ai-task-preset-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:6px; }
+.ai-task-preset-list button { display:grid; min-width:0; gap:3px; padding:8px 9px; border:1px solid #d6e2f1; border-radius:6px; color:#4c6488; background:#fff; text-align:left; }
+.ai-task-preset-list button:hover { border-color:#9db9e9; background:#f4f8ff; }
+.ai-task-preset-list button[data-active] { border-color:#7ea6ec; color:#285dcb; background:#edf3ff; box-shadow:inset 2px 0 0 #3f78f6; }
+.ai-task-preset-list strong { font-size:10px; }
+.ai-task-preset-list small { color:#8294b1; font-size:9px; line-height:1.4; }
 .ai-task-routing-list { display:grid; gap:7px; }
 .ai-task-routing-row { display:grid; grid-template-columns:minmax(170px,.8fr) minmax(250px,1.2fr) minmax(220px,1fr) 120px; align-items:center; gap:12px; padding:11px 12px; border:1px solid #dbe5f3; border-radius:7px; background:#fbfdff; }
 .ai-task-routing-copy { display:grid; min-width:0; gap:3px; }

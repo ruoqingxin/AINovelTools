@@ -10,6 +10,12 @@ import {
   useAiTaskPreferences,
   type AiTaskKey,
 } from "../lib/ai-task-preferences";
+import { AI_TASK_PRESETS, applyAiTaskPreset } from "../lib/ai-task-presets";
+import {
+  estimateNextRunCost,
+  formatCost,
+  nextRunCostLabel,
+} from "../lib/ai-cost-estimate";
 import {
   errorMessage,
   getAiBudgetSettings,
@@ -30,7 +36,6 @@ import {
   type AiTaskPromptPreference,
   type AiRun,
   type AiUsageCurrencySummary,
-  type AiUsageTaskSummary,
   type ModelProfile,
   type ProjectAiTaskOverrides,
 } from "../lib/tauri-client";
@@ -113,49 +118,6 @@ function mergeProjectPreferences(
   return Object.fromEntries(
     AI_TASK_DEFINITIONS.map(({ key }) => [key, overrides[key] ?? globalPreferences[key]]),
   ) as AiTaskPreferences;
-}
-
-function formatCost(micros: number | null, currency: string) {
-  if (micros === null) return "未设置单价";
-  const amount = micros / 1_000_000;
-  const formatted = amount < 0.01 ? amount.toFixed(4) : amount.toFixed(2);
-  return `${currency} ${formatted}`;
-}
-
-function averageTaskTokens(rows: AiUsageTaskSummary[] | undefined, taskKey: AiTaskKey) {
-  const matches = rows?.filter((row) => row.taskKey === taskKey) ?? [];
-  const runCount = matches.reduce((total, row) => total + row.runCount, 0);
-  if (!runCount) return null;
-  return {
-    runCount,
-    inputTokens: matches.reduce((total, row) => total + row.inputTokens, 0) / runCount,
-    outputTokens: matches.reduce((total, row) => total + row.outputTokens, 0) / runCount,
-  };
-}
-
-function estimateNextRunCost(
-  rows: AiUsageTaskSummary[] | undefined,
-  taskKey: AiTaskKey,
-  profile: ModelProfile | undefined,
-  days = 30,
-) {
-  if (!profile) return "选择模型后预估费用";
-  const inputPrice = profile.inputPriceMicrosPerMillion;
-  const outputPrice = profile.outputPriceMicrosPerMillion;
-  if (
-    !Number.isFinite(inputPrice)
-    || !Number.isFinite(outputPrice)
-    || (inputPrice <= 0 && outputPrice <= 0)
-  ) {
-    return "未设置模型单价";
-  }
-  const average = averageTaskTokens(rows, taskKey);
-  if (!average) return "预估样本不足";
-  const estimatedMicros = Math.round(
-    average.inputTokens * inputPrice / 1_000_000
-    + average.outputTokens * outputPrice / 1_000_000,
-  );
-  return `预估下一次约 ${formatCost(estimatedMicros, profile.priceCurrency || "CNY")} · 基于近 ${days} 天 ${average.runCount} 次记录`;
 }
 
 function formatRunDuration(createdAt: string, finishedAt: string | null) {
@@ -371,6 +333,7 @@ export function AiTaskModelSettings() {
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<AiTaskKey>("workDesign");
   const [scope, setScope] = useState<"GLOBAL" | "PROJECT">("GLOBAL");
+  const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const instructionRef = useRef<HTMLTextAreaElement>(null);
   const chatProfiles = profiles.data?.filter((profile) => profile.capability === "CHAT") ?? [];
   const preferredProfile = chatProfiles.find((profile) => profile.hasSecret) ?? chatProfiles[0];
@@ -444,6 +407,7 @@ export function AiTaskModelSettings() {
       ...current,
       [task]: { ...current[task], ...patch },
     }));
+    setActivePresetId(null);
     setNotice(null);
   }
 
@@ -459,6 +423,7 @@ export function AiTaskModelSettings() {
         },
       },
     }));
+    setActivePresetId(null);
     setNotice(null);
   }
 
@@ -477,6 +442,7 @@ export function AiTaskModelSettings() {
         },
       },
     }));
+    setActivePresetId(null);
     setNotice(null);
   }
 
@@ -497,6 +463,7 @@ export function AiTaskModelSettings() {
         context: { ...defaults.prompt.context },
       },
     });
+    setActivePresetId(null);
   }
 
   function insertPromptVariable(variable: string) {
@@ -541,6 +508,17 @@ export function AiTaskModelSettings() {
     });
   }
 
+  function applyPreset(presetId: string) {
+    const preset = AI_TASK_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    const next = applyAiTaskPreset(activeDraft, preset);
+    const normalized = normalizeAiTaskPreferences(next, profiles.data ?? [], true);
+    if (scope === "PROJECT") setProjectDraft(normalized);
+    else setDraft(normalized);
+    setActivePresetId(preset.id);
+    setNotice(`已应用“${preset.label}”预设到当前编辑范围；模型、备用模型和自定义提示词保持不变，保存后生效。`);
+  }
+
   async function applyToAll() {
     if (!preferredProfile) return;
     const current = activeDraft;
@@ -559,6 +537,7 @@ export function AiTaskModelSettings() {
     ) as AiTaskPreferences;
     if (scope === "GLOBAL") {
       setDraft(next);
+      setActivePresetId(null);
       setNotice(`已将“${preferredProfile.name}”应用到全部 AI 任务，保存后生效`);
       return;
     }
@@ -569,6 +548,7 @@ export function AiTaskModelSettings() {
     try {
       const saved = await saveProjectAiTaskOverrides(next);
       setProjectDraft(mergeProjectPreferences(draft, saved));
+      setActivePresetId(null);
       client.setQueryData(["project-ai-task-overrides"], saved);
       await client.invalidateQueries({ queryKey: ["ai-task-preferences"] });
       setNotice(`已将“${preferredProfile.name}”应用并保存到全部项目任务`);
@@ -655,6 +635,7 @@ export function AiTaskModelSettings() {
     } else {
       setNotice("正在编辑全局 AI 任务配置。");
     }
+    setActivePresetId(null);
     setScope(nextScope);
   }
 
@@ -679,6 +660,24 @@ export function AiTaskModelSettings() {
         <div><strong>任务路由与生成参数</strong><span>模型决定使用哪项服务，温度控制发散程度，最大输出控制单次生成长度。</span></div>
         <small>{assignedCount} / {AI_TASK_DEFINITIONS.length} 已指定 · {tunedCount} 项已调参</small>
       </div>
+      <section className="ai-task-presets">
+        <div className="ai-task-presets-heading">
+          <div><strong>题材与创作场景预设</strong><span>一次调整六类任务的生成参数和上下文预算；不会替换模型、备用模型或自定义提示词。</span></div>
+          <small>应用后仍可逐项编辑</small>
+        </div>
+        <div className="ai-task-preset-list">
+          {AI_TASK_PRESETS.map((preset) => <button
+            type="button"
+            key={preset.id}
+            aria-label={preset.label}
+            data-active={activePresetId === preset.id || undefined}
+            onClick={() => applyPreset(preset.id)}
+          >
+            <strong>{preset.label}</strong>
+            <small>{preset.description}</small>
+          </button>)}
+        </div>
+      </section>
       <div className="ai-task-routing-list">
         {AI_TASK_DEFINITIONS.map(({ key, label, description }) => {
           const preference = activeDraft[key];
@@ -712,7 +711,7 @@ export function AiTaskModelSettings() {
               <span className="ai-task-routing-state" data-ready={selectedProfile?.hasSecret || (!selectedId && preferredProfile?.hasSecret) || undefined}>
                 {selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "可用" : "缺少 Key" : preferredProfile ? `自动：${preferredProfile.name}` : "未配置"}
               </span>
-              <span className="ai-task-cost-estimate">{estimateNextRunCost(usage.data?.byTask, key, effectiveProfile, usage.data?.days)}</span>
+              <span className="ai-task-cost-estimate">{nextRunCostLabel(estimateNextRunCost(usage.data?.byTask, key, effectiveProfile), usage.data?.days)}</span>
               {hasCustomGeneration(preference, key, maxOutputLimit) ? <button type="button" onClick={() => clearTaskTuning(key, maxOutputLimit)} title={`恢复 ${label} 的推荐值：温度 ${defaults.temperature}，最大输出 ${Math.min(defaults.maxOutputTokens ?? maxOutputLimit, maxOutputLimit)}`}><RotateCcw size={12} />恢复生成参数</button> : null}
               <button type="button" onClick={() => setSelectedTask(key)} data-active={selectedTask === key || undefined}><ChevronDown size={12} />{hasCustomPrompt(preference, key) ? "已自定义" : "高级配置"}</button>
             </div>

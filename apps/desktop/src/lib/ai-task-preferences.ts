@@ -121,3 +121,35 @@ export function providerLabel(provider: ModelProfile["provider"]) {
   };
   return labels[provider];
 }
+
+export function describeTaskPreferenceDifferences(
+  preference: AiTaskPreference,
+  task: AiTaskKey,
+) {
+  const defaults = recommendedTaskPreference(task);
+  const differences: string[] = [];
+  if (preference.temperature !== defaults.temperature) {
+    differences.push(`温度 ${preference.temperature ?? "默认"}（推荐 ${defaults.temperature}）`);
+  }
+  if (preference.maxOutputTokens !== defaults.maxOutputTokens) {
+    differences.push(`最大输出 ${preference.maxOutputTokens ?? "默认"}（推荐 ${defaults.maxOutputTokens}）`);
+  }
+  if (preference.prompt.context.inputTokenBudget !== defaults.prompt.context.inputTokenBudget) {
+    differences.push(`输入预算 ${preference.prompt.context.inputTokenBudget ?? "默认"}（推荐 ${defaults.prompt.context.inputTokenBudget}）`);
+  }
+  const contextLabels: Array<[keyof AiTaskContextPreference, string]> = [
+    ["includeProjectContext", "正式设定"],
+    ["includeReferenceContent", "参考文件"],
+    ["includeProjectKnowledge", "项目知识"],
+    ["includeCurrentDraft", "当前草稿"],
+    ["includeChapterPlan", "章节规划"],
+  ];
+  for (const [key, label] of contextLabels) {
+    if (preference.prompt.context[key] !== defaults.prompt.context[key]) {
+      differences.push(`${preference.prompt.context[key] ? "开启" : "关闭"}${label}（推荐${defaults.prompt.context[key] ? "开启" : "关闭"}）`);
+    }
+  }
+  if (preference.prompt.systemPrompt?.trim()) differences.push("自定义系统提示词");
+  if (preference.prompt.instructionTemplate?.trim()) differences.push("自定义任务模板");
+  return differences;
+}

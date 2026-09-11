@@ -223,6 +223,48 @@ describe("SettingsView", () => {
     expect(screen.queryByRole("button", { name: "恢复生成参数" })).not.toBeInTheDocument();
   });
 
+  it("applies a genre preset without replacing the selected model or custom prompt", async () => {
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        secretRef: "model-profile:deepseek-profile", hasSecret: true, createdAt: "0", updatedAt: "0",
+      },
+    ]);
+    const preferences = recommendedAiTaskPreferenceSnapshot();
+    preferences.workDesign = {
+      ...preferences.workDesign,
+      profileId: "deepseek-profile",
+      prompt: {
+        ...preferences.workDesign.prompt,
+        systemPrompt: "保持作者既有边界",
+      },
+    };
+    mocks.getAiTaskPreferences.mockResolvedValue(preferences);
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    await screen.findByLabelText("作品设定温度");
+
+    fireEvent.click(screen.getByRole("button", { name: "悬疑推理" }));
+    expect(screen.getByLabelText("大纲主线温度")).toHaveValue(0.45);
+    expect(screen.getByLabelText("章节拆分温度")).toHaveValue(0.2);
+    fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
+
+    await screen.findByText("任务模型与生成参数已保存，后续生成会立即使用新配置");
+    expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({
+      workDesign: expect.objectContaining({
+        profileId: "deepseek-profile",
+        temperature: 0.35,
+        prompt: expect.objectContaining({
+          systemPrompt: "保持作者既有边界",
+        }),
+      }),
+      writing: expect.objectContaining({ temperature: 0.7 }),
+    }));
+  });
+
   it("opens AI task routing from a deep link and clears deleted model mappings", async () => {
     window.location.hash = "#ai-task-models";
     mocks.listModelProfiles.mockResolvedValue([

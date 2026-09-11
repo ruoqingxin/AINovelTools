@@ -353,6 +353,13 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         unavailable_reason: None,
     },
     FeatureDescriptor {
+        id: "ai_efficiency_guardrails",
+        display_name: "AI 任务预设、费用预算预检与故障恢复",
+        stage: "AI",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
         id: "r4_project_settings",
         display_name: "R4 项目设置基线",
         stage: "R4",
