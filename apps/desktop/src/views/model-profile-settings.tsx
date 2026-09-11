@@ -10,6 +10,7 @@ import {
   upsertModelProfile,
   type ModelProfileInput,
 } from "../lib/tauri-client";
+import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 type ModelPreset = {
   id: string;
@@ -90,12 +91,31 @@ const emptyProfile: ModelProfileInput = {
   privacyLevel: "ALLOW_CLOUD",
 };
 
-export function ModelProfileSettings() {
+function modelProfileSignature(profile: ModelProfileInput) {
+  return JSON.stringify({
+    name: profile.name,
+    provider: profile.provider,
+    capability: profile.capability,
+    baseUrl: profile.baseUrl,
+    modelId: profile.modelId,
+    contextWindow: profile.contextWindow,
+    maxOutputTokens: profile.maxOutputTokens,
+    privacyLevel: profile.privacyLevel,
+    timeoutSeconds: profile.timeoutSeconds,
+    retryLimit: profile.retryLimit,
+    inputPriceMicrosPerMillion: profile.inputPriceMicrosPerMillion,
+    outputPriceMicrosPerMillion: profile.outputPriceMicrosPerMillion,
+    priceCurrency: profile.priceCurrency,
+  });
+}
+
+export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) => void } = {}) {
   const client = useQueryClient();
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [hasInitialized, setHasInitialized] = useState(false);
   const [form, setForm] = useState<ModelProfileInput>(emptyProfile);
+  const [savedSignature, setSavedSignature] = useState(() => modelProfileSignature(emptyProfile));
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState<"save" | "test" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +124,13 @@ export function ModelProfileSettings() {
   const selectedProfile = profiles.data?.find((item) => item.id === editingProfileId);
   const availablePresets = modelPresets[form.provider];
   const selectedPreset = availablePresets.find((preset) => preset.id === form.modelId);
+  const profileDirty = modelProfileSignature(form) !== savedSignature || Boolean(secret.trim());
+  useUnsavedChangesGuard(profileDirty, "当前模型 API 配置有未保存修改。");
+
+  useEffect(() => {
+    props.onDirtyChange?.(profileDirty);
+    return () => props.onDirtyChange?.(false);
+  }, [profileDirty, props.onDirtyChange]);
 
   useEffect(() => {
     if (hasInitialized || !profiles.data) return;
@@ -130,14 +157,41 @@ export function ModelProfileSettings() {
       outputPriceMicrosPerMillion: profile.outputPriceMicrosPerMillion,
       priceCurrency: profile.priceCurrency,
     });
+    setSavedSignature(modelProfileSignature({
+      id: profile.id,
+      name: profile.name,
+      provider: profile.provider,
+      capability: profile.capability,
+      baseUrl: profile.baseUrl,
+      modelId: profile.modelId,
+      contextWindow: profile.contextWindow,
+      maxOutputTokens: profile.maxOutputTokens,
+      privacyLevel: profile.privacyLevel,
+      timeoutSeconds: profile.timeoutSeconds,
+      retryLimit: profile.retryLimit,
+      inputPriceMicrosPerMillion: profile.inputPriceMicrosPerMillion,
+      outputPriceMicrosPerMillion: profile.outputPriceMicrosPerMillion,
+      priceCurrency: profile.priceCurrency,
+    }));
   }, [editingProfileId, profiles.data]);
 
   function startNew() {
+    if (profileDirty && !window.confirm("当前模型配置有未保存修改，确定新建配置吗？")) return;
+    const next = { ...emptyProfile, name: "新模型配置" };
     setEditingProfileId(null);
-    setForm({ ...emptyProfile, name: "新模型配置" });
+    setForm(next);
+    setSavedSignature(modelProfileSignature(next));
     setSecret("");
     setError(null);
     setNotice("已创建新的配置草稿，填写后保存即可。");
+  }
+
+  function selectProfile(profile: NonNullable<typeof selectedProfile>) {
+    if (profile.id !== editingProfileId && profileDirty && !window.confirm("当前模型配置有未保存修改，确定切换吗？")) return;
+    setEditingProfileId(profile.id);
+    setSecret("");
+    setError(null);
+    setNotice(null);
   }
 
   function selectProvider(provider: ModelProfileInput["provider"]) {
@@ -179,7 +233,9 @@ export function ModelProfileSettings() {
       setSecret("");
     }
     setEditingProfileId(saved.id);
-    setForm((current) => ({ ...current, id: saved.id }));
+    const nextForm = { ...form, id: saved.id };
+    setForm(nextForm);
+    setSavedSignature(modelProfileSignature(nextForm));
     await client.invalidateQueries({ queryKey: ["model-profiles"] });
     return saved;
   }
@@ -240,7 +296,7 @@ export function ModelProfileSettings() {
           <button type="button" className="secondary-action icon-command" title="新建模型配置" aria-label="新建模型配置" onClick={startNew} disabled={busy !== null}><Plus size={15} /></button>
         </div>
         <div className="model-profile-list-items">
-          {profiles.data?.map((profile) => <button key={profile.id} type="button" className="model-profile-item" data-active={profile.id === editingProfileId || undefined} onClick={() => { setEditingProfileId(profile.id); setSecret(""); setError(null); setNotice(null); }} disabled={busy !== null} aria-label={`编辑 ${profile.name} ${profile.modelId}`}>
+          {profiles.data?.map((profile) => <button key={profile.id} type="button" className="model-profile-item" data-active={profile.id === editingProfileId || undefined} onClick={() => selectProfile(profile)} disabled={busy !== null} aria-label={`编辑 ${profile.name} ${profile.modelId}`}>
             <span className="model-profile-item-name">{profile.name}</span>
             <span className="model-profile-item-meta">{providerLabel(profile.provider)} · {profile.modelId}</span>
             <span className="model-profile-item-state"><span>{profile.capability === "CHAT" ? "写作" : "向量化"}</span><span>{profile.hasSecret ? "Key 已设" : "未设 Key"}</span></span>

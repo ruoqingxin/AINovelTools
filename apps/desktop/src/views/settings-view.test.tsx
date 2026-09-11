@@ -473,7 +473,7 @@ describe("SettingsView", () => {
     ]);
 
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
-    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "预算与记录" }));
     expect(await screen.findAllByText(/USD 0\.02/)).toHaveLength(2);
     expect(screen.getByText("大纲主线 · 故事大纲")).toBeVisible();
     expect(screen.getByText(/耗时 1 秒/)).toBeVisible();
@@ -549,7 +549,7 @@ describe("SettingsView", () => {
     });
 
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
-    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "预算与记录" }));
 
     expect(await screen.findByText("今日估算费用已达到每日预算的 80%")).toBeVisible();
   });
@@ -587,7 +587,7 @@ describe("SettingsView", () => {
     });
 
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
-    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "预算与记录" }));
 
     expect(await screen.findByText("整章创作 · DeepSeek 写作")).toBeVisible();
     expect(screen.getByText("有帮助 67%")).toBeVisible();

@@ -205,9 +205,16 @@ export function StoryPlanningWorkbench(props: {
   }, [dirty, props.onDirtyChange]);
 
   function selectSection(sectionId: string) {
-    if (pendingDirty) restoreUnsavedPending();
+    if (!confirmDiscardPending()) return;
     if (formalDirty && !window.confirm("当前正式设定有未保存修改，确定切换吗？")) return;
     props.onSelectSection?.(sectionId);
+  }
+
+  function confirmDiscardPending() {
+    if (!pendingDirty) return true;
+    if (!window.confirm("当前候选有未保存修改，确定放弃这些修改吗？")) return false;
+    restoreUnsavedPending();
+    return true;
   }
 
   function restoreUnsavedPending() {
@@ -218,7 +225,7 @@ export function StoryPlanningWorkbench(props: {
 
   function switchEditorTab(tab: "formal" | "pending") {
     if (tab === editorTab) return;
-    if (editorTab === "pending") restoreUnsavedPending();
+    if (editorTab === "pending" && !confirmDiscardPending()) return;
     setEditorTab(tab);
   }
 
@@ -255,7 +262,7 @@ export function StoryPlanningWorkbench(props: {
   }
 
   function startWriting() {
-    restoreUnsavedPending();
+    if (!confirmDiscardPending()) return;
     setShowEditor(true);
     setEditorTab("formal");
     setStartMode("WRITE");
@@ -264,7 +271,7 @@ export function StoryPlanningWorkbench(props: {
   }
 
   async function importSectionFile() {
-    restoreUnsavedPending();
+    if (!confirmDiscardPending()) return;
     const files = pendingFiles;
     if (!files.length) return;
     if (!chatProfile) { setError("请先在设置中配置一个可用的聊天模型"); return; }
@@ -286,7 +293,7 @@ export function StoryPlanningWorkbench(props: {
   }
 
   async function generateWithAi() {
-    restoreUnsavedPending();
+    if (!confirmDiscardPending()) return;
     if (!chatProfile) return;
     setGenerating(true);
     setError(null);

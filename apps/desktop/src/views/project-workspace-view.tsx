@@ -10,6 +10,7 @@ import { AiWritingPanel } from "./ai-writing-panel";
 import { AiModelNote } from "./ai-model-note";
 import { ChapterWorkspaceTabs, type ChapterWorkspaceTab } from "./chapter-workspace-tabs";
 import { essentialPlanningSectionIds, planningSectionGroups, StoryPlanningWorkbench } from "./story-planning-workbench";
+import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 const kindLabels: Record<PlanNodeKind, string> = {
   WORK_DESIGN: "作品设定",
@@ -368,6 +369,25 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
     enabled: selected?.kind === "CHAPTER",
   });
   const recovery = useQuery({ queryKey: ["recovery-logs", selected?.id], queryFn: () => listRecoveryLogs(selected!.id), enabled: selected?.kind === "CHAPTER" });
+  const chapterDirty = Boolean(selected?.kind === "CHAPTER" && draft !== (manuscript.data?.documentJson ?? ""));
+  const nodePlanDirty = Boolean(
+    selected
+    && selected.kind !== "WORK_DESIGN"
+    && (
+      nodePlanDraft !== (selectedStoredPlan?.content ?? "")
+      || nodePlanPendingDraft !== (selectedStoredPlan?.pendingContent ?? "")
+    ),
+  );
+  const titleDirty = Boolean(selected && editTitle !== selected.title);
+  const workspaceDirty = chapterDirty || nodePlanDirty || titleDirty || planningSectionDirty;
+  const unsavedMessage = chapterDirty
+    ? "当前章节正文有未保存修改。"
+    : nodePlanDirty
+      ? "当前规划有未保存修改。"
+      : titleDirty
+        ? "当前结构节点名称有未保存修改。"
+        : "当前作品设定有未保存修改。";
+  useUnsavedChangesGuard(workspaceDirty, unsavedMessage);
 
   useEffect(() => {
     const plan = selected ? planningSections.data?.find((section) => section.id === nodePlanId(selected.id)) : undefined;
@@ -430,15 +450,8 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
 
   useEffect(() => {
     if (!selected || selected.kind !== "CHAPTER" || !draft.trim() || draft === (manuscript.data?.documentJson ?? "")) return;
-    const timer = window.setTimeout(() => { void saveRecoveryLog({ chapterId: selected.id, documentJson: draft }); }, 5000);
+    const timer = window.setTimeout(() => { void saveRecoveryLog({ chapterId: selected.id, documentJson: draft }); }, 1_000);
     return () => window.clearTimeout(timer);
-  }, [draft, manuscript.data?.documentJson, selected]);
-
-  useEffect(() => {
-    const dirty = Boolean(selected?.kind === "CHAPTER" && draft.trim() && draft !== (manuscript.data?.documentJson ?? ""));
-    const onBeforeUnload = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [draft, manuscript.data?.documentJson, selected]);
 
   async function saveSelected() {
@@ -713,7 +726,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
   }
 
   function selectNode(node: PlanNode) {
-    if (selected?.kind === "CHAPTER" && draft.trim() && draft !== (manuscript.data?.documentJson ?? "") && !window.confirm("当前正文有未保存修改，确定切换吗？")) return false;
+    if (selected?.kind === "CHAPTER" && draft !== (manuscript.data?.documentJson ?? "") && !window.confirm("当前正文有未保存修改，确定切换吗？")) return false;
     if (selected?.kind === "WORK_DESIGN" && planningSectionDirty && selected.id !== node.id && !window.confirm("当前设定有未保存修改，确定切换吗？")) return false;
     if (selected && selected.kind !== "WORK_DESIGN" && selected.id !== node.id && nodePlanDraft !== (selectedStoredPlan?.content ?? "") && !window.confirm("当前规划有未保存修改，确定切换吗？")) return false;
     setSelectedId(node.id);
@@ -795,7 +808,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
       </div>
 
       {nodes.isPending ? <p className="plan-loading">正在加载规划…</p> : null}
-      {nodes.isError ? <p className="project-error" role="alert">无法加载规划：{String(nodes.error)}</p> : null}
+      {nodes.isError ? <p className="project-error" role="alert">无法加载规划：{errorMessage(nodes.error)}</p> : null}
       {error ? <p className="project-error" role="alert">{error}</p> : null}
 
       {!nodes.isPending && !nodes.isError ? <div className="plan-layout">
@@ -847,7 +860,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
         {selected.kind === "WORK_DESIGN" ? <StoryPlanningWorkbench selectedSectionId={selectedPlanningSectionId} onSelectSection={setSelectedPlanningSectionId} onDirtyChange={setPlanningSectionDirty} /> : null}
         {selected.kind === "CHAPTER" && workspaceMode === "planning" ? <div className="planning-redirect-panel"><BookOpen size={18} /><div><strong>执行卡明确后，进入正文完成本章</strong><span>正文、AI 写作、修订与恢复统一集中到正文工作区，并会沿用当前章节执行卡。</span></div><a href={`/writing#${selected.id}`}>写这一章</a></div> : null}
         {selected.kind === "CHAPTER" && workspaceMode === "writing" ? <div className="chapter-editor">
-          <div className="section-heading"><div><h2>章节工作区</h2><span>第 {selectedChapterIndex + 1} / {chapterNodes.length} 章 · {manuscript.data ? "已有修订" : "尚未保存"}</span></div><div className="chapter-heading-actions"><button type="button" className="icon-command" onClick={() => previousChapter && selectNode(previousChapter)} disabled={!previousChapter} aria-label="上一章" title="上一章"><ChevronLeft size={16} /></button><button type="button" className="icon-command" onClick={() => nextChapter && selectNode(nextChapter)} disabled={!nextChapter} aria-label="下一章" title="下一章"><ChevronRight size={16} /></button><button type="button" className="secondary-action" onClick={() => void createSceneForChapter(selected.id)}><Plus size={14} />按需拆分场景</button></div></div>
+          <div className="section-heading"><div><h2>章节工作区</h2><span>第 {selectedChapterIndex + 1} / {chapterNodes.length} 章</span><span className="save-state" data-state={savingDraft ? "saving" : chapterDirty ? "dirty" : manuscript.data ? "saved" : "empty"}>{savingDraft ? "保存中…" : chapterDirty ? "有未保存修改" : manuscript.data ? "已保存" : "尚未保存"}</span></div><div className="chapter-heading-actions"><button type="button" className="icon-command" onClick={() => previousChapter && selectNode(previousChapter)} disabled={!previousChapter} aria-label="上一章" title="上一章"><ChevronLeft size={16} /></button><button type="button" className="icon-command" onClick={() => nextChapter && selectNode(nextChapter)} disabled={!nextChapter} aria-label="下一章" title="下一章"><ChevronRight size={16} /></button><button type="button" className="secondary-action" onClick={() => void createSceneForChapter(selected.id)}><Plus size={14} />按需拆分场景</button></div></div>
           <ChapterWorkspaceTabs value={chapterTab} onChange={setChapterTab} recoveryCount={recovery.data?.length ?? 0} />
           {chapterTab === "editor" ? <div className="chapter-tab-panel" id="chapter-panel-editor" role="tabpanel" aria-labelledby="chapter-tab-editor">
             {editor ? <>

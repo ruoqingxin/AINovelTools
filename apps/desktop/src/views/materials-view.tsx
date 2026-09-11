@@ -14,8 +14,19 @@ import {
   type SummaryPrecision,
   type WritingCard,
 } from "../lib/tauri-client";
+import { KnowledgeSectionNav } from "./knowledge-section-nav";
+import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 const emptyCard: WritingCard = { id: "", projectId: "", cardType: "STYLE_RULE", title: "", content: "", sourceVersion: null, scope: "PROJECT", enabled: true, sortOrder: 0, createdAt: "", updatedAt: "" };
+
+function cardSignature(card: WritingCard) {
+  return JSON.stringify({
+    cardType: card.cardType,
+    title: card.title,
+    content: card.content,
+    scope: card.scope,
+  });
+}
 
 export function MaterialsView() {
   const client = useQueryClient();
@@ -25,6 +36,12 @@ export function MaterialsView() {
   const [card, setCard] = useState<WritingCard>(emptyCard);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const summaryDirty = summary.kind !== "CHAPTER"
+    || summary.precision !== "L0"
+    || Boolean(summary.sourceVersion.trim())
+    || Boolean(summary.content.trim());
+  const cardDirty = cardSignature(card) !== cardSignature(emptyCard);
+  useUnsavedChangesGuard(summaryDirty || cardDirty, summaryDirty ? "当前摘要有未保存内容。" : "当前写作卡片有未保存内容。");
 
   async function refresh(key: string[]) {
     await client.invalidateQueries({ queryKey: key });
@@ -45,16 +62,17 @@ export function MaterialsView() {
     try {
       await upsertSummaryMaterial({ id: crypto.randomUUID(), projectId: "", kind: summary.kind, precision: summary.precision, sourceId: null, sourceVersion: summary.sourceVersion || null, content: summary.content, generationMode: "MANUAL", lifecycleStatus: "ACTIVE", createdAt: "", updatedAt: "" });
       setSummary((value) => ({ ...value, content: "" })); setNotice("摘要已保存"); setError(null); await client.invalidateQueries({ queryKey: ["summary-materials"] });
-    } catch (cause) { setError(String(cause)); }
+    } catch (cause) { setError(errorMessage(cause)); }
   }
   async function saveCard() {
     try {
       await upsertWritingCard({ ...card, id: card.id || crypto.randomUUID(), projectId: card.projectId || "", createdAt: "", updatedAt: "" });
       setCard(emptyCard); setNotice("卡片已保存"); setError(null); await client.invalidateQueries({ queryKey: ["writing-cards"] });
-    } catch (cause) { setError(String(cause)); }
+    } catch (cause) { setError(errorMessage(cause)); }
   }
   return <section className="materials-view">
-    <div className="workspace-heading"><p className="eyebrow">R4 阶段 D</p><h1>摘要与写作卡片</h1><p className="workspace-lede">维护多精度摘要、风格规则和写作技巧。内容保留来源与生命周期信息，供后续上下文组装使用。</p></div>
+    <div className="workspace-heading"><p className="eyebrow">知识工作区</p><h1>摘要与写作卡片</h1><p className="workspace-lede">维护多精度摘要、风格规则和写作技巧。内容保留来源与生命周期信息，供后续上下文组装使用。</p></div>
+    <KnowledgeSectionNav />
     {notice ? <p className="project-notice" role="status">{notice}</p> : null}{error ? <p className="project-error" role="alert">{error}</p> : null}
     <div className="materials-layout">
       <div className="materials-panel"><div className="section-heading"><h2>新建摘要</h2><span>{summaries.data?.length ?? 0} 条</span></div>

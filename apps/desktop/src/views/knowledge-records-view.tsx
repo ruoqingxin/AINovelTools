@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookMarked, Link2, Milestone, Pencil, Plus, Save, Sparkles, UserRoundCheck } from "lucide-react";
 import { useMemo, useState } from "react";
+import type { KeyboardEvent } from "react";
 import {
   createBelief,
   createEvent,
@@ -21,6 +22,8 @@ import {
   updateForeshadowing,
   updateRelation,
 } from "../lib/tauri-client";
+import { KnowledgeSectionNav } from "./knowledge-section-nav";
+import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 type RecordTab = "relations" | "events" | "beliefs" | "foreshadowings";
 
@@ -81,6 +84,13 @@ export function KnowledgeRecordsView() {
     if (tab === "beliefs") return (beliefs.data ?? []).map((item) => ({ id: item.id, title: item.proposition, detail: `持有者 ${factLabels.get(item.holderKnowledgeId) ?? item.holderKnowledgeId}`, status: item.lifecycleStatus, evidence: item.evidenceAnchorIds.length, version: item.beliefVersion }));
     return (foreshadowings.data ?? []).map((item) => ({ id: item.id, title: item.title, detail: item.targetChapterId ? `目标章节 ${chapterList.find((chapter) => chapter.id === item.targetChapterId)?.title ?? item.targetChapterId}` : "尚未指定目标章节", status: `${item.lifecycleStatus} · ${item.status}`, evidence: item.evidenceAnchorIds.length, version: item.foreshadowingVersion }));
   }, [beliefs.data, chapterList, events.data, factLabels, foreshadowings.data, relations.data, tab]).filter((item) => lifecycleFilter === "ALL" || item.status === lifecycleFilter || item.status.startsWith(`${lifecycleFilter} ·`));
+  const recordDirty = Boolean(evidenceIds.length)
+    || lifecycleStatus !== "ACTIVE"
+    || Boolean(relation.fromKnowledgeId || relation.toKnowledgeId || relation.relationType.trim())
+    || Boolean(event.name.trim() || event.occurredAt || event.participantFactIds.length)
+    || Boolean(belief.holderKnowledgeId || belief.proposition.trim())
+    || Boolean(foreshadowing.title.trim() || foreshadowing.targetChapterId || foreshadowing.status !== "PLANTED");
+  useUnsavedChangesGuard(recordDirty, "当前知识记录有未保存内容。");
 
   function toggle(values: string[], id: string, update: (next: string[]) => void) {
     update(values.includes(id) ? values.filter((item) => item !== id) : [...values, id]);
@@ -104,6 +114,26 @@ export function KnowledgeRecordsView() {
     setForeshadowing({ title: "", targetChapterId: "", status: "PLANTED" });
     setError(null);
     setNotice(null);
+  }
+
+  function switchTab(nextTab: RecordTab) {
+    if (nextTab === tab) return;
+    if (recordDirty && !window.confirm("当前知识记录有未保存内容，确定切换类型吗？")) return;
+    setTab(nextTab);
+    startNew();
+  }
+
+  function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabs.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const next = tabs[nextIndex]!;
+    switchTab(next.id);
+    requestAnimationFrame(() => document.getElementById(`knowledge-record-tab-${next.id}`)?.focus());
   }
 
   function startEdit(id: string) {
@@ -183,8 +213,9 @@ export function KnowledgeRecordsView() {
         <h1>知识记录</h1>
         <p className="workspace-lede">创建并查看关系、事件、信念和伏笔；每条记录保留独立版本与证据锚点。</p>
       </div>
+      <KnowledgeSectionNav />
       <div className="knowledge-record-tabs" role="tablist" aria-label="知识记录类型">
-        {tabs.map(({ id, label, icon: Icon }) => <button key={id} type="button" role="tab" aria-selected={tab === id} data-active={tab === id || undefined} onClick={() => { setTab(id); startNew(); }}><Icon size={15} />{label}</button>)}
+        {tabs.map(({ id, label, icon: Icon }, index) => <button key={id} id={`knowledge-record-tab-${id}`} type="button" role="tab" aria-selected={tab === id} tabIndex={tab === id ? 0 : -1} data-active={tab === id || undefined} onClick={() => switchTab(id)} onKeyDown={(event) => moveTabFocus(event, index)}><Icon size={15} />{label}</button>)}
       </div>
       <div className="story-bible-toolbar knowledge-record-filter">
         <select value={lifecycleFilter} onChange={(event) => setLifecycleFilter(event.target.value as "ALL" | KnowledgeLifecycleStatus)} aria-label="审核状态筛选">

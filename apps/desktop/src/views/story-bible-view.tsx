@@ -16,6 +16,8 @@ import {
   type EntityType,
 } from "../lib/tauri-client";
 import { AiModelNote } from "./ai-model-note";
+import { KnowledgeSectionNav } from "./knowledge-section-nav";
+import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 const typeLabels: Record<EntityType, string> = {
   CHARACTER: "人物",
@@ -33,6 +35,18 @@ const emptyForm: EntityInput = {
   fixedAttributesJson: "{}",
   tags: [],
 };
+
+function entitySignature(form: EntityInput, summaryText: string, scopeText: string) {
+  return JSON.stringify({
+    entityType: form.entityType,
+    name: form.name,
+    description: form.description,
+    fixedAttributesJson: form.fixedAttributesJson,
+    sourceVersion: form.sourceVersion ?? "",
+    aliases: summaryText.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
+    tags: scopeText.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
+  });
+}
 
 export function StoryBibleView() {
   const client = useQueryClient();
@@ -61,6 +75,7 @@ export function StoryBibleView() {
   const [form, setForm] = useState<EntityInput>(emptyForm);
   const [summaryText, setSummaryText] = useState("");
   const [scopeText, setScopeText] = useState("");
+  const [savedSignature, setSavedSignature] = useState(() => entitySignature(emptyForm, "", ""));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<"save" | "archive" | null>(null);
@@ -110,18 +125,34 @@ export function StoryBibleView() {
     });
     setSummaryText(revision.aliases.join("、"));
     setScopeText(revision.tags.join("、"));
+    setSavedSignature(entitySignature({
+      id: selected.id,
+      entityType: selected.entityType,
+      name: revision.name,
+      aliases: revision.aliases,
+      description: revision.description,
+      fixedAttributesJson: revision.fixedAttributesJson,
+      tags: revision.tags,
+      sourceVersion: revision.sourceVersion ?? undefined,
+    }, revision.aliases.join("、"), revision.tags.join("、")));
   }, [revisions.data, selected]);
 
+  const entityDirty = entitySignature(form, summaryText, scopeText) !== savedSignature;
+  useUnsavedChangesGuard(entityDirty, selected ? "当前实体详情有未保存修改。" : "当前新实体有未保存内容。");
+
   function startNew() {
+    if (entityDirty && selectedId && !window.confirm("当前实体有未保存修改，确定新建并放弃这些修改吗？")) return;
     setSelectedId(null);
     setForm(emptyForm);
     setSummaryText("");
     setScopeText("");
+    setSavedSignature(entitySignature(emptyForm, "", ""));
     setError(null);
     setNotice(null);
   }
 
   function selectEntity(entity: Entity) {
+    if (entity.id !== selectedId && entityDirty && !window.confirm("当前实体有未保存修改，确定切换吗？")) return;
     setSelectedId(entity.id);
     setError(null);
     setNotice(null);
@@ -141,6 +172,7 @@ export function StoryBibleView() {
     try {
       const saved = await upsertEntity(input);
       setSelectedId(saved.id);
+      setSavedSignature(entitySignature(input, summaryText, scopeText));
       await client.invalidateQueries({ queryKey: ["entities", true] });
       await client.invalidateQueries({ queryKey: ["entity-revisions", saved.id] });
       setNotice("已保存为新修订");
@@ -244,6 +276,7 @@ export function StoryBibleView() {
         <h1>Story Bible</h1>
         <p className="workspace-lede">管理人物、地点、阵营、物品和概念。每次保存都会留下可追溯的实体修订。</p>
       </div>
+      <KnowledgeSectionNav />
 
       <div className="story-bible-toolbar">
         <label className="search-field"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索实体名称" aria-label="搜索实体" /></label>
@@ -255,7 +288,6 @@ export function StoryBibleView() {
           <option value="ACTIVE">仅显示活动</option><option value="ALL">全部状态</option><option value="ARCHIVED">仅显示归档</option>
         </select>
         <button type="button" className="primary-action" onClick={startNew}><Plus size={15} />新建实体</button>
-        <a href="/knowledge/records" className="secondary-action">知识记录</a>
       </div>
       {error ? <p className="project-error" role="alert">{error}</p> : null}
       {notice ? <p className="project-notice" role="status">{notice}</p> : null}
