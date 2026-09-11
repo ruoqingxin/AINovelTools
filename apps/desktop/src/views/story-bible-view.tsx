@@ -1,6 +1,7 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Check, FileUp, Plus, RotateCcw, Save, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { resolveTaskChatProfile, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
   errorMessage,
   extractEntitiesFromText,
@@ -13,6 +14,7 @@ import {
   type EntityInput,
   type EntityType,
 } from "../lib/tauri-client";
+import { AiModelNote } from "./ai-model-note";
 
 const typeLabels: Record<EntityType, string> = {
   CHARACTER: "人物",
@@ -66,8 +68,9 @@ export function StoryBibleView() {
   const [importSourceText, setImportSourceText] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const modelProfiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
-  const chatProfiles = (modelProfiles.data ?? []).filter((profile) => profile.capability === "CHAT" && profile.hasSecret);
-  const [importProfileId, setImportProfileId] = useState("");
+  const aiPreferences = useAiTaskPreferences();
+  const extractionProfile = resolveTaskChatProfile(modelProfiles.data, aiPreferences.data, "knowledgeExtraction");
+  const [importGuidance, setImportGuidance] = useState("");
   const selected = entities.data?.find((entity) => entity.id === selectedId) ?? null;
   const revisions = useQuery({
     queryKey: ["entity-revisions", selectedId],
@@ -191,11 +194,11 @@ export function StoryBibleView() {
 
   async function extractImportItems() {
     if (!importSourceText || importBusy) return;
-    if (!importProfileId) { setError("请先在设置中配置并选择一个聊天模型"); return; }
+    if (!extractionProfile) { setError("请先在设置中配置一个可用的聊天模型"); return; }
     setImportBusy(true); setError(null); setNotice(null);
     try {
       if (!form.name.trim() || !summaryText.trim() || !scopeText.trim()) { setError("AI 提炼前必须填写类型、名称、简要概述和适用范围"); return; }
-      const items = await extractEntitiesFromText(importProfileId, form.entityType, form.name.trim(), summaryText.trim(), scopeText.trim(), importSourceText);
+      const items = await extractEntitiesFromText(extractionProfile.id, form.entityType, form.name.trim(), summaryText.trim(), scopeText.trim(), importSourceText, importGuidance.trim());
       setImportItems(items.slice(0, 200));
       if (!items.length) setError("AI 没有提炼出符合主题的信息，请换一个主题或重试。");
     } catch (cause) { setError(errorMessage(cause)); }
@@ -272,10 +275,11 @@ export function StoryBibleView() {
           {!selected ? <div className="knowledge-import-panel entity-import-panel">
             <div className="section-heading"><h2>从文件提炼候选</h2><span>先定义主题，再让 AI 提炼</span></div>
             <div className="story-bible-toolbar import-toolbar">
-              <label>AI 模型<select value={importProfileId} onChange={(event) => setImportProfileId(event.target.value)}><option value="">选择聊天模型</option>{chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.modelId}</option>)}</select></label>
+              <AiModelNote taskLabel="知识提炼" profile={extractionProfile} />
               <label className="file-picker"><FileUp size={15} />{importFileName || "选择 TXT / Markdown 文件"}<input type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readImportFile(file); }} /></label>
-              <button type="button" className="primary-action" onClick={() => void extractImportItems()} disabled={!importSourceText || !importProfileId || !form.name.trim() || !summaryText.trim() || !scopeText.trim() || importBusy}><FileUp size={15} />{importBusy ? "AI 提炼中…" : "按主题提炼"}</button>
+              <button type="button" className="primary-action" onClick={() => void extractImportItems()} disabled={!importSourceText || !extractionProfile?.hasSecret || !form.name.trim() || !summaryText.trim() || !scopeText.trim() || importBusy}><FileUp size={15} />{importBusy ? "AI 提炼中…" : "按主题提炼"}</button>
             </div>
+            <label className="entity-import-guidance"><span>补充提炼意见（可选）</span><textarea rows={2} value={importGuidance} onChange={(event) => setImportGuidance(event.target.value)} placeholder="例如：优先提炼力量来源、使用代价和限制，忽略外貌与日常习惯" /></label>
             <p className="import-condition">提炼条件：{form.entityType ? typeLabels[form.entityType] : "未选择类型"} · {form.name || "未填写名称"} · {summaryText || "未填写简要概述"} · {scopeText || "未填写适用范围"}</p>
           </div> : null}
           {importItems.length ? <div className="import-review-panel" aria-label="导入候选审核">

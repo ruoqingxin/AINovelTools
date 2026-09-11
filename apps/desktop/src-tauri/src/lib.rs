@@ -13,8 +13,9 @@ mod state;
 use commands::ai::{
     assemble_context_with_project_knowledge, cancel_ai_task, decide_ai_proposal,
     delete_model_secret, enqueue_planning_ai_job, extract_entities_from_text, generate_ai_proposal,
-    generate_planning_content, get_planning_ai_job_request, list_ai_proposals, list_model_profiles,
-    run_next_planning_ai_job, save_model_secret, test_model_profile, upsert_model_profile,
+    generate_planning_content, get_ai_task_preferences, get_planning_ai_job_request,
+    list_ai_proposals, list_model_profiles, run_next_planning_ai_job, save_ai_task_preferences,
+    save_model_secret, test_model_profile, upsert_model_profile,
 };
 use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::entities::{
@@ -136,6 +137,8 @@ pub fn run() {
             merge_manuscript,
             save_recovery_log,
             list_model_profiles,
+            get_ai_task_preferences,
+            save_ai_task_preferences,
             upsert_model_profile,
             save_model_secret,
             delete_model_secret,

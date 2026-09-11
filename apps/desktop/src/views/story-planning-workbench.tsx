@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, DatabaseZap, FileUp, PenLine, RotateCcw, Save, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { resolveTaskChatProfile, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
   errorMessage,
   cancelJob,
@@ -16,6 +17,7 @@ import {
   type Job,
   type PlanningAiJobInput,
 } from "../lib/tauri-client";
+import { AiModelNote } from "./ai-model-note";
 
 type PlanningItem = { id: string; label: string; prompt: string; guidance: string };
 type PlanningGroup = { id: string; label: string; children: PlanningItem[] };
@@ -106,6 +108,7 @@ export function StoryPlanningWorkbench(props: {
   });
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
+  const aiPreferences = useAiTaskPreferences();
   const embeddings = useQuery({ queryKey: ["planning-embeddings"], queryFn: listPlanningEmbeddings });
   const selectedId = props.selectedSectionId ?? "seed-premise";
   const [form, setForm] = useState<PlanningSection>(emptySection(selectedId));
@@ -152,7 +155,7 @@ export function StoryPlanningWorkbench(props: {
   const nextIncompleteId = nextIncompletePlanningSectionId(selectedId, completedIds);
   const nextIncompleteSection = sections.find((section) => section.id === nextIncompleteId) ?? null;
   const phaseDescriptions = ["先确定故事入口", "建立持续推进的引擎", "连载中逐步补齐"];
-  const chatProfile = profiles.data?.find((profile) => profile.capability === "CHAT" && profile.hasSecret);
+  const chatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "workDesign");
   const embeddingProfile = profiles.data?.find((profile) => profile.capability === "EMBEDDING" && profile.hasSecret);
   const currentEmbedding = embeddings.data?.find((item) => item.sectionId === selectedId);
   const embeddingState = currentEmbedding ? "已生成" : "未生成";
@@ -403,6 +406,7 @@ export function StoryPlanningWorkbench(props: {
               <button type="button" className="story-planning-action-choice" data-selected={startMode === "AI" || undefined} aria-pressed={startMode === "AI"} onClick={() => { setStartMode("AI"); setPendingAction("AI"); setPendingFiles([]); setOperationGuidance(""); }} disabled={aiBusy || !chatProfile}><Sparkles size={17} /><span><strong>{activeJob?.jobType === "AI_PLANNING_GENERATE" ? "正在后台推导" : "AI 推导"}</strong><small>结合已有设定生成内容</small></span></button>
               <label className="story-planning-action-choice story-planning-import" data-selected={startMode === "IMPORT" || undefined} data-disabled={aiBusy || !chatProfile || undefined}><FileUp size={17} /><span><strong>{activeJob?.jobType === "AI_PLANNING_EXTRACT" ? "正在后台处理" : pendingFiles.length ? "继续添加文件" : "AI 提取文件"}</strong><small>{pendingFiles.length ? `已选 ${pendingFiles.length} 个文件，可继续添加` : "支持同时选择多个文件"}</small></span><input type="file" accept=".txt,.md,.json" multiple disabled={aiBusy || !chatProfile} onChange={(event) => { appendImportFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} /></label>
             </div>
+            <AiModelNote taskLabel="作品设定" profile={chatProfile} />
             {pendingAction ? <div className="story-planning-confirmation" role="status"><div className="story-planning-confirmation-summary">{pendingAction === "AI" ? <Sparkles size={16} /> : <FileUp size={16} />}<span><strong>{pendingAction === "AI" ? "确认进行 AI 推导？" : `确认提取 ${pendingFiles.length} 个文件？`}</strong><small>{pendingAction === "AI" ? `将结合已有正式设定生成“${selectedDefinition.label}”的候选内容，结果只会保存到待定区。` : allowImportRewrite ? `AI 将以所选文件为依据进行筛选、改写和合理补全，生成符合“${selectedDefinition.label}”范围的内容。` : `AI 只会严格提取所选文件中与“${selectedDefinition.label}”直接相关的原文信息，不会补写。`}</small>{pendingAction === "IMPORT" && pendingFiles.length ? <small className="story-planning-file-list">{pendingFiles.map((file) => file.name).join("、")}</small> : null}</span></div><label className="story-planning-guidance"><span>{pendingAction === "AI" ? "补充你的意见（可选）" : "补充提取要求（可选）"}</span><textarea rows={3} value={operationGuidance} onChange={(event) => setOperationGuidance(event.target.value)} placeholder={pendingAction === "AI" ? "例如：更偏现实主义，保留现有力量限制，不要加入穿越设定" : "例如：重点提取力量来源和使用代价，忽略人物外貌描写"} /></label>{pendingAction === "IMPORT" ? <label className="story-planning-rewrite-option"><input type="checkbox" checked={allowImportRewrite} onChange={(event) => setAllowImportRewrite(event.target.checked)} /><span><strong>允许 AI 改写并合理补全</strong><small>以文件内容为依据，重新组织表达并补足必要细节，使结果符合当前节点范围</small></span></label> : null}<div className="story-planning-confirmation-actions"><button type="button" className="primary-action" onClick={() => pendingAction === "AI" ? void generateWithAi() : void importSectionFile()} disabled={aiBusy || (pendingAction === "IMPORT" && !pendingFiles.length)}><Check size={14} />{pendingAction === "AI" ? "提交推导任务" : allowImportRewrite ? "提交生成改写" : "提交提取任务"}</button><button type="button" className="secondary-action" onClick={() => { setStartMode(null); setPendingAction(null); setPendingFiles([]); setOperationGuidance(""); setAllowImportRewrite(false); }} disabled={generating || importing}><X size={14} />取消</button></div></div> : null}
             {visibleJob ? <div className="story-planning-job-status" data-status={visibleJob.status.toLowerCase()}><div><strong>{visibleJob.jobType === "AI_PLANNING_EXTRACT" ? "文件处理任务" : "AI 推导任务"}</strong><span>{visibleJob.status === "QUEUED" ? "等待后台执行" : visibleJob.status === "RUNNING" ? "后台执行中，可安全切换页面" : visibleJob.status === "FAILED" ? visibleJob.errorSummary ?? "执行失败" : "任务已取消"}</span></div><div className="story-planning-job-progress"><span style={{ width: `${visibleJob.progress}%` }} /></div><small>{visibleJob.progress}%</small><div className="story-planning-job-actions"><a href="/jobs">查看任务日志</a>{activeJob ? <button type="button" onClick={() => void cancelActiveJob()}>取消任务</button> : null}</div></div> : null}
           </div>

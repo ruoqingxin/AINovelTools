@@ -39,6 +39,18 @@ pub(crate) struct PlanningAiJobInput {
     pub(crate) final_request_estimated_input_tokens: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExtractEntitiesInput {
+    profile_id: uuid::Uuid,
+    entity_type: novel_infrastructure::EntityType,
+    entity_name: String,
+    brief_summary: String,
+    applicability_scope: String,
+    source_text: String,
+    user_guidance: Option<String>,
+}
+
 const PLANNING_CONTEXT_RESERVE_TOKENS: u32 = 2_048;
 
 fn is_core_planning_section(section_id: &str) -> bool {
@@ -1303,13 +1315,17 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
 #[tauri::command]
 pub(crate) async fn extract_entities_from_text(
     state: tauri::State<'_, ProjectState>,
-    profile_id: uuid::Uuid,
-    entity_type: novel_infrastructure::EntityType,
-    entity_name: String,
-    brief_summary: String,
-    applicability_scope: String,
-    source_text: String,
+    input: ExtractEntitiesInput,
 ) -> Result<Vec<ExtractedEntity>, ApiError> {
+    let ExtractEntitiesInput {
+        profile_id,
+        entity_type,
+        entity_name,
+        brief_summary,
+        applicability_scope,
+        source_text,
+        user_guidance,
+    } = input;
     let profile = {
         let store = state
             .model_profiles
@@ -1343,11 +1359,17 @@ pub(crate) async fn extract_entities_from_text(
         });
     }
     let topic = format!("{entity_type:?}");
+    let user_guidance = user_guidance.unwrap_or_default();
     let mut context = novel_application::ContextPackage::connection_test();
     "你是小说知识整理助手。只根据用户提供的文件提炼信息，不得补写文件外事实。"
         .clone_into(&mut context.system_prompt);
     context.user_prompt = format!(
-        "请围绕以下四项定义，从文件中提炼与主题相关的事实和结构化信息。主题类型：{topic}；主题名称：{entity_name}；简要概述：{brief_summary}；适用范围：{applicability_scope}。只提炼文件中有依据的内容，不要扩写。输出严格 JSON 数组，每项包含 name、description、aliases(字符串数组)、tags(字符串数组)，不要 Markdown，不要解释。\n\n文件内容：\n{source_text}"
+        "请围绕以下四项定义，从文件中提炼与主题相关的事实和结构化信息。主题类型：{topic}；主题名称：{entity_name}；简要概述：{brief_summary}；适用范围：{applicability_scope}；作者补充要求：{}。只提炼文件中有依据的内容，不要扩写。输出严格 JSON 数组，每项包含 name、description、aliases(字符串数组)、tags(字符串数组)，不要 Markdown，不要解释。\n\n文件内容：\n{source_text}",
+        if user_guidance.trim().is_empty() {
+            "无"
+        } else {
+            user_guidance.trim()
+        }
     );
     context.estimated_input_tokens = (u32::try_from(source_text.len()).unwrap_or(u32::MAX) / 4)
         .min(
@@ -1436,6 +1458,31 @@ pub(crate) fn list_model_profiles(
         .lock()
         .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
     store.list().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn get_ai_task_preferences(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<novel_infrastructure::AiTaskPreferences, ApiError> {
+    let store = state
+        .model_profiles
+        .lock()
+        .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+    store.get_ai_task_preferences().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn save_ai_task_preferences(
+    state: tauri::State<'_, ProjectState>,
+    preferences: novel_infrastructure::AiTaskPreferences,
+) -> Result<novel_infrastructure::AiTaskPreferences, ApiError> {
+    let mut store = state
+        .model_profiles
+        .lock()
+        .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+    store
+        .save_ai_task_preferences(&preferences)
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]

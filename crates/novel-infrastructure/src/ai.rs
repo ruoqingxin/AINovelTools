@@ -14,6 +14,7 @@ use novel_domain::{
 };
 use reqwest::StatusCode;
 use rusqlite::OptionalExtension;
+use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -22,6 +23,7 @@ use uuid::Uuid;
 use crate::{DatabaseError, ProjectManager};
 
 const SECRET_SERVICE: &str = "AINovelTools";
+const AI_TASK_PREFERENCES_KEY: &str = "ai_task_model_preferences";
 
 #[derive(Debug, Error)]
 pub enum AiError {
@@ -83,6 +85,30 @@ impl AiError {
 }
 
 pub struct SecretStore;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiTaskPreferences {
+    pub work_design: Option<Uuid>,
+    pub outline: Option<Uuid>,
+    pub volume_planning: Option<Uuid>,
+    pub chapter_split: Option<Uuid>,
+    pub writing: Option<Uuid>,
+    pub knowledge_extraction: Option<Uuid>,
+}
+
+impl AiTaskPreferences {
+    fn selected_profile_ids(&self) -> [Option<Uuid>; 6] {
+        [
+            self.work_design,
+            self.outline,
+            self.volume_planning,
+            self.chapter_split,
+            self.writing,
+            self.knowledge_extraction,
+        ]
+    }
+}
 
 impl SecretStore {
     #[must_use]
@@ -642,6 +668,50 @@ impl ModelProfileStore {
             .map_err(AiError::from)
     }
 
+    pub fn get_ai_task_preferences(&self) -> Result<AiTaskPreferences, AiError> {
+        let stored = self
+            .database
+            .connection
+            .query_row(
+                "SELECT value FROM app_metadata WHERE key = ?1",
+                [AI_TASK_PREFERENCES_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(DatabaseError::from)?;
+        stored.map_or_else(
+            || Ok(AiTaskPreferences::default()),
+            |value| serde_json::from_str(&value).map_err(|_| AiError::ContextSerialization),
+        )
+    }
+
+    pub fn save_ai_task_preferences(
+        &mut self,
+        preferences: &AiTaskPreferences,
+    ) -> Result<AiTaskPreferences, AiError> {
+        let profiles = self.list()?;
+        for profile_id in preferences.selected_profile_ids().into_iter().flatten() {
+            let profile = profiles
+                .iter()
+                .find(|profile| profile.id == profile_id)
+                .ok_or(AiError::MissingProfile(profile_id))?;
+            if profile.capability != ModelCapability::Chat {
+                return Err(AiContractError::InvalidProviderCapability.into());
+            }
+        }
+        let value =
+            serde_json::to_string(preferences).map_err(|_| AiError::ContextSerialization)?;
+        self.database
+            .connection
+            .execute(
+                "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                rusqlite::params![AI_TASK_PREFERENCES_KEY, value],
+            )
+            .map_err(DatabaseError::from)?;
+        Ok(preferences.clone())
+    }
+
     pub fn get(&self, id: Uuid) -> Result<ModelProfile, AiError> {
         self.database.connection.query_row(
             "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles WHERE id = ?1",
@@ -1090,6 +1160,43 @@ mod tests {
             .expect("save secret reference");
         assert!(saved.has_secret);
         assert_eq!(store.list().expect("list profiles").len(), 1);
+    }
+
+    #[test]
+    fn ai_task_model_preferences_round_trip_without_an_open_project() {
+        let mut store = super::ModelProfileStore::in_memory().expect("settings store");
+        let chat = store
+            .upsert(novel_domain::ModelProfileInput {
+                id: None,
+                name: "任务模型".into(),
+                provider: novel_domain::ModelProvider::DeepSeek,
+                capability: novel_domain::ModelCapability::Chat,
+                base_url: "https://api.deepseek.com".into(),
+                model_id: "deepseek-v4-flash".into(),
+                context_window: 128_000,
+                max_output_tokens: 8_192,
+                privacy_level: novel_domain::PrivacyLevel::AllowCloud,
+                timeout_seconds: 120,
+                retry_limit: 1,
+            })
+            .expect("chat profile");
+        let preferences = super::AiTaskPreferences {
+            work_design: Some(chat.id),
+            outline: Some(chat.id),
+            volume_planning: Some(chat.id),
+            chapter_split: Some(chat.id),
+            writing: Some(chat.id),
+            knowledge_extraction: Some(chat.id),
+        };
+
+        let saved = store
+            .save_ai_task_preferences(&preferences)
+            .expect("save preferences");
+        assert_eq!(saved, preferences);
+        assert_eq!(
+            store.get_ai_task_preferences().expect("read preferences"),
+            preferences
+        );
     }
 
     #[cfg(windows)]

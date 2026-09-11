@@ -13,6 +13,8 @@ import {
   type AiAction,
   type AiProposal,
 } from "../lib/tauri-client";
+import { resolveTaskChatProfile, useAiTaskPreferences } from "../lib/ai-task-preferences";
+import { AiModelNote } from "./ai-model-note";
 
 const actionLabels: Record<AiAction, string> = {
   DRAFT: "AI 创作整章",
@@ -33,8 +35,8 @@ function textContent(text: string) {
 export function AiWritingPanel(props: { chapterId: string; chapterTitle: string; chapterPlan: string; draft: string; editor: Editor | null }) {
   const client = useQueryClient();
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
+  const aiPreferences = useAiTaskPreferences();
   const proposals = useQuery({ queryKey: ["ai-proposals", props.chapterId], queryFn: () => listAiProposals(props.chapterId) });
-  const [chatProfileId, setChatProfileId] = useState("");
   const [instruction, setInstruction] = useState("");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -42,11 +44,6 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
   const [partialTexts, setPartialTexts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [decidingProposalId, setDecidingProposalId] = useState<string | null>(null);
-
-  useEffect(() => {
-    const firstChat = profiles.data?.find((item) => item.capability === "CHAT");
-    if (!chatProfileId && firstChat) setChatProfileId(firstChat.id);
-  }, [chatProfileId, profiles.data]);
 
   useEffect(() => {
     let disposed = false;
@@ -62,7 +59,8 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
   }, []);
 
   async function runAction(action: AiAction) {
-    if (!chatProfileId || !props.editor) return;
+    const chatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "writing");
+    if (!chatProfile || !props.editor) return;
     const { from, to } = props.editor.state.selection;
     const selection = props.editor.state.doc.textBetween(from, to, "\n").trim();
     if ((action === "REWRITE" || action === "POLISH") && !selection) {
@@ -74,7 +72,7 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     setPreview("");
     try {
       const proposal = await generateAiProposal({
-        profileId: chatProfileId,
+        profileId: chatProfile.id,
         chapterId: props.chapterId,
         action,
         chapterTitle: props.chapterTitle,
@@ -133,17 +131,16 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     finally { setDecidingProposalId(null); }
   }
 
-  const chatProfiles = profiles.data?.filter((item) => item.capability === "CHAT") ?? [];
-  const selectedChatProfile = chatProfiles.find((item) => item.id === chatProfileId);
+  const selectedChatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "writing");
   const pending = proposals.data?.filter((item) => item.status === "PENDING") ?? [];
 
   return <section className="ai-panel" aria-label="AI 创作">
     <div className="section-heading"><h2><Sparkles size={15} />AI 创作</h2><span>云端 API · Proposal 审核</span></div>
-    <label className="ai-instruction">写作模型<select value={chatProfileId} onChange={(event) => setChatProfileId(event.target.value)}>{chatProfiles.length ? chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.modelId}</option>) : <option value="">请先配置 DeepSeek 或 OpenAI API</option>}</select></label>
-    <label className="ai-instruction">自然语言创作要求<input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让这一段更紧张，控制在 300 字内" /></label>
-    <p className="ai-request-hint">系统会把这句话与任务合同、章节规划和正文上下文编译成模型消息，再发送给已选云端 API。</p>
-    <div className="ai-draft-action"><div><strong>按章节执行卡创作整章</strong><span>AI 会参考章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿，确认后替换到正文。</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !chatProfileId || !selectedChatProfile?.hasSecret}><Sparkles size={14} />生成整章初稿</button></div>
-    <div className="ai-action-grid">{editingActions.map((action) => <button type="button" className="secondary-action" key={action} onClick={() => void runAction(action)} disabled={busy || !chatProfileId || !selectedChatProfile?.hasSecret}><Play size={14} />{actionLabels[action]}</button>)}</div>
+    <AiModelNote taskLabel="正文书写" profile={selectedChatProfile} />
+    <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>
+    <p className="ai-request-hint">系统会把这段意见与章节执行卡、写作规则和正文上下文一起编译成模型消息。</p>
+    <div className="ai-draft-action"><div><strong>按章节执行卡创作整章</strong><span>AI 会参考章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿，确认后替换到正文。</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !selectedChatProfile?.hasSecret}><Sparkles size={14} />生成整章初稿</button></div>
+    <div className="ai-action-grid">{editingActions.map((action) => <button type="button" className="secondary-action" key={action} onClick={() => void runAction(action)} disabled={busy || !selectedChatProfile?.hasSecret}><Play size={14} />{actionLabels[action]}</button>)}</div>
     {busy ? <div className="ai-running"><LoaderCircle size={15} className="spin" /><span>模型正在生成候选…</span><button type="button" className="secondary-action" onClick={() => void cancel()} disabled={!activeTaskId}><Ban size={14} />取消</button></div> : null}
     {preview ? <pre className="ai-preview">{preview}</pre> : null}
     {error ? <p className="project-error" role="alert">{error}</p> : null}

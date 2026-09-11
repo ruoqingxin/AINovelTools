@@ -169,6 +169,14 @@ export type ModelProfile = {
   createdAt: string; updatedAt: string;
 };
 export type ModelProfileInput = Omit<ModelProfile, "id" | "secretRef" | "hasSecret" | "createdAt" | "updatedAt"> & { id?: string };
+export type AiTaskPreferences = {
+  workDesign: string | null;
+  outline: string | null;
+  volumePlanning: string | null;
+  chapterSplit: string | null;
+  writing: string | null;
+  knowledgeExtraction: string | null;
+};
 export type AiProposal = {
   id: string; taskId: string; chapterId: string; action: AiAction; targetRevisionId: string | null;
   contextVersion: string; promptVersion: string; outputText: string; acceptedText: string | null;
@@ -364,6 +372,14 @@ export function listModelProfiles() {
   return invoke<ModelProfile[]>("list_model_profiles");
 }
 
+export function getAiTaskPreferences() {
+  return invoke<AiTaskPreferences>("get_ai_task_preferences");
+}
+
+export function saveAiTaskPreferences(preferences: AiTaskPreferences) {
+  return invoke<AiTaskPreferences>("save_ai_task_preferences", { preferences });
+}
+
 export function upsertModelProfile(input: ModelProfileInput) {
   return invoke<ModelProfile>("upsert_model_profile", { input });
 }
@@ -380,8 +396,8 @@ export function testModelProfile(profileId: string) {
   return invoke<ModelConnectionResponse>("test_model_profile", { profileId });
 }
 
-export function extractEntitiesFromText(profileId: string, entityType: EntityType, entityName: string, briefSummary: string, applicabilityScope: string, sourceText: string) {
-  return invoke<ExtractedEntity[]>("extract_entities_from_text", { profileId, entityType, entityName, briefSummary, applicabilityScope, sourceText });
+export function extractEntitiesFromText(profileId: string, entityType: EntityType, entityName: string, briefSummary: string, applicabilityScope: string, sourceText: string, userGuidance?: string) {
+  return invoke<ExtractedEntity[]>("extract_entities_from_text", { input: { profileId, entityType, entityName, briefSummary, applicabilityScope, sourceText, userGuidance } });
 }
 
 export function listAiProposals(chapterId: string) {

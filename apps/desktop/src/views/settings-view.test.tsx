@@ -1,20 +1,43 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsView } from "./settings-view";
 
-const mocks = vi.hoisted(() => ({ listModelProfiles: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  listModelProfiles: vi.fn(),
+  getAiTaskPreferences: vi.fn(),
+  saveAiTaskPreferences: vi.fn(),
+}));
 
 vi.mock("../lib/tauri-client", async () => {
   const actual = await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client");
-  return { ...actual, listModelProfiles: mocks.listModelProfiles };
+  return {
+    ...actual,
+    listModelProfiles: mocks.listModelProfiles,
+    getAiTaskPreferences: mocks.getAiTaskPreferences,
+    saveAiTaskPreferences: mocks.saveAiTaskPreferences,
+  };
 });
 
 describe("SettingsView", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    window.location.hash = "";
+  });
 
-  beforeEach(() => mocks.listModelProfiles.mockResolvedValue([]));
+  beforeEach(() => {
+    mocks.listModelProfiles.mockResolvedValue([]);
+    mocks.getAiTaskPreferences.mockResolvedValue({
+      workDesign: null,
+      outline: null,
+      volumePlanning: null,
+      chapterSplit: null,
+      writing: null,
+      knowledgeExtraction: null,
+    });
+    mocks.saveAiTaskPreferences.mockImplementation(async (preferences) => preferences);
+  });
 
   it("places model API configuration under settings", async () => {
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
@@ -59,5 +82,61 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "编辑 小说知识库 BAAI/bge-m3" }));
     expect(await screen.findByDisplayValue("小说知识库")).toBeVisible();
     expect(screen.getByLabelText("模型 ID")).toHaveValue("BAAI/bge-m3");
+  });
+
+  it("routes each AI task to a configured chat model", async () => {
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        secretRef: "model-profile:deepseek-profile", hasSecret: true, createdAt: "0", updatedAt: "0",
+      },
+      {
+        id: "outline-profile", name: "大纲模型", provider: "OPEN_AI", capability: "CHAT",
+        baseUrl: "https://api.openai.com/v1", modelId: "gpt-5.6-terra", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        secretRef: "model-profile:outline-profile", hasSecret: true, createdAt: "0", updatedAt: "0",
+      },
+    ]);
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    expect(await screen.findByRole("heading", { name: "AI 任务模型" })).toBeVisible();
+    fireEvent.change(await screen.findByLabelText("大纲主线模型"), { target: { value: "outline-profile" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存任务模型" }));
+
+    await screen.findByText("AI 任务模型已保存，后续生成会立即使用新配置");
+    expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({ outline: "outline-profile" }));
+  });
+
+  it("opens AI task routing from a deep link and clears deleted model mappings", async () => {
+    window.location.hash = "#ai-task-models";
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "available-profile", name: "可用模型", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        secretRef: "model-profile:available-profile", hasSecret: true, createdAt: "0", updatedAt: "0",
+      },
+    ]);
+    mocks.getAiTaskPreferences.mockResolvedValue({
+      workDesign: null,
+      outline: "deleted-profile",
+      volumePlanning: null,
+      chapterSplit: null,
+      writing: null,
+      knowledgeExtraction: null,
+    });
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+
+    expect(await screen.findByRole("heading", { name: "AI 任务模型" })).toBeVisible();
+    const outlineModel = await screen.findByLabelText("大纲主线模型");
+    await waitFor(() => expect(outlineModel).toHaveValue(""));
+    fireEvent.click(screen.getByRole("button", { name: "保存任务模型" }));
+
+    await screen.findByText("AI 任务模型已保存，后续生成会立即使用新配置");
+    expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({ outline: null }));
   });
 });
