@@ -160,7 +160,7 @@ export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
 export type ModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
 export type ModelCapability = "CHAT" | "EMBEDDING";
 export type PrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
-export type AiAction = "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE";
+export type AiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE";
 export type AiProposalStatus = "PENDING" | "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED";
 export type ModelProfile = {
   id: string; name: string; provider: ModelProvider; capability: ModelCapability; baseUrl: string; modelId: string;

@@ -75,6 +75,7 @@ pub struct ModelProfileInput {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AiAction {
+    Draft,
     Continue,
     Rewrite,
     Polish,
@@ -758,6 +759,7 @@ mod tests {
         );
         assert!(super::AiAction::Rewrite.requires_selection());
         assert!(!super::AiAction::Continue.requires_selection());
+        assert!(!super::AiAction::Draft.requires_selection());
     }
 
     #[test]

@@ -948,6 +948,7 @@ fn parse_privacy(value: &str) -> PrivacyLevel {
 }
 fn action_str(value: AiAction) -> &'static str {
     match value {
+        AiAction::Draft => "DRAFT",
         AiAction::Continue => "CONTINUE",
         AiAction::Rewrite => "REWRITE",
         AiAction::Polish => "POLISH",
@@ -956,6 +957,7 @@ fn action_str(value: AiAction) -> &'static str {
 }
 fn parse_action(value: &str) -> AiAction {
     match value {
+        "DRAFT" => AiAction::Draft,
         "REWRITE" => AiAction::Rewrite,
         "POLISH" => AiAction::Polish,
         "SUMMARIZE" => AiAction::Summarize,
@@ -1033,6 +1035,19 @@ mod tests {
 
     fn context() -> novel_application::ContextPackage {
         novel_application::ContextPackage::connection_test()
+    }
+
+    #[test]
+    fn writing_actions_round_trip() {
+        for action in [
+            novel_domain::AiAction::Draft,
+            novel_domain::AiAction::Continue,
+            novel_domain::AiAction::Rewrite,
+            novel_domain::AiAction::Polish,
+            novel_domain::AiAction::Summarize,
+        ] {
+            assert_eq!(super::parse_action(super::action_str(action)), action);
+        }
     }
 
     #[test]

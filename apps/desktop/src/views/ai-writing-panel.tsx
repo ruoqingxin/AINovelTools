@@ -15,11 +15,13 @@ import {
 } from "../lib/tauri-client";
 
 const actionLabels: Record<AiAction, string> = {
+  DRAFT: "AI 创作整章",
   CONTINUE: "续写",
   REWRITE: "重写选区",
   POLISH: "润色选区",
   SUMMARIZE: "章节摘要",
 };
+const editingActions: AiAction[] = ["CONTINUE", "REWRITE", "POLISH", "SUMMARIZE"];
 
 function textContent(text: string) {
   return text.split(/\r?\n/).map((line) => ({
@@ -96,6 +98,10 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
 
   function applyText(proposal: AiProposal, text: string) {
     if (!props.editor || proposal.action === "SUMMARIZE") return;
+    if (proposal.action === "DRAFT") {
+      props.editor.commands.setContent({ type: "doc", content: textContent(text) });
+      return;
+    }
     if (proposal.action === "CONTINUE") {
       props.editor.commands.insertContentAt(props.editor.state.doc.content.size, textContent(text));
       return;
@@ -106,6 +112,7 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
 
   async function decide(proposal: AiProposal, mode: "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED") {
     setError(null);
+    if (mode !== "REJECTED" && proposal.action === "DRAFT" && props.editor?.getText().trim() && !window.confirm("应用整章创作候选会替换当前正文草稿。确定继续吗？")) return;
     if (mode !== "REJECTED" && proposal.action !== "SUMMARIZE") {
       if (!props.editor) {
         setError("正文编辑器尚未准备好。");
@@ -135,7 +142,8 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     <label className="ai-instruction">写作模型<select value={chatProfileId} onChange={(event) => setChatProfileId(event.target.value)}>{chatProfiles.length ? chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.modelId}</option>) : <option value="">请先配置 DeepSeek 或 OpenAI API</option>}</select></label>
     <label className="ai-instruction">自然语言创作要求<input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让这一段更紧张，控制在 300 字内" /></label>
     <p className="ai-request-hint">系统会把这句话与任务合同、章节规划和正文上下文编译成模型消息，再发送给已选云端 API。</p>
-    <div className="ai-action-grid">{(Object.keys(actionLabels) as AiAction[]).map((action) => <button type="button" className="secondary-action" key={action} onClick={() => void runAction(action)} disabled={busy || !chatProfileId || !selectedChatProfile?.hasSecret}><Play size={14} />{actionLabels[action]}</button>)}</div>
+    <div className="ai-draft-action"><div><strong>按章节执行卡创作整章</strong><span>AI 会参考章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿，确认后替换到正文。</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !chatProfileId || !selectedChatProfile?.hasSecret}><Sparkles size={14} />生成整章初稿</button></div>
+    <div className="ai-action-grid">{editingActions.map((action) => <button type="button" className="secondary-action" key={action} onClick={() => void runAction(action)} disabled={busy || !chatProfileId || !selectedChatProfile?.hasSecret}><Play size={14} />{actionLabels[action]}</button>)}</div>
     {busy ? <div className="ai-running"><LoaderCircle size={15} className="spin" /><span>模型正在生成候选…</span><button type="button" className="secondary-action" onClick={() => void cancel()} disabled={!activeTaskId}><Ban size={14} />取消</button></div> : null}
     {preview ? <pre className="ai-preview">{preview}</pre> : null}
     {error ? <p className="project-error" role="alert">{error}</p> : null}
@@ -143,7 +151,7 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     {pending.length ? <div className="proposal-list"><div className="section-heading"><h3>待审核候选</h3><span>{pending.length} 条</span></div>{pending.map((proposal) => <article className="proposal" key={proposal.id}>
       <div className="proposal-meta"><strong>{actionLabels[proposal.action]}</strong><code>{proposal.promptVersion}</code></div>
       <textarea value={partialTexts[proposal.id] ?? proposal.outputText} onChange={(event) => setPartialTexts((value) => ({ ...value, [proposal.id]: event.target.value }))} aria-label={`${actionLabels[proposal.action]}候选文本`} />
-      <div className="ai-actions"><button type="button" className="primary-action" onClick={() => void decide(proposal, "ACCEPTED")} disabled={decidingProposalId !== null}><Check size={14} />{decidingProposalId === proposal.id ? "处理中…" : proposal.action === "SUMMARIZE" ? "保留摘要" : "全部应用到草稿"}</button><button type="button" className="secondary-action" onClick={() => void decide(proposal, "PARTIALLY_ACCEPTED")} disabled={decidingProposalId !== null}><Check size={14} />应用编辑后的文本</button><button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />拒绝</button></div>
+      <div className="ai-actions"><button type="button" className="primary-action" onClick={() => void decide(proposal, "ACCEPTED")} disabled={decidingProposalId !== null}><Check size={14} />{decidingProposalId === proposal.id ? "处理中…" : proposal.action === "SUMMARIZE" ? "保留摘要" : proposal.action === "DRAFT" ? "应用到正文（整章替换）" : "全部应用到草稿"}</button><button type="button" className="secondary-action" onClick={() => void decide(proposal, "PARTIALLY_ACCEPTED")} disabled={decidingProposalId !== null}><Check size={14} />应用编辑后的文本</button><button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />拒绝</button></div>
     </article>)}</div> : null}
   </section>;
 }

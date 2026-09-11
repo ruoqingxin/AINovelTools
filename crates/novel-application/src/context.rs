@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROMPT_VERSION: &str = "r3-writing-v3";
+pub const PROMPT_VERSION: &str = "r3-writing-v4";
 const TRUNCATION_MARKER: &str = "[已按 TokenBudget 截断]";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -552,6 +552,17 @@ fn build_prompt_sections(
 
 fn build_task_contract(input: &AssembleContextInput) -> AiTaskContract {
     let (role, goal, target_type, acceptance_criteria, output_contract) = match input.action {
+        AiAction::Draft => (
+            AiTaskRole::DraftWriter,
+            "依据章节执行卡、项目上下文和作者要求创作本章完整初稿。",
+            "CHAPTER",
+            vec![
+                "完整覆盖章节执行卡中的目标、关键行动、冲突变化和结尾钩子。".to_owned(),
+                "正文内部的场景、人物行动和因果推进连贯，可直接进入候选审核。".to_owned(),
+                "只输出完整章节正文。".to_owned(),
+            ],
+            "纯文本完整章节候选正文；不得附带分析、标题、JSON、变更声明或写作说明。",
+        ),
         AiAction::Continue => (
             AiTaskRole::DraftWriter,
             "从当前草稿结尾继续写作，不复述已有内容。",

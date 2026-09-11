@@ -2512,6 +2512,7 @@ mod tests {
             })
             .expect("entity");
         for action in [
+            super::AiAction::Draft,
             super::AiAction::Continue,
             super::AiAction::Rewrite,
             super::AiAction::Polish,

@@ -113,10 +113,10 @@ export function StoryPlanningWorkbench(props: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [editorTab, setEditorTab] = useState<"formal" | "pending">("formal");
-  const [showEditor, setShowEditor] = useState(false);
+  const [showEditor, setShowEditor] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [startMode, setStartMode] = useState<PlanningStartMode | null>(null);
+  const [startMode, setStartMode] = useState<PlanningStartMode | null>("WRITE");
   const [pendingAction, setPendingAction] = useState<"AI" | "IMPORT" | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [operationGuidance, setOperationGuidance] = useState("");
@@ -172,9 +172,9 @@ export function StoryPlanningWorkbench(props: {
     setForm(next);
     setError(null);
     setNotice(null);
-    setShowEditor(Boolean(next.content.trim() || next.pendingContent.trim()));
+    setShowEditor(true);
     setEditorTab(next.pendingContent.trim() ? "pending" : "formal");
-    setStartMode(null);
+    setStartMode("WRITE");
     setPendingAction(null);
     setPendingFiles([]);
     setOperationGuidance("");

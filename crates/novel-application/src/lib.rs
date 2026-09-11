@@ -163,7 +163,7 @@ mod tests {
             input_token_budget: 1_024,
         };
         let package = super::ContextAssembler::assemble(&input).expect("assemble contract");
-        assert_eq!(package.prompt_version, "r3-writing-v3");
+        assert_eq!(package.prompt_version, "r3-writing-v4");
         assert_eq!(package.task_contract.role, super::AiTaskRole::DraftWriter);
         assert!(
             package
@@ -185,6 +185,10 @@ mod tests {
         );
 
         for (action, expected_role) in [
+            (
+                novel_domain::AiAction::Draft,
+                super::AiTaskRole::DraftWriter,
+            ),
             (
                 novel_domain::AiAction::Continue,
                 super::AiTaskRole::DraftWriter,
