@@ -702,6 +702,39 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (31, 'planning_chunk_embeddings');",
             )?;
         }
+        if applied.unwrap_or(0) < 32 {
+            self.connection.execute_batch(
+                "ALTER TABLE ai_tasks ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1 CHECK(attempt_count > 0);
+                ALTER TABLE ai_tasks ADD COLUMN retry_reason TEXT;
+                ALTER TABLE ai_tasks ADD COLUMN fallback_profile_id TEXT REFERENCES model_profiles(id);
+                CREATE INDEX IF NOT EXISTS idx_ai_tasks_created ON ai_tasks(created_at DESC);
+                INSERT INTO schema_migrations (version, name) VALUES (32, 'ai_run_attempt_tracking');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 33 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS ai_proposal_feedback (
+                    proposal_id TEXT PRIMARY KEY NOT NULL REFERENCES ai_proposals(id) ON DELETE CASCADE,
+                    rating TEXT NOT NULL CHECK(rating IN ('HELPFUL','NOT_HELPFUL')),
+                    note TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT INTO schema_migrations (version, name) VALUES (33, 'ai_proposal_quality_feedback');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 34 {
+            self.connection.execute_batch(
+                "ALTER TABLE ai_tasks ADD COLUMN estimated_input_tokens INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE ai_tasks ADD COLUMN estimated_output_tokens INTEGER NOT NULL DEFAULT 0;
+                CREATE TABLE IF NOT EXISTS project_ai_task_overrides (
+                    task_key TEXT PRIMARY KEY NOT NULL,
+                    preference_json TEXT NOT NULL CHECK(json_valid(preference_json)),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT INTO schema_migrations (version, name) VALUES (34, 'ai_usage_stats_and_project_overrides');",
+            )?;
+        }
         Ok(())
     }
 

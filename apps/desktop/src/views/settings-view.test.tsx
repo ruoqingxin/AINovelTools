@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   listModelProfiles: vi.fn(),
   getAiTaskPreferences: vi.fn(),
   saveAiTaskPreferences: vi.fn(),
+  listAiRuns: vi.fn(),
+  getProjectAiTaskOverrides: vi.fn(),
+  saveProjectAiTaskOverride: vi.fn(),
+  removeProjectAiTaskOverride: vi.fn(),
 }));
 
 function recommendedAiTaskPreferenceSnapshot() {
@@ -24,6 +28,10 @@ vi.mock("../lib/tauri-client", async () => {
     listModelProfiles: mocks.listModelProfiles,
     getAiTaskPreferences: mocks.getAiTaskPreferences,
     saveAiTaskPreferences: mocks.saveAiTaskPreferences,
+    listAiRuns: mocks.listAiRuns,
+    getProjectAiTaskOverrides: mocks.getProjectAiTaskOverrides,
+    saveProjectAiTaskOverride: mocks.saveProjectAiTaskOverride,
+    removeProjectAiTaskOverride: mocks.removeProjectAiTaskOverride,
   };
 });
 
@@ -37,6 +45,34 @@ describe("SettingsView", () => {
     mocks.listModelProfiles.mockResolvedValue([]);
     mocks.getAiTaskPreferences.mockResolvedValue(recommendedAiTaskPreferenceSnapshot());
     mocks.saveAiTaskPreferences.mockImplementation(async (preferences) => preferences);
+    mocks.listAiRuns.mockResolvedValue([]);
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({
+      available: false,
+      workDesign: null,
+      outline: null,
+      volumePlanning: null,
+      chapterSplit: null,
+      writing: null,
+      knowledgeExtraction: null,
+    });
+    mocks.saveProjectAiTaskOverride.mockImplementation(async (_task, preference) => ({
+      available: true,
+      workDesign: preference,
+      outline: null,
+      volumePlanning: null,
+      chapterSplit: null,
+      writing: null,
+      knowledgeExtraction: null,
+    }));
+    mocks.removeProjectAiTaskOverride.mockResolvedValue({
+      available: true,
+      workDesign: null,
+      outline: null,
+      volumePlanning: null,
+      chapterSplit: null,
+      writing: null,
+      knowledgeExtraction: null,
+    });
   });
 
   it("places model API configuration under settings", async () => {
@@ -104,13 +140,23 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
     expect(await screen.findByRole("heading", { name: "AI 任务模型" })).toBeVisible();
     fireEvent.change(await screen.findByLabelText("大纲主线模型"), { target: { value: "outline-profile" } });
+    fireEvent.change(screen.getByLabelText("大纲主线备用模型"), { target: { value: "deepseek-profile" } });
     fireEvent.change(screen.getByLabelText("大纲主线温度"), { target: { value: "0.4" } });
     fireEvent.change(screen.getByLabelText("大纲主线最大输出"), { target: { value: "4096" } });
     fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
 
     await screen.findByText("任务模型与生成参数已保存，后续生成会立即使用新配置");
     expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({
-      outline: { profileId: "outline-profile", temperature: 0.4, maxOutputTokens: 4096 },
+      outline: expect.objectContaining({
+        profileId: "outline-profile",
+        fallbackProfileId: "deepseek-profile",
+        temperature: 0.4,
+        maxOutputTokens: 4096,
+        prompt: expect.objectContaining({
+          systemPrompt: null,
+          instructionTemplate: null,
+        }),
+      }),
     }));
   });
 
@@ -133,15 +179,15 @@ describe("SettingsView", () => {
       expect(screen.getByLabelText(`${task.label}温度`)).toHaveValue(task.defaultTemperature);
       expect(screen.getByLabelText(`${task.label}最大输出`)).toHaveValue(task.defaultMaxOutputTokens);
     }
-    expect(screen.queryByRole("button", { name: "恢复推荐值" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "恢复生成参数" })).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("大纲主线温度"), { target: { value: "0.2" } });
     fireEvent.change(screen.getByLabelText("大纲主线最大输出"), { target: { value: "2048" } });
-    fireEvent.click(screen.getByRole("button", { name: "恢复推荐值" }));
+    fireEvent.click(screen.getByRole("button", { name: "恢复生成参数" }));
 
     expect(screen.getByLabelText("大纲主线温度")).toHaveValue(0.6);
     expect(screen.getByLabelText("大纲主线最大输出")).toHaveValue(6144);
-    expect(screen.queryByRole("button", { name: "恢复推荐值" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "恢复生成参数" })).not.toBeInTheDocument();
   });
 
   it("opens AI task routing from a deep link and clears deleted model mappings", async () => {
@@ -168,7 +214,83 @@ describe("SettingsView", () => {
 
     await screen.findByText("任务模型与生成参数已保存，后续生成会立即使用新配置");
     expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({
-      outline: { profileId: null, temperature: 0.6, maxOutputTokens: 6144 },
+      outline: expect.objectContaining({
+        profileId: null,
+        temperature: 0.6,
+        maxOutputTokens: 6144,
+        prompt: expect.objectContaining({
+          context: expect.objectContaining({ inputTokenBudget: 32768 }),
+        }),
+      }),
     }));
+  });
+
+  it("edits and preserves per-task prompt, variables, context switches, and budget", async () => {
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        secretRef: "model-profile:deepseek-profile", hasSecret: true, createdAt: "0", updatedAt: "0",
+      },
+    ]);
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    await screen.findByRole("heading", { name: "AI 任务模型" });
+    await screen.findByLabelText("作品设定温度");
+    fireEvent.click(screen.getByRole("tab", { name: /正文书写/ }));
+
+    fireEvent.change(screen.getByLabelText(/系统提示词覆盖/), { target: { value: "保持第一人称，克制表达。" } });
+    fireEvent.change(screen.getByLabelText(/自定义任务模板/), { target: { value: "章节 {{chapterTitle}}" } });
+    fireEvent.click(screen.getByRole("button", { name: "{{userInstruction}}" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /当前草稿/ }));
+    fireEvent.change(screen.getByLabelText(/输入 Token 预算/), { target: { value: "24576" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
+
+    await screen.findByText("任务模型与生成参数已保存，后续生成会立即使用新配置");
+    expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({
+      writing: expect.objectContaining({
+        prompt: {
+          systemPrompt: "保持第一人称，克制表达。",
+          instructionTemplate: "章节 {{chapterTitle}}{{userInstruction}}",
+          context: expect.objectContaining({
+            includeCurrentDraft: false,
+            inputTokenBudget: 24576,
+          }),
+        },
+      }),
+    }));
+  });
+
+  it("saves the selected task as a project-level override", async () => {
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        secretRef: "model-profile:deepseek-profile", hasSecret: true, createdAt: "0", updatedAt: "0",
+      },
+    ]);
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({
+      available: true,
+      workDesign: null,
+      outline: null,
+      volumePlanning: null,
+      chapterSplit: null,
+      writing: null,
+      knowledgeExtraction: null,
+    });
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    await screen.findByLabelText("作品设定温度");
+    fireEvent.click(screen.getByRole("button", { name: "保存为项目覆盖" }));
+
+    await screen.findByText("已保存“作品设定”的项目级覆盖");
+    expect(mocks.saveProjectAiTaskOverride).toHaveBeenCalledWith(
+      "workDesign",
+      expect.objectContaining({ temperature: 0.45, maxOutputTokens: 4096 }),
+    );
   });
 });

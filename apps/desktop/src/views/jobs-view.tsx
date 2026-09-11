@@ -15,7 +15,7 @@ const typeLabels: Record<JobType, string> = {
 const statusLabels = { QUEUED: "等待中", RUNNING: "执行中", SUCCEEDED: "已完成", FAILED: "失败", CANCELLED: "已取消" } as const;
 const stageLabels: Record<string, string> = {
   QUEUED: "已排队", PREPARING: "准备任务", RETRIEVAL: "检索上下文", CONTEXT: "整理上下文", REQUESTING: "等待模型",
-  RECEIVING: "接收内容", SAVING: "保存结果", COMPLETED: "执行完成", FAILED: "执行失败",
+  RECEIVING: "接收内容", FALLBACK: "切换备用模型", SAVING: "保存结果", COMPLETED: "执行完成", FAILED: "执行失败",
   CANCEL_REQUESTED: "正在取消", CANCELLED: "已取消", RETRY: "重新执行",
 };
 

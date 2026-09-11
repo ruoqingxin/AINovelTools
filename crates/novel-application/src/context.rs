@@ -805,7 +805,12 @@ fn retrieval_method_label(method: novel_domain::RetrievalMethod) -> &'static str
     }
 }
 
-fn document_text(document_json: &str) -> Result<String, ContextError> {
+/// Extracts the plain text from a persisted editor document.
+///
+/// # Errors
+///
+/// Returns an error when the JSON document is malformed or unsupported.
+pub fn document_text(document_json: &str) -> Result<String, ContextError> {
     let value: serde_json::Value = serde_json::from_str(document_json)
         .map_err(|error| ContextError::InvalidDocument(error.to_string()))?;
     if value.get("type").and_then(serde_json::Value::as_str) != Some("doc") {

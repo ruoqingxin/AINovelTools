@@ -32,8 +32,10 @@ mod knowledge_store;
 mod materials_store;
 mod search_store;
 pub use ai::{
-    AiError, AiTaskKind, AiTaskPreference, AiTaskPreferences, EmbeddingGateway, GenerationOptions,
-    ModelGateway, ModelProfileStore, SecretStore,
+    AiError, AiOutputValidation, AiProposalFeedback, AiProposalFeedbackRating, AiProposalReview,
+    AiRun, AiTaskContextPreference, AiTaskKind, AiTaskPreference, AiTaskPreferences,
+    AiTaskPromptPreference, EmbeddingGateway, GenerationOptions, ModelGateway, ModelProfileStore,
+    ProjectAiTaskOverrides, SecretStore, apply_task_prompt_preferences, render_prompt_template,
 };
 pub use entity_store::EntityStoreError;
 pub use knowledge_store::KnowledgeStoreError;
@@ -172,7 +174,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 31;
+pub const CURRENT_SCHEMA_VERSION: i64 = 34;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -2946,6 +2948,61 @@ mod tests {
                 retry_limit: 1,
             })
             .expect("profile");
+        let fallback = manager
+            .upsert_model_profile(super::ModelProfileInput {
+                id: None,
+                name: "备用模型".into(),
+                provider: super::ModelProvider::OpenAi,
+                capability: super::ModelCapability::Chat,
+                base_url: "https://api.openai.com/v1".into(),
+                model_id: "gpt-test".into(),
+                context_window: 8_192,
+                max_output_tokens: 1_024,
+                privacy_level: super::PrivacyLevel::AllowCloud,
+                timeout_seconds: 30,
+                retry_limit: 1,
+            })
+            .expect("fallback profile");
+        manager
+            .save_project_ai_task_override(
+                super::AiTaskKind::Writing,
+                &super::AiTaskPreference {
+                    profile_id: Some(profile.id),
+                    fallback_profile_id: Some(fallback.id),
+                    temperature: Some(0.7),
+                    max_output_tokens: Some(2_048),
+                    prompt: super::AiTaskPromptPreference {
+                        system_prompt: Some("项目专用写作提示".into()),
+                        instruction_template: Some("章节 {{chapterTitle}}".into()),
+                        context: super::AiTaskContextPreference {
+                            include_project_knowledge: Some(false),
+                            input_token_budget: Some(16_384),
+                            ..super::AiTaskContextPreference::default()
+                        },
+                    },
+                },
+            )
+            .expect("project override");
+        let overrides = manager
+            .get_project_ai_task_overrides()
+            .expect("project overrides");
+        assert!(overrides.available);
+        assert_eq!(
+            overrides
+                .get(super::AiTaskKind::Writing)
+                .and_then(|item| item.prompt.system_prompt.as_deref()),
+            Some("项目专用写作提示")
+        );
+        manager
+            .remove_project_ai_task_override(super::AiTaskKind::Writing)
+            .expect("remove override");
+        assert!(
+            manager
+                .get_project_ai_task_overrides()
+                .expect("overrides after removal")
+                .get(super::AiTaskKind::Writing)
+                .is_none()
+        );
         assert!(!profile.has_secret);
         let context = novel_application::ContextAssembler::assemble(
             &novel_application::AssembleContextInput {
@@ -2962,6 +3019,9 @@ mod tests {
         )
         .expect("context");
         let task_id = manager.create_ai_task(profile.id, &context).expect("task");
+        manager
+            .record_ai_task_fallback(task_id, fallback.id, "PROVIDER_TIMEOUT")
+            .expect("record fallback");
         let session = manager.current.as_ref().expect("session");
         let (task_contract_json, context_section_audit_json): (String, String) = session
             .database
@@ -2980,6 +3040,31 @@ mod tests {
             .complete_ai_task(task_id, &context, "新的段落。".into())
             .expect("proposal");
         assert_eq!(proposal.status, super::AiProposalStatus::Pending);
+        let runs = manager.list_ai_runs(10).expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].attempt_count, 2);
+        assert_eq!(runs[0].profile_name, "备用模型");
+        assert_eq!(runs[0].retry_reason.as_deref(), Some("PROVIDER_TIMEOUT"));
+        let feedback = manager
+            .rate_ai_proposal(
+                proposal.id,
+                super::AiProposalFeedbackRating::Helpful,
+                Some("冲突推进自然".into()),
+            )
+            .expect("feedback");
+        assert_eq!(feedback.rating, super::AiProposalFeedbackRating::Helpful);
+        let reviews = manager
+            .list_ai_proposal_reviews(chapter.id)
+            .expect("proposal reviews");
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].validation.status, "WARNING");
+        assert_eq!(
+            reviews[0]
+                .feedback
+                .as_ref()
+                .and_then(|item| item.note.as_deref()),
+            Some("冲突推进自然")
+        );
         manager
             .decide_ai_proposal(proposal.id, super::AiProposalStatus::Accepted, None)
             .expect("accept");

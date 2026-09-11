@@ -171,8 +171,23 @@ export type ModelProfile = {
 export type ModelProfileInput = Omit<ModelProfile, "id" | "secretRef" | "hasSecret" | "createdAt" | "updatedAt"> & { id?: string };
 export type AiTaskPreference = {
   profileId: string | null;
+  fallbackProfileId: string | null;
   temperature: number | null;
   maxOutputTokens: number | null;
+  prompt: AiTaskPromptPreference;
+};
+export type AiTaskPromptPreference = {
+  systemPrompt: string | null;
+  instructionTemplate: string | null;
+  context: AiTaskContextPreference;
+};
+export type AiTaskContextPreference = {
+  includeProjectContext: boolean | null;
+  includeReferenceContent: boolean | null;
+  includeProjectKnowledge: boolean | null;
+  includeCurrentDraft: boolean | null;
+  includeChapterPlan: boolean | null;
+  inputTokenBudget: number | null;
 };
 export type AiTaskPreferences = {
   workDesign: AiTaskPreference;
@@ -182,10 +197,37 @@ export type AiTaskPreferences = {
   writing: AiTaskPreference;
   knowledgeExtraction: AiTaskPreference;
 };
+export type ProjectAiTaskOverrides = {
+  available: boolean;
+  workDesign: AiTaskPreference | null;
+  outline: AiTaskPreference | null;
+  volumePlanning: AiTaskPreference | null;
+  chapterSplit: AiTaskPreference | null;
+  writing: AiTaskPreference | null;
+  knowledgeExtraction: AiTaskPreference | null;
+};
 export type AiProposal = {
   id: string; taskId: string; chapterId: string; action: AiAction; targetRevisionId: string | null;
   contextVersion: string; promptVersion: string; outputText: string; acceptedText: string | null;
   status: AiProposalStatus; createdAt: string; decidedAt: string | null;
+};
+export type AiRun = {
+  id: string; action: AiAction; status: string; chapterTitle: string; profileName: string;
+  attemptCount: number; retryReason: string | null; errorCode: string | null;
+  estimatedInputTokens: number; estimatedOutputTokens: number;
+  promptVersion: string; createdAt: string; finishedAt: string | null;
+};
+export type AiProposalFeedback = {
+  proposalId: string; rating: "HELPFUL" | "NOT_HELPFUL"; note: string | null;
+  createdAt: string; updatedAt: string;
+};
+export type AiProposalReview = {
+  proposal: AiProposal;
+  validation: {
+    status: "VALID" | "WARNING" | "INVALID"; messages: string[]; characterCount: number;
+    paragraphCount: number; estimatedOutputTokens: number;
+  };
+  feedback: AiProposalFeedback | null;
 };
 export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX" | "AI_PLANNING_GENERATE" | "AI_PLANNING_EXTRACT";
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
@@ -385,6 +427,15 @@ export function getAiTaskPreferences() {
 export function saveAiTaskPreferences(preferences: AiTaskPreferences) {
   return invoke<AiTaskPreferences>("save_ai_task_preferences", { preferences });
 }
+export function getProjectAiTaskOverrides() {
+  return invoke<ProjectAiTaskOverrides>("get_project_ai_task_overrides");
+}
+export function saveProjectAiTaskOverride(task: keyof AiTaskPreferences, preference: AiTaskPreference) {
+  return invoke<ProjectAiTaskOverrides>("save_project_ai_task_override", { task, preference });
+}
+export function removeProjectAiTaskOverride(task: keyof AiTaskPreferences) {
+  return invoke<ProjectAiTaskOverrides>("remove_project_ai_task_override", { task });
+}
 
 export function upsertModelProfile(input: ModelProfileInput) {
   return invoke<ModelProfile>("upsert_model_profile", { input });
@@ -407,7 +458,13 @@ export function extractEntitiesFromText(profileId: string, entityType: EntityTyp
 }
 
 export function listAiProposals(chapterId: string) {
-  return invoke<AiProposal[]>("list_ai_proposals", { chapterId });
+  return invoke<AiProposalReview[]>("list_ai_proposals", { chapterId });
+}
+export function listAiRuns(limit = 20) {
+  return invoke<AiRun[]>("list_ai_runs", { limit });
+}
+export function rateAiProposal(id: string, rating: "HELPFUL" | "NOT_HELPFUL", note?: string) {
+  return invoke<AiProposalFeedback>("rate_ai_proposal", { id, rating, note });
 }
 
 export function generateAiProposal(input: {

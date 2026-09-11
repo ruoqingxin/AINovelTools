@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{
     Arc,
@@ -99,6 +100,18 @@ pub enum AiTaskKind {
 
 impl AiTaskKind {
     #[must_use]
+    pub const fn storage_key(self) -> &'static str {
+        match self {
+            Self::WorkDesign => "workDesign",
+            Self::Outline => "outline",
+            Self::VolumePlanning => "volumePlanning",
+            Self::ChapterSplit => "chapterSplit",
+            Self::Writing => "writing",
+            Self::KnowledgeExtraction => "knowledgeExtraction",
+        }
+    }
+
+    #[must_use]
     pub const fn default_temperature(self) -> f64 {
         match self {
             Self::WorkDesign => 0.45,
@@ -118,21 +131,151 @@ impl AiTaskKind {
             Self::Writing => 8_192,
         }
     }
+
+    #[must_use]
+    pub const fn default_input_token_budget(self) -> u32 {
+        match self {
+            Self::WorkDesign | Self::ChapterSplit => 24_576,
+            Self::Outline | Self::VolumePlanning | Self::KnowledgeExtraction => 32_768,
+            Self::Writing => 49_152,
+        }
+    }
+
+    #[must_use]
+    pub const fn default_include_project_context(self) -> bool {
+        matches!(
+            self,
+            Self::WorkDesign | Self::Outline | Self::VolumePlanning | Self::ChapterSplit
+        )
+    }
+
+    #[must_use]
+    pub const fn default_include_reference_content(self) -> bool {
+        matches!(self, Self::WorkDesign | Self::KnowledgeExtraction)
+    }
+
+    #[must_use]
+    pub const fn default_include_project_knowledge(self) -> bool {
+        !matches!(self, Self::KnowledgeExtraction)
+    }
+
+    #[must_use]
+    pub const fn default_include_current_draft(self) -> bool {
+        matches!(self, Self::Writing)
+    }
+
+    #[must_use]
+    pub const fn default_include_chapter_plan(self) -> bool {
+        matches!(self, Self::Writing)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AiTaskPreference {
     pub profile_id: Option<Uuid>,
+    pub fallback_profile_id: Option<Uuid>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<u32>,
+    pub prompt: AiTaskPromptPreference,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AiTaskPromptPreference {
+    pub system_prompt: Option<String>,
+    pub instruction_template: Option<String>,
+    pub context: AiTaskContextPreference,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AiTaskContextPreference {
+    pub include_project_context: Option<bool>,
+    pub include_reference_content: Option<bool>,
+    pub include_project_knowledge: Option<bool>,
+    pub include_current_draft: Option<bool>,
+    pub include_chapter_plan: Option<bool>,
+    pub input_token_budget: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRun {
+    pub id: Uuid,
+    pub action: String,
+    pub status: String,
+    pub chapter_title: String,
+    pub profile_name: String,
+    pub attempt_count: u32,
+    pub retry_reason: Option<String>,
+    pub error_code: Option<String>,
+    pub estimated_input_tokens: u32,
+    pub estimated_output_tokens: u32,
+    pub prompt_version: String,
+    pub created_at: String,
+    pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AiProposalFeedbackRating {
+    Helpful,
+    NotHelpful,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProposalFeedback {
+    pub proposal_id: Uuid,
+    pub rating: AiProposalFeedbackRating,
+    pub note: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiOutputValidation {
+    pub status: String,
+    pub messages: Vec<String>,
+    pub character_count: usize,
+    pub paragraph_count: usize,
+    pub estimated_output_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProposalReview {
+    pub proposal: AiProposal,
+    pub validation: AiOutputValidation,
+    pub feedback: Option<AiProposalFeedback>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct AiTaskPreferenceData {
     profile_id: Option<Uuid>,
+    fallback_profile_id: Option<Uuid>,
     temperature: Option<f64>,
     max_output_tokens: Option<u32>,
+    prompt: AiTaskPromptPreferenceData,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct AiTaskPromptPreferenceData {
+    system_prompt: Option<String>,
+    instruction_template: Option<String>,
+    context: AiTaskContextPreferenceData,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct AiTaskContextPreferenceData {
+    include_project_context: Option<bool>,
+    include_reference_content: Option<bool>,
+    include_project_knowledge: Option<bool>,
+    include_current_draft: Option<bool>,
+    include_chapter_plan: Option<bool>,
+    input_token_budget: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -150,8 +293,21 @@ impl Serialize for AiTaskPreference {
     {
         AiTaskPreferenceData {
             profile_id: self.profile_id,
+            fallback_profile_id: self.fallback_profile_id,
             temperature: self.temperature,
             max_output_tokens: self.max_output_tokens,
+            prompt: AiTaskPromptPreferenceData {
+                system_prompt: self.prompt.system_prompt.clone(),
+                instruction_template: self.prompt.instruction_template.clone(),
+                context: AiTaskContextPreferenceData {
+                    include_project_context: self.prompt.context.include_project_context,
+                    include_reference_content: self.prompt.context.include_reference_content,
+                    include_project_knowledge: self.prompt.context.include_project_knowledge,
+                    include_current_draft: self.prompt.context.include_current_draft,
+                    include_chapter_plan: self.prompt.context.include_chapter_plan,
+                    input_token_budget: self.prompt.context.input_token_budget,
+                },
+            },
         }
         .serialize(serializer)
     }
@@ -169,8 +325,21 @@ impl<'de> Deserialize<'de> for AiTaskPreference {
             },
             AiTaskPreferenceValue::Detailed(data) => Self {
                 profile_id: data.profile_id,
+                fallback_profile_id: data.fallback_profile_id,
                 temperature: data.temperature,
                 max_output_tokens: data.max_output_tokens,
+                prompt: AiTaskPromptPreference {
+                    system_prompt: data.prompt.system_prompt,
+                    instruction_template: data.prompt.instruction_template,
+                    context: AiTaskContextPreference {
+                        include_project_context: data.prompt.context.include_project_context,
+                        include_reference_content: data.prompt.context.include_reference_content,
+                        include_project_knowledge: data.prompt.context.include_project_knowledge,
+                        include_current_draft: data.prompt.context.include_current_draft,
+                        include_chapter_plan: data.prompt.context.include_chapter_plan,
+                        input_token_budget: data.prompt.context.input_token_budget,
+                    },
+                },
             },
             AiTaskPreferenceValue::Empty => Self::default(),
         })
@@ -188,7 +357,45 @@ pub struct AiTaskPreferences {
     pub knowledge_extraction: AiTaskPreference,
 }
 
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectAiTaskOverrides {
+    pub available: bool,
+    pub work_design: Option<AiTaskPreference>,
+    pub outline: Option<AiTaskPreference>,
+    pub volume_planning: Option<AiTaskPreference>,
+    pub chapter_split: Option<AiTaskPreference>,
+    pub writing: Option<AiTaskPreference>,
+    pub knowledge_extraction: Option<AiTaskPreference>,
+}
+
+impl ProjectAiTaskOverrides {
+    #[must_use]
+    pub fn get(&self, task: AiTaskKind) -> Option<&AiTaskPreference> {
+        match task {
+            AiTaskKind::WorkDesign => self.work_design.as_ref(),
+            AiTaskKind::Outline => self.outline.as_ref(),
+            AiTaskKind::VolumePlanning => self.volume_planning.as_ref(),
+            AiTaskKind::ChapterSplit => self.chapter_split.as_ref(),
+            AiTaskKind::Writing => self.writing.as_ref(),
+            AiTaskKind::KnowledgeExtraction => self.knowledge_extraction.as_ref(),
+        }
+    }
+}
+
 impl AiTaskPreferences {
+    #[must_use]
+    pub fn get(&self, task: AiTaskKind) -> &AiTaskPreference {
+        match task {
+            AiTaskKind::WorkDesign => &self.work_design,
+            AiTaskKind::Outline => &self.outline,
+            AiTaskKind::VolumePlanning => &self.volume_planning,
+            AiTaskKind::ChapterSplit => &self.chapter_split,
+            AiTaskKind::Writing => &self.writing,
+            AiTaskKind::KnowledgeExtraction => &self.knowledge_extraction,
+        }
+    }
+
     fn entries(&self) -> [&AiTaskPreference; 6] {
         [
             &self.work_design,
@@ -218,8 +425,10 @@ impl AiTaskPreference {
     fn recommended(task: AiTaskKind) -> Self {
         Self {
             profile_id: None,
+            fallback_profile_id: None,
             temperature: Some(task.default_temperature()),
             max_output_tokens: Some(task.default_max_output_tokens()),
+            prompt: AiTaskPromptPreference::recommended(task),
         }
     }
 
@@ -227,6 +436,99 @@ impl AiTaskPreference {
         self.temperature.get_or_insert(task.default_temperature());
         self.max_output_tokens
             .get_or_insert(task.default_max_output_tokens());
+        self.prompt.set_recommended_defaults(task);
+    }
+}
+
+impl AiTaskPromptPreference {
+    fn recommended(task: AiTaskKind) -> Self {
+        Self {
+            system_prompt: None,
+            instruction_template: None,
+            context: AiTaskContextPreference::recommended(task),
+        }
+    }
+
+    fn set_recommended_defaults(&mut self, task: AiTaskKind) {
+        self.context.set_recommended_defaults(task);
+    }
+}
+
+impl AiTaskContextPreference {
+    fn recommended(task: AiTaskKind) -> Self {
+        Self {
+            include_project_context: Some(task.default_include_project_context()),
+            include_reference_content: Some(task.default_include_reference_content()),
+            include_project_knowledge: Some(task.default_include_project_knowledge()),
+            include_current_draft: Some(task.default_include_current_draft()),
+            include_chapter_plan: Some(task.default_include_chapter_plan()),
+            input_token_budget: Some(task.default_input_token_budget()),
+        }
+    }
+
+    fn set_recommended_defaults(&mut self, task: AiTaskKind) {
+        self.include_project_context
+            .get_or_insert(task.default_include_project_context());
+        self.include_reference_content
+            .get_or_insert(task.default_include_reference_content());
+        self.include_project_knowledge
+            .get_or_insert(task.default_include_project_knowledge());
+        self.include_current_draft
+            .get_or_insert(task.default_include_current_draft());
+        self.include_chapter_plan
+            .get_or_insert(task.default_include_chapter_plan());
+        self.input_token_budget
+            .get_or_insert(task.default_input_token_budget());
+    }
+}
+
+#[must_use]
+pub fn render_prompt_template(template: &str, variables: &[(&str, &str)]) -> String {
+    variables
+        .iter()
+        .fold(template.to_owned(), |rendered, (name, value)| {
+            rendered.replace(&format!("{{{{{name}}}}}"), value)
+        })
+}
+
+pub fn apply_task_prompt_preferences(
+    context: &mut ContextPackage,
+    preference: &AiTaskPreference,
+    variables: &[(&str, &str)],
+) {
+    let mut changed = false;
+    if let Some(system_prompt) = preference
+        .prompt
+        .system_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        system_prompt.clone_into(&mut context.system_prompt);
+        changed = true;
+    }
+    if let Some(instruction_template) = preference
+        .prompt
+        .instruction_template
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let rendered = render_prompt_template(instruction_template, variables);
+        context.user_prompt.push_str("\n\n[P0 自定义任务模板]\n");
+        context.user_prompt.push_str(&rendered);
+        changed = true;
+    }
+    if changed {
+        let digest = format!(
+            "{:x}",
+            Sha256::digest(
+                format!("{}\n{}", context.system_prompt, context.user_prompt).as_bytes()
+            )
+        );
+        let suffix = &digest[..8];
+        context.prompt_version = format!("{}+task-{suffix}", context.prompt_version);
+        context.context_version = format!("{}+task-{suffix}", context.context_version);
     }
 }
 
@@ -888,22 +1190,7 @@ impl ModelProfileStore {
         preferences.set_recommended_defaults();
         let profiles = self.list()?;
         for preference in preferences.entries() {
-            if preference
-                .temperature
-                .is_some_and(|value| !value.is_finite() || !(0.0..=2.0).contains(&value))
-                || preference.max_output_tokens == Some(0)
-            {
-                return Err(AiContractError::InvalidGenerationOptions.into());
-            }
-            if let Some(profile_id) = preference.profile_id {
-                let profile = profiles
-                    .iter()
-                    .find(|profile| profile.id == profile_id)
-                    .ok_or(AiError::MissingProfile(profile_id))?;
-                if profile.capability != ModelCapability::Chat {
-                    return Err(AiContractError::InvalidProviderCapability.into());
-                }
-            }
+            validate_ai_task_preference(preference, &profiles)?;
         }
         let value =
             serde_json::to_string(&preferences).map_err(|_| AiError::ContextSerialization)?;
@@ -954,6 +1241,79 @@ impl ModelProfileStore {
 }
 
 impl ProjectManager {
+    pub fn get_project_ai_task_overrides(&self) -> Result<ProjectAiTaskOverrides, AiError> {
+        let Some(session) = self.current.as_ref() else {
+            return Ok(ProjectAiTaskOverrides::default());
+        };
+        let mut overrides = ProjectAiTaskOverrides {
+            available: true,
+            ..ProjectAiTaskOverrides::default()
+        };
+        let mut statement = session
+            .database
+            .connection
+            .prepare("SELECT task_key, preference_json FROM project_ai_task_overrides")
+            .map_err(DatabaseError::from)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(DatabaseError::from)?;
+        for row in rows {
+            let (task_key, preference_json) = row.map_err(DatabaseError::from)?;
+            let preference = serde_json::from_str::<AiTaskPreference>(&preference_json)
+                .map_err(|_| AiError::ContextSerialization)?;
+            match task_key.as_str() {
+                "workDesign" => overrides.work_design = Some(preference),
+                "outline" => overrides.outline = Some(preference),
+                "volumePlanning" => overrides.volume_planning = Some(preference),
+                "chapterSplit" => overrides.chapter_split = Some(preference),
+                "writing" => overrides.writing = Some(preference),
+                "knowledgeExtraction" => overrides.knowledge_extraction = Some(preference),
+                _ => {}
+            }
+        }
+        Ok(overrides)
+    }
+
+    pub fn save_project_ai_task_override(
+        &mut self,
+        task: AiTaskKind,
+        preference: &AiTaskPreference,
+    ) -> Result<(), AiError> {
+        let profiles = self.list_model_profiles()?;
+        validate_ai_task_preference(preference, &profiles)?;
+        let preference_json =
+            serde_json::to_string(preference).map_err(|_| AiError::ContextSerialization)?;
+        let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        session
+            .database
+            .connection
+            .execute(
+                "INSERT INTO project_ai_task_overrides (task_key, preference_json)
+                 VALUES (?1, ?2)
+                 ON CONFLICT(task_key) DO UPDATE SET
+                    preference_json=excluded.preference_json,
+                    updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                rusqlite::params![task.storage_key(), preference_json],
+            )
+            .map_err(DatabaseError::from)?;
+        Ok(())
+    }
+
+    pub fn remove_project_ai_task_override(&mut self, task: AiTaskKind) -> Result<(), AiError> {
+        let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        session
+            .database
+            .connection
+            .execute(
+                "DELETE FROM project_ai_task_overrides WHERE task_key=?1",
+                [task.storage_key()],
+            )
+            .map_err(DatabaseError::from)?;
+        Ok(())
+    }
+
     pub fn list_model_profiles(&self) -> Result<Vec<ModelProfile>, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
         let mut statement = session.database.connection.prepare(
@@ -1034,8 +1394,8 @@ impl ProjectManager {
         let context_section_audit_json = serde_json::to_string(&context.section_audit)
             .map_err(|_| AiError::ContextSerialization)?;
         session.database.connection.execute(
-            "INSERT INTO ai_tasks (id, profile_id, chapter_id, action, target_revision_id, context_version, prompt_version, task_contract_json, context_section_audit_json, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            rusqlite::params![task_id.to_string(), profile_id.to_string(), context.chapter_id.to_string(), action_str(context.action), context.target_revision_id.map(|id| id.to_string()), context.context_version, context.prompt_version, task_contract_json, context_section_audit_json, task_status_str(AiTaskStatus::Running)],
+            "INSERT INTO ai_tasks (id, profile_id, chapter_id, action, target_revision_id, context_version, prompt_version, task_contract_json, context_section_audit_json, status, estimated_input_tokens) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![task_id.to_string(), profile_id.to_string(), context.chapter_id.to_string(), action_str(context.action), context.target_revision_id.map(|id| id.to_string()), context.context_version, context.prompt_version, task_contract_json, context_section_audit_json, task_status_str(AiTaskStatus::Running), context.estimated_input_tokens],
         ).map_err(DatabaseError::from)?;
         Ok(task_id)
     }
@@ -1049,13 +1409,15 @@ impl ProjectManager {
         if output_text.trim().is_empty() {
             return Err(AiError::InvalidResponse);
         }
+        let estimated_output_tokens =
+            u32::try_from(output_text.trim().chars().count().div_ceil(4)).unwrap_or(u32::MAX);
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
         let transaction = session
             .database
             .connection
             .transaction()
             .map_err(DatabaseError::from)?;
-        transaction.execute("UPDATE ai_tasks SET status='COMPLETED', finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1 AND status='RUNNING'", [task_id.to_string()]).map_err(DatabaseError::from)?;
+        transaction.execute("UPDATE ai_tasks SET status='COMPLETED', estimated_output_tokens=?2, finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1 AND status='RUNNING'", rusqlite::params![task_id.to_string(), estimated_output_tokens]).map_err(DatabaseError::from)?;
         let proposal_id = Uuid::new_v4();
         transaction.execute(
             "INSERT INTO ai_proposals (id, task_id, chapter_id, action, target_revision_id, context_version, prompt_version, output_text, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'PENDING')",
@@ -1079,6 +1441,85 @@ impl ProjectManager {
         Ok(())
     }
 
+    pub fn record_ai_task_fallback(
+        &mut self,
+        task_id: Uuid,
+        fallback_profile_id: Uuid,
+        reason: &str,
+    ) -> Result<(), AiError> {
+        let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        let capability: Option<String> = session
+            .database
+            .connection
+            .query_row(
+                "SELECT capability FROM model_profiles WHERE id = ?1",
+                [fallback_profile_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(DatabaseError::from)?;
+        match capability.as_deref() {
+            None => return Err(AiError::MissingProfile(fallback_profile_id)),
+            Some("CHAT") => {}
+            Some(_) => return Err(AiContractError::InvalidProviderCapability.into()),
+        }
+        let changed = session.database.connection.execute(
+            "UPDATE ai_tasks SET profile_id=?2, fallback_profile_id=?2, attempt_count=attempt_count+1, retry_reason=?3 WHERE id=?1 AND status='RUNNING'",
+            rusqlite::params![task_id.to_string(), fallback_profile_id.to_string(), reason],
+        ).map_err(DatabaseError::from)?;
+        if changed == 0 {
+            return Err(AiError::InvalidResponse);
+        }
+        Ok(())
+    }
+
+    pub fn list_ai_runs(&self, limit: u32) -> Result<Vec<AiRun>, AiError> {
+        let session = self.current.as_ref().ok_or(AiError::NoProject)?;
+        let mut statement = session
+            .database
+            .connection
+            .prepare(
+                "SELECT t.id, t.action, t.status, COALESCE(c.title, '未命名章节'), COALESCE(p.name, '已删除模型'),
+                        t.attempt_count, t.retry_reason, t.error_code, t.estimated_input_tokens,
+                        t.estimated_output_tokens, t.prompt_version, t.created_at, t.finished_at
+                 FROM ai_tasks t
+                 LEFT JOIN chapters c ON c.id = t.chapter_id
+                 LEFT JOIN model_profiles p ON p.id = t.profile_id
+                 ORDER BY t.created_at DESC, t.rowid DESC
+                 LIMIT ?1",
+            )
+            .map_err(DatabaseError::from)?;
+        let rows = statement
+            .query_map([i64::from(limit.clamp(1, 100))], |row| {
+                let id = Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+                Ok(AiRun {
+                    id,
+                    action: row.get(1)?,
+                    status: row.get(2)?,
+                    chapter_title: row.get(3)?,
+                    profile_name: row.get(4)?,
+                    attempt_count: row.get(5)?,
+                    retry_reason: row.get(6)?,
+                    error_code: row.get(7)?,
+                    estimated_input_tokens: row.get(8)?,
+                    estimated_output_tokens: row.get(9)?,
+                    prompt_version: row.get(10)?,
+                    created_at: row.get(11)?,
+                    finished_at: row.get(12)?,
+                })
+            })
+            .map_err(DatabaseError::from)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
+            .map_err(AiError::from)
+    }
+
     pub fn list_ai_proposals(&self, chapter_id: Uuid) -> Result<Vec<AiProposal>, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
         let mut statement = session.database.connection.prepare(
@@ -1088,6 +1529,91 @@ impl ProjectManager {
             .query_map([chapter_id.to_string()], read_proposal)
             .map_err(DatabaseError::from)?;
         rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
+            .map_err(AiError::from)
+    }
+
+    pub fn list_ai_proposal_reviews(
+        &self,
+        chapter_id: Uuid,
+    ) -> Result<Vec<AiProposalReview>, AiError> {
+        let proposals = self.list_ai_proposals(chapter_id)?;
+        let session = self.current.as_ref().ok_or(AiError::NoProject)?;
+        let mut feedback = HashMap::new();
+        let mut statement = session
+            .database
+            .connection
+            .prepare(
+                "SELECT f.proposal_id, f.rating, f.note, f.created_at, f.updated_at
+                 FROM ai_proposal_feedback f
+                 INNER JOIN ai_proposals p ON p.id = f.proposal_id
+                 WHERE p.chapter_id = ?1",
+            )
+            .map_err(DatabaseError::from)?;
+        let rows = statement
+            .query_map([chapter_id.to_string()], read_proposal_feedback)
+            .map_err(DatabaseError::from)?;
+        for item in rows {
+            let item = item.map_err(DatabaseError::from)?;
+            feedback.insert(item.proposal_id, item);
+        }
+        Ok(proposals
+            .into_iter()
+            .map(|proposal| AiProposalReview {
+                validation: validate_ai_output(proposal.action, &proposal.output_text),
+                feedback: feedback.remove(&proposal.id),
+                proposal,
+            })
+            .collect())
+    }
+
+    pub fn rate_ai_proposal(
+        &mut self,
+        proposal_id: Uuid,
+        rating: AiProposalFeedbackRating,
+        note: Option<String>,
+    ) -> Result<AiProposalFeedback, AiError> {
+        let _ = self.get_ai_proposal(proposal_id)?;
+        let note = note.filter(|value| !value.trim().is_empty());
+        if note
+            .as_deref()
+            .is_some_and(|value| value.chars().count() > 2_000)
+        {
+            return Err(AiContractError::InvalidGenerationOptions.into());
+        }
+        let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        session
+            .database
+            .connection
+            .execute(
+                "INSERT INTO ai_proposal_feedback (proposal_id, rating, note)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(proposal_id) DO UPDATE SET
+                    rating=excluded.rating,
+                    note=excluded.note,
+                    updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                rusqlite::params![proposal_id.to_string(), feedback_rating_str(rating), note],
+            )
+            .map_err(DatabaseError::from)?;
+        self.get_ai_proposal_feedback(proposal_id)?
+            .ok_or(AiError::InvalidResponse)
+    }
+
+    pub fn get_ai_proposal_feedback(
+        &self,
+        proposal_id: Uuid,
+    ) -> Result<Option<AiProposalFeedback>, AiError> {
+        let session = self.current.as_ref().ok_or(AiError::NoProject)?;
+        session
+            .database
+            .connection
+            .query_row(
+                "SELECT proposal_id, rating, note, created_at, updated_at
+                 FROM ai_proposal_feedback WHERE proposal_id=?1",
+                [proposal_id.to_string()],
+                read_proposal_feedback,
+            )
+            .optional()
             .map_err(DatabaseError::from)
             .map_err(AiError::from)
     }
@@ -1171,6 +1697,16 @@ fn read_proposal(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiProposal> {
     })
 }
 
+fn read_proposal_feedback(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiProposalFeedback> {
+    Ok(AiProposalFeedback {
+        proposal_id: parse_uuid(row.get::<_, String>(0)?, 0)?,
+        rating: parse_feedback_rating(&row.get::<_, String>(1)?),
+        note: row.get(2)?,
+        created_at: row.get(3)?,
+        updated_at: row.get(4)?,
+    })
+}
+
 fn parse_uuid(value: String, column: usize) -> rusqlite::Result<Uuid> {
     Uuid::parse_str(&value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
@@ -1220,6 +1756,126 @@ fn parse_privacy(value: &str) -> PrivacyLevel {
         PrivacyLevel::AllowCloud
     } else {
         PrivacyLevel::LocalOnly
+    }
+}
+fn feedback_rating_str(value: AiProposalFeedbackRating) -> &'static str {
+    match value {
+        AiProposalFeedbackRating::Helpful => "HELPFUL",
+        AiProposalFeedbackRating::NotHelpful => "NOT_HELPFUL",
+    }
+}
+fn parse_feedback_rating(value: &str) -> AiProposalFeedbackRating {
+    match value {
+        "HELPFUL" => AiProposalFeedbackRating::Helpful,
+        _ => AiProposalFeedbackRating::NotHelpful,
+    }
+}
+fn validate_ai_task_preference(
+    preference: &AiTaskPreference,
+    profiles: &[ModelProfile],
+) -> Result<(), AiError> {
+    if preference
+        .temperature
+        .is_some_and(|value| !value.is_finite() || !(0.0..=2.0).contains(&value))
+        || preference.max_output_tokens == Some(0)
+        || preference
+            .prompt
+            .context
+            .input_token_budget
+            .is_some_and(|value| !(256..=1_000_000).contains(&value))
+        || preference
+            .prompt
+            .system_prompt
+            .as_deref()
+            .is_some_and(|value| value.chars().count() > 20_000)
+        || preference
+            .prompt
+            .instruction_template
+            .as_deref()
+            .is_some_and(|value| value.chars().count() > 20_000)
+    {
+        return Err(AiContractError::InvalidGenerationOptions.into());
+    }
+    if let Some(profile_id) = preference.profile_id {
+        let profile = profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or(AiError::MissingProfile(profile_id))?;
+        if profile.capability != ModelCapability::Chat {
+            return Err(AiContractError::InvalidProviderCapability.into());
+        }
+    }
+    if let Some(fallback_profile_id) = preference.fallback_profile_id {
+        if preference.profile_id == Some(fallback_profile_id) {
+            return Err(AiContractError::InvalidGenerationOptions.into());
+        }
+        let fallback = profiles
+            .iter()
+            .find(|profile| profile.id == fallback_profile_id)
+            .ok_or(AiError::MissingProfile(fallback_profile_id))?;
+        if fallback.capability != ModelCapability::Chat {
+            return Err(AiContractError::InvalidProviderCapability.into());
+        }
+    }
+    Ok(())
+}
+fn validate_ai_output(action: AiAction, output_text: &str) -> AiOutputValidation {
+    let trimmed = output_text.trim();
+    let character_count = trimmed.chars().count();
+    let paragraph_count = trimmed
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+    let mut messages = Vec::new();
+    if trimmed.is_empty() {
+        messages.push("输出为空，不能形成候选。".to_owned());
+    } else {
+        if character_count < 20 {
+            messages.push("输出明显过短，建议检查是否被模型提前截断。".to_owned());
+        }
+        if paragraph_count == 0 {
+            messages.push("输出没有可识别的段落结构。".to_owned());
+        }
+        if trimmed.contains("```") {
+            messages.push("正文候选包含 Markdown 代码围栏，应用前建议清理。".to_owned());
+        }
+        if [
+            "好的",
+            "当然",
+            "以下是",
+            "我会",
+            "下面是",
+            "作为AI",
+            "作为 AI",
+        ]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+        {
+            messages.push("输出开头包含对话式说明，可能混入了模型元话语。".to_owned());
+        }
+        if trimmed.ends_with("...")
+            || trimmed.ends_with('…')
+            || trimmed.ends_with("（未完")
+            || trimmed.ends_with("(未完")
+        {
+            messages.push("输出结尾像未完成内容，建议续写或重新生成。".to_owned());
+        }
+        if trimmed.starts_with('{') && trimmed.ends_with('}') && action != AiAction::Summarize {
+            messages.push("正文候选看起来是 JSON 结构，与应用合同不一致。".to_owned());
+        }
+    }
+    AiOutputValidation {
+        status: if trimmed.is_empty() {
+            "INVALID".to_owned()
+        } else if messages.is_empty() {
+            "VALID".to_owned()
+        } else {
+            "WARNING".to_owned()
+        },
+        messages,
+        character_count,
+        paragraph_count,
+        estimated_output_tokens: u32::try_from(character_count.div_ceil(4)).unwrap_or(u32::MAX),
     }
 }
 fn action_str(value: AiAction) -> &'static str {
@@ -1403,10 +2059,38 @@ mod tests {
                 retry_limit: 1,
             })
             .expect("chat profile");
+        let fallback = store
+            .upsert(novel_domain::ModelProfileInput {
+                id: None,
+                name: "备用任务模型".into(),
+                provider: novel_domain::ModelProvider::OpenAi,
+                capability: novel_domain::ModelCapability::Chat,
+                base_url: "https://api.openai.com/v1".into(),
+                model_id: "gpt-test".into(),
+                context_window: 128_000,
+                max_output_tokens: 8_192,
+                privacy_level: novel_domain::PrivacyLevel::AllowCloud,
+                timeout_seconds: 120,
+                retry_limit: 1,
+            })
+            .expect("fallback profile");
         let preference = super::AiTaskPreference {
             profile_id: Some(chat.id),
+            fallback_profile_id: Some(fallback.id),
             temperature: Some(0.8),
             max_output_tokens: Some(4_096),
+            prompt: super::AiTaskPromptPreference {
+                system_prompt: Some("优先保持人物视角一致。".into()),
+                instruction_template: Some("章节：{{chapterTitle}}".into()),
+                context: super::AiTaskContextPreference {
+                    include_project_context: Some(true),
+                    include_reference_content: Some(false),
+                    include_project_knowledge: Some(true),
+                    include_current_draft: Some(false),
+                    include_chapter_plan: Some(true),
+                    input_token_budget: Some(24_576),
+                },
+            },
         };
         let preferences = super::AiTaskPreferences {
             work_design: preference.clone(),
@@ -1438,6 +2122,10 @@ mod tests {
         assert_eq!(preferences.work_design.profile_id, Some(profile_id));
         assert_eq!(preferences.work_design.temperature, None);
         assert_eq!(preferences.work_design.max_output_tokens, None);
+        assert_eq!(
+            preferences.work_design.prompt,
+            super::AiTaskPromptPreference::default()
+        );
         assert_eq!(preferences.outline, super::AiTaskPreference::default());
     }
 
@@ -1492,6 +2180,11 @@ mod tests {
         };
         preferences.outline.temperature = Some(0.75);
         preferences.outline.max_output_tokens = Some(3_200);
+        preferences
+            .chapter_split
+            .prompt
+            .context
+            .include_project_knowledge = Some(false);
 
         let saved = store
             .save_ai_task_preferences(&preferences)
@@ -1501,12 +2194,51 @@ mod tests {
         assert_eq!(saved.work_design.max_output_tokens, Some(4_096));
         assert_eq!(saved.outline.temperature, Some(0.75));
         assert_eq!(saved.outline.max_output_tokens, Some(3_200));
+        assert_eq!(
+            saved.chapter_split.prompt.context.include_project_knowledge,
+            Some(false)
+        );
         assert_eq!(saved.writing.temperature, Some(0.9));
         assert_eq!(saved.writing.max_output_tokens, Some(8_192));
         assert_eq!(
             store.get_ai_task_preferences().expect("read preferences"),
             saved
         );
+    }
+
+    #[test]
+    fn task_prompt_preferences_render_variables_and_change_context_versions() {
+        let mut context = novel_application::ContextPackage::connection_test();
+        let original_prompt_version = context.prompt_version.clone();
+        let original_context_version = context.context_version.clone();
+        let preference = super::AiTaskPreference {
+            prompt: super::AiTaskPromptPreference {
+                system_prompt: Some("你是严谨的执行编辑。".into()),
+                instruction_template: Some(
+                    "章节：{{chapterTitle}}\n作者意见：{{userInstruction}}".into(),
+                ),
+                context: super::AiTaskContextPreference::default(),
+            },
+            ..super::AiTaskPreference::default()
+        };
+
+        super::apply_task_prompt_preferences(
+            &mut context,
+            &preference,
+            &[
+                ("chapterTitle", "雨夜来客"),
+                ("userInstruction", "让冲突先藏后露"),
+            ],
+        );
+
+        assert_eq!(context.system_prompt, "你是严谨的执行编辑。");
+        assert!(
+            context
+                .user_prompt
+                .ends_with("[P0 自定义任务模板]\n章节：雨夜来客\n作者意见：让冲突先藏后露")
+        );
+        assert_ne!(context.prompt_version, original_prompt_version);
+        assert_ne!(context.context_version, original_context_version);
     }
 
     #[test]

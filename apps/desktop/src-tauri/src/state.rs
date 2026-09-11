@@ -22,6 +22,15 @@ pub(crate) struct AiTaskStarted {
     pub(crate) task_id: uuid::Uuid,
 }
 
+#[derive(Debug, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AiTaskAttempt {
+    pub(crate) task_id: uuid::Uuid,
+    pub(crate) attempt: u8,
+    pub(crate) profile_name: String,
+    pub(crate) fallback_reason: Option<String>,
+}
+
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelConnectionResponse {

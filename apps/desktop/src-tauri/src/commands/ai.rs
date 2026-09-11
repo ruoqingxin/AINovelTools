@@ -1,4 +1,4 @@
-use crate::state::{AiStreamChunk, AiTaskStarted, ModelConnectionResponse};
+use crate::state::{AiStreamChunk, AiTaskAttempt, AiTaskStarted, ModelConnectionResponse};
 use crate::{ApiError, ProjectState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -88,6 +88,164 @@ fn task_generation_options(
     })
 }
 
+fn load_ai_task_preference(
+    state: &ProjectState,
+    task: novel_infrastructure::AiTaskKind,
+) -> Result<novel_infrastructure::AiTaskPreference, ApiError> {
+    let mut preference = {
+        let store = state
+            .model_profiles
+            .lock()
+            .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+        let preferences = store.get_ai_task_preferences().map_err(ApiError::from)?;
+        preferences.get(task).clone()
+    };
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    if let Some(project_preference) = manager
+        .get_project_ai_task_overrides()
+        .map_err(ApiError::from)?
+        .get(task)
+    {
+        preference = project_preference.clone();
+    }
+    Ok(preference)
+}
+
+fn effective_task_input_budget(
+    profile: &novel_infrastructure::ModelProfile,
+    max_output_tokens: u32,
+    preference: &novel_infrastructure::AiTaskPreference,
+) -> u32 {
+    let model_budget = profile.context_window.saturating_sub(max_output_tokens);
+    preference
+        .prompt
+        .context
+        .input_token_budget
+        .map_or(model_budget, |budget| model_budget.min(budget))
+        .max(256)
+}
+
+fn context_option(value: Option<bool>, default: bool) -> bool {
+    value.unwrap_or(default)
+}
+
+struct AiGenerationOutcome {
+    output: String,
+    fallback_profile: Option<novel_infrastructure::ModelProfile>,
+    fallback_reason: Option<String>,
+}
+
+fn should_try_fallback(error: &novel_infrastructure::AiError) -> bool {
+    matches!(
+        error,
+        novel_infrastructure::AiError::RateLimited
+            | novel_infrastructure::AiError::Timeout
+            | novel_infrastructure::AiError::ProviderUnavailable
+            | novel_infrastructure::AiError::Network
+            | novel_infrastructure::AiError::InvalidResponse
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn generate_with_task_fallback<F>(
+    state: &ProjectState,
+    preference: &novel_infrastructure::AiTaskPreference,
+    primary: &novel_infrastructure::ModelProfile,
+    primary_secret: Option<&str>,
+    context: &novel_application::ContextPackage,
+    options: novel_infrastructure::GenerationOptions,
+    stream: bool,
+    disable_thinking: bool,
+    cancelled: Arc<AtomicBool>,
+    mut on_chunk: F,
+) -> Result<AiGenerationOutcome, novel_infrastructure::AiError>
+where
+    F: FnMut(&str) + Send,
+{
+    match state
+        .gateway
+        .generate_with_options(
+            primary,
+            primary_secret,
+            context,
+            options,
+            stream,
+            disable_thinking,
+            Arc::clone(&cancelled),
+            &mut on_chunk,
+        )
+        .await
+    {
+        Ok(output) => Ok(AiGenerationOutcome {
+            output,
+            fallback_profile: None,
+            fallback_reason: None,
+        }),
+        Err(error) if !should_try_fallback(&error) => Err(error),
+        Err(primary_error) => {
+            let Some(fallback_id) = preference
+                .fallback_profile_id
+                .filter(|profile_id| *profile_id != primary.id)
+            else {
+                return Err(primary_error);
+            };
+            let fallback = {
+                let store = state
+                    .model_profiles
+                    .lock()
+                    .map_err(|_| novel_infrastructure::AiError::ProviderUnavailable)?;
+                let Ok(fallback) = store.get(fallback_id) else {
+                    return Err(primary_error);
+                };
+                fallback
+            };
+            if fallback.capability != novel_infrastructure::ModelCapability::Chat
+                || fallback.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly
+            {
+                return Err(primary_error);
+            }
+            let fallback_secret = fallback
+                .secret_ref
+                .as_deref()
+                .ok_or(novel_infrastructure::AiError::MissingSecret)
+                .and_then(novel_infrastructure::SecretStore::get)?;
+            let fallback_reason = primary_error.code().to_owned();
+            let output = state
+                .gateway
+                .generate_with_options(
+                    &fallback,
+                    Some(&fallback_secret),
+                    context,
+                    options,
+                    stream,
+                    disable_thinking,
+                    cancelled,
+                    on_chunk,
+                )
+                .await?;
+            Ok(AiGenerationOutcome {
+                output,
+                fallback_profile: Some(fallback),
+                fallback_reason: Some(fallback_reason),
+            })
+        }
+    }
+}
+
+fn truncate_text_to_char_budget(value: &str, char_budget: usize, marker: &str) -> String {
+    if value.chars().count() <= char_budget {
+        return value.to_owned();
+    }
+    let marker_cost = marker.chars().count();
+    let content_budget = char_budget.saturating_sub(marker_cost).max(1);
+    let mut truncated = value.chars().take(content_budget).collect::<String>();
+    truncated.push_str(marker);
+    truncated
+}
+
 #[cfg(test)]
 mod task_generation_options_tests {
     #[test]
@@ -109,6 +267,12 @@ mod task_generation_options_tests {
         .expect("explicit options");
         assert_eq!(explicit.temperature, Some(0.4));
         assert_eq!(explicit.max_output_tokens, Some(2_048));
+    }
+
+    #[test]
+    fn truncates_text_with_a_visible_budget_marker() {
+        let truncated = super::truncate_text_to_char_budget("一二三四五六七八九十", 8, "[截断]");
+        assert_eq!(truncated, "一二三四[截断]");
     }
 }
 
@@ -1067,6 +1231,30 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             }
         };
     let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
+    let task_kind = input
+        .task_key
+        .unwrap_or(novel_infrastructure::AiTaskKind::WorkDesign);
+    let task_preference = match load_ai_task_preference(&state, task_kind) {
+        Ok(preference) => preference,
+        Err(error) => {
+            fail_planning_job(&state, job.id, error.message);
+            return true;
+        }
+    };
+    let include_project_context = context_option(
+        task_preference.prompt.context.include_project_context,
+        task_kind.default_include_project_context(),
+    );
+    let include_reference_content = context_option(
+        task_preference.prompt.context.include_reference_content,
+        task_kind.default_include_reference_content(),
+    );
+    let include_project_knowledge = context_option(
+        task_preference.prompt.context.include_project_knowledge,
+        task_kind.default_include_project_knowledge(),
+    );
+    let input_token_budget =
+        effective_task_input_budget(&profile, max_output_tokens, &task_preference);
     let secret = if let Some(secret_ref) = profile.secret_ref.as_deref() {
         match novel_infrastructure::SecretStore::get(secret_ref) {
             Ok(secret) => secret,
@@ -1079,11 +1267,16 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         fail_planning_job(&state, job.id, "模型配置缺少 API 密钥");
         return true;
     };
-    let input_token_budget = profile.context_window.saturating_sub(max_output_tokens);
     let query = format!(
         "{} {} {}",
         input.section_title, input.section_prompt, input.user_guidance
     );
+    if !include_project_context {
+        input.existing_context.clear();
+    }
+    if !include_reference_content {
+        input.reference_content.clear();
+    }
     let planning_mode = match planning_context_mode(&input.mode, input.allow_rewrite) {
         Ok(mode) => mode,
         Err(error) => {
@@ -1091,67 +1284,85 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             return true;
         }
     };
-    let embedding_query = match planning_embedding_query(&state, &query).await {
-        Ok(result) => {
-            append_planning_job_event(
-                &state,
-                job.id,
-                "RETRIEVAL",
-                format!("查询向量生成完成，耗时 {} ms", result.elapsed_ms),
-                7,
-            );
-            Some(result)
-        }
-        Err(reason) => {
-            append_planning_job_event(
-                &state,
-                job.id,
-                "RETRIEVAL",
-                format!("向量检索不可用（{reason}），已回退关键词匹配"),
-                7,
-            );
-            None
-        }
-    };
-    let project_retrieval = if let Some(embedding) = embedding_query.as_ref() {
-        match semantic_planning_context(&state, &input.existing_context, &query, &embedding.query)
-            .await
-        {
-            Ok(retrieval) => Some(retrieval),
-            Err(reason) => {
-                append_planning_job_event(
-                    &state,
-                    job.id,
-                    "RETRIEVAL",
-                    format!("正式设定向量筛选失败（{reason}），已回退关键词匹配"),
-                    8,
-                );
-                None
+    let embedding_query =
+        if include_project_knowledge && (include_project_context || include_reference_content) {
+            match planning_embedding_query(&state, &query).await {
+                Ok(result) => {
+                    append_planning_job_event(
+                        &state,
+                        job.id,
+                        "RETRIEVAL",
+                        format!("查询向量生成完成，耗时 {} ms", result.elapsed_ms),
+                        7,
+                    );
+                    Some(result)
+                }
+                Err(reason) => {
+                    append_planning_job_event(
+                        &state,
+                        job.id,
+                        "RETRIEVAL",
+                        format!("向量检索不可用（{reason}），已回退关键词匹配"),
+                        7,
+                    );
+                    None
+                }
             }
+        } else {
+            None
+        };
+    let project_retrieval = if include_project_context {
+        if let Some(embedding) = embedding_query.as_ref() {
+            match semantic_planning_context(
+                &state,
+                &input.existing_context,
+                &query,
+                &embedding.query,
+            )
+            .await
+            {
+                Ok(retrieval) => Some(retrieval),
+                Err(reason) => {
+                    append_planning_job_event(
+                        &state,
+                        job.id,
+                        "RETRIEVAL",
+                        format!("正式设定向量筛选失败（{reason}），已回退关键词匹配"),
+                        8,
+                    );
+                    None
+                }
+            }
+        } else {
+            None
         }
     } else {
         None
     };
-    let reference_retrieval = if let Some(embedding) = embedding_query.as_ref() {
-        match semantic_reference_similarities(
-            &state,
-            &input.reference_content,
-            &query,
-            &embedding.query,
-        )
-        .await
-        {
-            Ok(retrieval) => Some(retrieval),
-            Err(reason) => {
-                append_planning_job_event(
-                    &state,
-                    job.id,
-                    "RETRIEVAL",
-                    format!("文件证据向量筛选失败（{reason}），已回退关键词匹配"),
-                    9,
-                );
-                None
+    let reference_retrieval = if include_reference_content {
+        if let Some(embedding) = embedding_query.as_ref() {
+            match semantic_reference_similarities(
+                &state,
+                &input.reference_content,
+                &query,
+                &embedding.query,
+            )
+            .await
+            {
+                Ok(retrieval) => Some(retrieval),
+                Err(reason) => {
+                    append_planning_job_event(
+                        &state,
+                        job.id,
+                        "RETRIEVAL",
+                        format!("文件证据向量筛选失败（{reason}），已回退关键词匹配"),
+                        9,
+                    );
+                    None
+                }
             }
+        } else {
+            None
         }
     } else {
         None
@@ -1252,6 +1463,17 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             return true;
         }
     };
+    novel_infrastructure::apply_task_prompt_preferences(
+        &mut context,
+        &task_preference,
+        &[
+            ("sectionTitle", input.section_title.as_str()),
+            ("sectionPrompt", input.section_prompt.as_str()),
+            ("userGuidance", input.user_guidance.as_str()),
+            ("existingContext", input.existing_context.as_str()),
+            ("referenceContent", input.reference_content.as_str()),
+        ],
+    );
     input.system_prompt_snapshot = Some(context.system_prompt.clone());
     input.user_prompt_snapshot = Some(context.user_prompt.clone());
     let estimated_input_chars = context
@@ -1301,40 +1523,53 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
     let callback_app = app.clone();
     let mut received_chars = 0usize;
     let mut last_progress = 30u8;
-    let result = state
-        .gateway
-        .generate_with_options(
-            &profile,
-            Some(&secret),
-            &context,
-            generation_options,
-            true,
-            false,
-            Arc::clone(&cancelled),
-            move |chunk| {
-                received_chars += chunk.chars().count();
-                let progress = u8::try_from(35 + (received_chars / 120).min(50)).unwrap_or(u8::MAX);
-                if progress >= last_progress.saturating_add(5) {
-                    last_progress = progress;
-                    let callback_state = callback_app.state::<ProjectState>();
-                    if let Ok(mut manager) = callback_state.manager.lock() {
-                        let _ = manager.update_job_progress(job.id, progress);
-                        let _ = manager.append_job_event(
-                            job.id,
-                            "RECEIVING",
-                            format!("已接收约 {received_chars} 个字符"),
-                            progress,
-                        );
-                    }
+    let result = generate_with_task_fallback(
+        &state,
+        &task_preference,
+        &profile,
+        Some(&secret),
+        &context,
+        generation_options,
+        true,
+        false,
+        Arc::clone(&cancelled),
+        move |chunk| {
+            received_chars += chunk.chars().count();
+            let progress = u8::try_from(35 + (received_chars / 120).min(50)).unwrap_or(u8::MAX);
+            if progress >= last_progress.saturating_add(5) {
+                last_progress = progress;
+                let callback_state = callback_app.state::<ProjectState>();
+                if let Ok(mut manager) = callback_state.manager.lock() {
+                    let _ = manager.update_job_progress(job.id, progress);
+                    let _ = manager.append_job_event(
+                        job.id,
+                        "RECEIVING",
+                        format!("已接收约 {received_chars} 个字符"),
+                        progress,
+                    );
                 }
-            },
-        )
-        .await;
+            }
+        },
+    )
+    .await;
     if let Ok(mut cancellations) = state.ai_cancellations.lock() {
         cancellations.remove(&job.id);
     }
     match result {
-        Ok(output) => {
+        Ok(outcome) => {
+            if let Some(fallback) = outcome.fallback_profile.as_ref() {
+                append_planning_job_event(
+                    &state,
+                    job.id,
+                    "FALLBACK",
+                    format!(
+                        "主模型调用失败（{}），已切换到备用模型“{}”",
+                        outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+                        fallback.name
+                    ),
+                    35,
+                );
+            }
             let Ok(mut manager) = state.manager.lock() else {
                 return true;
             };
@@ -1364,7 +1599,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                 references: Vec::new(),
                 updated_at: String::new(),
             });
-            section.pending_content = output;
+            section.pending_content = outcome.output;
             section.references = input.source_name.clone().unwrap_or_default();
             if let Err(error) = manager.save_planning_section(section) {
                 drop(manager);
@@ -1427,12 +1662,23 @@ pub(crate) async fn extract_entities_from_text(
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
-    let generation_options = task_generation_options(
-        Some(novel_infrastructure::AiTaskKind::KnowledgeExtraction),
-        temperature,
-        max_output_tokens,
-    )?;
+    let task_kind = novel_infrastructure::AiTaskKind::KnowledgeExtraction;
+    let task_preference = load_ai_task_preference(&state, task_kind)?;
+    let include_reference_content = context_option(
+        task_preference.prompt.context.include_reference_content,
+        task_kind.default_include_reference_content(),
+    );
+    if !include_reference_content {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "知识提炼已关闭参考文件上下文，请先在 AI 任务设置中开启".to_owned(),
+        });
+    }
+    let generation_options =
+        task_generation_options(Some(task_kind), temperature, max_output_tokens)?;
     let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
+    let input_token_budget =
+        effective_task_input_budget(&profile, max_output_tokens, &task_preference);
     let secret = profile
         .secret_ref
         .as_deref()
@@ -1451,6 +1697,15 @@ pub(crate) async fn extract_entities_from_text(
     }
     let topic = format!("{entity_type:?}");
     let user_guidance = user_guidance.unwrap_or_default();
+    let source_text = truncate_text_to_char_budget(
+        &source_text,
+        usize::try_from(input_token_budget)
+            .unwrap_or(usize::MAX)
+            .saturating_mul(4)
+            .saturating_sub(8_192)
+            .max(1_024),
+        "\n[已按上下文预算截断文件内容]",
+    );
     let mut context = novel_application::ContextPackage::connection_test();
     "你是小说知识整理助手。只根据用户提供的文件提炼信息，不得补写文件外事实。"
         .clone_into(&mut context.system_prompt);
@@ -1462,22 +1717,38 @@ pub(crate) async fn extract_entities_from_text(
             user_guidance.trim()
         }
     );
-    context.estimated_input_tokens = (u32::try_from(source_text.len()).unwrap_or(u32::MAX) / 4)
-        .min(profile.context_window.saturating_sub(max_output_tokens));
-    let output = state
-        .gateway
-        .generate_with_options(
-            &profile,
-            Some(&secret),
-            &context,
-            generation_options,
-            false,
-            false,
-            Arc::new(AtomicBool::new(false)),
-            |_| {},
-        )
-        .await
-        .map_err(ApiError::from)?;
+    novel_infrastructure::apply_task_prompt_preferences(
+        &mut context,
+        &task_preference,
+        &[
+            ("entityType", topic.as_str()),
+            ("entityName", entity_name.as_str()),
+            ("briefSummary", brief_summary.as_str()),
+            ("applicabilityScope", applicability_scope.as_str()),
+            ("userGuidance", user_guidance.as_str()),
+            ("sourceText", source_text.as_str()),
+        ],
+    );
+    context.estimated_input_tokens = u32::try_from(
+        (context.system_prompt.chars().count() + context.user_prompt.chars().count()).div_ceil(4),
+    )
+    .unwrap_or(u32::MAX)
+    .min(input_token_budget);
+    let output = generate_with_task_fallback(
+        &state,
+        &task_preference,
+        &profile,
+        Some(&secret),
+        &context,
+        generation_options,
+        false,
+        false,
+        Arc::new(AtomicBool::new(false)),
+        |_| {},
+    )
+    .await
+    .map_err(ApiError::from)?
+    .output;
     let cleaned = output
         .trim()
         .trim_start_matches("```json")
@@ -1570,6 +1841,77 @@ pub(crate) fn save_ai_task_preferences(
         .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
     store
         .save_ai_task_preferences(&preferences)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn get_project_ai_task_overrides(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<novel_infrastructure::ProjectAiTaskOverrides, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .get_project_ai_task_overrides()
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn save_project_ai_task_override(
+    state: tauri::State<'_, ProjectState>,
+    task: novel_infrastructure::AiTaskKind,
+    preference: novel_infrastructure::AiTaskPreference,
+) -> Result<novel_infrastructure::ProjectAiTaskOverrides, ApiError> {
+    let profiles = {
+        let store = state
+            .model_profiles
+            .lock()
+            .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+        store.list().map_err(ApiError::from)?
+    };
+    let required_profile_ids = [preference.profile_id, preference.fallback_profile_id];
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    for profile_id in required_profile_ids.into_iter().flatten() {
+        let profile = profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| {
+                ApiError::from(novel_infrastructure::AiError::MissingProfile(profile_id))
+            })?;
+        if profile.capability != novel_infrastructure::ModelCapability::Chat {
+            return Err(ApiError {
+                code: "INVALID_INPUT",
+                message: "项目覆盖只能使用聊天模型".to_owned(),
+            });
+        }
+        sync_model_profile(&mut manager, profile)?;
+    }
+    manager
+        .save_project_ai_task_override(task, &preference)
+        .map_err(ApiError::from)?;
+    manager
+        .get_project_ai_task_overrides()
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn remove_project_ai_task_override(
+    state: tauri::State<'_, ProjectState>,
+    task: novel_infrastructure::AiTaskKind,
+) -> Result<novel_infrastructure::ProjectAiTaskOverrides, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .remove_project_ai_task_override(task)
+        .map_err(ApiError::from)?;
+    manager
+        .get_project_ai_task_overrides()
         .map_err(ApiError::from)
 }
 
@@ -1695,13 +2037,43 @@ pub(crate) async fn test_model_profile(
 pub(crate) fn list_ai_proposals(
     state: tauri::State<'_, ProjectState>,
     chapter_id: uuid::Uuid,
-) -> Result<Vec<novel_infrastructure::AiProposal>, ApiError> {
+) -> Result<Vec<novel_infrastructure::AiProposalReview>, ApiError> {
     let manager = state
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
-        .list_ai_proposals(chapter_id)
+        .list_ai_proposal_reviews(chapter_id)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn rate_ai_proposal(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    rating: novel_infrastructure::AiProposalFeedbackRating,
+    note: Option<String>,
+) -> Result<novel_infrastructure::AiProposalFeedback, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .rate_ai_proposal(id, rating, note)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn list_ai_runs(
+    state: tauri::State<'_, ProjectState>,
+    limit: Option<u32>,
+) -> Result<Vec<novel_infrastructure::AiRun>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .list_ai_runs(limit.unwrap_or(20))
         .map_err(ApiError::from)
 }
 
@@ -1776,38 +2148,87 @@ pub(crate) async fn generate_ai_proposal(
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
-    let generation_options = task_generation_options(
-        Some(novel_infrastructure::AiTaskKind::Writing),
-        temperature,
-        max_output_tokens,
-    )?;
+    let task_kind = novel_infrastructure::AiTaskKind::Writing;
+    let task_preference = load_ai_task_preference(&state, task_kind)?;
+    let include_project_knowledge = context_option(
+        task_preference.prompt.context.include_project_knowledge,
+        task_kind.default_include_project_knowledge(),
+    );
+    let include_current_draft = context_option(
+        task_preference.prompt.context.include_current_draft,
+        task_kind.default_include_current_draft(),
+    );
+    let include_chapter_plan = context_option(
+        task_preference.prompt.context.include_chapter_plan,
+        task_kind.default_include_chapter_plan(),
+    );
+    let generation_options =
+        task_generation_options(Some(task_kind), temperature, max_output_tokens)?;
     let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
+    let input_token_budget =
+        effective_task_input_budget(&profile, max_output_tokens, &task_preference);
+    let effective_document_json =
+        if !include_current_draft && action == novel_infrastructure::AiAction::Draft {
+            r#"{"type":"doc","content":[]}"#.to_owned()
+        } else {
+            document_json
+        };
     let context_input = novel_application::AssembleContextInput {
         chapter_id,
         target_revision_id,
         action,
         chapter_title,
-        chapter_plan,
-        document_json,
+        chapter_plan: if include_chapter_plan {
+            chapter_plan
+        } else {
+            String::new()
+        },
+        document_json: effective_document_json,
         selection,
         instruction,
-        input_token_budget: profile
-            .context_window
-            .saturating_sub(max_output_tokens)
-            .max(256),
+        input_token_budget,
     };
-    let context = {
+    let mut context = {
         let manager = state
             .manager
             .lock()
             .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-        manager
-            .assemble_context_with_project_knowledge(&context_input)
-            .map_err(|error| ApiError {
-                code: "INVALID_INPUT",
-                message: error.to_string(),
-            })?
+        let result = if include_project_knowledge {
+            manager.assemble_context_with_project_knowledge(&context_input)
+        } else {
+            novel_application::ContextAssembler::assemble(&context_input)
+        };
+        result.map_err(|error| ApiError {
+            code: "INVALID_INPUT",
+            message: error.to_string(),
+        })?
     };
+    let current_draft =
+        novel_application::document_text(&context_input.document_json).unwrap_or_default();
+    let project_knowledge = context.user_prompt.clone();
+    novel_infrastructure::apply_task_prompt_preferences(
+        &mut context,
+        &task_preference,
+        &[
+            ("chapterTitle", context_input.chapter_title.as_str()),
+            ("chapterPlan", context_input.chapter_plan.as_str()),
+            (
+                "userInstruction",
+                context_input.instruction.as_deref().unwrap_or(""),
+            ),
+            (
+                "selection",
+                context_input.selection.as_deref().unwrap_or(""),
+            ),
+            ("currentDraft", current_draft.as_str()),
+            ("projectKnowledge", project_knowledge.as_str()),
+        ],
+    );
+    context.estimated_input_tokens = u32::try_from(
+        (context.system_prompt.chars().count() + context.user_prompt.chars().count()).div_ceil(4),
+    )
+    .unwrap_or(u32::MAX)
+    .min(profile.context_window.saturating_sub(max_output_tokens));
     let secret = match profile.secret_ref.as_deref() {
         Some(secret_ref) => {
             Some(novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?)
@@ -1833,27 +2254,27 @@ pub(crate) async fn generate_ai_proposal(
         .lock()
         .map_err(|_| ApiError::internal("AI cancellation mutex poisoned"))?
         .insert(task_id, Arc::clone(&cancelled));
-    let result = state
-        .gateway
-        .generate_with_options(
-            &profile,
-            secret.as_deref(),
-            &context,
-            generation_options,
-            stream,
-            false,
-            Arc::clone(&cancelled),
-            |chunk| {
-                let _ = app.emit(
-                    "ai-task-chunk",
-                    AiStreamChunk {
-                        task_id,
-                        chunk: chunk.to_owned(),
-                    },
-                );
-            },
-        )
-        .await;
+    let result = generate_with_task_fallback(
+        &state,
+        &task_preference,
+        &profile,
+        secret.as_deref(),
+        &context,
+        generation_options,
+        stream,
+        false,
+        Arc::clone(&cancelled),
+        |chunk| {
+            let _ = app.emit(
+                "ai-task-chunk",
+                AiStreamChunk {
+                    task_id,
+                    chunk: chunk.to_owned(),
+                },
+            );
+        },
+    )
+    .await;
     state
         .ai_cancellations
         .lock()
@@ -1864,9 +2285,25 @@ pub(crate) async fn generate_ai_proposal(
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     match result {
-        Ok(output) => manager
-            .complete_ai_task(task_id, &context, output)
-            .map_err(ApiError::from),
+        Ok(outcome) => {
+            if let Some(fallback) = outcome.fallback_profile.as_ref() {
+                let reason = outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN");
+                sync_model_profile(&mut manager, fallback)?;
+                let _ = manager.record_ai_task_fallback(task_id, fallback.id, reason);
+                let _ = app.emit(
+                    "ai-task-attempt",
+                    AiTaskAttempt {
+                        task_id,
+                        attempt: 2,
+                        profile_name: fallback.name.clone(),
+                        fallback_reason: Some(reason.to_owned()),
+                    },
+                );
+            }
+            manager
+                .complete_ai_task(task_id, &context, outcome.output)
+                .map_err(ApiError::from)
+        }
         Err(error) => {
             let _ = manager.fail_ai_task(task_id, &error);
             Err(ApiError::from(error))
