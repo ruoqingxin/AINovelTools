@@ -41,6 +41,12 @@ export type WritingReadinessItem = {
   href: string;
 };
 
+export type WritingPreflightNotice = {
+  id: string;
+  label: string;
+  detail: string;
+};
+
 const writingGapPatterns: Array<WritingGapTarget & { keywords: string[] }> = [
   {
     id: "character-card",
@@ -140,6 +146,75 @@ export function findWritingGapTargets(text: string): WritingGapTarget[] {
   return targets.filter(
     (target, index) => targets.findIndex((candidate) => candidate.id === target.id) === index,
   );
+}
+
+export function auditChapterPlan(input: {
+  chapterPlan: string;
+  volumePlan: string;
+  sections: PlanningSection[];
+}): WritingPreflightNotice[] {
+  const plan = input.chapterPlan.trim();
+  if (!plan) return [];
+
+  const notices: WritingPreflightNotice[] = [];
+  if (!input.volumePlan.trim()) {
+    notices.push({
+      id: "volume-plan",
+      label: "所属分卷规划缺失",
+      detail: "执行卡没有可承接的分卷目标，生成正文前建议先补齐分卷阶段任务和卷末转折。",
+    });
+  }
+
+  const narrativeSection = input.sections.find((section) => section.id === "frame-narrative");
+  const formalPerspectives = affirmedNarrativePerspectives(narrativeSection?.content ?? "");
+  const planPerspectives = affirmedNarrativePerspectives(plan);
+  const conflictingPerspective = formalPerspectives.find(
+    (perspective) => planPerspectives.length > 0 && !planPerspectives.includes(perspective),
+  );
+  if (conflictingPerspective) {
+    notices.push({
+      id: "narrative-perspective",
+      label: "叙述人称可能冲突",
+      detail: `正式设定要求${conflictingPerspective}，执行卡另行指定了${planPerspectives.join("、")}。请确认本章是否例外。`,
+    });
+  }
+
+  const structuralChecks = [
+    {
+      id: "chapter-goal",
+      label: "本章目标",
+      detail: "未识别到明确目标，正文可能缺少本章要完成的推进任务。",
+      pattern: /目标|目的|任务|要完成|要获得|需要/,
+    },
+    {
+      id: "chapter-conflict",
+      label: "冲突推进",
+      detail: "未识别到明确阻碍或对抗，场景可能缺少持续张力。",
+      pattern: /冲突|阻碍|对抗|争夺|威胁|对手|敌人/,
+    },
+    {
+      id: "chapter-turn",
+      label: "关键行动与转折",
+      detail: "未识别到关键选择、发现或局面变化，章节可能只复述信息。",
+      pattern: /行动|选择|决定|发现|反转|转折|改变/,
+    },
+    {
+      id: "chapter-hook",
+      label: "结尾钩子",
+      detail: "未识别到章末悬念、伏笔或下一章接口，衔接可能偏弱。",
+      pattern: /钩子|悬念|伏笔|线索|留下|未完/,
+    },
+  ];
+  for (const check of structuralChecks) {
+    if (!check.pattern.test(plan)) {
+      notices.push({
+        id: check.id,
+        label: check.label,
+        detail: check.detail,
+      });
+    }
+  }
+  return notices;
 }
 
 export function buildWritingReadinessItems(
@@ -242,7 +317,11 @@ export function assessWritingReadiness(input: {
 }
 
 function hasAffirmedNarrativePerspective(content: string) {
-  return ["第一人称", "第二人称", "第三人称"].some((label) => {
+  return affirmedNarrativePerspectives(content).length > 0;
+}
+
+function affirmedNarrativePerspectives(content: string) {
+  return ["第一人称", "第二人称", "第三人称"].filter((label) => {
     let searchFrom = 0;
     while (searchFrom < content.length) {
       const index = content.indexOf(label, searchFrom);

@@ -3359,6 +3359,7 @@ mod tests {
             outline: preference.clone(),
             volume_planning: preference.clone(),
             chapter_split: preference.clone(),
+            chapter_plan: preference.clone(),
             writing: preference.clone(),
             knowledge_extraction: preference,
         };
@@ -3375,6 +3376,7 @@ mod tests {
             super::AiTaskKind::Outline,
             super::AiTaskKind::VolumePlanning,
             super::AiTaskKind::ChapterSplit,
+            super::AiTaskKind::ChapterPlan,
             super::AiTaskKind::Writing,
             super::AiTaskKind::KnowledgeExtraction,
         ] {

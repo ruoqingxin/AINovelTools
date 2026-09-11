@@ -196,6 +196,7 @@ export type AiTaskPreferences = {
   outline: AiTaskPreference;
   volumePlanning: AiTaskPreference;
   chapterSplit: AiTaskPreference;
+  chapterPlan: AiTaskPreference;
   writing: AiTaskPreference;
   knowledgeExtraction: AiTaskPreference;
 };
@@ -205,6 +206,7 @@ export type ProjectAiTaskOverrides = {
   outline: AiTaskPreference | null;
   volumePlanning: AiTaskPreference | null;
   chapterSplit: AiTaskPreference | null;
+  chapterPlan: AiTaskPreference | null;
   writing: AiTaskPreference | null;
   knowledgeExtraction: AiTaskPreference | null;
 };
@@ -288,7 +290,7 @@ export type JobEvent = {
 export type PlanningAiJobInput = {
   profileId: string; mode: "GENERATE" | "EXTRACT"; sectionId: string; sectionTitle: string;
   sectionPrompt: string; existingContext: string; referenceContent: string; userGuidance: string;
-  allowRewrite: boolean; taskKey?: "workDesign" | "outline" | "volumePlanning" | "chapterSplit"; temperature?: number; maxOutputTokens?: number;
+  allowRewrite: boolean; taskKey?: "workDesign" | "outline" | "volumePlanning" | "chapterSplit" | "chapterPlan"; temperature?: number; maxOutputTokens?: number;
   sourceName?: string[] | string; systemPromptSnapshot?: string; userPromptSnapshot?: string;
   finalRequestEndpoint?: string; finalRequestBody?: string; finalRequestEstimatedInputTokens?: number;
 };

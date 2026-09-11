@@ -55,6 +55,7 @@ describe("WritingReadinessPanel", () => {
     vi.clearAllMocks();
     const preferences = structuredClone(emptyAiTaskPreferences);
     preferences.workDesign.profileId = profile.id;
+    preferences.chapterPlan.profileId = profile.id;
     mocks.enqueuePlanningAiJob.mockResolvedValue({});
     mocks.getAiTaskPreferences.mockResolvedValue(preferences);
     mocks.listJobs.mockResolvedValue([]);
@@ -72,6 +73,9 @@ describe("WritingReadinessPanel", () => {
       <QueryClientProvider client={new QueryClient()}>
         <WritingReadinessPanel
           chapterId="chapter-1"
+          chapterTitle="第1章·入城"
+          volumeId="volume-1"
+          volumePlan=""
           readiness={readiness}
           loading={false}
           sections={[]}
@@ -91,6 +95,99 @@ describe("WritingReadinessPanel", () => {
           taskKey: "workDesign",
         }),
       ),
+    );
+  });
+
+  it("generates a chapter execution card with the volume context after prerequisites are ready", async () => {
+    const sections = [
+      "seed-premise",
+      "engine-protagonist",
+      "frame-setting",
+      "frame-narrative",
+    ].map((id) => ({
+      id,
+      content: id === "frame-narrative" ? "第三人称有限视角" : "已确认设定",
+      pendingContent: "",
+      rationale: "",
+      consequence: "",
+      references: [],
+      updatedAt: "",
+    }));
+    const readiness = assessWritingReadiness({
+      sections,
+      hasCharacterCard: true,
+      hasChapterPlan: false,
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <WritingReadinessPanel
+          chapterId="chapter-1"
+          chapterTitle="第1章·入城"
+          volumeId="volume-1"
+          volumePlan="第一卷目标：主角进入城市并发现身份线索。"
+          readiness={readiness}
+          loading={false}
+          sections={sections}
+        />
+      </QueryClientProvider>,
+    );
+
+    const row = (await screen.findByText("章节执行卡")).closest("article");
+    expect(row).not.toBeNull();
+    fireEvent.click(await within(row!).findByRole("button", { name: "AI 生成执行卡" }));
+
+    await waitFor(() =>
+      expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          profileId: profile.id,
+          sectionId: "plan-node:chapter-1",
+          sectionTitle: "第1章·入城·章节执行卡",
+          taskKey: "chapterPlan",
+          userGuidance: expect.stringContaining("第一卷目标"),
+        }),
+      ),
+    );
+  });
+
+  it("blocks execution-card generation until the formal volume plan exists", async () => {
+    const sections = [
+      "seed-premise",
+      "engine-protagonist",
+      "frame-setting",
+      "frame-narrative",
+    ].map((id) => ({
+      id,
+      content: id === "frame-narrative" ? "第三人称有限视角" : "已确认设定",
+      pendingContent: "",
+      rationale: "",
+      consequence: "",
+      references: [],
+      updatedAt: "",
+    }));
+    const readiness = assessWritingReadiness({
+      sections,
+      hasCharacterCard: true,
+      hasChapterPlan: false,
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <WritingReadinessPanel
+          chapterId="chapter-1"
+          chapterTitle="第1章·入城"
+          volumeId="volume-1"
+          volumePlan=""
+          readiness={readiness}
+          loading={false}
+          sections={sections}
+        />
+      </QueryClientProvider>,
+    );
+
+    const row = (await screen.findByText("章节执行卡")).closest("article");
+    expect(row).not.toBeNull();
+    expect(await within(row!).findByRole("link", { name: "先补分卷规划" })).toHaveAttribute(
+      "href",
+      "/planning#volume-1",
     );
   });
 });

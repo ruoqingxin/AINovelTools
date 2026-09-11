@@ -35,6 +35,7 @@ const runActionLabels: Record<string, string> = {
   outline: "大纲主线",
   volumePlanning: "分卷规划",
   chapterSplit: "章节拆分",
+  chapterPlan: "章节规划",
   writing: "正文书写",
   knowledgeExtraction: "知识提炼",
 };

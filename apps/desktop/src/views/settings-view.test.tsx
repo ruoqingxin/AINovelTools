@@ -81,6 +81,7 @@ describe("SettingsView", () => {
       outline: null,
       volumePlanning: null,
       chapterSplit: null,
+      chapterPlan: null,
       writing: null,
       knowledgeExtraction: null,
     });
@@ -90,6 +91,7 @@ describe("SettingsView", () => {
       outline: null,
       volumePlanning: null,
       chapterSplit: null,
+      chapterPlan: null,
       writing: null,
       knowledgeExtraction: null,
     }));
@@ -103,6 +105,7 @@ describe("SettingsView", () => {
       outline: null,
       volumePlanning: null,
       chapterSplit: null,
+      chapterPlan: null,
       writing: null,
       knowledgeExtraction: null,
     });
@@ -193,7 +196,7 @@ describe("SettingsView", () => {
     }));
   });
 
-  it("shows the six recommended defaults and restores an overridden task", async () => {
+  it("shows the seven recommended defaults and restores an overridden task", async () => {
     mocks.listModelProfiles.mockResolvedValue([
       {
         id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
@@ -353,6 +356,7 @@ describe("SettingsView", () => {
       outline: null,
       volumePlanning: null,
       chapterSplit: null,
+      chapterPlan: null,
       writing: null,
       knowledgeExtraction: null,
     });
@@ -392,6 +396,7 @@ describe("SettingsView", () => {
       outline: null,
       volumePlanning: null,
       chapterSplit: null,
+      chapterPlan: null,
       writing: null,
       knowledgeExtraction: null,
     });
@@ -423,6 +428,7 @@ describe("SettingsView", () => {
       outline: null,
       volumePlanning: null,
       chapterSplit: null,
+      chapterPlan: null,
       writing: null,
       knowledgeExtraction: null,
     });

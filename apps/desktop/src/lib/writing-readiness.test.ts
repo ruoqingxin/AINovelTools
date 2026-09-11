@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assessWritingReadiness,
+  auditChapterPlan,
   blockingWritingSections,
   buildWritingReadinessItems,
   findWritingGapTargets,
@@ -158,5 +159,33 @@ describe("buildWritingReadinessItems", () => {
     expect(items.find((item) => item.id === "frame-setting")?.href).toBe(
       "/planning#frame-setting",
     );
+  });
+});
+
+describe("auditChapterPlan", () => {
+  it("accepts an execution card with the expected structural signals", () => {
+    const notices = auditChapterPlan({
+      chapterPlan:
+        "本章目标：让主角发现身份线索。关键冲突是与守卫争夺证据；主角选择独自追踪，局势因此改变。结尾留下神秘印记作为钩子。",
+      volumePlan: "第一卷目标：进入主城并揭开身份线索。",
+      sections: [section("frame-narrative", "第三人称有限视角")],
+    });
+
+    expect(notices).toEqual([]);
+  });
+
+  it("reports explicit perspective conflicts and missing structural signals", () => {
+    const notices = auditChapterPlan({
+      chapterPlan: "本章目标是让主角选择调查旧案并发现异常记录。采用第一人称。",
+      volumePlan: "",
+      sections: [section("frame-narrative", "第三人称有限视角")],
+    });
+
+    expect(notices.map((notice) => notice.id)).toEqual([
+      "volume-plan",
+      "narrative-perspective",
+      "chapter-conflict",
+      "chapter-hook",
+    ]);
   });
 });

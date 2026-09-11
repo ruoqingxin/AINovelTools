@@ -95,6 +95,7 @@ pub enum AiTaskKind {
     Outline,
     VolumePlanning,
     ChapterSplit,
+    ChapterPlan,
     Writing,
     KnowledgeExtraction,
 }
@@ -126,6 +127,7 @@ impl AiTaskKind {
             Self::Outline => "outline",
             Self::VolumePlanning => "volumePlanning",
             Self::ChapterSplit => "chapterSplit",
+            Self::ChapterPlan => "chapterPlan",
             Self::Writing => "writing",
             Self::KnowledgeExtraction => "knowledgeExtraction",
         }
@@ -138,6 +140,7 @@ impl AiTaskKind {
             Self::Outline => 0.6,
             Self::VolumePlanning => 0.55,
             Self::ChapterSplit => 0.3,
+            Self::ChapterPlan => 0.35,
             Self::Writing => 0.9,
             Self::KnowledgeExtraction => 0.1,
         }
@@ -146,7 +149,10 @@ impl AiTaskKind {
     #[must_use]
     pub const fn default_max_output_tokens(self) -> u32 {
         match self {
-            Self::WorkDesign | Self::ChapterSplit | Self::KnowledgeExtraction => 4_096,
+            Self::WorkDesign
+            | Self::ChapterSplit
+            | Self::ChapterPlan
+            | Self::KnowledgeExtraction => 4_096,
             Self::Outline | Self::VolumePlanning => 6_144,
             Self::Writing => 8_192,
         }
@@ -155,7 +161,7 @@ impl AiTaskKind {
     #[must_use]
     pub const fn default_input_token_budget(self) -> u32 {
         match self {
-            Self::WorkDesign | Self::ChapterSplit => 24_576,
+            Self::WorkDesign | Self::ChapterSplit | Self::ChapterPlan => 24_576,
             Self::Outline | Self::VolumePlanning | Self::KnowledgeExtraction => 32_768,
             Self::Writing => 49_152,
         }
@@ -165,7 +171,11 @@ impl AiTaskKind {
     pub const fn default_include_project_context(self) -> bool {
         matches!(
             self,
-            Self::WorkDesign | Self::Outline | Self::VolumePlanning | Self::ChapterSplit
+            Self::WorkDesign
+                | Self::Outline
+                | Self::VolumePlanning
+                | Self::ChapterSplit
+                | Self::ChapterPlan
         )
     }
 
@@ -483,6 +493,7 @@ pub struct AiTaskPreferences {
     pub outline: AiTaskPreference,
     pub volume_planning: AiTaskPreference,
     pub chapter_split: AiTaskPreference,
+    pub chapter_plan: AiTaskPreference,
     pub writing: AiTaskPreference,
     pub knowledge_extraction: AiTaskPreference,
 }
@@ -495,6 +506,7 @@ pub struct ProjectAiTaskOverrides {
     pub outline: Option<AiTaskPreference>,
     pub volume_planning: Option<AiTaskPreference>,
     pub chapter_split: Option<AiTaskPreference>,
+    pub chapter_plan: Option<AiTaskPreference>,
     pub writing: Option<AiTaskPreference>,
     pub knowledge_extraction: Option<AiTaskPreference>,
 }
@@ -507,6 +519,7 @@ impl ProjectAiTaskOverrides {
             AiTaskKind::Outline => self.outline.as_ref(),
             AiTaskKind::VolumePlanning => self.volume_planning.as_ref(),
             AiTaskKind::ChapterSplit => self.chapter_split.as_ref(),
+            AiTaskKind::ChapterPlan => self.chapter_plan.as_ref(),
             AiTaskKind::Writing => self.writing.as_ref(),
             AiTaskKind::KnowledgeExtraction => self.knowledge_extraction.as_ref(),
         }
@@ -521,17 +534,19 @@ impl AiTaskPreferences {
             AiTaskKind::Outline => &self.outline,
             AiTaskKind::VolumePlanning => &self.volume_planning,
             AiTaskKind::ChapterSplit => &self.chapter_split,
+            AiTaskKind::ChapterPlan => &self.chapter_plan,
             AiTaskKind::Writing => &self.writing,
             AiTaskKind::KnowledgeExtraction => &self.knowledge_extraction,
         }
     }
 
-    fn entries(&self) -> [&AiTaskPreference; 6] {
+    fn entries(&self) -> [&AiTaskPreference; 7] {
         [
             &self.work_design,
             &self.outline,
             &self.volume_planning,
             &self.chapter_split,
+            &self.chapter_plan,
             &self.writing,
             &self.knowledge_extraction,
         ]
@@ -545,6 +560,8 @@ impl AiTaskPreferences {
             .set_recommended_defaults(AiTaskKind::VolumePlanning);
         self.chapter_split
             .set_recommended_defaults(AiTaskKind::ChapterSplit);
+        self.chapter_plan
+            .set_recommended_defaults(AiTaskKind::ChapterPlan);
         self.writing.set_recommended_defaults(AiTaskKind::Writing);
         self.knowledge_extraction
             .set_recommended_defaults(AiTaskKind::KnowledgeExtraction);
@@ -669,6 +686,7 @@ impl Default for AiTaskPreferences {
             outline: AiTaskPreference::recommended(AiTaskKind::Outline),
             volume_planning: AiTaskPreference::recommended(AiTaskKind::VolumePlanning),
             chapter_split: AiTaskPreference::recommended(AiTaskKind::ChapterSplit),
+            chapter_plan: AiTaskPreference::recommended(AiTaskKind::ChapterPlan),
             writing: AiTaskPreference::recommended(AiTaskKind::Writing),
             knowledge_extraction: AiTaskPreference::recommended(AiTaskKind::KnowledgeExtraction),
         }
@@ -1440,6 +1458,7 @@ impl ProjectManager {
                 "outline" => overrides.outline = Some(preference),
                 "volumePlanning" => overrides.volume_planning = Some(preference),
                 "chapterSplit" => overrides.chapter_split = Some(preference),
+                "chapterPlan" => overrides.chapter_plan = Some(preference),
                 "writing" => overrides.writing = Some(preference),
                 "knowledgeExtraction" => overrides.knowledge_extraction = Some(preference),
                 _ => {}
@@ -1483,6 +1502,7 @@ impl ProjectManager {
             (AiTaskKind::Outline, &preferences.outline),
             (AiTaskKind::VolumePlanning, &preferences.volume_planning),
             (AiTaskKind::ChapterSplit, &preferences.chapter_split),
+            (AiTaskKind::ChapterPlan, &preferences.chapter_plan),
             (AiTaskKind::Writing, &preferences.writing),
             (
                 AiTaskKind::KnowledgeExtraction,
@@ -2772,11 +2792,12 @@ mod tests {
 
     #[test]
     fn ai_task_defaults_match_product_recommendations() {
-        let cases: [(super::AiTaskKind, f64, u32); 6] = [
+        let cases: [(super::AiTaskKind, f64, u32); 7] = [
             (super::AiTaskKind::WorkDesign, 0.45, 4_096),
             (super::AiTaskKind::Outline, 0.6, 6_144),
             (super::AiTaskKind::VolumePlanning, 0.55, 6_144),
             (super::AiTaskKind::ChapterSplit, 0.3, 4_096),
+            (super::AiTaskKind::ChapterPlan, 0.35, 4_096),
             (super::AiTaskKind::Writing, 0.9, 8_192),
             (super::AiTaskKind::KnowledgeExtraction, 0.1, 4_096),
         ];
@@ -2878,6 +2899,7 @@ mod tests {
             outline: preference.clone(),
             volume_planning: preference.clone(),
             chapter_split: preference.clone(),
+            chapter_plan: preference.clone(),
             writing: preference.clone(),
             knowledge_extraction: preference,
         };
@@ -2957,6 +2979,8 @@ mod tests {
         assert_eq!(preferences.volume_planning.max_output_tokens, Some(6_144));
         assert_eq!(preferences.chapter_split.temperature, Some(0.3));
         assert_eq!(preferences.chapter_split.max_output_tokens, Some(4_096));
+        assert_eq!(preferences.chapter_plan.temperature, Some(0.35));
+        assert_eq!(preferences.chapter_plan.max_output_tokens, Some(4_096));
         assert_eq!(preferences.writing.temperature, Some(0.9));
         assert_eq!(preferences.writing.max_output_tokens, Some(8_192));
         assert_eq!(preferences.knowledge_extraction.temperature, Some(0.1));
@@ -2974,6 +2998,7 @@ mod tests {
             outline: super::AiTaskPreference::default(),
             volume_planning: super::AiTaskPreference::default(),
             chapter_split: super::AiTaskPreference::default(),
+            chapter_plan: super::AiTaskPreference::default(),
             writing: super::AiTaskPreference::default(),
             knowledge_extraction: super::AiTaskPreference::default(),
         };
@@ -2997,6 +3022,8 @@ mod tests {
             saved.chapter_split.prompt.context.include_project_knowledge,
             Some(false)
         );
+        assert_eq!(saved.chapter_plan.temperature, Some(0.35));
+        assert_eq!(saved.chapter_plan.max_output_tokens, Some(4_096));
         assert_eq!(saved.writing.temperature, Some(0.9));
         assert_eq!(saved.writing.max_output_tokens, Some(8_192));
         assert_eq!(
