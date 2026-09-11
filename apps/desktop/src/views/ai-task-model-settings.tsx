@@ -30,6 +30,7 @@ import {
   type AiTaskPromptPreference,
   type AiRun,
   type AiUsageCurrencySummary,
+  type AiUsageTaskSummary,
   type ModelProfile,
   type ProjectAiTaskOverrides,
 } from "../lib/tauri-client";
@@ -119,6 +120,57 @@ function formatCost(micros: number | null, currency: string) {
   const amount = micros / 1_000_000;
   const formatted = amount < 0.01 ? amount.toFixed(4) : amount.toFixed(2);
   return `${currency} ${formatted}`;
+}
+
+function averageTaskTokens(rows: AiUsageTaskSummary[] | undefined, taskKey: AiTaskKey) {
+  const matches = rows?.filter((row) => row.taskKey === taskKey) ?? [];
+  const runCount = matches.reduce((total, row) => total + row.runCount, 0);
+  if (!runCount) return null;
+  return {
+    runCount,
+    inputTokens: matches.reduce((total, row) => total + row.inputTokens, 0) / runCount,
+    outputTokens: matches.reduce((total, row) => total + row.outputTokens, 0) / runCount,
+  };
+}
+
+function estimateNextRunCost(
+  rows: AiUsageTaskSummary[] | undefined,
+  taskKey: AiTaskKey,
+  profile: ModelProfile | undefined,
+  days = 30,
+) {
+  if (!profile) return "选择模型后预估费用";
+  const inputPrice = profile.inputPriceMicrosPerMillion;
+  const outputPrice = profile.outputPriceMicrosPerMillion;
+  if (
+    !Number.isFinite(inputPrice)
+    || !Number.isFinite(outputPrice)
+    || (inputPrice <= 0 && outputPrice <= 0)
+  ) {
+    return "未设置模型单价";
+  }
+  const average = averageTaskTokens(rows, taskKey);
+  if (!average) return "预估样本不足";
+  const estimatedMicros = Math.round(
+    average.inputTokens * inputPrice / 1_000_000
+    + average.outputTokens * outputPrice / 1_000_000,
+  );
+  return `预估下一次约 ${formatCost(estimatedMicros, profile.priceCurrency || "CNY")} · 基于近 ${days} 天 ${average.runCount} 次记录`;
+}
+
+function formatRunDuration(createdAt: string, finishedAt: string | null) {
+  if (!finishedAt) return null;
+  const startedAt = Date.parse(createdAt);
+  const completedAt = Date.parse(finishedAt);
+  if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt) || completedAt < startedAt) return null;
+  const totalSeconds = Math.max(1, Math.round((completedAt - startedAt) / 1_000));
+  if (totalSeconds < 60) return `${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours} 小时 ${remainingMinutes} 分` : `${hours} 小时`;
 }
 
 function costTotalsByCurrency(runs: AiRun[] | undefined) {
@@ -633,6 +685,7 @@ export function AiTaskModelSettings() {
           const defaults = recommendedTaskPreference(key);
           const selectedId = preference.profileId ?? "";
           const selectedProfile = chatProfiles.find((profile) => profile.id === selectedId);
+          const effectiveProfile = selectedProfile ?? preferredProfile;
           const selectionMissing = Boolean(selectedId && !selectedProfile);
           const maxOutputLimit = maxOutputLimitForTask(key);
           return <div className="ai-task-routing-row" key={key}>
@@ -659,6 +712,7 @@ export function AiTaskModelSettings() {
               <span className="ai-task-routing-state" data-ready={selectedProfile?.hasSecret || (!selectedId && preferredProfile?.hasSecret) || undefined}>
                 {selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "可用" : "缺少 Key" : preferredProfile ? `自动：${preferredProfile.name}` : "未配置"}
               </span>
+              <span className="ai-task-cost-estimate">{estimateNextRunCost(usage.data?.byTask, key, effectiveProfile, usage.data?.days)}</span>
               {hasCustomGeneration(preference, key, maxOutputLimit) ? <button type="button" onClick={() => clearTaskTuning(key, maxOutputLimit)} title={`恢复 ${label} 的推荐值：温度 ${defaults.temperature}，最大输出 ${Math.min(defaults.maxOutputTokens ?? maxOutputLimit, maxOutputLimit)}`}><RotateCcw size={12} />恢复生成参数</button> : null}
               <button type="button" onClick={() => setSelectedTask(key)} data-active={selectedTask === key || undefined}><ChevronDown size={12} />{hasCustomPrompt(preference, key) ? "已自定义" : "高级配置"}</button>
             </div>
@@ -767,11 +821,14 @@ export function AiTaskModelSettings() {
           </div> : <p className="plan-empty">生成并评价正文候选后，这里会显示质量对比。</p>}
         </div>
         {runs.isPending ? <p className="plan-empty">正在加载运行记录…</p> : runs.isError ? <p className="project-error">运行记录加载失败：{errorMessage(runs.error)}</p> : runs.data?.length ? <div className="ai-run-list">
-          {runs.data.map((run) => <article className="ai-run-row" key={run.id}>
-            <div><strong>{RUN_ACTION_LABELS[run.action] ?? run.taskKey} · {run.chapterTitle}</strong><small>{new Date(run.createdAt).toLocaleString()} · {run.profileName} · {run.source === "PLANNING" ? "规划" : run.source === "KNOWLEDGE_EXTRACTION" ? "知识提炼" : "正文"}</small></div>
-            <span className={`job-status job-${run.status.toLowerCase()}`}>{RUN_STATUS_LABELS[run.status] ?? run.status}</span>
-            <small>尝试 {run.attemptCount} · 输入约 {run.estimatedInputTokens.toLocaleString()} / 输出约 {run.estimatedOutputTokens.toLocaleString()} tokens · {formatCost(run.estimatedCostMicros, run.priceCurrency)}{run.retryReason ? ` · 回退原因 ${run.retryReason}` : ""}{run.errorCode ? ` · ${run.errorCode}` : ""}</small>
-          </article>)}
+          {runs.data.map((run) => {
+            const duration = formatRunDuration(run.createdAt, run.finishedAt);
+            return <article className="ai-run-row" key={run.id}>
+              <div><strong>{RUN_ACTION_LABELS[run.action] ?? run.taskKey} · {run.chapterTitle}</strong><small>{new Date(run.createdAt).toLocaleString()} · {run.profileName} · {run.source === "PLANNING" ? "规划" : run.source === "KNOWLEDGE_EXTRACTION" ? "知识提炼" : "正文"}</small></div>
+              <span className={`job-status job-${run.status.toLowerCase()}`}>{RUN_STATUS_LABELS[run.status] ?? run.status}</span>
+              <small>尝试 {run.attemptCount}{duration ? ` · 耗时 ${duration}` : ""} · 输入约 {run.estimatedInputTokens.toLocaleString()} / 输出约 {run.estimatedOutputTokens.toLocaleString()} tokens · {formatCost(run.estimatedCostMicros, run.priceCurrency)}{run.retryReason ? ` · 回退原因 ${run.retryReason}` : ""}{run.errorCode ? ` · ${run.errorCode}` : ""}</small>
+            </article>;
+          })}
         </div> : <p className="plan-empty">当前项目还没有 AI 运行记录。</p>}
       </section>
       <div className="ai-task-routing-actions">

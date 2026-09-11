@@ -2307,6 +2307,7 @@ button:focus-visible {
 .ai-task-routing-meta { display:grid; justify-items:end; gap:5px; }
 .ai-task-routing-state { color:#9a7a43; font-size:10px; text-align:right; }
 .ai-task-routing-state[data-ready] { color:#27845c; }
+.ai-task-cost-estimate { color:#7183a0; font-size:9px; line-height:1.4; text-align:right; }
 .ai-task-routing-meta button { display:inline-flex; align-items:center; gap:4px; padding:0; border:0; color:#6f83a2; background:transparent; font-size:9px; }
 .ai-task-routing-meta button:hover { color:#3971d8; }
 .ai-task-routing-meta button[data-active] { color:#2f68d1; font-weight:700; }

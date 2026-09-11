@@ -434,6 +434,38 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
     expect(await screen.findAllByText(/USD 0\.02/)).toHaveLength(2);
     expect(screen.getByText("大纲主线 · 故事大纲")).toBeVisible();
+    expect(screen.getByText(/耗时 1 秒/)).toBeVisible();
+  });
+
+  it("estimates the next task cost from saved token usage", async () => {
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        inputPriceMicrosPerMillion: 2500000, outputPriceMicrosPerMillion: 10000000,
+        priceCurrency: "USD", secretRef: "model-profile:deepseek-profile", hasSecret: true,
+        createdAt: "0", updatedAt: "0",
+      },
+    ]);
+    mocks.getAiUsageSummary.mockResolvedValue({
+      days: 30,
+      total: [],
+      daily: [],
+      byTask: [{
+        taskKey: "workDesign",
+        currency: "USD",
+        runCount: 2,
+        inputTokens: 8000,
+        outputTokens: 4000,
+        estimatedCostMicros: 60000,
+      }],
+    });
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+
+    expect(await screen.findByText(/预估下一次约 USD 0\.03 · 基于近 30 天 2 次记录/)).toBeVisible();
   });
 
   it("warns when estimated spend reaches a soft budget", async () => {
