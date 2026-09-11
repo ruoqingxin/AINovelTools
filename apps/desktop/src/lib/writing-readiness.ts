@@ -1,25 +1,137 @@
 import type { PlanningSection } from "./tauri-client";
 
-export const writingReadinessSections = [
+export const blockingWritingSections = [
   { id: "seed-premise", label: "核心前提与开局情境" },
   { id: "engine-protagonist", label: "主角目标与内在需求" },
-  { id: "engine-antagonism", label: "对抗系统与升级机制" },
-  { id: "engine-stakes", label: "赌注、代价与失败后果" },
-  { id: "engine-ending", label: "结局状态与承诺兑现" },
-  { id: "cast-arcs", label: "人物弧光、秘密与信息差" },
   { id: "frame-setting", label: "舞台、硬规则与资源限制" },
   { id: "frame-narrative", label: "视角、信息与叙事节奏" },
 ] as const;
 
+export const warningWritingSections = [
+  { id: "seed-genre-promise", label: "类型、题材与阅读承诺" },
+  { id: "engine-antagonism", label: "对抗系统与升级机制" },
+  { id: "engine-stakes", label: "赌注、代价与失败后果" },
+  { id: "engine-ending", label: "结局状态与承诺兑现" },
+  { id: "cast-arcs", label: "人物弧光、秘密与信息差" },
+] as const;
+
 export type WritingReadiness = {
-  ready: boolean;
-  completedCount: number;
-  totalCount: number;
-  missingSections: Array<{ id: string; label: string }>;
+  canGenerate: boolean;
+  blockingCompletedCount: number;
+  blockingTotalCount: number;
+  blockingMissingSections: Array<{ id: string; label: string }>;
+  warningMissingSections: Array<{ id: string; label: string }>;
   missingCharacterCard: boolean;
   missingChapterPlan: boolean;
   missingNarrativePerspective: boolean;
 };
+
+export type WritingGapTarget = {
+  id: string;
+  label: string;
+  href: string;
+};
+
+const writingGapPatterns: Array<WritingGapTarget & { keywords: string[] }> = [
+  {
+    id: "character-card",
+    label: "补人物卡",
+    href: "/knowledge",
+    keywords: [
+      "人物卡",
+      "角色卡",
+      "主角卡",
+      "人物信息",
+      "角色资料",
+      "主角名字",
+      "主角姓名",
+      "主角信息",
+      "人物姓名",
+      "角色姓名",
+    ],
+  },
+  {
+    id: "chapter-plan",
+    label: "补章节执行卡",
+    href: "/planning",
+    keywords: ["章节执行卡", "章节卡", "章节计划", "本章目标"],
+  },
+  {
+    id: "seed-premise",
+    label: "补核心前提",
+    href: "/planning#seed-premise",
+    keywords: ["核心前提", "开局情境", "故事前提", "故事为什么开始"],
+  },
+  {
+    id: "engine-protagonist",
+    label: "补主角目标",
+    href: "/planning#engine-protagonist",
+    keywords: ["主角目标", "内在需求", "主角动机", "主角欲望", "主角设定"],
+  },
+  {
+    id: "engine-antagonism",
+    label: "补对抗机制",
+    href: "/planning#engine-antagonism",
+    keywords: ["对抗系统", "升级机制", "反派目标", "敌人层级"],
+  },
+  {
+    id: "engine-stakes",
+    label: "补赌注与代价",
+    href: "/planning#engine-stakes",
+    keywords: ["赌注", "失败后果", "行动代价", "风险代价"],
+  },
+  {
+    id: "engine-ending",
+    label: "补结局方向",
+    href: "/planning#engine-ending",
+    keywords: ["结局状态", "承诺兑现", "最终结局"],
+  },
+  {
+    id: "cast-arcs",
+    label: "补人物弧光",
+    href: "/planning#cast-arcs",
+    keywords: ["人物弧光", "角色弧光", "信息差"],
+  },
+  {
+    id: "frame-setting",
+    label: "补世界与力量规则",
+    href: "/planning#frame-setting",
+    keywords: [
+      "境界",
+      "境界设定",
+      "力量体系",
+      "力量规则",
+      "硬规则",
+      "世界规则",
+      "能力边界",
+      "资源限制",
+      "修炼体系",
+      "禁忌",
+    ],
+  },
+  {
+    id: "frame-history",
+    label: "补势力与历史",
+    href: "/planning#frame-history",
+    keywords: ["历史因果", "势力关系", "势力矛盾"],
+  },
+  {
+    id: "frame-narrative",
+    label: "补叙述视角",
+    href: "/planning#frame-narrative",
+    keywords: ["叙述人称", "叙述视角", "视角范围", "人称未明确"],
+  },
+];
+
+export function findWritingGapTargets(text: string): WritingGapTarget[] {
+  const targets = writingGapPatterns
+    .filter((target) => target.keywords.some((keyword) => text.includes(keyword)))
+    .map(({ id, label, href }) => ({ id, label, href }));
+
+  return targets.filter(
+    (target, index) => targets.findIndex((candidate) => candidate.id === target.id) === index,
+  );
+}
 
 export function assessWritingReadiness(input: {
   sections: PlanningSection[];
@@ -31,7 +143,10 @@ export function assessWritingReadiness(input: {
       .filter((section) => section.content.trim())
       .map((section) => section.id),
   );
-  const missingSections = writingReadinessSections
+  const blockingMissingSections = blockingWritingSections
+    .filter((section) => !completedIds.has(section.id))
+    .map((section) => ({ id: section.id, label: section.label }));
+  const warningMissingSections = warningWritingSections
     .filter((section) => !completedIds.has(section.id))
     .map((section) => ({ id: section.id, label: section.label }));
   const missingCharacterCard = !input.hasCharacterCard;
@@ -44,14 +159,16 @@ export function assessWritingReadiness(input: {
     Boolean(narrativeSection?.content.trim()) && !hasExplicitNarrativePerspective;
 
   return {
-    ready:
-      missingSections.length === 0 &&
+    canGenerate:
+      blockingMissingSections.length === 0 &&
       !missingCharacterCard &&
       !missingChapterPlan &&
       !missingNarrativePerspective,
-    completedCount: writingReadinessSections.length - missingSections.length,
-    totalCount: writingReadinessSections.length,
-    missingSections,
+    blockingCompletedCount:
+      blockingWritingSections.length - blockingMissingSections.length,
+    blockingTotalCount: blockingWritingSections.length,
+    blockingMissingSections,
+    warningMissingSections,
     missingCharacterCard,
     missingChapterPlan,
     missingNarrativePerspective,

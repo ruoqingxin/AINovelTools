@@ -1277,6 +1277,12 @@ textarea:focus-visible,
   background: #fffaf0;
 }
 
+.writing-readiness[data-state="warning"] {
+  border-color: #d8c69c;
+  color: #775f38;
+  background: #fffdf6;
+}
+
 .writing-readiness-heading {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1301,6 +1307,10 @@ textarea:focus-visible,
 
 .writing-readiness[data-state="blocked"] .writing-readiness-heading strong {
   color: #7a5a22;
+}
+
+.writing-readiness[data-state="warning"] .writing-readiness-heading strong {
+  color: #6e5934;
 }
 
 .writing-readiness-heading span {
@@ -1352,6 +1362,18 @@ textarea:focus-visible,
   color: #617997;
   background: #fff;
   font-weight: 700;
+}
+
+.writing-readiness-items code[data-severity="blocking"] {
+  border-color: #e3c58a;
+  color: #845f20;
+  background: #fffaf0;
+}
+
+.writing-readiness-items code[data-severity="warning"] {
+  border-color: #dfd8c6;
+  color: #776e5d;
+  background: #fffdf8;
 }
 
 .writing-readiness-actions {
@@ -1430,6 +1452,7 @@ textarea:focus-visible,
 }
 
 .ai-actions button,
+.ai-actions a,
 .ai-action-grid button,
 .ai-running button {
   display: inline-flex;
@@ -1442,6 +1465,8 @@ textarea:focus-visible,
   font-size: 11px;
   font-weight: 650;
 }
+
+.ai-actions a { text-decoration: none; }
 
 .ai-action-grid button:disabled,
 .ai-actions button:disabled {
@@ -1554,7 +1579,14 @@ textarea:focus-visible,
 .proposal-validation { color:#8a6a2d; font-size:9px; }
 .proposal-validation[data-status="valid"] { color:#27845c; }
 .proposal-validation[data-status="invalid"] { color:#c04b4b; }
+.proposal-validation[data-status="needs_input"] { color:#a0641e; font-weight:700; }
 .proposal-validation-messages { display:grid; gap:3px; margin-top:7px; padding:7px 9px; border-left:2px solid #d8ab74; color:#8a6530; background:#fffaf2; font-size:9px; line-height:1.45; }
+.proposal[data-state="needs-input"] { border-color:#e3c58a; background:#fffdf7; }
+.proposal[data-state="needs-input"] .proposal-validation-messages { border-left-color:#d18b35; color:#865824; background:#fff8e9; }
+.proposal-needs-input { display:grid; gap:4px; margin-top:9px; padding:10px 11px; border:1px solid #ead8b5; border-radius:6px; color:#7b6239; background:#fffaf0; }
+.proposal-needs-input strong { color:#774b1c; font-size:11px; }
+.proposal-needs-input span { color:#8a7553; font-size:10px; line-height:1.5; }
+.proposal-needs-input pre { max-height:230px; margin:6px 0 0; overflow:auto; color:#674c2d; font-family:inherit; font-size:11px; line-height:1.6; white-space:pre-wrap; }
 .proposal-heading-actions { display:flex; align-items:center; gap:9px; }
 .proposal-heading-actions button { display:inline-flex; min-height:28px; align-items:center; gap:5px; padding:0 9px; border:1px solid #c8d9f5; border-radius:6px; color:#2f68d1; background:#f3f7ff; font-size:10px; font-weight:700; }
 .proposal-diff,

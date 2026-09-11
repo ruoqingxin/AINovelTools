@@ -582,6 +582,7 @@ describe("SettingsView", () => {
         notHelpfulCount: 1,
         validCount: 2,
         warningCount: 1,
+        needsInputCount: 0,
         invalidCount: 0,
       }],
     });
@@ -591,7 +592,7 @@ describe("SettingsView", () => {
 
     expect(await screen.findByText("整章创作 · DeepSeek 写作")).toBeVisible();
     expect(screen.getByText("有帮助 67%")).toBeVisible();
-    expect(screen.getByText("校验问题 33%")).toBeVisible();
+    expect(screen.getByText("需补资料 0 · 校验问题 33%")).toBeVisible();
     expect(screen.getByText("采用 67%")).toBeVisible();
   });
 });

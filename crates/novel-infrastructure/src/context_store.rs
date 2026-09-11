@@ -20,13 +20,9 @@ const WRITING_SETTING_SECTIONS: [(&str, &str); 15] = [
     ("frame-history", "历史因果、势力与矛盾来源"),
     ("frame-narrative", "视角、信息与叙事节奏"),
 ];
-const REQUIRED_WRITING_SETTING_SECTIONS: [(&str, &str); 8] = [
+const REQUIRED_WRITING_SETTING_SECTIONS: [(&str, &str); 4] = [
     ("seed-premise", "核心前提与开局情境"),
     ("engine-protagonist", "主角目标与内在需求"),
-    ("engine-antagonism", "对抗系统与升级机制"),
-    ("engine-stakes", "赌注、代价与失败后果"),
-    ("engine-ending", "结局状态与承诺兑现"),
-    ("cast-arcs", "人物弧光、秘密与信息差"),
     ("frame-setting", "舞台、硬规则与资源限制"),
     ("frame-narrative", "视角、信息与叙事节奏"),
 ];
@@ -355,7 +351,7 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
             output.push_str("- 叙述人称：正式设定未明确第一人称、第二人称或第三人称\n");
         }
         output.push_str(
-            "生成判断：正文生成前先检查以上缺项。若缺项直接影响本章主角动机、能力边界、境界/力量规则、世界限制、人物行为或失败后果，停止创作并只输出“[上下文不足]”，逐项说明缺少的正式设定和补齐位置；不得自行补全项目事实。\n",
+            "生成判断：正文生成前只检查以上缺项。仅当缺项直接影响本章主角动机、能力边界、境界/力量规则、世界限制、人物行为或失败后果时，停止创作并只输出“[上下文不足]”，逐项说明缺少的正式设定和补齐位置；未列为缺失项的一般规划不得作为停止创作的理由；不得自行补全项目事实。\n",
         );
     }
     if let Some(person) = narrative_person {

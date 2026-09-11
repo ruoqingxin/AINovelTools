@@ -2687,7 +2687,8 @@ mod tests {
                 .contains("叙述视角硬约束：本作品固定使用第三人称")
         );
         assert!(package.user_prompt.contains("人物卡：知识库尚未建立"));
-        assert!(package.user_prompt.contains("赌注、代价与失败后果"));
+        assert!(package.user_prompt.contains("核心前提与开局情境"));
+        assert!(package.user_prompt.contains("未列为缺失项的一般规划"));
         assert!(!package.user_prompt.contains("这段候选不得进入正文上下文"));
         assert!(
             package
@@ -3257,6 +3258,54 @@ mod tests {
         assert_eq!(quality.groups.len(), 1);
         assert_eq!(quality.groups[0].accepted_count, 1);
         assert_eq!(quality.groups[0].warning_count, 1);
+        let needs_input_task = manager.create_ai_task(profile.id, &context).expect("task");
+        let needs_input_proposal = manager
+            .complete_ai_task(
+                needs_input_task,
+                &context,
+                "[上下文不足]\n- 主角卡：未建立\n- 境界规则：缺失".into(),
+            )
+            .expect("needs-input proposal");
+        let needs_input_review = manager
+            .list_ai_proposal_reviews(chapter.id)
+            .expect("needs-input review")
+            .into_iter()
+            .find(|item| item.proposal.id == needs_input_proposal.id)
+            .expect("needs-input review item");
+        assert_eq!(needs_input_review.validation.status, "NEEDS_INPUT");
+        assert!(
+            manager
+                .decide_ai_proposal(
+                    needs_input_proposal.id,
+                    super::AiProposalStatus::Accepted,
+                    None,
+                )
+                .is_err()
+        );
+        assert!(
+            manager
+                .decide_ai_proposal(
+                    needs_input_proposal.id,
+                    super::AiProposalStatus::PartiallyAccepted,
+                    Some("模型说明不能作为正文".into()),
+                )
+                .is_err()
+        );
+        assert_eq!(
+            manager
+                .decide_ai_proposal(
+                    needs_input_proposal.id,
+                    super::AiProposalStatus::Rejected,
+                    None,
+                )
+                .expect("reject needs-input proposal")
+                .status,
+            super::AiProposalStatus::Rejected
+        );
+        let quality = manager.get_ai_quality_summary(20).expect("quality summary");
+        assert_eq!(quality.total_proposals, 2);
+        assert_eq!(quality.total_with_issues, 2);
+        assert_eq!(quality.groups[0].needs_input_count, 1);
         assert!(
             manager
                 .current_manuscript(chapter.id)

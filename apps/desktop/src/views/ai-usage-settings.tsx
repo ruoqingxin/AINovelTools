@@ -200,7 +200,7 @@ export function AiUsageSettings(props: { onDirtyChange?: (dirty: boolean) => voi
           {quality.data.groups.map((group) => <article className="ai-quality-row" key={`${group.taskKey}:${group.action}:${group.promptVersion}:${group.profileName}`}>
             <div><strong>{RUN_ACTION_LABELS[group.action] ?? group.taskKey} · {group.profileName}</strong><small>{group.promptVersion} · {group.proposalCount} 条候选</small></div>
             <span>有帮助 {percentage(group.helpfulCount, group.ratedCount) ?? "—"}{percentage(group.helpfulCount, group.ratedCount) === null ? "" : "%"}</span>
-            <span data-warning={group.warningCount + group.invalidCount > 0 || undefined}>校验问题 {percentage(group.warningCount + group.invalidCount, group.proposalCount) ?? 0}%</span>
+            <span data-warning={group.warningCount + group.needsInputCount + group.invalidCount > 0 || undefined}>需补资料 {group.needsInputCount} · 校验问题 {percentage(group.warningCount + group.invalidCount, group.proposalCount) ?? 0}%</span>
             <span>采用 {percentage(group.acceptedCount, group.proposalCount) ?? 0}%</span>
           </article>)}
         </div> : <p className="plan-empty">生成并评价正文候选后，这里会显示质量对比。</p>}

@@ -68,10 +68,9 @@ impl ContextCandidateKind {
 
     const fn max_attached(self) -> usize {
         match self {
-            Self::ProjectSetting => 1,
+            Self::ProjectSetting | Self::Foreshadowing | Self::Summary | Self::Event => 1,
             Self::AuthoritativeFact | Self::Keyword => 4,
             Self::CurrentState | Self::Entity => 2,
-            Self::Foreshadowing | Self::Summary | Self::Event => 1,
         }
     }
 }
@@ -631,7 +630,7 @@ fn build_task_contract(input: &AssembleContextInput) -> AiTaskContract {
         "只依据当前草稿和已提供的章节材料总结；无法确认的信息标为不确定，不得补写正文之外的事实。"
             .to_owned()
     } else {
-        "生成前先检查 [P1 作品正式设定与生成前判断]；若缺少直接影响本章人物动机、主角能力、境界/力量规则、世界限制或失败后果的正式设定，停止推断并只输出“[上下文不足]”，逐项列出缺失的正式设定及补齐位置；不得自行补全项目事实。".to_owned()
+        "生成前先检查 [P1 作品正式设定与生成前判断]；仅当其中“缺失项”直接影响本章人物动机、主角能力、境界/力量规则、世界限制或失败后果时，才停止推断并只输出“[上下文不足]”，逐项列出缺失的正式设定及补齐位置；未列为缺失项的一般规划不得作为停止创作的理由；不得自行补全项目事实。".to_owned()
     };
     AiTaskContract {
         role,

@@ -253,6 +253,7 @@ export type AiQualityGroup = {
   notHelpfulCount: number;
   validCount: number;
   warningCount: number;
+  needsInputCount: number;
   invalidCount: number;
 };
 export type AiQualitySummary = {
@@ -269,7 +270,7 @@ export type AiProposalFeedback = {
 export type AiProposalReview = {
   proposal: AiProposal;
   validation: {
-    status: "VALID" | "WARNING" | "INVALID"; messages: string[]; characterCount: number;
+    status: "VALID" | "WARNING" | "INVALID" | "NEEDS_INPUT"; messages: string[]; characterCount: number;
     paragraphCount: number; estimatedOutputTokens: number;
   };
   feedback: AiProposalFeedback | null;

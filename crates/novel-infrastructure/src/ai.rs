@@ -308,6 +308,7 @@ pub struct AiQualityGroup {
     pub not_helpful_count: u32,
     pub valid_count: u32,
     pub warning_count: u32,
+    pub needs_input_count: u32,
     pub invalid_count: u32,
 }
 
@@ -2135,6 +2136,9 @@ impl ProjectManager {
             match validation.status.as_str() {
                 "VALID" => aggregate.valid = aggregate.valid.saturating_add(1),
                 "WARNING" => aggregate.warnings = aggregate.warnings.saturating_add(1),
+                "NEEDS_INPUT" => {
+                    aggregate.needs_input = aggregate.needs_input.saturating_add(1);
+                }
                 _ => aggregate.invalid = aggregate.invalid.saturating_add(1),
             }
         }
@@ -2153,6 +2157,7 @@ impl ProjectManager {
             summary.total_with_issues = summary
                 .total_with_issues
                 .saturating_add(aggregate.warnings)
+                .saturating_add(aggregate.needs_input)
                 .saturating_add(aggregate.invalid);
             summary.groups.push(AiQualityGroup {
                 task_key,
@@ -2166,6 +2171,7 @@ impl ProjectManager {
                 not_helpful_count: aggregate.not_helpful,
                 valid_count: aggregate.valid,
                 warning_count: aggregate.warnings,
+                needs_input_count: aggregate.needs_input,
                 invalid_count: aggregate.invalid,
             });
         }
@@ -2291,6 +2297,11 @@ impl ProjectManager {
         if current.status != AiProposalStatus::Pending || status == AiProposalStatus::Pending {
             return Err(AiContractError::InvalidProposalTransition.into());
         }
+        if status != AiProposalStatus::Rejected
+            && validate_ai_output(current.action, &current.output_text).status == "NEEDS_INPUT"
+        {
+            return Err(AiContractError::InvalidProposalTransition.into());
+        }
         let accepted = match status {
             AiProposalStatus::Accepted => Some(current.output_text.clone()),
             AiProposalStatus::PartiallyAccepted => {
@@ -2397,6 +2408,7 @@ struct QualityAggregate {
     not_helpful: u32,
     valid: u32,
     warnings: u32,
+    needs_input: u32,
     invalid: u32,
 }
 
@@ -2558,13 +2570,16 @@ fn validate_ai_task_preference(
 }
 fn validate_ai_output(action: AiAction, output_text: &str) -> AiOutputValidation {
     let trimmed = output_text.trim();
+    let needs_input = trimmed.contains("[上下文不足]");
     let character_count = trimmed.chars().count();
     let paragraph_count = trimmed
         .lines()
         .filter(|line| !line.trim().is_empty())
         .count();
     let mut messages = Vec::new();
-    if trimmed.is_empty() {
+    if needs_input {
+        messages.push("模型没有生成正文，要求先补齐正式设定。".to_owned());
+    } else if trimmed.is_empty() {
         messages.push("输出为空，不能形成候选。".to_owned());
     } else {
         if character_count < 20 {
@@ -2602,7 +2617,9 @@ fn validate_ai_output(action: AiAction, output_text: &str) -> AiOutputValidation
         }
     }
     AiOutputValidation {
-        status: if trimmed.is_empty() {
+        status: if needs_input {
+            "NEEDS_INPUT".to_owned()
+        } else if trimmed.is_empty() {
             "INVALID".to_owned()
         } else if messages.is_empty() {
             "VALID".to_owned()
@@ -2720,6 +2737,21 @@ mod tests {
         ] {
             assert_eq!(super::parse_action(super::action_str(action)), action);
         }
+    }
+
+    #[test]
+    fn context_insufficient_output_requires_input_instead_of_becoming_prose() {
+        let validation = super::validate_ai_output(
+            novel_domain::AiAction::Draft,
+            "[上下文不足]\n- 主角卡：未建立\n- 境界规则：缺失",
+        );
+        assert_eq!(validation.status, "NEEDS_INPUT");
+        assert!(
+            validation
+                .messages
+                .iter()
+                .any(|message| message.contains("没有生成正文"))
+        );
     }
 
     #[test]

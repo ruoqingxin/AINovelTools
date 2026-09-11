@@ -18,7 +18,7 @@ import {
   type AiProposalReview,
 } from "../lib/tauri-client";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
-import { assessWritingReadiness } from "../lib/writing-readiness";
+import { assessWritingReadiness, findWritingGapTargets } from "../lib/writing-readiness";
 import { AiModelNote } from "./ai-model-note";
 
 const actionLabels: Record<AiAction, string> = {
@@ -134,7 +134,7 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     const chatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "writing");
     const chatPreference = resolveTaskPreference(aiPreferences.data, "writing");
     if (!chatProfile || !props.editor) return;
-    if ((action === "DRAFT" || action === "CONTINUE") && !readinessLoading && !readiness.ready) {
+    if ((action === "DRAFT" || action === "CONTINUE") && !readinessLoading && !readiness.canGenerate) {
       setError("请先补齐创作准入中列出的关键设定，再生成正文。");
       document.getElementById("writing-readiness")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
@@ -236,6 +236,11 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
 
   async function decide(proposal: AiProposal, mode: "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED", acceptedTextOverride?: string) {
     setError(null);
+    const proposalValidation = proposals.data?.find((item) => item.proposal.id === proposal.id)?.validation;
+    if (mode !== "REJECTED" && proposalValidation?.status === "NEEDS_INPUT") {
+      setError("这次结果没有生成正文，需要先补齐模型列出的关键设定。");
+      return;
+    }
     if (mode !== "REJECTED" && proposal.action === "DRAFT" && props.editor?.getText().trim() && !window.confirm("应用整章创作候选会替换当前正文草稿。确定继续吗？")) return;
     const replacementRange = mode !== "REJECTED" ? resolveReplacementRange(proposal) : null;
     if (mode !== "REJECTED" && proposal.action !== "SUMMARIZE") {
@@ -279,8 +284,10 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
   const selectedChatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "writing");
   const selectedChatPreference = resolveTaskPreference(aiPreferences.data, "writing");
   const pending = proposals.data?.filter((item) => item.proposal.status === "PENDING") ?? [];
+  const pendingCandidates = pending.filter((item) => item.validation.status !== "NEEDS_INPUT");
+  const needsInputCandidates = pending.filter((item) => item.validation.status === "NEEDS_INPUT");
   const compareReviews = compareIds
-    .map((id) => pending.find((item) => item.proposal.id === id))
+    .map((id) => pendingCandidates.find((item) => item.proposal.id === id))
     .filter((item): item is AiProposalReview => Boolean(item));
   const readinessLoading = planningSections.isPending || entities.isPending;
   const readiness = assessWritingReadiness({
@@ -288,41 +295,48 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     hasCharacterCard: (entities.data ?? []).some((entity) => entity.entityType === "CHARACTER"),
     hasChapterPlan: Boolean(props.chapterPlan.trim()),
   });
-  const admissionBlocked = !readinessLoading && !readiness.ready;
+  const admissionBlocked = !readinessLoading && !readiness.canGenerate;
   const writingActionBlocked = (action: AiAction) =>
     admissionBlocked && (action === "DRAFT" || action === "CONTINUE");
   const readinessState = readinessLoading
     ? "loading"
-    : readiness.ready
-      ? "ready"
+    : readiness.canGenerate
+      ? readiness.warningMissingSections.length
+        ? "warning"
+        : "ready"
       : "blocked";
   const readinessMessage = readinessLoading
     ? "正在核对正式设定、人物卡和章节执行卡。"
-    : readiness.ready
-      ? "核心正式设定、人物卡和章节执行卡均已确认，可以进入正文创作。"
-      : "存在未确认的创作依据；整章创作和续写已暂停，请先补齐下列关键设定。";
-  const planningTarget = readiness.missingSections[0]?.id ?? (readiness.missingNarrativePerspective ? "frame-narrative" : props.chapterId);
+    : readiness.canGenerate
+      ? readiness.warningMissingSections.length
+        ? `可以开始创作；另有 ${readiness.warningMissingSections.length} 项建议补充的规划。`
+        : "关键设定、人物卡、章节执行卡和叙述人称均已确认，可以进入正文创作。"
+      : `还有 ${readiness.blockingMissingSections.length + Number(readiness.missingCharacterCard) + Number(readiness.missingChapterPlan) + Number(readiness.missingNarrativePerspective)} 项关键依据未确认，整章创作和续写已暂停。`;
+  const planningTarget = readiness.blockingMissingSections[0]?.id ?? (readiness.missingNarrativePerspective ? "frame-narrative" : props.chapterId);
 
   return <section className="ai-panel" aria-label="AI 创作">
     <div className="section-heading"><h2><Sparkles size={15} />AI 创作</h2><div className="proposal-heading-actions"><span>云端 API · Proposal 审核</span>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
     <AiModelNote taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
     <section className="writing-readiness" id="writing-readiness" data-state={readinessState} aria-label="创作准入检查">
       <div className="writing-readiness-heading">
-        {readinessLoading ? <LoaderCircle size={16} className="spin" /> : readiness.ready ? <Check size={16} /> : <CircleAlert size={16} />}
+        {readinessLoading ? <LoaderCircle size={16} className="spin" /> : readiness.canGenerate ? <Check size={16} /> : <CircleAlert size={16} />}
         <div><strong>创作准入</strong><span>{readinessMessage}</span></div>
-        <small>{readinessLoading ? "检查中" : readiness.ready ? "可写" : "待补齐"}</small>
+        <small>{readinessLoading ? "检查中" : readiness.canGenerate ? readiness.warningMissingSections.length ? "可写·有建议" : "可写" : "待补齐"}</small>
       </div>
-      {!readinessLoading && !readiness.ready ? <div className="writing-readiness-body">
+      {!readinessLoading && (!readiness.canGenerate || readiness.warningMissingSections.length) ? <div className="writing-readiness-body">
         <div className="writing-readiness-items">
-          <span>正式设定 {readiness.completedCount}/{readiness.totalCount}</span>
-          {readiness.missingSections.map((item) => <code key={item.id}>{item.label}</code>)}
-          {readiness.missingCharacterCard ? <code>人物卡</code> : null}
-          {readiness.missingChapterPlan ? <code>章节执行卡</code> : null}
-          {readiness.missingNarrativePerspective ? <code>叙述人称未明确</code> : null}
+          {!readiness.canGenerate ? <span>关键设定 {readiness.blockingCompletedCount}/{readiness.blockingTotalCount}</span> : null}
+          {readiness.blockingMissingSections.map((item) => <code data-severity="blocking" key={item.id}>{item.label}</code>)}
+          {readiness.missingCharacterCard ? <code data-severity="blocking">人物卡</code> : null}
+          {readiness.missingChapterPlan ? <code data-severity="blocking">章节执行卡</code> : null}
+          {readiness.missingNarrativePerspective ? <code data-severity="blocking">叙述人称未明确</code> : null}
+          {readiness.warningMissingSections.length ? <span>建议补充 {readiness.warningMissingSections.length} 项</span> : null}
+          {readiness.warningMissingSections.map((item) => <code data-severity="warning" key={item.id}>{item.label}</code>)}
         </div>
         <div className="writing-readiness-actions">
-          {readiness.missingSections.length || readiness.missingChapterPlan || readiness.missingNarrativePerspective ? <a href={`/planning#${planningTarget}`}>去补设定</a> : null}
+          {readiness.blockingMissingSections.length || readiness.missingChapterPlan || readiness.missingNarrativePerspective ? <a href={`/planning#${planningTarget}`}>去补设定</a> : null}
           {readiness.missingCharacterCard ? <a href="/knowledge">去补人物卡</a> : null}
+          {readiness.canGenerate && readiness.warningMissingSections.length ? <a href={`/planning#${readiness.warningMissingSections[0]!.id}`}>查看建议项</a> : null}
         </div>
       </div> : null}
     </section>
@@ -336,10 +350,12 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     {error ? <p className="project-error" role="alert">{error}</p> : null}
 
     <div className="proposal-list" aria-label="候选审核">
-      <div className="section-heading"><h3><ShieldCheck size={14} />候选审核</h3><span>{proposals.isPending ? "正在加载" : `${pending.length} 条待审 · 已选 ${compareIds.length}/2 对比`}</span></div>
+      <div className="section-heading"><h3><ShieldCheck size={14} />候选审核</h3><span>{proposals.isPending ? "正在加载" : `${pendingCandidates.length} 条待审${needsInputCandidates.length ? ` · ${needsInputCandidates.length} 条需补资料` : ""} · 已选 ${compareIds.length}/2 对比`}</span></div>
       {proposals.isPending ? <div className="proposal-empty"><LoaderCircle size={18} className="spin" /><div><strong>正在读取待审核候选</strong><span>生成结果会保留在这里，确认前不会写入正文。</span></div></div> : proposals.isError ? <p className="project-error" role="alert">候选审核加载失败：{errorMessage(proposals.error)}</p> : pending.length ? <>
       {pending.map(({ proposal, validation, feedback }) => {
+        const needsInput = validation.status === "NEEDS_INPUT";
         const text = partialTexts[proposal.id] ?? proposal.outputText;
+        const needsInputTargets = needsInput ? findWritingGapTargets(text) : [];
         const segments = candidateSegments(text);
         const selectedSegments = segmentSelections[proposal.id] ?? segments.map((_, index) => index);
         const original = proposalAnchors[proposal.id]?.selection
@@ -347,28 +363,29 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
             ? props.editor.state.doc.textBetween(props.editor.state.selection.from, props.editor.state.selection.to, "\n").trim()
             : "");
         const diffRows = original ? buildLineDiff(original, text) : [];
-        return <article className="proposal" id={`ai-proposal-${proposal.id}`} key={proposal.id}>
-        <div className="proposal-meta"><strong>{actionLabels[proposal.action]}</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{validation.status === "VALID" ? "校验通过" : validation.status === "WARNING" ? "需要检查" : "无效输出"} · {validation.characterCount} 字</span><code>{proposal.promptVersion}</code><button type="button" data-active={compareIds.includes(proposal.id) || undefined} onClick={() => toggleCompare(proposal.id)}><Columns2 size={12} />对比</button></div>
+        return <article className="proposal" data-state={needsInput ? "needs-input" : undefined} id={`ai-proposal-${proposal.id}`} key={proposal.id}>
+        <div className="proposal-meta"><strong>{actionLabels[proposal.action]}</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{needsInput ? "需补资料" : validation.status === "VALID" ? "校验通过" : validation.status === "WARNING" ? "需要检查" : "无效输出"} · {validation.characterCount} 字</span><code>{proposal.promptVersion}</code>{!needsInput ? <button type="button" data-active={compareIds.includes(proposal.id) || undefined} onClick={() => toggleCompare(proposal.id)}><Columns2 size={12} />对比</button> : null}</div>
         {validation.messages.length ? <div className="proposal-validation-messages">{validation.messages.map((message) => <span key={message}>{message}</span>)}</div> : null}
-        {original ? <details className="proposal-diff" open><summary>原文与候选差异<span>{proposalAnchors[proposal.id] ? "已绑定生成时选区" : "使用当前选区"}</span></summary><div>{diffRows.map((row, index) => <p data-kind={row.kind} key={`${row.kind}-${index}`}><span>{row.kind === "removed" ? "-" : row.kind === "added" ? "+" : " "}</span>{row.text || " "}</p>)}</div></details> : null}
-        <textarea value={text} onChange={(event) => {
+        {needsInput ? <div className="proposal-needs-input"><strong>模型没有生成正文</strong><span>它要求先补齐可能影响本章人物、能力、世界规则或失败后果的正式设定。</span><pre>{text}</pre></div> : null}
+        {!needsInput && original ? <details className="proposal-diff" open><summary>原文与候选差异<span>{proposalAnchors[proposal.id] ? "已绑定生成时选区" : "使用当前选区"}</span></summary><div>{diffRows.map((row, index) => <p data-kind={row.kind} key={`${row.kind}-${index}`}><span>{row.kind === "removed" ? "-" : row.kind === "added" ? "+" : " "}</span>{row.text || " "}</p>)}</div></details> : null}
+        {!needsInput ? <textarea value={text} onChange={(event) => {
           setPartialTexts((value) => ({ ...value, [proposal.id]: event.target.value }));
           setSegmentSelections((value) => {
             const next = { ...value };
             delete next[proposal.id];
             return next;
           });
-        }} aria-label={`${actionLabels[proposal.action]}候选文本`} />
-        {segments.length > 1 && proposal.action !== "SUMMARIZE" ? <details className="proposal-segments"><summary>按段选择<span>已选 {selectedSegments.length}/{segments.length} 段</span></summary><div>{segments.map((segment, index) => <label key={`${index}-${segment.slice(0, 16)}`}><input type="checkbox" checked={selectedSegments.includes(index)} onChange={() => setSegmentSelections((value) => {
+        }} aria-label={`${actionLabels[proposal.action]}候选文本`} /> : null}
+        {!needsInput && segments.length > 1 && proposal.action !== "SUMMARIZE" ? <details className="proposal-segments"><summary>按段选择<span>已选 {selectedSegments.length}/{segments.length} 段</span></summary><div>{segments.map((segment, index) => <label key={`${index}-${segment.slice(0, 16)}`}><input type="checkbox" checked={selectedSegments.includes(index)} onChange={() => setSegmentSelections((value) => {
           const current = value[proposal.id] ?? segments.map((_, segmentIndex) => segmentIndex);
           return { ...value, [proposal.id]: current.includes(index) ? current.filter((item) => item !== index) : [...current, index].sort((left, right) => left - right) };
         })} /><span>{segment}</span></label>)}</div></details> : null}
-        <div className="proposal-feedback">
+        {!needsInput ? <div className="proposal-feedback">
           <input value={feedbackNotes[proposal.id] ?? feedback?.note ?? ""} onChange={(event) => setFeedbackNotes((value) => ({ ...value, [proposal.id]: event.target.value }))} placeholder="可选：记录这条候选的优点或问题" maxLength={2000} aria-label="候选质量反馈" />
           <button type="button" data-active={feedback?.rating === "HELPFUL" || undefined} onClick={() => void submitFeedback(proposal, "HELPFUL")} title="标记为有帮助"><ThumbsUp size={13} />有帮助</button>
           <button type="button" data-active={feedback?.rating === "NOT_HELPFUL" || undefined} onClick={() => void submitFeedback(proposal, "NOT_HELPFUL")} title="标记为需改进"><ThumbsDown size={13} />需改进</button>
-        </div>
-        <div className="ai-actions"><button type="button" className="primary-action" onClick={() => void decide(proposal, "ACCEPTED")} disabled={decidingProposalId !== null}><Check size={14} />{decidingProposalId === proposal.id ? "处理中…" : proposal.action === "SUMMARIZE" ? "保留摘要" : proposal.action === "DRAFT" ? "应用到正文（整章替换）" : "全部应用到草稿"}</button>{proposal.action !== "SUMMARIZE" ? <button type="button" className="secondary-action" onClick={() => void decide(proposal, "PARTIALLY_ACCEPTED", selectedCandidateText(proposal))} disabled={decidingProposalId !== null || !selectedCandidateText(proposal).trim()}><Check size={14} />应用所选段落</button> : null}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />拒绝</button></div>
+        </div> : null}
+        <div className="ai-actions">{needsInput ? <>{needsInputTargets.length ? needsInputTargets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/planning#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : <a className="primary-action" href="/planning">打开作品规划</a>}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭</button></> : <><button type="button" className="primary-action" onClick={() => void decide(proposal, "ACCEPTED")} disabled={decidingProposalId !== null}><Check size={14} />{decidingProposalId === proposal.id ? "处理中…" : proposal.action === "SUMMARIZE" ? "保留摘要" : proposal.action === "DRAFT" ? "应用到正文（整章替换）" : "全部应用到草稿"}</button>{proposal.action !== "SUMMARIZE" ? <button type="button" className="secondary-action" onClick={() => void decide(proposal, "PARTIALLY_ACCEPTED", selectedCandidateText(proposal))} disabled={decidingProposalId !== null || !selectedCandidateText(proposal).trim()}><Check size={14} />应用所选段落</button> : null}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />拒绝</button></>}</div>
       </article>;
       })}
       {compareReviews.length === 2 ? <section className="proposal-compare">
