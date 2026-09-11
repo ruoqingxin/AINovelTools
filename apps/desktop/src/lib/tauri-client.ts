@@ -169,13 +169,18 @@ export type ModelProfile = {
   createdAt: string; updatedAt: string;
 };
 export type ModelProfileInput = Omit<ModelProfile, "id" | "secretRef" | "hasSecret" | "createdAt" | "updatedAt"> & { id?: string };
+export type AiTaskPreference = {
+  profileId: string | null;
+  temperature: number | null;
+  maxOutputTokens: number | null;
+};
 export type AiTaskPreferences = {
-  workDesign: string | null;
-  outline: string | null;
-  volumePlanning: string | null;
-  chapterSplit: string | null;
-  writing: string | null;
-  knowledgeExtraction: string | null;
+  workDesign: AiTaskPreference;
+  outline: AiTaskPreference;
+  volumePlanning: AiTaskPreference;
+  chapterSplit: AiTaskPreference;
+  writing: AiTaskPreference;
+  knowledgeExtraction: AiTaskPreference;
 };
 export type AiProposal = {
   id: string; taskId: string; chapterId: string; action: AiAction; targetRevisionId: string | null;
@@ -195,7 +200,8 @@ export type JobEvent = {
 export type PlanningAiJobInput = {
   profileId: string; mode: "GENERATE" | "EXTRACT"; sectionId: string; sectionTitle: string;
   sectionPrompt: string; existingContext: string; referenceContent: string; userGuidance: string;
-  allowRewrite: boolean; sourceName?: string[] | string; systemPromptSnapshot?: string; userPromptSnapshot?: string;
+  allowRewrite: boolean; temperature?: number; maxOutputTokens?: number;
+  sourceName?: string[] | string; systemPromptSnapshot?: string; userPromptSnapshot?: string;
   finalRequestEndpoint?: string; finalRequestBody?: string; finalRequestEstimatedInputTokens?: number;
 };
 export type PlanningAiRequestPreview = {
@@ -396,8 +402,8 @@ export function testModelProfile(profileId: string) {
   return invoke<ModelConnectionResponse>("test_model_profile", { profileId });
 }
 
-export function extractEntitiesFromText(profileId: string, entityType: EntityType, entityName: string, briefSummary: string, applicabilityScope: string, sourceText: string, userGuidance?: string) {
-  return invoke<ExtractedEntity[]>("extract_entities_from_text", { input: { profileId, entityType, entityName, briefSummary, applicabilityScope, sourceText, userGuidance } });
+export function extractEntitiesFromText(profileId: string, entityType: EntityType, entityName: string, briefSummary: string, applicabilityScope: string, sourceText: string, userGuidance?: string, temperature?: number, maxOutputTokens?: number) {
+  return invoke<ExtractedEntity[]>("extract_entities_from_text", { input: { profileId, entityType, entityName, briefSummary, applicabilityScope, sourceText, userGuidance, temperature, maxOutputTokens } });
 }
 
 export function listAiProposals(chapterId: string) {
@@ -407,6 +413,7 @@ export function listAiProposals(chapterId: string) {
 export function generateAiProposal(input: {
   profileId: string; chapterId: string; action: AiAction; chapterTitle: string; chapterPlan: string;
   documentJson: string; selection?: string; instruction?: string; stream: boolean;
+  temperature?: number; maxOutputTokens?: number;
 }) {
   return invoke<AiProposal>("generate_ai_proposal", input);
 }

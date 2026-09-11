@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Save, Sparkles } from "lucide-react";
+import { Check, RotateCcw, Save, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   AI_TASK_DEFINITIONS,
+  emptyAiTaskPreference,
   emptyAiTaskPreferences,
   providerLabel,
   useAiTaskPreferences,
@@ -12,11 +13,32 @@ import {
   errorMessage,
   listModelProfiles,
   saveAiTaskPreferences,
+  type AiTaskPreference,
   type AiTaskPreferences,
 } from "../lib/tauri-client";
 
+function samePreference(left: AiTaskPreference, right: AiTaskPreference) {
+  return left.profileId === right.profileId
+    && left.temperature === right.temperature
+    && left.maxOutputTokens === right.maxOutputTokens;
+}
+
 function samePreferences(left: AiTaskPreferences, right: AiTaskPreferences) {
-  return AI_TASK_DEFINITIONS.every(({ key }) => left[key] === right[key]);
+  return AI_TASK_DEFINITIONS.every(({ key }) => samePreference(left[key], right[key]));
+}
+
+function parseTemperature(value: string) {
+  if (!value.trim()) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.round(Math.min(2, Math.max(0, number)) * 10) / 10;
+}
+
+function parseMaxOutputTokens(value: string, limit: number) {
+  if (!value.trim()) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.min(limit, Math.max(1, Math.floor(number)));
 }
 
 export function AiTaskModelSettings() {
@@ -30,7 +52,8 @@ export function AiTaskModelSettings() {
   const [notice, setNotice] = useState<string | null>(null);
   const chatProfiles = profiles.data?.filter((profile) => profile.capability === "CHAT") ?? [];
   const preferredProfile = chatProfiles.find((profile) => profile.hasSecret) ?? chatProfiles[0];
-  const assignedCount = AI_TASK_DEFINITIONS.filter(({ key }) => Boolean(draft[key])).length;
+  const assignedCount = AI_TASK_DEFINITIONS.filter(({ key }) => Boolean(draft[key].profileId)).length;
+  const tunedCount = AI_TASK_DEFINITIONS.filter(({ key }) => draft[key].temperature !== null || draft[key].maxOutputTokens !== null).length;
   const changed = preferences.data ? !samePreferences(draft, preferences.data) : assignedCount > 0;
 
   useEffect(() => {
@@ -43,26 +66,61 @@ export function AiTaskModelSettings() {
     setDraft(
       Object.fromEntries(
         AI_TASK_DEFINITIONS.map(({ key }) => {
-          const profileId = preferences.data[key];
-          return [key, profileId && availableProfileIds.has(profileId) ? profileId : null];
+          const preference = preferences.data[key];
+          const selectedProfile = profiles.data.find((profile) => profile.id === preference.profileId && availableProfileIds.has(profile.id));
+          const profileId = preference.profileId && selectedProfile
+            ? preference.profileId
+            : null;
+          const temperature = preference.temperature !== null
+            && Number.isFinite(preference.temperature)
+            && preference.temperature >= 0
+            && preference.temperature <= 2
+            ? preference.temperature
+            : null;
+          const maxOutputTokens = preference.maxOutputTokens && preference.maxOutputTokens > 0
+            ? Math.min(preference.maxOutputTokens, selectedProfile?.maxOutputTokens ?? preference.maxOutputTokens)
+            : null;
+          return [key, { profileId, temperature, maxOutputTokens }];
         }),
       ) as AiTaskPreferences,
     );
     setInitialized(true);
   }, [initialized, preferences.data, profiles.data]);
 
-  function updateTask(task: AiTaskKey, profileId: string) {
-    setDraft((current) => ({ ...current, [task]: profileId || null }));
+  function updateTask(task: AiTaskKey, patch: Partial<AiTaskPreference>) {
+    setDraft((current) => ({
+      ...current,
+      [task]: { ...current[task], ...patch },
+    }));
     setNotice(null);
+  }
+
+  function clearTaskTuning(task: AiTaskKey) {
+    updateTask(task, {
+      temperature: emptyAiTaskPreference.temperature,
+      maxOutputTokens: emptyAiTaskPreference.maxOutputTokens,
+    });
+  }
+
+  function selectTaskProfile(task: AiTaskKey, profileId: string) {
+    const nextProfile = chatProfiles.find((profile) => profile.id === profileId);
+    const current = draft[task];
+    updateTask(task, {
+      profileId: profileId || null,
+      maxOutputTokens: current.maxOutputTokens
+        ? Math.min(current.maxOutputTokens, nextProfile?.maxOutputTokens ?? current.maxOutputTokens)
+        : null,
+    });
   }
 
   function applyToAll() {
     if (!preferredProfile) return;
-    setDraft(
-      Object.fromEntries(
-        AI_TASK_DEFINITIONS.map(({ key }) => [key, preferredProfile.id]),
-      ) as AiTaskPreferences,
-    );
+    setDraft((current) => Object.fromEntries(
+      AI_TASK_DEFINITIONS.map(({ key }) => [
+        key,
+        { ...current[key], profileId: preferredProfile.id },
+      ]),
+    ) as AiTaskPreferences);
     setNotice(`已将“${preferredProfile.name}”应用到全部 AI 任务`);
   }
 
@@ -74,7 +132,7 @@ export function AiTaskModelSettings() {
       const saved = await saveAiTaskPreferences(draft);
       setDraft(saved);
       await client.invalidateQueries({ queryKey: ["ai-task-preferences"] });
-      setNotice("AI 任务模型已保存，后续生成会立即使用新配置");
+      setNotice("任务模型与生成参数已保存，后续生成会立即使用新配置");
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -86,7 +144,7 @@ export function AiTaskModelSettings() {
     <div className="settings-content-heading">
       <div>
         <h2>AI 任务模型</h2>
-        <p>为不同创作阶段分配已配置的聊天模型。未指定时自动使用第一个带 Key 的可用模型。</p>
+        <p>为不同创作阶段分配聊天模型，并按任务设置温度与最大输出。留空表示使用模型默认值。</p>
       </div>
       {chatProfiles.length ? <button type="button" className="secondary-action" onClick={applyToAll} disabled={!preferredProfile || saving}><Sparkles size={14} />全部使用首选模型</button> : null}
     </div>
@@ -100,30 +158,39 @@ export function AiTaskModelSettings() {
     </div> : null}
     {!profiles.isPending && chatProfiles.length ? <div className="ai-task-routing">
       <div className="ai-task-routing-heading">
-        <div><strong>任务路由</strong><span>每个任务独立选择，避免规划和正文互相覆盖</span></div>
-        <small>{assignedCount} / {AI_TASK_DEFINITIONS.length} 已指定</small>
+        <div><strong>任务路由与生成参数</strong><span>模型决定使用哪项服务，温度控制发散程度，最大输出控制单次生成长度。</span></div>
+        <small>{assignedCount} / {AI_TASK_DEFINITIONS.length} 已指定 · {tunedCount} 项已调参</small>
       </div>
       <div className="ai-task-routing-list">
         {AI_TASK_DEFINITIONS.map(({ key, label, description }) => {
-          const selectedId = draft[key] ?? "";
+          const preference = draft[key];
+          const selectedId = preference.profileId ?? "";
           const selectedProfile = chatProfiles.find((profile) => profile.id === selectedId);
           const selectionMissing = Boolean(selectedId && !selectedProfile);
-          return <label className="ai-task-routing-row" key={key}>
+          const maxOutputLimit = selectedProfile?.maxOutputTokens ?? 131_072;
+          return <div className="ai-task-routing-row" key={key}>
             <span className="ai-task-routing-copy"><strong>{label}</strong><small>{description}</small></span>
-            <select value={selectedId} onChange={(event) => updateTask(key, event.target.value)} aria-label={`${label}模型`} data-missing={selectionMissing || undefined}>
+            <label className="ai-task-model-field"><span>任务模型</span><select value={selectedId} onChange={(event) => selectTaskProfile(key, event.target.value)} aria-label={`${label}模型`} data-missing={selectionMissing || undefined}>
               <option value="">自动选择可用模型</option>
               {chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>
                 {profile.name} · {providerLabel(profile.provider)} · {profile.modelId}{profile.hasSecret ? "" : "（未设置 Key）"}
               </option>)}
-            </select>
-            <span className="ai-task-routing-state" data-ready={selectedProfile?.hasSecret || (!selectedId && preferredProfile?.hasSecret) || undefined}>
-              {selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "可用" : "缺少 Key" : preferredProfile ? `自动：${preferredProfile.name}` : "未配置"}
-            </span>
-          </label>;
+            </select></label>
+            <div className="ai-task-tuning-fields">
+              <label><span>温度</span><input type="number" min="0" max="2" step="0.1" inputMode="decimal" value={preference.temperature ?? ""} onChange={(event) => updateTask(key, { temperature: parseTemperature(event.target.value) })} placeholder="默认" aria-label={`${label}温度`} /></label>
+              <label><span>最大输出</span><input type="number" min="1" max={maxOutputLimit} step="1" inputMode="numeric" value={preference.maxOutputTokens ?? ""} onChange={(event) => updateTask(key, { maxOutputTokens: parseMaxOutputTokens(event.target.value, maxOutputLimit) })} placeholder={selectedProfile ? `最大 ${maxOutputLimit}` : "模型默认"} aria-label={`${label}最大输出`} /></label>
+            </div>
+            <div className="ai-task-routing-meta">
+              <span className="ai-task-routing-state" data-ready={selectedProfile?.hasSecret || (!selectedId && preferredProfile?.hasSecret) || undefined}>
+                {selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "可用" : "缺少 Key" : preferredProfile ? `自动：${preferredProfile.name}` : "未配置"}
+              </span>
+              {preference.temperature !== null || preference.maxOutputTokens !== null ? <button type="button" onClick={() => clearTaskTuning(key)} title={`恢复 ${label} 的默认生成参数`}><RotateCcw size={12} />恢复默认</button> : null}
+            </div>
+          </div>;
         })}
       </div>
       <div className="ai-task-routing-actions">
-        <button type="button" className="primary-action" onClick={() => void save()} disabled={!changed || saving}><Save size={14} />{saving ? "保存中…" : "保存任务模型"}</button>
+        <button type="button" className="primary-action" onClick={() => void save()} disabled={!changed || saving}><Save size={14} />{saving ? "保存中…" : "保存任务配置"}</button>
         {preferences.data && changed ? <button type="button" className="secondary-action" onClick={() => { setDraft(preferences.data ?? emptyAiTaskPreferences); setNotice("已撤销未保存的修改"); }} disabled={saving}>撤销修改</button> : null}
         {!changed && notice?.includes("已保存") ? <span className="ai-task-saved"><Check size={13} />已应用</span> : null}
       </div>

@@ -10,6 +10,21 @@ const mocks = vi.hoisted(() => ({
   saveAiTaskPreferences: vi.fn(),
 }));
 
+function emptyTaskPreference() {
+  return { profileId: null, temperature: null, maxOutputTokens: null };
+}
+
+function emptyAiTaskPreferences() {
+  return {
+    workDesign: emptyTaskPreference(),
+    outline: emptyTaskPreference(),
+    volumePlanning: emptyTaskPreference(),
+    chapterSplit: emptyTaskPreference(),
+    writing: emptyTaskPreference(),
+    knowledgeExtraction: emptyTaskPreference(),
+  };
+}
+
 vi.mock("../lib/tauri-client", async () => {
   const actual = await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client");
   return {
@@ -28,14 +43,7 @@ describe("SettingsView", () => {
 
   beforeEach(() => {
     mocks.listModelProfiles.mockResolvedValue([]);
-    mocks.getAiTaskPreferences.mockResolvedValue({
-      workDesign: null,
-      outline: null,
-      volumePlanning: null,
-      chapterSplit: null,
-      writing: null,
-      knowledgeExtraction: null,
-    });
+    mocks.getAiTaskPreferences.mockResolvedValue(emptyAiTaskPreferences());
     mocks.saveAiTaskPreferences.mockImplementation(async (preferences) => preferences);
   });
 
@@ -104,10 +112,14 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
     expect(await screen.findByRole("heading", { name: "AI 任务模型" })).toBeVisible();
     fireEvent.change(await screen.findByLabelText("大纲主线模型"), { target: { value: "outline-profile" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存任务模型" }));
+    fireEvent.change(screen.getByLabelText("大纲主线温度"), { target: { value: "0.4" } });
+    fireEvent.change(screen.getByLabelText("大纲主线最大输出"), { target: { value: "4096" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
 
-    await screen.findByText("AI 任务模型已保存，后续生成会立即使用新配置");
-    expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({ outline: "outline-profile" }));
+    await screen.findByText("任务模型与生成参数已保存，后续生成会立即使用新配置");
+    expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({
+      outline: { profileId: "outline-profile", temperature: 0.4, maxOutputTokens: 4096 },
+    }));
   });
 
   it("opens AI task routing from a deep link and clears deleted model mappings", async () => {
@@ -121,12 +133,8 @@ describe("SettingsView", () => {
       },
     ]);
     mocks.getAiTaskPreferences.mockResolvedValue({
-      workDesign: null,
-      outline: "deleted-profile",
-      volumePlanning: null,
-      chapterSplit: null,
-      writing: null,
-      knowledgeExtraction: null,
+      ...emptyAiTaskPreferences(),
+      outline: { profileId: "deleted-profile", temperature: null, maxOutputTokens: null },
     });
 
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
@@ -134,9 +142,11 @@ describe("SettingsView", () => {
     expect(await screen.findByRole("heading", { name: "AI 任务模型" })).toBeVisible();
     const outlineModel = await screen.findByLabelText("大纲主线模型");
     await waitFor(() => expect(outlineModel).toHaveValue(""));
-    fireEvent.click(screen.getByRole("button", { name: "保存任务模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
 
-    await screen.findByText("AI 任务模型已保存，后续生成会立即使用新配置");
-    expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({ outline: null }));
+    await screen.findByText("任务模型与生成参数已保存，后续生成会立即使用新配置");
+    expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({
+      outline: { profileId: null, temperature: null, maxOutputTokens: null },
+    }));
   });
 });

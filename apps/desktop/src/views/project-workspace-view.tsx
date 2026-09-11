@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { resolveTaskChatProfile, useAiTaskPreferences } from "../lib/ai-task-preferences";
+import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import { cancelJob, clearRecoveryLogs, createPlanNode, currentManuscript, enqueuePlanningAiJob, errorMessage, listJobs, listManuscriptRevisions, listModelProfiles, listPlanningSections, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, savePlanningSection, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
 import { AiModelNote } from "./ai-model-note";
@@ -330,11 +330,15 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
   const outlineProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "outline");
   const volumeProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "volumePlanning");
   const chapterSplitProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "chapterSplit");
+  const outlinePreference = resolveTaskPreference(aiPreferences.data, "outline");
+  const volumePreference = resolveTaskPreference(aiPreferences.data, "volumePlanning");
+  const chapterSplitPreference = resolveTaskPreference(aiPreferences.data, "chapterSplit");
   const nodeTaskProfile = selected?.kind === "OUTLINE"
     ? outlineProfile
     : selected?.kind === "VOLUME" || selected?.kind === "VOLUME_MANAGER"
       ? volumeProfile
       : undefined;
+  const nodeTaskPreference = selected?.kind === "OUTLINE" ? outlinePreference : volumePreference;
   const selectedChapterIndex = selected?.kind === "CHAPTER" ? chapterNodes.findIndex((node) => node.id === selected.id) : -1;
   const previousChapter = selectedChapterIndex > 0 ? chapterNodes[selectedChapterIndex - 1] : null;
   const nextChapter = selectedChapterIndex >= 0 && selectedChapterIndex < chapterNodes.length - 1 ? chapterNodes[selectedChapterIndex + 1] : null;
@@ -513,7 +517,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
       const existing = (planningSections.data ?? []).filter((item) => item.content.trim()).map((item) => `${item.id}: ${item.content}`).join("\n");
       const targetGuidance = selected.kind === "VOLUME_MANAGER" ? buildVolumePlanTargetGuidance(volumePlanTargets) : "";
       const userGuidance = [nodePlanGuidance.trim(), targetGuidance].filter(Boolean).join("\n");
-      await enqueuePlanningAiJob({ profileId: nodeTaskProfile.id, mode: "GENERATE", sectionId: nodePlanId(selected.id), sectionTitle: selected.title, sectionPrompt: nodePlanPrompt(selected.kind), existingContext: existing, referenceContent: "", userGuidance: userGuidance || "请先给出可执行的候选方案，保留作者可修改的空间。", allowRewrite: false });
+      await enqueuePlanningAiJob({ profileId: nodeTaskProfile.id, mode: "GENERATE", sectionId: nodePlanId(selected.id), sectionTitle: selected.title, sectionPrompt: nodePlanPrompt(selected.kind), existingContext: existing, referenceContent: "", userGuidance: userGuidance || "请先给出可执行的候选方案，保留作者可修改的空间。", allowRewrite: false, temperature: nodeTaskPreference.temperature ?? undefined, maxOutputTokens: nodeTaskPreference.maxOutputTokens ?? undefined });
       await client.invalidateQueries({ queryKey: ["jobs"] });
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setGeneratingNodePlan(false); }
@@ -548,6 +552,8 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
         referenceContent: "",
         userGuidance: userGuidance || "请按剧情阶段拆分，避免重复章节目标。",
         allowRewrite: false,
+        temperature: chapterSplitPreference.temperature ?? undefined,
+        maxOutputTokens: chapterSplitPreference.maxOutputTokens ?? undefined,
       });
       await client.invalidateQueries({ queryKey: ["jobs"] });
     } catch (cause) {

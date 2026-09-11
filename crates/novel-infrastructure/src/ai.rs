@@ -86,26 +86,83 @@ impl AiError {
 
 pub struct SecretStore;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AiTaskPreference {
+    pub profile_id: Option<Uuid>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct AiTaskPreferenceData {
+    profile_id: Option<Uuid>,
+    temperature: Option<f64>,
+    max_output_tokens: Option<u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AiTaskPreferenceValue {
+    ProfileId(Uuid),
+    Detailed(AiTaskPreferenceData),
+    Empty,
+}
+
+impl Serialize for AiTaskPreference {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        AiTaskPreferenceData {
+            profile_id: self.profile_id,
+            temperature: self.temperature,
+            max_output_tokens: self.max_output_tokens,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for AiTaskPreference {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match AiTaskPreferenceValue::deserialize(deserializer)? {
+            AiTaskPreferenceValue::ProfileId(profile_id) => Self {
+                profile_id: Some(profile_id),
+                ..Self::default()
+            },
+            AiTaskPreferenceValue::Detailed(data) => Self {
+                profile_id: data.profile_id,
+                temperature: data.temperature,
+                max_output_tokens: data.max_output_tokens,
+            },
+            AiTaskPreferenceValue::Empty => Self::default(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiTaskPreferences {
-    pub work_design: Option<Uuid>,
-    pub outline: Option<Uuid>,
-    pub volume_planning: Option<Uuid>,
-    pub chapter_split: Option<Uuid>,
-    pub writing: Option<Uuid>,
-    pub knowledge_extraction: Option<Uuid>,
+    pub work_design: AiTaskPreference,
+    pub outline: AiTaskPreference,
+    pub volume_planning: AiTaskPreference,
+    pub chapter_split: AiTaskPreference,
+    pub writing: AiTaskPreference,
+    pub knowledge_extraction: AiTaskPreference,
 }
 
 impl AiTaskPreferences {
-    fn selected_profile_ids(&self) -> [Option<Uuid>; 6] {
+    fn entries(&self) -> [&AiTaskPreference; 6] {
         [
-            self.work_design,
-            self.outline,
-            self.volume_planning,
-            self.chapter_split,
-            self.writing,
-            self.knowledge_extraction,
+            &self.work_design,
+            &self.outline,
+            &self.volume_planning,
+            &self.chapter_split,
+            &self.writing,
+            &self.knowledge_extraction,
         ]
     }
 }
@@ -247,6 +304,12 @@ impl Default for ModelGateway {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GenerationOptions {
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<u32>,
+}
+
 impl ModelGateway {
     #[must_use]
     pub fn request_preview(
@@ -255,6 +318,24 @@ impl ModelGateway {
         context: &ContextPackage,
         stream: bool,
         disable_thinking: bool,
+    ) -> (String, serde_json::Value) {
+        self.request_preview_with_options(
+            profile,
+            context,
+            stream,
+            disable_thinking,
+            GenerationOptions::default(),
+        )
+    }
+
+    #[must_use]
+    pub fn request_preview_with_options(
+        &self,
+        profile: &ModelProfile,
+        context: &ContextPackage,
+        stream: bool,
+        disable_thinking: bool,
+        options: GenerationOptions,
     ) -> (String, serde_json::Value) {
         let endpoint = format!(
             "{}/chat/completions",
@@ -273,7 +354,14 @@ impl ModelGateway {
         } else {
             "max_tokens"
         };
-        body[token_field] = serde_json::json!(profile.max_output_tokens);
+        let max_output_tokens = options
+            .max_output_tokens
+            .unwrap_or(profile.max_output_tokens)
+            .clamp(1, profile.max_output_tokens.max(1));
+        body[token_field] = serde_json::json!(max_output_tokens);
+        if let Some(temperature) = options.temperature {
+            body["temperature"] = serde_json::json!(temperature.clamp(0.0, 2.0));
+        }
         if profile.provider == ModelProvider::DeepSeek {
             body["thinking"] = serde_json::json!({
                 "type": if disable_thinking { "disabled" } else { "enabled" }
@@ -291,6 +379,34 @@ impl ModelGateway {
         stream: bool,
         disable_thinking: bool,
         cancelled: Arc<AtomicBool>,
+        on_chunk: F,
+    ) -> Result<String, AiError>
+    where
+        F: FnMut(&str) + Send,
+    {
+        self.generate_with_options(
+            profile,
+            secret,
+            context,
+            GenerationOptions::default(),
+            stream,
+            disable_thinking,
+            cancelled,
+            on_chunk,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn generate_with_options<F>(
+        &self,
+        profile: &ModelProfile,
+        secret: Option<&str>,
+        context: &ContextPackage,
+        options: GenerationOptions,
+        stream: bool,
+        disable_thinking: bool,
+        cancelled: Arc<AtomicBool>,
         mut on_chunk: F,
     ) -> Result<String, AiError>
     where
@@ -299,7 +415,8 @@ impl ModelGateway {
         if profile.capability != ModelCapability::Chat {
             return Err(AiContractError::InvalidProviderCapability.into());
         }
-        let (endpoint, body) = self.request_preview(profile, context, stream, disable_thinking);
+        let (endpoint, body) =
+            self.request_preview_with_options(profile, context, stream, disable_thinking, options);
         let attempts = usize::from(profile.retry_limit) + 1;
         for attempt in 0..attempts {
             if cancelled.load(Ordering::Relaxed) {
@@ -690,13 +807,22 @@ impl ModelProfileStore {
         preferences: &AiTaskPreferences,
     ) -> Result<AiTaskPreferences, AiError> {
         let profiles = self.list()?;
-        for profile_id in preferences.selected_profile_ids().into_iter().flatten() {
-            let profile = profiles
-                .iter()
-                .find(|profile| profile.id == profile_id)
-                .ok_or(AiError::MissingProfile(profile_id))?;
-            if profile.capability != ModelCapability::Chat {
-                return Err(AiContractError::InvalidProviderCapability.into());
+        for preference in preferences.entries() {
+            if preference
+                .temperature
+                .is_some_and(|value| !value.is_finite() || !(0.0..=2.0).contains(&value))
+                || preference.max_output_tokens == Some(0)
+            {
+                return Err(AiContractError::InvalidGenerationOptions.into());
+            }
+            if let Some(profile_id) = preference.profile_id {
+                let profile = profiles
+                    .iter()
+                    .find(|profile| profile.id == profile_id)
+                    .ok_or(AiError::MissingProfile(profile_id))?;
+                if profile.capability != ModelCapability::Chat {
+                    return Err(AiContractError::InvalidProviderCapability.into());
+                }
             }
         }
         let value =
@@ -1180,13 +1306,18 @@ mod tests {
                 retry_limit: 1,
             })
             .expect("chat profile");
+        let preference = super::AiTaskPreference {
+            profile_id: Some(chat.id),
+            temperature: Some(0.8),
+            max_output_tokens: Some(4_096),
+        };
         let preferences = super::AiTaskPreferences {
-            work_design: Some(chat.id),
-            outline: Some(chat.id),
-            volume_planning: Some(chat.id),
-            chapter_split: Some(chat.id),
-            writing: Some(chat.id),
-            knowledge_extraction: Some(chat.id),
+            work_design: preference.clone(),
+            outline: preference.clone(),
+            volume_planning: preference.clone(),
+            chapter_split: preference.clone(),
+            writing: preference.clone(),
+            knowledge_extraction: preference,
         };
 
         let saved = store
@@ -1197,6 +1328,38 @@ mod tests {
             store.get_ai_task_preferences().expect("read preferences"),
             preferences
         );
+    }
+
+    #[test]
+    fn ai_task_preferences_read_legacy_profile_ids() {
+        let profile_id = uuid::Uuid::new_v4();
+        let preferences: super::AiTaskPreferences = serde_json::from_str(&format!(
+            r#"{{"workDesign":"{profile_id}","outline":null}}"#
+        ))
+        .expect("legacy preferences");
+
+        assert_eq!(preferences.work_design.profile_id, Some(profile_id));
+        assert_eq!(preferences.work_design.temperature, None);
+        assert_eq!(preferences.work_design.max_output_tokens, None);
+        assert_eq!(preferences.outline, super::AiTaskPreference::default());
+    }
+
+    #[test]
+    fn request_preview_applies_and_clamps_generation_options() {
+        let gateway = super::ModelGateway::default();
+        let (_, body) = gateway.request_preview_with_options(
+            &profile("https://example.invalid/v1".into(), 9),
+            &context(),
+            false,
+            false,
+            super::GenerationOptions {
+                temperature: Some(0.5),
+                max_output_tokens: Some(99_999),
+            },
+        );
+
+        assert_eq!(body["temperature"], serde_json::json!(0.5));
+        assert_eq!(body["max_tokens"], serde_json::json!(512));
     }
 
     #[cfg(windows)]

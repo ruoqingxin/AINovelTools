@@ -31,6 +31,10 @@ pub(crate) struct PlanningAiJobInput {
     pub(crate) reference_content: String,
     pub(crate) user_guidance: String,
     pub(crate) allow_rewrite: bool,
+    #[serde(default)]
+    pub(crate) temperature: Option<f64>,
+    #[serde(default)]
+    pub(crate) max_output_tokens: Option<u32>,
     pub(crate) source_name: Option<Vec<String>>,
     pub(crate) system_prompt_snapshot: Option<String>,
     pub(crate) user_prompt_snapshot: Option<String>,
@@ -49,9 +53,43 @@ pub(crate) struct ExtractEntitiesInput {
     applicability_scope: String,
     source_text: String,
     user_guidance: Option<String>,
+    temperature: Option<f64>,
+    max_output_tokens: Option<u32>,
 }
 
 const PLANNING_CONTEXT_RESERVE_TOKENS: u32 = 2_048;
+
+fn task_generation_options(
+    temperature: Option<f64>,
+    max_output_tokens: Option<u32>,
+) -> Result<novel_infrastructure::GenerationOptions, ApiError> {
+    if temperature.is_some_and(|value| !value.is_finite() || !(0.0..=2.0).contains(&value)) {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "温度必须介于 0 到 2 之间".to_owned(),
+        });
+    }
+    if max_output_tokens == Some(0) {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "最大输出 tokens 必须大于 0".to_owned(),
+        });
+    }
+    Ok(novel_infrastructure::GenerationOptions {
+        temperature,
+        max_output_tokens,
+    })
+}
+
+fn effective_max_output_tokens(
+    profile: &novel_domain::ModelProfile,
+    options: novel_infrastructure::GenerationOptions,
+) -> u32 {
+    options
+        .max_output_tokens
+        .unwrap_or(profile.max_output_tokens)
+        .clamp(1, profile.max_output_tokens.max(1))
+}
 
 fn is_core_planning_section(section_id: &str) -> bool {
     matches!(
@@ -706,6 +744,8 @@ mod planning_context_tests {
             reference_content: "[文件片段 1] 主角在停电城市寻找失踪姐姐。".to_owned(),
             user_guidance: String::new(),
             allow_rewrite: false,
+            temperature: None,
+            max_output_tokens: None,
             source_name: None,
             system_prompt_snapshot: None,
             user_prompt_snapshot: None,
@@ -813,6 +853,8 @@ pub(crate) async fn generate_planning_content(
         reference_content: planned_context.reference_context,
         user_guidance,
         allow_rewrite,
+        temperature: None,
+        max_output_tokens: None,
         source_name: None,
         system_prompt_snapshot: None,
         user_prompt_snapshot: None,
@@ -983,6 +1025,15 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         fail_planning_job(&state, job.id, "本地隐私策略禁止调用远程模型");
         return true;
     }
+    let generation_options =
+        match task_generation_options(input.temperature, input.max_output_tokens) {
+            Ok(options) => options,
+            Err(error) => {
+                fail_planning_job(&state, job.id, error.message);
+                return true;
+            }
+        };
+    let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
     let secret = if let Some(secret_ref) = profile.secret_ref.as_deref() {
         match novel_infrastructure::SecretStore::get(secret_ref) {
             Ok(secret) => secret,
@@ -995,9 +1046,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         fail_planning_job(&state, job.id, "模型配置缺少 API 密钥");
         return true;
     };
-    let input_token_budget = profile
-        .context_window
-        .saturating_sub(profile.max_output_tokens);
+    let input_token_budget = profile.context_window.saturating_sub(max_output_tokens);
     let query = format!(
         "{} {} {}",
         input.section_title, input.section_prompt, input.user_guidance
@@ -1177,14 +1226,14 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         .len()
         .saturating_add(context.user_prompt.len());
     context.estimated_input_tokens = (u32::try_from(estimated_input_chars).unwrap_or(u32::MAX) / 4)
-        .min(
-            profile
-                .context_window
-                .saturating_sub(profile.max_output_tokens),
-        );
-    let (endpoint, request_body) = state
-        .gateway
-        .request_preview(&profile, &context, true, false);
+        .min(profile.context_window.saturating_sub(max_output_tokens));
+    let (endpoint, request_body) = state.gateway.request_preview_with_options(
+        &profile,
+        &context,
+        true,
+        false,
+        generation_options,
+    );
     input.final_request_endpoint = Some(endpoint);
     input.final_request_estimated_input_tokens = Some(context.estimated_input_tokens);
     input.final_request_body = match serde_json::to_string_pretty(&request_body) {
@@ -1221,10 +1270,11 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
     let mut last_progress = 30u8;
     let result = state
         .gateway
-        .generate(
+        .generate_with_options(
             &profile,
             Some(&secret),
             &context,
+            generation_options,
             true,
             false,
             Arc::clone(&cancelled),
@@ -1325,6 +1375,8 @@ pub(crate) async fn extract_entities_from_text(
         applicability_scope,
         source_text,
         user_guidance,
+        temperature,
+        max_output_tokens,
     } = input;
     let profile = {
         let store = state
@@ -1342,6 +1394,8 @@ pub(crate) async fn extract_entities_from_text(
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
+    let generation_options = task_generation_options(temperature, max_output_tokens)?;
+    let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
     let secret = profile
         .secret_ref
         .as_deref()
@@ -1372,17 +1426,14 @@ pub(crate) async fn extract_entities_from_text(
         }
     );
     context.estimated_input_tokens = (u32::try_from(source_text.len()).unwrap_or(u32::MAX) / 4)
-        .min(
-            profile
-                .context_window
-                .saturating_sub(profile.max_output_tokens),
-        );
+        .min(profile.context_window.saturating_sub(max_output_tokens));
     let output = state
         .gateway
-        .generate(
+        .generate_with_options(
             &profile,
             Some(&secret),
             &context,
+            generation_options,
             false,
             false,
             Arc::new(AtomicBool::new(false)),
@@ -1665,6 +1716,8 @@ pub(crate) async fn generate_ai_proposal(
     selection: Option<String>,
     instruction: Option<String>,
     stream: bool,
+    temperature: Option<f64>,
+    max_output_tokens: Option<u32>,
 ) -> Result<novel_infrastructure::AiProposal, ApiError> {
     let profile = {
         let store = state
@@ -1686,6 +1739,8 @@ pub(crate) async fn generate_ai_proposal(
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
+    let generation_options = task_generation_options(temperature, max_output_tokens)?;
+    let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
     let context_input = novel_application::AssembleContextInput {
         chapter_id,
         target_revision_id,
@@ -1697,7 +1752,7 @@ pub(crate) async fn generate_ai_proposal(
         instruction,
         input_token_budget: profile
             .context_window
-            .saturating_sub(profile.max_output_tokens)
+            .saturating_sub(max_output_tokens)
             .max(256),
     };
     let context = {
@@ -1739,10 +1794,11 @@ pub(crate) async fn generate_ai_proposal(
         .insert(task_id, Arc::clone(&cancelled));
     let result = state
         .gateway
-        .generate(
+        .generate_with_options(
             &profile,
             secret.as_deref(),
             &context,
+            generation_options,
             stream,
             false,
             Arc::clone(&cancelled),

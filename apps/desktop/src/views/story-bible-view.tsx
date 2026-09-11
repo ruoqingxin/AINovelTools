@@ -1,7 +1,7 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Check, FileUp, Plus, RotateCcw, Save, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { resolveTaskChatProfile, useAiTaskPreferences } from "../lib/ai-task-preferences";
+import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
   errorMessage,
   extractEntitiesFromText,
@@ -70,6 +70,7 @@ export function StoryBibleView() {
   const modelProfiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
   const extractionProfile = resolveTaskChatProfile(modelProfiles.data, aiPreferences.data, "knowledgeExtraction");
+  const extractionPreference = resolveTaskPreference(aiPreferences.data, "knowledgeExtraction");
   const [importGuidance, setImportGuidance] = useState("");
   const selected = entities.data?.find((entity) => entity.id === selectedId) ?? null;
   const revisions = useQuery({
@@ -198,7 +199,7 @@ export function StoryBibleView() {
     setImportBusy(true); setError(null); setNotice(null);
     try {
       if (!form.name.trim() || !summaryText.trim() || !scopeText.trim()) { setError("AI 提炼前必须填写类型、名称、简要概述和适用范围"); return; }
-      const items = await extractEntitiesFromText(extractionProfile.id, form.entityType, form.name.trim(), summaryText.trim(), scopeText.trim(), importSourceText, importGuidance.trim());
+      const items = await extractEntitiesFromText(extractionProfile.id, form.entityType, form.name.trim(), summaryText.trim(), scopeText.trim(), importSourceText, importGuidance.trim(), extractionPreference.temperature ?? undefined, extractionPreference.maxOutputTokens ?? undefined);
       setImportItems(items.slice(0, 200));
       if (!items.length) setError("AI 没有提炼出符合主题的信息，请换一个主题或重试。");
     } catch (cause) { setError(errorMessage(cause)); }
@@ -275,7 +276,7 @@ export function StoryBibleView() {
           {!selected ? <div className="knowledge-import-panel entity-import-panel">
             <div className="section-heading"><h2>从文件提炼候选</h2><span>先定义主题，再让 AI 提炼</span></div>
             <div className="story-bible-toolbar import-toolbar">
-              <AiModelNote taskLabel="知识提炼" profile={extractionProfile} />
+              <AiModelNote taskLabel="知识提炼" profile={extractionProfile} preference={extractionPreference} />
               <label className="file-picker"><FileUp size={15} />{importFileName || "选择 TXT / Markdown 文件"}<input type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readImportFile(file); }} /></label>
               <button type="button" className="primary-action" onClick={() => void extractImportItems()} disabled={!importSourceText || !extractionProfile?.hasSecret || !form.name.trim() || !summaryText.trim() || !scopeText.trim() || importBusy}><FileUp size={15} />{importBusy ? "AI 提炼中…" : "按主题提炼"}</button>
             </div>

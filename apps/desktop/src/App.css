@@ -2262,14 +2262,19 @@ button:focus-visible {
 .ai-task-routing-heading strong { color:#30496f; font-size:13px; }
 .ai-task-routing-heading span,.ai-task-routing-heading small { color:#8294b1; font-size:10px; line-height:1.5; }
 .ai-task-routing-list { display:grid; gap:7px; }
-.ai-task-routing-row { display:grid; grid-template-columns:minmax(180px,1fr) minmax(280px,1.4fr) 96px; align-items:center; gap:12px; padding:11px 12px; border:1px solid #dbe5f3; border-radius:7px; background:#fbfdff; }
+.ai-task-routing-row { display:grid; grid-template-columns:minmax(170px,.85fr) minmax(240px,1.25fr) minmax(220px,1fr) 120px; align-items:center; gap:12px; padding:11px 12px; border:1px solid #dbe5f3; border-radius:7px; background:#fbfdff; }
 .ai-task-routing-copy { display:grid; min-width:0; gap:3px; }
 .ai-task-routing-copy strong { color:#344e76; font-size:12px; }
 .ai-task-routing-copy small { color:#8294b1; font-size:10px; line-height:1.45; }
-.ai-task-routing-row select { min-width:0; height:36px; padding:0 10px; border:1px solid #c6d5eb; border-radius:7px; color:#405a7f; background:#fff; font:inherit; font-size:11px; }
+.ai-task-model-field,.ai-task-tuning-fields label { display:grid; min-width:0; gap:4px; color:#7a8ca9; font-size:9px; }
+.ai-task-routing-row select,.ai-task-tuning-fields input { min-width:0; height:36px; padding:0 10px; border:1px solid #c6d5eb; border-radius:7px; color:#405a7f; background:#fff; font:inherit; font-size:11px; }
 .ai-task-routing-row select[data-missing] { border-color:#d8ab74; color:#8a5a20; background:#fffaf2; }
+.ai-task-tuning-fields { display:grid; grid-template-columns:minmax(72px,.7fr) minmax(110px,1fr); gap:7px; }
+.ai-task-routing-meta { display:grid; justify-items:end; gap:5px; }
 .ai-task-routing-state { color:#9a7a43; font-size:10px; text-align:right; }
 .ai-task-routing-state[data-ready] { color:#27845c; }
+.ai-task-routing-meta button { display:inline-flex; align-items:center; gap:4px; padding:0; border:0; color:#6f83a2; background:transparent; font-size:9px; }
+.ai-task-routing-meta button:hover { color:#3971d8; }
 .ai-task-routing-actions { display:flex; align-items:center; gap:8px; }
 .ai-task-routing-actions button { display:inline-flex; align-items:center; gap:6px; min-height:34px; }
 .ai-task-saved { display:inline-flex; align-items:center; gap:4px; color:#27845c; font-size:10px; }
@@ -2401,6 +2406,7 @@ button:focus-visible {
   .model-profile-item { flex:0 0 206px; }
   .model-profile-editor { padding:18px 0 0; }
   .ai-task-routing-row { grid-template-columns:1fr; gap:8px; }
+  .ai-task-routing-meta { justify-items:start; }
   .ai-task-routing-state { text-align:left; }
   .materials-layout { grid-template-columns:1fr; }
   .search-toolbar { flex-wrap:wrap; }

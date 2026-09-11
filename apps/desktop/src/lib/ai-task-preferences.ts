@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   getAiTaskPreferences,
+  type AiTaskPreference,
   type AiTaskPreferences,
   type ModelProfile,
 } from "./tauri-client";
@@ -20,13 +21,19 @@ export const AI_TASK_DEFINITIONS: Array<{
   { key: "knowledgeExtraction", label: "知识提炼", description: "从导入文件中提炼人物、地点和设定条目" },
 ];
 
+export const emptyAiTaskPreference: AiTaskPreference = {
+  profileId: null,
+  temperature: null,
+  maxOutputTokens: null,
+};
+
 export const emptyAiTaskPreferences: AiTaskPreferences = {
-  workDesign: null,
-  outline: null,
-  volumePlanning: null,
-  chapterSplit: null,
-  writing: null,
-  knowledgeExtraction: null,
+  workDesign: emptyAiTaskPreference,
+  outline: emptyAiTaskPreference,
+  volumePlanning: emptyAiTaskPreference,
+  chapterSplit: emptyAiTaskPreference,
+  writing: emptyAiTaskPreference,
+  knowledgeExtraction: emptyAiTaskPreference,
 };
 
 export function useAiTaskPreferences() {
@@ -41,13 +48,21 @@ export function resolveTaskChatProfile(
   preferences: AiTaskPreferences | undefined,
   task: AiTaskKey,
 ) {
+  const preference = resolveTaskPreference(preferences, task);
   const chatProfiles = profiles?.filter((profile) => profile.capability === "CHAT") ?? [];
-  const preferredId = preferences?.[task];
+  const preferredId = preference.profileId;
   if (preferredId) {
     const preferred = chatProfiles.find((profile) => profile.id === preferredId);
     if (preferred) return preferred;
   }
   return chatProfiles.find((profile) => profile.hasSecret) ?? chatProfiles[0];
+}
+
+export function resolveTaskPreference(
+  preferences: AiTaskPreferences | undefined,
+  task: AiTaskKey,
+) {
+  return preferences?.[task] ?? emptyAiTaskPreference;
 }
 
 export function providerLabel(provider: ModelProfile["provider"]) {

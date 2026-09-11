@@ -431,6 +431,8 @@ pub enum AiContractError {
     InvalidBaseUrl,
     #[error("context window and output token limits must be positive")]
     InvalidTokenLimit,
+    #[error("generation options are invalid")]
+    InvalidGenerationOptions,
     #[error("timeout must be between 1 and 600 seconds")]
     InvalidTimeout,
     #[error("retry limit cannot exceed 3")]
