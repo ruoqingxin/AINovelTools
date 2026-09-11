@@ -165,7 +165,7 @@ mod tests {
             input_token_budget: 1_024,
         };
         let package = super::ContextAssembler::assemble(&input).expect("assemble contract");
-        assert_eq!(package.prompt_version, "r3-writing-v4");
+        assert_eq!(package.prompt_version, "r3-writing-v6");
         assert_eq!(package.task_contract.role, super::AiTaskRole::DraftWriter);
         assert!(
             package
@@ -173,6 +173,19 @@ mod tests {
                 .forbidden_actions
                 .iter()
                 .any(|item| item.contains("正式正文"))
+        );
+        assert!(
+            package
+                .task_contract
+                .uncertainty_policy
+                .contains("正式设定")
+        );
+        assert!(
+            package
+                .task_contract
+                .acceptance_criteria
+                .iter()
+                .any(|item| item.contains("叙述人称"))
         );
         assert!(package.user_prompt.contains("[P0 任务合同]"));
         assert!(package.user_prompt.contains("[P0 用户本次明确指令]"));
@@ -241,6 +254,11 @@ mod tests {
         };
         let candidates = vec![
             make_candidate(super::ContextCandidateKind::Keyword, 10_000, "高相关关键词"),
+            make_candidate(
+                super::ContextCandidateKind::ProjectSetting,
+                10_000,
+                "主角目标与境界规则",
+            ),
             make_candidate(super::ContextCandidateKind::Entity, 4_000, "当前人物卡"),
             make_candidate(
                 super::ContextCandidateKind::AuthoritativeFact,
@@ -265,14 +283,14 @@ mod tests {
 
         let selected = super::ContextPlanner::plan(&candidates, 24, 8);
         assert_eq!(selected.len(), 8);
-        assert_eq!(selected[0].chunk.content, "林澈不饮酒。");
-        assert_eq!(selected[1].chunk.content, "当前状态");
-        assert_eq!(selected[2].chunk.content, "当前人物卡");
-        assert_eq!(selected[3].chunk.content, "未回收伏笔");
-        assert_eq!(selected[4].chunk.content, "章节摘要");
-        assert_eq!(selected[5].chunk.content, "历史事件");
-        assert_eq!(selected[6].chunk.content, "高相关关键词");
-        assert_eq!(selected[7].chunk.content, "林澈左臂受伤。");
+        assert_eq!(selected[0].chunk.content, "主角目标与境界规则");
+        assert_eq!(selected[1].chunk.content, "林澈不饮酒。");
+        assert_eq!(selected[2].chunk.content, "当前状态");
+        assert_eq!(selected[3].chunk.content, "当前人物卡");
+        assert_eq!(selected[4].chunk.content, "未回收伏笔");
+        assert_eq!(selected[5].chunk.content, "章节摘要");
+        assert_eq!(selected[6].chunk.content, "历史事件");
+        assert_eq!(selected[7].chunk.content, "高相关关键词");
         assert!(selected.iter().all(|item| item.chunk.content != "参考片段"));
     }
 }

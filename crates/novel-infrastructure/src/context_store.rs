@@ -3,6 +3,37 @@ use novel_application::{ContextCandidate, ContextCandidateKind};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 
+const WRITING_SETTING_SECTIONS: [(&str, &str); 15] = [
+    ("seed-premise", "核心前提与开局情境"),
+    ("seed-genre-promise", "类型、题材与阅读承诺"),
+    ("seed-hook", "核心卖点与独特钩子"),
+    ("seed-tone", "基调、尺度与篇幅体量"),
+    ("engine-protagonist", "主角目标与内在需求"),
+    ("engine-antagonism", "对抗系统与升级机制"),
+    ("engine-stakes", "赌注、代价与失败后果"),
+    ("engine-theme", "核心谜团与主题命题"),
+    ("engine-ending", "结局状态与承诺兑现"),
+    ("cast-core-relationship", "核心关系与关系变化"),
+    ("cast-supporting", "关键角色与叙事功能"),
+    ("cast-arcs", "人物弧光、秘密与信息差"),
+    ("frame-setting", "舞台、硬规则与资源限制"),
+    ("frame-history", "历史因果、势力与矛盾来源"),
+    ("frame-narrative", "视角、信息与叙事节奏"),
+];
+const REQUIRED_WRITING_SETTING_SECTIONS: [(&str, &str); 8] = [
+    ("seed-premise", "核心前提与开局情境"),
+    ("engine-protagonist", "主角目标与内在需求"),
+    ("engine-antagonism", "对抗系统与升级机制"),
+    ("engine-stakes", "赌注、代价与失败后果"),
+    ("engine-ending", "结局状态与承诺兑现"),
+    ("cast-arcs", "人物弧光、秘密与信息差"),
+    ("frame-setting", "舞台、硬规则与资源限制"),
+    ("frame-narrative", "视角、信息与叙事节奏"),
+];
+const MAX_WRITING_SETTING_SECTION_CHARS: usize = 1_400;
+const MAX_WRITING_SETTINGS_CHARS: usize = 10_000;
+const SETTING_TRUNCATION_MARKER: &str = "\n[正式设定片段已按上下文预算截断]";
+
 impl ProjectManager {
     pub(crate) fn collect_context_candidates(
         &self,
@@ -19,6 +50,21 @@ impl ProjectManager {
         ]
         .join("\n");
         let normalized_query = normalize_for_match(&query_text);
+        let planning_sections = self.list_planning_sections().unwrap_or_default();
+        let has_character_card = self
+            .list_entities(false)
+            .unwrap_or_default()
+            .iter()
+            .any(|entity| entity.entity_type == EntityType::Character);
+        candidates.push(build_candidate(
+            ContextCandidateKind::ProjectSetting,
+            build_writing_setting_context(&planning_sections, has_character_card),
+            Uuid::nil(),
+            "planning:writing-context:v1".to_owned(),
+            RetrievalMethod::Structured,
+            ContextAuthority::ProjectSetting,
+            10_000,
+        ));
 
         let mut facts = self
             .list_current_facts()
@@ -275,6 +321,128 @@ fn input_search_query(input: &novel_application::AssembleContextInput) -> String
         .unwrap_or(input.chapter_title.as_str())
         .trim()
         .to_owned()
+}
+
+fn build_writing_setting_context(sections: &[PlanningSection], has_character_card: bool) -> String {
+    let by_id = sections
+        .iter()
+        .filter(|section| !section.content.trim().is_empty())
+        .map(|section| (section.id.as_str(), section))
+        .collect::<std::collections::HashMap<_, _>>();
+    let missing = REQUIRED_WRITING_SETTING_SECTIONS
+        .iter()
+        .filter(|(id, _)| !by_id.contains_key(id))
+        .copied()
+        .collect::<Vec<_>>();
+    let narrative_person = by_id
+        .get("frame-narrative")
+        .and_then(|section| detect_narrative_person(&section.content));
+    let missing_narrative_person =
+        by_id.contains_key("frame-narrative") && narrative_person.is_none();
+
+    let mut output = String::new();
+    if missing.is_empty() && has_character_card && !missing_narrative_person {
+        output.push_str("正式设定完整性：正文写作所需的核心设定和人物卡已建立。\n");
+    } else {
+        output.push_str("正式设定完整性：发现缺少正文生成依据。\n缺失项：\n");
+        for (id, label) in &missing {
+            let _ = writeln!(output, "- {label}（{id}）：未建立正式设定");
+        }
+        if !has_character_card {
+            output.push_str("- 人物卡：知识库尚未建立任何“人物”实体卡\n");
+        }
+        if missing_narrative_person {
+            output.push_str("- 叙述人称：正式设定未明确第一人称、第二人称或第三人称\n");
+        }
+        output.push_str(
+            "生成判断：正文生成前先检查以上缺项。若缺项直接影响本章主角动机、能力边界、境界/力量规则、世界限制、人物行为或失败后果，停止创作并只输出“[上下文不足]”，逐项说明缺少的正式设定和补齐位置；不得自行补全项目事实。\n",
+        );
+    }
+    if let Some(person) = narrative_person {
+        let narrative = by_id
+            .get("frame-narrative")
+            .map_or("", |section| section.content.trim());
+        let _ = write!(
+            output,
+            "\n叙述视角硬约束：本作品固定使用{person}。同一章节的初次创作、续写和多次重新生成必须保持相同叙述人称、视角范围和称呼方式，不得因重新生成而切换。正式设定依据：{}\n",
+            truncate_setting_content(narrative, 360)
+        );
+    }
+
+    output.push_str("\n已批准正式设定：\n");
+    let mut included = 0_usize;
+    let mut omitted = Vec::new();
+    let mut used_chars = output.chars().count();
+    for (id, label) in WRITING_SETTING_SECTIONS {
+        let Some(section) = by_id.get(id) else {
+            continue;
+        };
+        let content =
+            truncate_setting_content(section.content.trim(), MAX_WRITING_SETTING_SECTION_CHARS);
+        let block = format!("正式设定「{label}」（{id}）：\n{content}\n\n");
+        let block_chars = block.chars().count();
+        if included > 0 && used_chars.saturating_add(block_chars) > MAX_WRITING_SETTINGS_CHARS {
+            omitted.push(label);
+            continue;
+        }
+        used_chars = used_chars.saturating_add(block_chars);
+        included = included.saturating_add(1);
+        output.push_str(&block);
+    }
+    if included == 0 {
+        output.push_str("尚未建立任何正式作品设定。\n");
+    }
+    if !omitted.is_empty() {
+        let _ = writeln!(
+            output,
+            "[其余正式设定因上下文预算未展开：{}]",
+            omitted.join("、")
+        );
+    }
+    output.trim_end().to_owned()
+}
+
+fn truncate_setting_content(content: &str, limit: usize) -> String {
+    if content.chars().count() <= limit {
+        return content.to_owned();
+    }
+    let marker_chars = SETTING_TRUNCATION_MARKER.chars().count();
+    if limit <= marker_chars {
+        return SETTING_TRUNCATION_MARKER.chars().take(limit).collect();
+    }
+    let kept = content
+        .chars()
+        .take(limit.saturating_sub(marker_chars))
+        .collect::<String>();
+    format!("{kept}{SETTING_TRUNCATION_MARKER}")
+}
+
+fn detect_narrative_person(content: &str) -> Option<&'static str> {
+    let normalized = content.to_lowercase();
+    let mut matches = Vec::new();
+    for label in ["第一人称", "第二人称", "第三人称"] {
+        let mut search_from = 0;
+        while let Some(relative_index) = normalized[search_from..].find(label) {
+            let index = search_from.saturating_add(relative_index);
+            let prefix = normalized[..index]
+                .chars()
+                .rev()
+                .take(4)
+                .collect::<String>();
+            if !["不", "非", "别", "未", "禁", "勿", "避"]
+                .iter()
+                .any(|marker| prefix.contains(marker))
+            {
+                matches.push((index, label));
+                break;
+            }
+            search_from = index.saturating_add(label.len());
+        }
+    }
+    matches
+        .into_iter()
+        .min_by_key(|(index, _)| *index)
+        .map(|(_, label)| label)
 }
 
 fn search_result_candidate(

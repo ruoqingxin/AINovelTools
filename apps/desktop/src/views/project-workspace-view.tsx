@@ -429,6 +429,19 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
   }, [chapterNodes, selectedId, workspaceMode]);
 
   useEffect(() => {
+    if (workspaceMode !== "planning" || selectedId) return;
+    const requestedId = window.location.hash.slice(1);
+    if (!requestedId) return;
+    const requestedSection = planningSectionGroups.flatMap((group) => group.children).find((item) => item.id === requestedId);
+    if (requestedSection && workDesignNode) {
+      if (selectNode(workDesignNode)) setSelectedPlanningSectionId(requestedId);
+      return;
+    }
+    const requestedNode = activeNodes.find((node) => node.id === requestedId);
+    if (requestedNode) selectNode(requestedNode);
+  }, [activeNodes, selectedId, workspaceMode, workDesignNode]);
+
+  useEffect(() => {
     if (nodePlanJob?.status !== "SUCCEEDED") return;
     void client.invalidateQueries({ queryKey: ["planning-sections"] });
   }, [client, nodePlanJob?.id, nodePlanJob?.status]);

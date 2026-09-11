@@ -2620,6 +2620,85 @@ mod tests {
     }
 
     #[test]
+    fn context_assembly_includes_formal_settings_and_reports_missing_writing_basis() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-context-settings-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager
+            .create(&root, "正式设定上下文")
+            .expect("create project");
+        let chapter = manager
+            .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+            .expect("chapter");
+        for (id, content) in [
+            ("engine-protagonist", "主角需要隐藏不能持久战斗的弱点。"),
+            (
+                "frame-setting",
+                "境界分为炼气、筑基、金丹；跨境界战斗必须付出寿元代价。",
+            ),
+            (
+                "frame-narrative",
+                "不使用第一人称，采用第三人称有限视角，只跟随主角。",
+            ),
+        ] {
+            manager
+                .save_planning_section(super::PlanningSection {
+                    id: id.to_owned(),
+                    content: content.to_owned(),
+                    pending_content: "这段候选不得进入正文上下文。".to_owned(),
+                    rationale: String::new(),
+                    consequence: String::new(),
+                    references: Vec::new(),
+                    updated_at: String::new(),
+                })
+                .expect("save planning section");
+        }
+
+        let package = manager
+            .assemble_context_with_project_knowledge(&novel_application::AssembleContextInput {
+                chapter_id: chapter.id,
+                target_revision_id: None,
+                action: super::AiAction::Draft,
+                chapter_title: "第一章".into(),
+                chapter_plan: "主角首次越境战斗。".into(),
+                document_json: r#"{"type":"doc","content":[]}"#.into(),
+                selection: None,
+                instruction: Some("按正式设定创作".into()),
+                input_token_budget: 8_192,
+            })
+            .expect("context package");
+
+        assert!(
+            package
+                .user_prompt
+                .contains("[P1 作品正式设定与生成前判断]")
+        );
+        assert!(package.user_prompt.contains("主角目标与内在需求"));
+        assert!(
+            package
+                .user_prompt
+                .contains("主角需要隐藏不能持久战斗的弱点。")
+        );
+        assert!(package.user_prompt.contains("舞台、硬规则与资源限制"));
+        assert!(package.user_prompt.contains("境界分为炼气、筑基、金丹"));
+        assert!(
+            package
+                .user_prompt
+                .contains("叙述视角硬约束：本作品固定使用第三人称")
+        );
+        assert!(package.user_prompt.contains("人物卡：知识库尚未建立"));
+        assert!(package.user_prompt.contains("赌注、代价与失败后果"));
+        assert!(!package.user_prompt.contains("这段候选不得进入正文上下文"));
+        assert!(
+            package
+                .retrieval_evidence
+                .iter()
+                .any(|item| item.authority == super::ContextAuthority::ProjectSetting)
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn context_assembly_promotes_finalized_facts_into_authoritative_section() {
         let root = std::path::PathBuf::from("target")
             .join(format!("ainovel-context-facts-{}", uuid::Uuid::new_v4()));

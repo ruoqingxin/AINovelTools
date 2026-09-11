@@ -574,7 +574,7 @@ export function invalidateProjectQueries(queryClient: { invalidateQueries: (opti
     ["writing-cards"], ["plan-nodes"], ["planning-sections"], ["current-facts"], ["evidence-anchors"],
     ["relations"], ["events"], ["beliefs"], ["foreshadowings"], ["knowledge-candidates"],
     ["knowledge-conflicts"], ["project-search"], ["jobs"], ["recovery-all"], ["manuscript"],
-    ["manuscript-history"], ["recovery-logs"], ["ai-proposals"],
+    ["manuscript-history"], ["recovery-logs"], ["ai-proposals"], ["ai-runs"],
   ];
   return Promise.all([
     ...projectKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),

@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import type { Editor } from "@tiptap/react";
-import { Ban, Check, Columns2, LoaderCircle, Play, RotateCcw, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { Ban, Check, CircleAlert, Columns2, LoaderCircle, Play, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   cancelAiTask,
@@ -9,13 +9,16 @@ import {
   errorMessage,
   generateAiProposal,
   listAiProposals,
+  listEntities,
   listModelProfiles,
+  listPlanningSections,
   rateAiProposal,
   type AiAction,
   type AiProposal,
   type AiProposalReview,
 } from "../lib/tauri-client";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
+import { assessWritingReadiness } from "../lib/writing-readiness";
 import { AiModelNote } from "./ai-model-note";
 
 const actionLabels: Record<AiAction, string> = {
@@ -81,6 +84,8 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
   const proposals = useQuery({ queryKey: ["ai-proposals", props.chapterId], queryFn: () => listAiProposals(props.chapterId) });
+  const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
+  const entities = useQuery({ queryKey: ["entities", false], queryFn: () => listEntities(false) });
   const [instruction, setInstruction] = useState("");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -129,6 +134,11 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     const chatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "writing");
     const chatPreference = resolveTaskPreference(aiPreferences.data, "writing");
     if (!chatProfile || !props.editor) return;
+    if ((action === "DRAFT" || action === "CONTINUE") && !readinessLoading && !readiness.ready) {
+      setError("请先补齐创作准入中列出的关键设定，再生成正文。");
+      document.getElementById("writing-readiness")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     const { from, to } = props.editor.state.selection;
     const selection = props.editor.state.doc.textBetween(from, to, "\n").trim();
     if ((action === "REWRITE" || action === "POLISH") && !selection) {
@@ -163,7 +173,11 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
       }
       await client.invalidateQueries({ queryKey: ["ai-proposals", props.chapterId] });
     } catch (cause) { setError(errorMessage(cause)); }
-    finally { setBusy(false); setActiveTaskId(null); }
+    finally {
+      void client.invalidateQueries({ queryKey: ["ai-runs"] });
+      setBusy(false);
+      setActiveTaskId(null);
+    }
   }
 
   async function cancel() {
@@ -268,21 +282,62 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
   const compareReviews = compareIds
     .map((id) => pending.find((item) => item.proposal.id === id))
     .filter((item): item is AiProposalReview => Boolean(item));
+  const readinessLoading = planningSections.isPending || entities.isPending;
+  const readiness = assessWritingReadiness({
+    sections: planningSections.data ?? [],
+    hasCharacterCard: (entities.data ?? []).some((entity) => entity.entityType === "CHARACTER"),
+    hasChapterPlan: Boolean(props.chapterPlan.trim()),
+  });
+  const admissionBlocked = !readinessLoading && !readiness.ready;
+  const writingActionBlocked = (action: AiAction) =>
+    admissionBlocked && (action === "DRAFT" || action === "CONTINUE");
+  const readinessState = readinessLoading
+    ? "loading"
+    : readiness.ready
+      ? "ready"
+      : "blocked";
+  const readinessMessage = readinessLoading
+    ? "正在核对正式设定、人物卡和章节执行卡。"
+    : readiness.ready
+      ? "核心正式设定、人物卡和章节执行卡均已确认，可以进入正文创作。"
+      : "存在未确认的创作依据；整章创作和续写已暂停，请先补齐下列关键设定。";
+  const planningTarget = readiness.missingSections[0]?.id ?? (readiness.missingNarrativePerspective ? "frame-narrative" : props.chapterId);
 
   return <section className="ai-panel" aria-label="AI 创作">
     <div className="section-heading"><h2><Sparkles size={15} />AI 创作</h2><div className="proposal-heading-actions"><span>云端 API · Proposal 审核</span>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
     <AiModelNote taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
+    <section className="writing-readiness" id="writing-readiness" data-state={readinessState} aria-label="创作准入检查">
+      <div className="writing-readiness-heading">
+        {readinessLoading ? <LoaderCircle size={16} className="spin" /> : readiness.ready ? <Check size={16} /> : <CircleAlert size={16} />}
+        <div><strong>创作准入</strong><span>{readinessMessage}</span></div>
+        <small>{readinessLoading ? "检查中" : readiness.ready ? "可写" : "待补齐"}</small>
+      </div>
+      {!readinessLoading && !readiness.ready ? <div className="writing-readiness-body">
+        <div className="writing-readiness-items">
+          <span>正式设定 {readiness.completedCount}/{readiness.totalCount}</span>
+          {readiness.missingSections.map((item) => <code key={item.id}>{item.label}</code>)}
+          {readiness.missingCharacterCard ? <code>人物卡</code> : null}
+          {readiness.missingChapterPlan ? <code>章节执行卡</code> : null}
+          {readiness.missingNarrativePerspective ? <code>叙述人称未明确</code> : null}
+        </div>
+        <div className="writing-readiness-actions">
+          {readiness.missingSections.length || readiness.missingChapterPlan || readiness.missingNarrativePerspective ? <a href={`/planning#${planningTarget}`}>去补设定</a> : null}
+          {readiness.missingCharacterCard ? <a href="/knowledge">去补人物卡</a> : null}
+        </div>
+      </div> : null}
+    </section>
     <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>
     <p className="ai-request-hint">系统会把这段意见与章节执行卡、写作规则和正文上下文一起编译成模型消息。</p>
-    <div className="ai-draft-action"><div><strong>按章节执行卡创作整章</strong><span>AI 会参考章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿，确认后替换到正文。</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !selectedChatProfile?.hasSecret}><Sparkles size={14} />生成整章初稿</button></div>
-    <div className="ai-action-grid">{editingActions.map((action) => <button type="button" className="secondary-action" key={action} onClick={() => void runAction(action)} disabled={busy || !selectedChatProfile?.hasSecret}><Play size={14} />{actionLabels[action]}</button>)}</div>
+    <div className="ai-draft-action"><div><strong>按章节执行卡创作整章</strong><span>AI 会参考章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿，确认后替换到正文。</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked("DRAFT")}><Sparkles size={14} />生成整章初稿</button></div>
+    <div className="ai-action-grid">{editingActions.map((action) => <button type="button" className="secondary-action" key={action} onClick={() => void runAction(action)} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked(action)}><Play size={14} />{actionLabels[action]}</button>)}</div>
     {busy ? <div className="ai-running"><LoaderCircle size={15} className="spin" /><span>模型正在生成候选…</span><button type="button" className="secondary-action" onClick={() => void cancel()} disabled={!activeTaskId}><Ban size={14} />取消</button></div> : null}
     {fallbackNotice ? <p className="project-notice" role="status">{fallbackNotice}</p> : null}
     {preview ? <pre className="ai-preview">{preview}</pre> : null}
     {error ? <p className="project-error" role="alert">{error}</p> : null}
 
-    {pending.length ? <div className="proposal-list">
-      <div className="section-heading"><h3>待审核候选</h3><span>{pending.length} 条 · 已选 {compareIds.length}/2 对比</span></div>
+    <div className="proposal-list" aria-label="候选审核">
+      <div className="section-heading"><h3><ShieldCheck size={14} />候选审核</h3><span>{proposals.isPending ? "正在加载" : `${pending.length} 条待审 · 已选 ${compareIds.length}/2 对比`}</span></div>
+      {proposals.isPending ? <div className="proposal-empty"><LoaderCircle size={18} className="spin" /><div><strong>正在读取待审核候选</strong><span>生成结果会保留在这里，确认前不会写入正文。</span></div></div> : proposals.isError ? <p className="project-error" role="alert">候选审核加载失败：{errorMessage(proposals.error)}</p> : pending.length ? <>
       {pending.map(({ proposal, validation, feedback }) => {
         const text = partialTexts[proposal.id] ?? proposal.outputText;
         const segments = candidateSegments(text);
@@ -326,6 +381,7 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
           </div>)}
         </div>
       </section> : null}
-    </div> : null}
+      </> : <div className="proposal-empty"><ShieldCheck size={20} /><div><strong>当前没有待审核候选</strong><span>AI 生成结果会先停在这里，你确认后才会写入正文。</span></div><a href="/knowledge/review">进入审核中心</a></div>}
+    </div>
   </section>;
 }

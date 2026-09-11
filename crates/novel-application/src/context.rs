@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROMPT_VERSION: &str = "r3-writing-v4";
+pub const PROMPT_VERSION: &str = "r3-writing-v6";
 const TRUNCATION_MARKER: &str = "[已按 TokenBudget 截断]";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,6 +42,7 @@ pub struct RetrievalPlan {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContextCandidateKind {
+    ProjectSetting,
     AuthoritativeFact,
     CurrentState,
     Entity,
@@ -54,18 +55,20 @@ pub enum ContextCandidateKind {
 impl ContextCandidateKind {
     const fn priority(self) -> u8 {
         match self {
-            Self::AuthoritativeFact => 0,
-            Self::CurrentState => 1,
-            Self::Entity => 2,
-            Self::Foreshadowing => 3,
-            Self::Summary => 4,
-            Self::Event => 5,
-            Self::Keyword => 6,
+            Self::ProjectSetting => 0,
+            Self::AuthoritativeFact => 1,
+            Self::CurrentState => 2,
+            Self::Entity => 3,
+            Self::Foreshadowing => 4,
+            Self::Summary => 5,
+            Self::Event => 6,
+            Self::Keyword => 7,
         }
     }
 
     const fn max_attached(self) -> usize {
         match self {
+            Self::ProjectSetting => 1,
             Self::AuthoritativeFact | Self::Keyword => 4,
             Self::CurrentState | Self::Entity => 2,
             Self::Foreshadowing | Self::Summary | Self::Event => 1,
@@ -140,7 +143,7 @@ impl ContextPlanner {
         }
 
         let mut seen = HashSet::new();
-        let mut grouped = std::array::from_fn::<_, 7, _>(|_| Vec::new());
+        let mut grouped = std::array::from_fn::<_, 8, _>(|_| Vec::new());
         for candidate in candidates {
             let normalized_content = candidate
                 .evidence
@@ -235,6 +238,7 @@ pub struct AiTaskContract {
 pub enum ContextSectionKind {
     TaskContract,
     UserInstruction,
+    ProjectSettings,
     AuthoritativeFacts,
     ChapterPlan,
     CurrentState,
@@ -457,6 +461,8 @@ impl PromptSection {
 }
 
 struct CompiledRetrieval {
+    project_settings: String,
+    project_setting_count: u16,
     authoritative_facts: String,
     authoritative_count: u16,
     task_materials: String,
@@ -497,6 +503,16 @@ fn build_prompt_sections(
             "用户本次明确指令",
             user_material,
             1,
+        ),
+        PromptSection::new(
+            ContextSectionKind::ProjectSettings,
+            1,
+            "作品正式设定与生成前判断",
+            non_empty_or(
+                retrieval.project_settings.clone(),
+                "本次没有可用的正式作品设定；生成前不得自行补全主角、境界或世界规则。",
+            ),
+            retrieval.project_setting_count,
         ),
         PromptSection::new(
             ContextSectionKind::AuthoritativeFacts,
@@ -559,6 +575,8 @@ fn build_task_contract(input: &AssembleContextInput) -> AiTaskContract {
             vec![
                 "完整覆盖章节执行卡中的目标、关键行动、冲突变化和结尾钩子。".to_owned(),
                 "正文内部的场景、人物行动和因果推进连贯，可直接进入候选审核。".to_owned(),
+                "叙述人称和视角边界必须与正式设定一致；同一章节多次生成不得随机切换人称。"
+                    .to_owned(),
                 "只输出完整章节正文。".to_owned(),
             ],
             "纯文本完整章节候选正文；不得附带分析、标题、JSON、变更声明或写作说明。",
@@ -570,6 +588,7 @@ fn build_task_contract(input: &AssembleContextInput) -> AiTaskContract {
             vec![
                 "输出能与当前草稿结尾自然衔接。".to_owned(),
                 "不改变已提供事实、章节目标和人物知识边界。".to_owned(),
+                "延续当前章节既定的叙述人称和视角边界，不得改成另一人称。".to_owned(),
                 "只输出新增候选正文。".to_owned(),
             ],
             "纯文本候选正文；不得附带分析、标题、JSON 或变更声明。",
@@ -608,6 +627,12 @@ fn build_task_contract(input: &AssembleContextInput) -> AiTaskContract {
             "纯文本章节摘要；不得附带分析、标题、JSON 或变更声明。",
         ),
     };
+    let uncertainty_policy = if input.action == AiAction::Summarize {
+        "只依据当前草稿和已提供的章节材料总结；无法确认的信息标为不确定，不得补写正文之外的事实。"
+            .to_owned()
+    } else {
+        "生成前先检查 [P1 作品正式设定与生成前判断]；若缺少直接影响本章人物动机、主角能力、境界/力量规则、世界限制或失败后果的正式设定，停止推断并只输出“[上下文不足]”，逐项列出缺失的正式设定及补齐位置；不得自行补全项目事实。".to_owned()
+    };
     AiTaskContract {
         role,
         goal: goal.to_owned(),
@@ -624,7 +649,7 @@ fn build_task_contract(input: &AssembleContextInput) -> AiTaskContract {
             "不得越过本次目标对象和修改范围。".to_owned(),
         ],
         acceptance_criteria,
-        uncertainty_policy: "关键依据不足或上下文冲突时停止推断，输出“[上下文不足]”并简要列出缺少的信息；不得自行补全项目事实。".to_owned(),
+        uncertainty_policy,
         output_contract: output_contract.to_owned(),
     }
 }
@@ -730,6 +755,8 @@ fn non_empty_or(value: String, fallback: &str) -> String {
 fn compile_retrieval_evidence(evidence: &[RetrievalEvidence]) -> CompiledRetrieval {
     if evidence.is_empty() {
         return CompiledRetrieval {
+            project_settings: String::new(),
+            project_setting_count: 0,
             authoritative_facts: String::new(),
             authoritative_count: 0,
             task_materials: String::new(),
@@ -752,6 +779,7 @@ fn compile_retrieval_evidence(evidence: &[RetrievalEvidence]) -> CompiledRetriev
     ordered.retain(|item| seen.insert(item.chunk.id));
 
     let mut authoritative_facts = Vec::new();
+    let mut project_settings = Vec::new();
     let mut task_materials = Vec::new();
     let mut references = Vec::new();
     let mut evidence_refs = Vec::with_capacity(ordered.len());
@@ -764,6 +792,7 @@ fn compile_retrieval_evidence(evidence: &[RetrievalEvidence]) -> CompiledRetriev
             item.chunk.content.trim()
         );
         match item.authority {
+            novel_domain::ContextAuthority::ProjectSetting => project_settings.push(text),
             novel_domain::ContextAuthority::AuthoritativeFact => authoritative_facts.push(text),
             novel_domain::ContextAuthority::TaskMaterial => task_materials.push(text),
             novel_domain::ContextAuthority::Reference => references.push(text),
@@ -786,6 +815,8 @@ fn compile_retrieval_evidence(evidence: &[RetrievalEvidence]) -> CompiledRetriev
         "RETRIEVAL_ATTACHED"
     };
     CompiledRetrieval {
+        project_setting_count: u16::try_from(project_settings.len()).unwrap_or(u16::MAX),
+        project_settings: project_settings.join("\n\n"),
         authoritative_count: u16::try_from(authoritative_facts.len()).unwrap_or(u16::MAX),
         authoritative_facts: authoritative_facts.join("\n\n"),
         task_material_count: u16::try_from(task_materials.len()).unwrap_or(u16::MAX),
