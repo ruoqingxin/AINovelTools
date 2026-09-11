@@ -32,6 +32,15 @@ export type WritingGapTarget = {
   href: string;
 };
 
+export type WritingReadinessItem = {
+  id: string;
+  label: string;
+  description: string;
+  severity: "blocking" | "warning";
+  kind: "section" | "character-card" | "chapter-plan";
+  href: string;
+};
+
 const writingGapPatterns: Array<WritingGapTarget & { keywords: string[] }> = [
   {
     id: "character-card",
@@ -131,6 +140,63 @@ export function findWritingGapTargets(text: string): WritingGapTarget[] {
   return targets.filter(
     (target, index) => targets.findIndex((candidate) => candidate.id === target.id) === index,
   );
+}
+
+export function buildWritingReadinessItems(
+  readiness: WritingReadiness,
+  chapterId: string,
+): WritingReadinessItem[] {
+  const items: WritingReadinessItem[] = readiness.blockingMissingSections.map((section) => ({
+    id: section.id,
+    label: section.label,
+    description: "正式设定 · 正文准入依赖",
+    severity: "blocking",
+    kind: "section",
+    href: `/planning#${section.id}`,
+  }));
+
+  if (readiness.missingCharacterCard) {
+    items.push({
+      id: "character-card",
+      label: "人物卡",
+      description: "知识库 · 至少建立一张人物卡",
+      severity: "blocking",
+      kind: "character-card",
+      href: "/knowledge",
+    });
+  }
+  if (readiness.missingChapterPlan) {
+    items.push({
+      id: "chapter-plan",
+      label: "章节执行卡",
+      description: "章节规划 · 本章人物、冲突与结尾依据",
+      severity: "blocking",
+      kind: "chapter-plan",
+      href: `/planning#${chapterId}`,
+    });
+  }
+  if (readiness.missingNarrativePerspective) {
+    items.push({
+      id: "frame-narrative",
+      label: "叙述人称未明确",
+      description: "正式设定 · 固定第一、第二或第三人称",
+      severity: "blocking",
+      kind: "section",
+      href: "/planning#frame-narrative",
+    });
+  }
+
+  items.push(
+    ...readiness.warningMissingSections.map((section) => ({
+      id: section.id,
+      label: section.label,
+      description: "规划建议 · 不阻断创作",
+      severity: "warning" as const,
+      kind: "section" as const,
+      href: `/planning#${section.id}`,
+    })),
+  );
+  return items;
 }
 
 export function assessWritingReadiness(input: {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   assessWritingReadiness,
   blockingWritingSections,
+  buildWritingReadinessItems,
   findWritingGapTargets,
   warningWritingSections,
 } from "./writing-readiness";
@@ -131,5 +132,31 @@ describe("findWritingGapTargets", () => {
 
   it("returns no target when the model only gives a generic insufficiency message", () => {
     expect(findWritingGapTargets("[上下文不足]\n正式设定不完整")).toEqual([]);
+  });
+});
+
+describe("buildWritingReadinessItems", () => {
+  it("puts all blocking gaps before optional suggestions and preserves direct destinations", () => {
+    const readiness = assessWritingReadiness({
+      sections: [],
+      hasCharacterCard: false,
+      hasChapterPlan: false,
+    });
+    const items = buildWritingReadinessItems(readiness, "chapter-1");
+
+    expect(items.slice(0, 7).map((item) => item.id)).toEqual([
+      "seed-premise",
+      "engine-protagonist",
+      "frame-setting",
+      "frame-narrative",
+      "character-card",
+      "chapter-plan",
+      ...warningWritingSections.slice(0, 1).map((item) => item.id),
+    ]);
+    expect(items.find((item) => item.id === "character-card")?.href).toBe("/knowledge");
+    expect(items.find((item) => item.id === "chapter-plan")?.href).toBe("/planning#chapter-1");
+    expect(items.find((item) => item.id === "frame-setting")?.href).toBe(
+      "/planning#frame-setting",
+    );
   });
 });

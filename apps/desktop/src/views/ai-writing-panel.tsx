@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import type { Editor } from "@tiptap/react";
-import { Ban, Check, CircleAlert, Columns2, LoaderCircle, Play, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { Ban, Check, Columns2, LoaderCircle, Play, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   cancelAiTask,
@@ -20,6 +20,7 @@ import {
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import { assessWritingReadiness, findWritingGapTargets } from "../lib/writing-readiness";
 import { AiModelNote } from "./ai-model-note";
+import { WritingReadinessPanel } from "./writing-readiness-panel";
 
 const actionLabels: Record<AiAction, string> = {
   DRAFT: "AI 创作整章",
@@ -298,48 +299,11 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
   const admissionBlocked = !readinessLoading && !readiness.canGenerate;
   const writingActionBlocked = (action: AiAction) =>
     admissionBlocked && (action === "DRAFT" || action === "CONTINUE");
-  const readinessState = readinessLoading
-    ? "loading"
-    : readiness.canGenerate
-      ? readiness.warningMissingSections.length
-        ? "warning"
-        : "ready"
-      : "blocked";
-  const readinessMessage = readinessLoading
-    ? "正在核对正式设定、人物卡和章节执行卡。"
-    : readiness.canGenerate
-      ? readiness.warningMissingSections.length
-        ? `可以开始创作；另有 ${readiness.warningMissingSections.length} 项建议补充的规划。`
-        : "关键设定、人物卡、章节执行卡和叙述人称均已确认，可以进入正文创作。"
-      : `还有 ${readiness.blockingMissingSections.length + Number(readiness.missingCharacterCard) + Number(readiness.missingChapterPlan) + Number(readiness.missingNarrativePerspective)} 项关键依据未确认，整章创作和续写已暂停。`;
-  const planningTarget = readiness.blockingMissingSections[0]?.id ?? (readiness.missingNarrativePerspective ? "frame-narrative" : props.chapterId);
 
   return <section className="ai-panel" aria-label="AI 创作">
     <div className="section-heading"><h2><Sparkles size={15} />AI 创作</h2><div className="proposal-heading-actions"><span>云端 API · Proposal 审核</span>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
     <AiModelNote taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
-    <section className="writing-readiness" id="writing-readiness" data-state={readinessState} aria-label="创作准入检查">
-      <div className="writing-readiness-heading">
-        {readinessLoading ? <LoaderCircle size={16} className="spin" /> : readiness.canGenerate ? <Check size={16} /> : <CircleAlert size={16} />}
-        <div><strong>创作准入</strong><span>{readinessMessage}</span></div>
-        <small>{readinessLoading ? "检查中" : readiness.canGenerate ? readiness.warningMissingSections.length ? "可写·有建议" : "可写" : "待补齐"}</small>
-      </div>
-      {!readinessLoading && (!readiness.canGenerate || readiness.warningMissingSections.length) ? <div className="writing-readiness-body">
-        <div className="writing-readiness-items">
-          {!readiness.canGenerate ? <span>关键设定 {readiness.blockingCompletedCount}/{readiness.blockingTotalCount}</span> : null}
-          {readiness.blockingMissingSections.map((item) => <code data-severity="blocking" key={item.id}>{item.label}</code>)}
-          {readiness.missingCharacterCard ? <code data-severity="blocking">人物卡</code> : null}
-          {readiness.missingChapterPlan ? <code data-severity="blocking">章节执行卡</code> : null}
-          {readiness.missingNarrativePerspective ? <code data-severity="blocking">叙述人称未明确</code> : null}
-          {readiness.warningMissingSections.length ? <span>建议补充 {readiness.warningMissingSections.length} 项</span> : null}
-          {readiness.warningMissingSections.map((item) => <code data-severity="warning" key={item.id}>{item.label}</code>)}
-        </div>
-        <div className="writing-readiness-actions">
-          {readiness.blockingMissingSections.length || readiness.missingChapterPlan || readiness.missingNarrativePerspective ? <a href={`/planning#${planningTarget}`}>去补设定</a> : null}
-          {readiness.missingCharacterCard ? <a href="/knowledge">去补人物卡</a> : null}
-          {readiness.canGenerate && readiness.warningMissingSections.length ? <a href={`/planning#${readiness.warningMissingSections[0]!.id}`}>查看建议项</a> : null}
-        </div>
-      </div> : null}
-    </section>
+    <WritingReadinessPanel chapterId={props.chapterId} readiness={readiness} loading={readinessLoading} sections={planningSections.data ?? []} />
     <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>
     <p className="ai-request-hint">系统会把这段意见与章节执行卡、写作规则和正文上下文一起编译成模型消息。</p>
     <div className="ai-draft-action"><div><strong>按章节执行卡创作整章</strong><span>AI 会参考章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿，确认后替换到正文。</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked("DRAFT")}><Sparkles size={14} />生成整章初稿</button></div>

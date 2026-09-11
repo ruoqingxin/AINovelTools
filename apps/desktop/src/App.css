@@ -1330,73 +1330,152 @@ textarea:focus-visible,
 
 .writing-readiness-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 10px;
+  gap: 9px;
   margin-top: 9px;
   padding-top: 9px;
   border-top: 1px solid rgba(116, 139, 171, .2);
 }
 
-.writing-readiness-items {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 5px;
+.writing-readiness-progress {
+  position: relative;
+  height: 5px;
+  margin: 12px 0 3px;
+  overflow: visible;
+  border-radius: 999px;
+  background: #e2eaf5;
 }
 
-.writing-readiness-items span,
-.writing-readiness-items code {
-  padding: 3px 7px;
-  border: 1px solid #dfd2b5;
-  border-radius: 5px;
-  color: #7b6239;
-  background: #fffdf8;
-  font: inherit;
+.writing-readiness-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #5c8fe9;
+  transition: width .22s ease;
+}
+
+.writing-readiness[data-state="blocked"] .writing-readiness-progress > span {
+  background: #d29435;
+}
+
+.writing-readiness[data-state="warning"] .writing-readiness-progress > span {
+  background: #bd9243;
+}
+
+.writing-readiness[data-state="ready"] .writing-readiness-progress > span {
+  background: #49a47f;
+}
+
+.writing-readiness-progress > small {
+  position: absolute;
+  right: 0;
+  bottom: 8px;
+  color: #7186a4;
   font-size: 9px;
-  line-height: 1.35;
-}
-
-.writing-readiness-items span {
-  border-color: #d5dfed;
-  color: #617997;
-  background: #fff;
   font-weight: 700;
 }
 
-.writing-readiness-items code[data-severity="blocking"] {
-  border-color: #e3c58a;
-  color: #845f20;
-  background: #fffaf0;
+.writing-readiness-list {
+  display: grid;
+  gap: 10px;
 }
 
-.writing-readiness-items code[data-severity="warning"] {
-  border-color: #dfd8c6;
-  color: #776e5d;
-  background: #fffdf8;
-}
-
-.writing-readiness-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+.writing-readiness-group {
+  display: grid;
   gap: 6px;
 }
 
-.writing-readiness-actions a {
-  display: inline-flex;
-  min-height: 27px;
+.writing-readiness-group-heading {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  color: #7186a4;
+}
+
+.writing-readiness-group-heading strong {
+  font-size: 10px;
+}
+
+.writing-readiness-group-heading small {
+  font-size: 9px;
+}
+
+.writing-readiness-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 1px solid #e1e8f2;
+  border-left: 3px solid #d29435;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .72);
+}
+
+.writing-readiness-item[data-severity="warning"] {
+  border-left-color: #c8b27f;
+}
+
+.writing-readiness-item > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.writing-readiness-item strong {
+  overflow: hidden;
+  color: #405a7f;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writing-readiness-item > div:first-child > span {
+  color: #8797ae;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.writing-readiness-item-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.writing-readiness-item-actions a,
+.writing-readiness-item-actions button,
+.writing-readiness-job {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   padding: 0 8px;
-  border: 1px solid #dfd2b5;
+  border: 1px solid #d8e2ef;
   border-radius: 5px;
-  color: #7a5a22;
+  color: #617997;
   background: #fff;
   font: inherit;
   font-size: 9px;
   font-weight: 700;
   text-decoration: none;
+  white-space: nowrap;
+}
+
+.writing-readiness-item-actions button {
   cursor: pointer;
+}
+
+.writing-readiness-job {
+  border-color: #d6e3f7;
+  color: #3a70c5;
+  background: #f3f7ff;
+}
+
+.writing-readiness-notice {
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .ai-actions,
@@ -2095,6 +2174,8 @@ textarea:focus-visible,
   .ai-draft-action { align-items: flex-start; flex-direction: column; }
   .model-wide { grid-column: auto; }
   .ai-actions { flex-wrap: wrap; }
+  .writing-readiness-item { grid-template-columns: 1fr; }
+  .writing-readiness-item-actions { justify-content: flex-start; flex-wrap: wrap; }
   .proposal-feedback,.proposal-compare-grid { grid-template-columns:1fr; }
   .chapter-tabs { overflow-x: auto; }
   .chapter-tabs button { flex: 0 0 auto; }
