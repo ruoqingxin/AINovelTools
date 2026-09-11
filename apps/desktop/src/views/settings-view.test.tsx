@@ -9,9 +9,13 @@ const mocks = vi.hoisted(() => ({
   listModelProfiles: vi.fn(),
   getAiTaskPreferences: vi.fn(),
   saveAiTaskPreferences: vi.fn(),
+  getAiBudgetSettings: vi.fn(),
+  saveAiBudgetSettings: vi.fn(),
   listAiRuns: vi.fn(),
+  getAiUsageSummary: vi.fn(),
   getProjectAiTaskOverrides: vi.fn(),
   saveProjectAiTaskOverride: vi.fn(),
+  saveProjectAiTaskOverrides: vi.fn(),
   removeProjectAiTaskOverride: vi.fn(),
 }));
 
@@ -28,9 +32,13 @@ vi.mock("../lib/tauri-client", async () => {
     listModelProfiles: mocks.listModelProfiles,
     getAiTaskPreferences: mocks.getAiTaskPreferences,
     saveAiTaskPreferences: mocks.saveAiTaskPreferences,
+    getAiBudgetSettings: mocks.getAiBudgetSettings,
+    saveAiBudgetSettings: mocks.saveAiBudgetSettings,
     listAiRuns: mocks.listAiRuns,
+    getAiUsageSummary: mocks.getAiUsageSummary,
     getProjectAiTaskOverrides: mocks.getProjectAiTaskOverrides,
     saveProjectAiTaskOverride: mocks.saveProjectAiTaskOverride,
+    saveProjectAiTaskOverrides: mocks.saveProjectAiTaskOverrides,
     removeProjectAiTaskOverride: mocks.removeProjectAiTaskOverride,
   };
 });
@@ -45,7 +53,19 @@ describe("SettingsView", () => {
     mocks.listModelProfiles.mockResolvedValue([]);
     mocks.getAiTaskPreferences.mockResolvedValue(recommendedAiTaskPreferenceSnapshot());
     mocks.saveAiTaskPreferences.mockImplementation(async (preferences) => preferences);
+    mocks.getAiBudgetSettings.mockResolvedValue({
+      currency: "USD",
+      dailyLimitMicros: null,
+      projectLimitMicros: null,
+    });
+    mocks.saveAiBudgetSettings.mockImplementation(async (settings) => settings);
     mocks.listAiRuns.mockResolvedValue([]);
+    mocks.getAiUsageSummary.mockResolvedValue({
+      days: 30,
+      total: [],
+      daily: [],
+      byTask: [],
+    });
     mocks.getProjectAiTaskOverrides.mockResolvedValue({
       available: false,
       workDesign: null,
@@ -63,6 +83,10 @@ describe("SettingsView", () => {
       chapterSplit: null,
       writing: null,
       knowledgeExtraction: null,
+    }));
+    mocks.saveProjectAiTaskOverrides.mockImplementation(async (preferences) => ({
+      available: true,
+      ...preferences,
     }));
     mocks.removeProjectAiTaskOverride.mockResolvedValue({
       available: true,
@@ -292,5 +316,158 @@ describe("SettingsView", () => {
       "workDesign",
       expect.objectContaining({ temperature: 0.45, maxOutputTokens: 4096 }),
     );
+  });
+
+  it("loads project overrides into a separate project editing scope", async () => {
+    const global = recommendedAiTaskPreferenceSnapshot();
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        inputPriceMicrosPerMillion: 2500000, outputPriceMicrosPerMillion: 10000000,
+        priceCurrency: "USD", secretRef: "model-profile:deepseek-profile", hasSecret: true,
+        createdAt: "0", updatedAt: "0",
+      },
+    ]);
+    mocks.getAiTaskPreferences.mockResolvedValue(global);
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({
+      available: true,
+      workDesign: {
+        ...global.workDesign,
+        temperature: 1.1,
+        maxOutputTokens: 3072,
+      },
+      outline: null,
+      volumePlanning: null,
+      chapterSplit: null,
+      writing: null,
+      knowledgeExtraction: null,
+    });
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    await screen.findByLabelText("作品设定温度");
+    expect(screen.getByLabelText("作品设定温度")).toHaveValue(0.45);
+
+    fireEvent.click(screen.getByRole("tab", { name: "项目覆盖" }));
+    await waitFor(() => expect(screen.getByLabelText("作品设定温度")).toHaveValue(1.1));
+    expect(screen.getByLabelText("作品设定最大输出")).toHaveValue(3072);
+  });
+
+  it("persists the preferred model to all project task overrides", async () => {
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        inputPriceMicrosPerMillion: 2500000, outputPriceMicrosPerMillion: 10000000,
+        priceCurrency: "USD", secretRef: "model-profile:deepseek-profile", hasSecret: true,
+        createdAt: "0", updatedAt: "0",
+      },
+    ]);
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({
+      available: true,
+      workDesign: null,
+      outline: null,
+      volumePlanning: null,
+      chapterSplit: null,
+      writing: null,
+      knowledgeExtraction: null,
+    });
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    await screen.findByLabelText("作品设定温度");
+    fireEvent.click(screen.getByRole("tab", { name: "项目覆盖" }));
+    fireEvent.click(screen.getByRole("button", { name: "全部使用首选模型" }));
+
+    await screen.findByText("已将“DeepSeek 写作”应用并保存到全部项目任务");
+    expect(mocks.saveProjectAiTaskOverrides).toHaveBeenCalledTimes(1);
+    const saved = mocks.saveProjectAiTaskOverrides.mock.calls[0][0];
+    expect(AI_TASK_DEFINITIONS.every(({ key }) => saved[key].profileId === "deepseek-profile")).toBe(true);
+  });
+
+  it("shows estimated model cost for unified AI runs", async () => {
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        inputPriceMicrosPerMillion: 2500000, outputPriceMicrosPerMillion: 10000000,
+        priceCurrency: "USD", secretRef: "model-profile:deepseek-profile", hasSecret: true,
+        createdAt: "0", updatedAt: "0",
+      },
+    ]);
+    mocks.listAiRuns.mockResolvedValue([
+      {
+        id: "run-1",
+        taskKey: "outline",
+        source: "PLANNING",
+        action: "outline",
+        status: "COMPLETED",
+        chapterTitle: "故事大纲",
+        profileName: "规划模型",
+        attemptCount: 1,
+        retryReason: null,
+        errorCode: null,
+        estimatedInputTokens: 1000,
+        estimatedOutputTokens: 500,
+        estimatedCostMicros: 20000,
+        priceCurrency: "USD",
+        promptVersion: "planning-v1",
+        createdAt: "2026-09-11T00:00:00Z",
+        finishedAt: "2026-09-11T00:00:01Z",
+      },
+    ]);
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    expect(await screen.findAllByText(/USD 0\.02/)).toHaveLength(2);
+    expect(screen.getByText("大纲主线 · 故事大纲")).toBeVisible();
+  });
+
+  it("warns when estimated spend reaches a soft budget", async () => {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        inputPriceMicrosPerMillion: 2500000, outputPriceMicrosPerMillion: 10000000,
+        priceCurrency: "USD", secretRef: "model-profile:deepseek-profile", hasSecret: true,
+        createdAt: "0", updatedAt: "0",
+      },
+    ]);
+    mocks.getAiUsageSummary.mockResolvedValue({
+      days: 30,
+      total: [{
+        currency: "USD",
+        runCount: 2,
+        inputTokens: 1000,
+        outputTokens: 500,
+        estimatedCostMicros: 20000,
+      }],
+      daily: [{
+        date: today,
+        currency: "USD",
+        runCount: 2,
+        inputTokens: 1000,
+        outputTokens: 500,
+        estimatedCostMicros: 20000,
+      }],
+      byTask: [],
+    });
+    mocks.getAiBudgetSettings.mockResolvedValue({
+      currency: "USD",
+      dailyLimitMicros: 25000,
+      projectLimitMicros: 100000,
+    });
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+
+    expect(await screen.findByText("今日估算费用已达到每日预算的 80%")).toBeVisible();
   });
 });

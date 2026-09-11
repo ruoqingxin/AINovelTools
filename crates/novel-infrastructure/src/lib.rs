@@ -32,10 +32,12 @@ mod knowledge_store;
 mod materials_store;
 mod search_store;
 pub use ai::{
-    AiError, AiOutputValidation, AiProposalFeedback, AiProposalFeedbackRating, AiProposalReview,
-    AiRun, AiTaskContextPreference, AiTaskKind, AiTaskPreference, AiTaskPreferences,
-    AiTaskPromptPreference, EmbeddingGateway, GenerationOptions, ModelGateway, ModelProfileStore,
-    ProjectAiTaskOverrides, SecretStore, apply_task_prompt_preferences, render_prompt_template,
+    AiBudgetSettings, AiError, AiOutputValidation, AiProposalFeedback, AiProposalFeedbackRating,
+    AiProposalReview, AiRun, AiRunSource, AiRunStart, AiTaskContextPreference, AiTaskKind,
+    AiTaskPreference, AiTaskPreferences, AiTaskPromptPreference, AiUsageCurrencySummary,
+    AiUsageDailySummary, AiUsageSummary, AiUsageTaskSummary, EmbeddingGateway, GenerationOptions,
+    ModelGateway, ModelProfileStore, ProjectAiTaskOverrides, SecretStore,
+    apply_task_prompt_preferences, render_prompt_template,
 };
 pub use entity_store::EntityStoreError;
 pub use knowledge_store::KnowledgeStoreError;
@@ -174,7 +176,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 34;
+pub const CURRENT_SCHEMA_VERSION: i64 = 35;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -321,6 +323,27 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         stage: "R3",
         status: FeatureStatus::Partial,
         unavailable_reason: Some("正在实现 Proposal 交互"),
+    },
+    FeatureDescriptor {
+        id: "ai_task_routing",
+        display_name: "六类 AI 任务路由与项目覆盖",
+        stage: "AI",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "ai_run_audit",
+        display_name: "统一 AI 运行审计与主备回退",
+        stage: "AI",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "ai_usage_governance",
+        display_name: "AI 用量估算与软预算",
+        stage: "AI",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
     },
     FeatureDescriptor {
         id: "r4_project_settings",
@@ -2946,6 +2969,9 @@ mod tests {
                 privacy_level: super::PrivacyLevel::AllowCloud,
                 timeout_seconds: 30,
                 retry_limit: 1,
+                input_price_micros_per_million: 2_000_000,
+                output_price_micros_per_million: 4_000_000,
+                price_currency: "USD".into(),
             })
             .expect("profile");
         let fallback = manager
@@ -2961,6 +2987,9 @@ mod tests {
                 privacy_level: super::PrivacyLevel::AllowCloud,
                 timeout_seconds: 30,
                 retry_limit: 1,
+                input_price_micros_per_million: 1_000_000,
+                output_price_micros_per_million: 2_000_000,
+                price_currency: "USD".into(),
             })
             .expect("fallback profile");
         manager
@@ -3042,9 +3071,27 @@ mod tests {
         assert_eq!(proposal.status, super::AiProposalStatus::Pending);
         let runs = manager.list_ai_runs(10).expect("runs");
         assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].task_key, "writing");
+        assert_eq!(runs[0].source, "WRITING");
         assert_eq!(runs[0].attempt_count, 2);
         assert_eq!(runs[0].profile_name, "备用模型");
         assert_eq!(runs[0].retry_reason.as_deref(), Some("PROVIDER_TIMEOUT"));
+        assert_eq!(runs[0].price_currency, "USD");
+        assert!(runs[0].estimated_cost_micros.is_some());
+        let usage = manager.get_ai_usage_summary(30).expect("usage summary");
+        assert_eq!(usage.days, 30);
+        assert_eq!(usage.total.len(), 1);
+        assert_eq!(usage.total[0].run_count, 1);
+        assert_eq!(
+            usage.total[0].input_tokens,
+            u64::from(runs[0].estimated_input_tokens)
+        );
+        assert_eq!(
+            usage.total[0].output_tokens,
+            u64::from(runs[0].estimated_output_tokens)
+        );
+        assert_eq!(usage.daily.len(), 1);
+        assert_eq!(usage.by_task.len(), 1);
         let feedback = manager
             .rate_ai_proposal(
                 proposal.id,
@@ -3089,6 +3136,66 @@ mod tests {
     }
 
     #[test]
+    fn project_ai_task_overrides_can_be_saved_as_a_batch() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-ai-batch-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "批量覆盖测试").expect("create");
+        let profile = manager
+            .upsert_model_profile(super::ModelProfileInput {
+                id: None,
+                name: "批量模型".into(),
+                provider: super::ModelProvider::DeepSeek,
+                capability: super::ModelCapability::Chat,
+                base_url: "https://api.deepseek.com".into(),
+                model_id: "deepseek-chat".into(),
+                context_window: 32_768,
+                max_output_tokens: 4_096,
+                privacy_level: super::PrivacyLevel::AllowCloud,
+                timeout_seconds: 30,
+                retry_limit: 1,
+                input_price_micros_per_million: 1_000_000,
+                output_price_micros_per_million: 2_000_000,
+                price_currency: "CNY".into(),
+            })
+            .expect("profile");
+        let preference = super::AiTaskPreference {
+            profile_id: Some(profile.id),
+            ..super::AiTaskPreference::default()
+        };
+        let preferences = super::AiTaskPreferences {
+            work_design: preference.clone(),
+            outline: preference.clone(),
+            volume_planning: preference.clone(),
+            chapter_split: preference.clone(),
+            writing: preference.clone(),
+            knowledge_extraction: preference,
+        };
+
+        manager
+            .save_project_ai_task_overrides(&preferences)
+            .expect("batch overrides");
+        let overrides = manager
+            .get_project_ai_task_overrides()
+            .expect("project overrides");
+        assert!(overrides.available);
+        for task in [
+            super::AiTaskKind::WorkDesign,
+            super::AiTaskKind::Outline,
+            super::AiTaskKind::VolumePlanning,
+            super::AiTaskKind::ChapterSplit,
+            super::AiTaskKind::Writing,
+            super::AiTaskKind::KnowledgeExtraction,
+        ] {
+            assert_eq!(
+                overrides.get(task).and_then(|item| item.profile_id),
+                Some(profile.id)
+            );
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn failed_ai_tasks_do_not_create_proposals() {
         let root = std::path::PathBuf::from("target")
             .join(format!("ainovel-ai-fail-{}", uuid::Uuid::new_v4()));
@@ -3110,6 +3217,9 @@ mod tests {
                 privacy_level: super::PrivacyLevel::AllowCloud,
                 timeout_seconds: 30,
                 retry_limit: 0,
+                input_price_micros_per_million: 0,
+                output_price_micros_per_million: 0,
+                price_currency: "USD".into(),
             })
             .expect("profile");
         let context = novel_application::ContextAssembler::assemble(
@@ -3140,6 +3250,76 @@ mod tests {
     }
 
     #[test]
+    fn planning_ai_runs_are_recorded_with_fallback_and_cost_snapshot() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-planning-run-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "AI 运行测试").expect("create");
+        let profile = manager
+            .upsert_model_profile(super::ModelProfileInput {
+                id: None,
+                name: "规划模型".into(),
+                provider: super::ModelProvider::DeepSeek,
+                capability: super::ModelCapability::Chat,
+                base_url: "https://api.deepseek.com".into(),
+                model_id: "deepseek-v4-flash".into(),
+                context_window: 128_000,
+                max_output_tokens: 8_192,
+                privacy_level: super::PrivacyLevel::AllowCloud,
+                timeout_seconds: 120,
+                retry_limit: 1,
+                input_price_micros_per_million: 2_000_000,
+                output_price_micros_per_million: 4_000_000,
+                price_currency: "USD".into(),
+            })
+            .expect("profile");
+        let fallback = manager
+            .upsert_model_profile(super::ModelProfileInput {
+                id: None,
+                name: "备用规划模型".into(),
+                provider: super::ModelProvider::OpenAi,
+                capability: super::ModelCapability::Chat,
+                base_url: "https://api.openai.com/v1".into(),
+                model_id: "gpt-test".into(),
+                context_window: 128_000,
+                max_output_tokens: 8_192,
+                privacy_level: super::PrivacyLevel::AllowCloud,
+                timeout_seconds: 120,
+                retry_limit: 1,
+                input_price_micros_per_million: 1_000_000,
+                output_price_micros_per_million: 2_000_000,
+                price_currency: "CNY".into(),
+            })
+            .expect("fallback");
+        let run_id = manager
+            .start_ai_run(super::AiRunStart {
+                task: super::AiTaskKind::WorkDesign,
+                source: super::AiRunSource::Planning,
+                job_id: None,
+                chapter_id: None,
+                display_title: "核心前提",
+                profile_id: profile.id,
+                prompt_version: "planning-v1",
+                estimated_input_tokens: 2_000,
+            })
+            .expect("run");
+        manager
+            .record_ai_run_fallback(run_id, fallback.id, "PROVIDER_TIMEOUT")
+            .expect("fallback");
+        manager.complete_ai_run(run_id, 500).expect("complete");
+        let runs = manager.list_ai_runs(10).expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].task_key, "workDesign");
+        assert_eq!(runs[0].source, "PLANNING");
+        assert_eq!(runs[0].chapter_title, "核心前提");
+        assert_eq!(runs[0].profile_name, "备用规划模型");
+        assert_eq!(runs[0].attempt_count, 2);
+        assert_eq!(runs[0].price_currency, "CNY");
+        assert_eq!(runs[0].estimated_cost_micros, Some(3_000));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn embedding_profiles_cannot_create_writing_tasks() {
         let root = std::path::PathBuf::from("target")
             .join(format!("ainovel-embedding-role-{}", uuid::Uuid::new_v4()));
@@ -3161,6 +3341,9 @@ mod tests {
                 privacy_level: super::PrivacyLevel::AllowCloud,
                 timeout_seconds: 30,
                 retry_limit: 0,
+                input_price_micros_per_million: 0,
+                output_price_micros_per_million: 0,
+                price_currency: "USD".into(),
             })
             .expect("profile");
         let context = novel_application::ContextAssembler::assemble(

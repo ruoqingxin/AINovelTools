@@ -50,6 +50,9 @@ pub struct ModelProfile {
     pub privacy_level: PrivacyLevel,
     pub timeout_seconds: u32,
     pub retry_limit: u8,
+    pub input_price_micros_per_million: u64,
+    pub output_price_micros_per_million: u64,
+    pub price_currency: String,
     pub secret_ref: Option<String>,
     pub has_secret: bool,
     pub created_at: String,
@@ -70,6 +73,9 @@ pub struct ModelProfileInput {
     pub privacy_level: PrivacyLevel,
     pub timeout_seconds: u32,
     pub retry_limit: u8,
+    pub input_price_micros_per_million: u64,
+    pub output_price_micros_per_million: u64,
+    pub price_currency: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -437,6 +443,8 @@ pub enum AiContractError {
     InvalidTimeout,
     #[error("retry limit cannot exceed 3")]
     InvalidRetryLimit,
+    #[error("model pricing metadata is invalid")]
+    InvalidPricing,
     #[error("the selected provider does not support this model capability")]
     InvalidProviderCapability,
     #[error("this action requires a non-empty selection")]
@@ -707,6 +715,16 @@ impl ModelProfileInput {
         if self.retry_limit > 3 {
             return Err(AiContractError::InvalidRetryLimit);
         }
+        if self.price_currency.len() != 3
+            || !self
+                .price_currency
+                .chars()
+                .all(|value| value.is_ascii_uppercase())
+            || self.input_price_micros_per_million > 1_000_000_000_000
+            || self.output_price_micros_per_million > 1_000_000_000_000
+        {
+            return Err(AiContractError::InvalidPricing);
+        }
         let valid_capability = matches!(
             (self.provider, self.capability),
             (ModelProvider::SiliconFlow, ModelCapability::Embedding)
@@ -751,6 +769,9 @@ mod tests {
             privacy_level: super::PrivacyLevel::AllowCloud,
             timeout_seconds: 120,
             retry_limit: 1,
+            input_price_micros_per_million: 2_500_000,
+            output_price_micros_per_million: 10_000_000,
+            price_currency: "USD".into(),
         };
         assert_eq!(input.validate(), Ok(()));
         let mut invalid = input.clone();
@@ -758,6 +779,12 @@ mod tests {
         assert_eq!(
             invalid.validate(),
             Err(super::AiContractError::InvalidProviderCapability)
+        );
+        let mut invalid_pricing = input.clone();
+        invalid_pricing.price_currency = "US".into();
+        assert_eq!(
+            invalid_pricing.validate(),
+            Err(super::AiContractError::InvalidPricing)
         );
         assert!(super::AiAction::Rewrite.requires_selection());
         assert!(!super::AiAction::Continue.requires_selection());

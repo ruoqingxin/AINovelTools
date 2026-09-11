@@ -1516,6 +1516,29 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         let _ = manager.update_job_progress(job.id, 30);
         let _ = manager.append_job_event(job.id, "REQUESTING", "正在等待模型响应", 30);
     }
+    let run_id = {
+        let Ok(mut manager) = state.manager.lock() else {
+            fail_planning_job(&state, job.id, "无法写入 AI 运行记录");
+            return true;
+        };
+        match manager.start_ai_run(novel_infrastructure::AiRunStart {
+            task: task_kind,
+            source: novel_infrastructure::AiRunSource::Planning,
+            job_id: Some(job.id),
+            chapter_id: None,
+            display_title: &input.section_title,
+            profile_id: profile.id,
+            prompt_version: &context.prompt_version,
+            estimated_input_tokens: context.estimated_input_tokens,
+        }) {
+            Ok(run_id) => run_id,
+            Err(error) => {
+                drop(manager);
+                fail_planning_job(&state, job.id, format!("无法创建 AI 运行记录：{error}"));
+                return true;
+            }
+        }
+    };
     let cancelled = Arc::new(AtomicBool::new(false));
     if let Ok(mut cancellations) = state.ai_cancellations.lock() {
         cancellations.insert(job.id, Arc::clone(&cancelled));
@@ -1558,6 +1581,27 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
     match result {
         Ok(outcome) => {
             if let Some(fallback) = outcome.fallback_profile.as_ref() {
+                if let Ok(mut manager) = state.manager.lock() {
+                    let _ = manager.record_ai_run_fallback(
+                        run_id,
+                        fallback.id,
+                        outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+                    );
+                    let (endpoint, request_body) = state.gateway.request_preview_with_options(
+                        fallback,
+                        &context,
+                        true,
+                        false,
+                        generation_options,
+                    );
+                    input.final_request_endpoint = Some(endpoint);
+                    input.final_request_estimated_input_tokens =
+                        Some(context.estimated_input_tokens);
+                    input.final_request_body = serde_json::to_string_pretty(&request_body).ok();
+                    if let Ok(payload) = serde_json::to_string(&input) {
+                        let _ = manager.update_job_payload(job.id, payload);
+                    }
+                }
                 append_planning_job_event(
                     &state,
                     job.id,
@@ -1601,11 +1645,18 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             });
             section.pending_content = outcome.output;
             section.references = input.source_name.clone().unwrap_or_default();
+            let output_tokens = u32::try_from(section.pending_content.chars().count().div_ceil(4))
+                .unwrap_or(u32::MAX);
             if let Err(error) = manager.save_planning_section(section) {
                 drop(manager);
+                if let Ok(mut manager) = state.manager.lock() {
+                    let _ = manager
+                        .fail_ai_run(run_id, &novel_infrastructure::AiError::InvalidResponse);
+                }
                 fail_planning_job(&state, job.id, error.to_string());
                 return true;
             }
+            let _ = manager.complete_ai_run(run_id, output_tokens);
             let _ = manager.append_job_event(job.id, "COMPLETED", "结果已保存到待定区", 100);
             let _ = manager.update_job_status(
                 job.id,
@@ -1616,6 +1667,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         }
         Err(novel_infrastructure::AiError::Cancelled) => {
             if let Ok(mut manager) = state.manager.lock() {
+                let _ = manager.fail_ai_run(run_id, &novel_infrastructure::AiError::Cancelled);
                 let _ = manager.append_job_event(job.id, "CANCELLED", "任务已取消", 100);
                 let _ = manager.update_job_status(
                     job.id,
@@ -1625,7 +1677,12 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                 );
             }
         }
-        Err(error) => fail_planning_job(&state, job.id, error.to_string()),
+        Err(error) => {
+            if let Ok(mut manager) = state.manager.lock() {
+                let _ = manager.fail_ai_run(run_id, &error);
+            }
+            fail_planning_job(&state, job.id, error.to_string());
+        }
     }
     true
 }
@@ -1734,7 +1791,25 @@ pub(crate) async fn extract_entities_from_text(
     )
     .unwrap_or(u32::MAX)
     .min(input_token_budget);
-    let output = generate_with_task_fallback(
+    let run_id = {
+        let mut manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        manager
+            .start_ai_run(novel_infrastructure::AiRunStart {
+                task: task_kind,
+                source: novel_infrastructure::AiRunSource::KnowledgeExtraction,
+                job_id: None,
+                chapter_id: None,
+                display_title: &format!("知识提炼 · {entity_name}"),
+                profile_id: profile.id,
+                prompt_version: &context.prompt_version,
+                estimated_input_tokens: context.estimated_input_tokens,
+            })
+            .map_err(ApiError::from)?
+    };
+    let outcome = generate_with_task_fallback(
         &state,
         &task_preference,
         &profile,
@@ -1746,9 +1821,26 @@ pub(crate) async fn extract_entities_from_text(
         Arc::new(AtomicBool::new(false)),
         |_| {},
     )
-    .await
-    .map_err(ApiError::from)?
-    .output;
+    .await;
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if let Ok(mut manager) = state.manager.lock() {
+                let _ = manager.fail_ai_run(run_id, &error);
+            }
+            return Err(ApiError::from(error));
+        }
+    };
+    if let Some(fallback) = outcome.fallback_profile.as_ref()
+        && let Ok(mut manager) = state.manager.lock()
+    {
+        let _ = manager.record_ai_run_fallback(
+            run_id,
+            fallback.id,
+            outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+        );
+    }
+    let output = outcome.output;
     let cleaned = output
         .trim()
         .trim_start_matches("```json")
@@ -1759,10 +1851,22 @@ pub(crate) async fn extract_entities_from_text(
         .find('[')
         .and_then(|start| cleaned.rfind(']').map(|end| &cleaned[start..=end]))
         .unwrap_or(cleaned);
-    serde_json::from_str(json).map_err(|_| ApiError {
-        code: "INVALID_RESPONSE",
-        message: "AI 返回的提炼结果不是有效 JSON，请重试".to_owned(),
-    })
+    if let Ok(entities) = serde_json::from_str(json) {
+        if let Ok(mut manager) = state.manager.lock() {
+            let output_tokens =
+                u32::try_from(output.chars().count().div_ceil(4)).unwrap_or(u32::MAX);
+            let _ = manager.complete_ai_run(run_id, output_tokens);
+        }
+        Ok(entities)
+    } else {
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.fail_ai_run(run_id, &novel_infrastructure::AiError::InvalidResponse);
+        }
+        Err(ApiError {
+            code: "INVALID_RESPONSE",
+            message: "AI 返回的提炼结果不是有效 JSON，请重试".to_owned(),
+        })
+    }
 }
 
 fn sync_model_profile(
@@ -1782,6 +1886,9 @@ fn sync_model_profile(
             privacy_level: profile.privacy_level,
             timeout_seconds: profile.timeout_seconds,
             retry_limit: profile.retry_limit,
+            input_price_micros_per_million: profile.input_price_micros_per_million,
+            output_price_micros_per_million: profile.output_price_micros_per_million,
+            price_currency: profile.price_currency.clone(),
         })
         .map_err(ApiError::from)?;
     manager
@@ -1845,6 +1952,31 @@ pub(crate) fn save_ai_task_preferences(
 }
 
 #[tauri::command]
+pub(crate) fn get_ai_budget_settings(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<novel_infrastructure::AiBudgetSettings, ApiError> {
+    let store = state
+        .model_profiles
+        .lock()
+        .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+    store.get_ai_budget_settings().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn save_ai_budget_settings(
+    state: tauri::State<'_, ProjectState>,
+    settings: novel_infrastructure::AiBudgetSettings,
+) -> Result<novel_infrastructure::AiBudgetSettings, ApiError> {
+    let mut store = state
+        .model_profiles
+        .lock()
+        .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+    store
+        .save_ai_budget_settings(&settings)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn get_project_ai_task_overrides(
     state: tauri::State<'_, ProjectState>,
 ) -> Result<novel_infrastructure::ProjectAiTaskOverrides, ApiError> {
@@ -1892,6 +2024,59 @@ pub(crate) fn save_project_ai_task_override(
     }
     manager
         .save_project_ai_task_override(task, &preference)
+        .map_err(ApiError::from)?;
+    manager
+        .get_project_ai_task_overrides()
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn save_project_ai_task_overrides(
+    state: tauri::State<'_, ProjectState>,
+    preferences: novel_infrastructure::AiTaskPreferences,
+) -> Result<novel_infrastructure::ProjectAiTaskOverrides, ApiError> {
+    let profiles = {
+        let store = state
+            .model_profiles
+            .lock()
+            .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+        store.list().map_err(ApiError::from)?
+    };
+    let required_profile_ids = [
+        preferences.work_design.profile_id,
+        preferences.work_design.fallback_profile_id,
+        preferences.outline.profile_id,
+        preferences.outline.fallback_profile_id,
+        preferences.volume_planning.profile_id,
+        preferences.volume_planning.fallback_profile_id,
+        preferences.chapter_split.profile_id,
+        preferences.chapter_split.fallback_profile_id,
+        preferences.writing.profile_id,
+        preferences.writing.fallback_profile_id,
+        preferences.knowledge_extraction.profile_id,
+        preferences.knowledge_extraction.fallback_profile_id,
+    ];
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    for profile_id in required_profile_ids.into_iter().flatten() {
+        let profile = profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| {
+                ApiError::from(novel_infrastructure::AiError::MissingProfile(profile_id))
+            })?;
+        if profile.capability != novel_infrastructure::ModelCapability::Chat {
+            return Err(ApiError {
+                code: "INVALID_INPUT",
+                message: "项目覆盖只能使用聊天模型".to_owned(),
+            });
+        }
+        sync_model_profile(&mut manager, profile)?;
+    }
+    manager
+        .save_project_ai_task_overrides(&preferences)
         .map_err(ApiError::from)?;
     manager
         .get_project_ai_task_overrides()
@@ -2074,6 +2259,20 @@ pub(crate) fn list_ai_runs(
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
         .list_ai_runs(limit.unwrap_or(20))
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn get_ai_usage_summary(
+    state: tauri::State<'_, ProjectState>,
+    days: Option<u32>,
+) -> Result<novel_infrastructure::AiUsageSummary, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .get_ai_usage_summary(days.unwrap_or(30))
         .map_err(ApiError::from)
 }
 

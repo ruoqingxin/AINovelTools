@@ -165,7 +165,9 @@ export type AiProposalStatus = "PENDING" | "ACCEPTED" | "PARTIALLY_ACCEPTED" | "
 export type ModelProfile = {
   id: string; name: string; provider: ModelProvider; capability: ModelCapability; baseUrl: string; modelId: string;
   contextWindow: number; maxOutputTokens: number; privacyLevel: PrivacyLevel;
-  timeoutSeconds: number; retryLimit: number; secretRef: string | null; hasSecret: boolean;
+  timeoutSeconds: number; retryLimit: number;
+  inputPriceMicrosPerMillion: number; outputPriceMicrosPerMillion: number; priceCurrency: string;
+  secretRef: string | null; hasSecret: boolean;
   createdAt: string; updatedAt: string;
 };
 export type ModelProfileInput = Omit<ModelProfile, "id" | "secretRef" | "hasSecret" | "createdAt" | "updatedAt"> & { id?: string };
@@ -212,10 +214,32 @@ export type AiProposal = {
   status: AiProposalStatus; createdAt: string; decidedAt: string | null;
 };
 export type AiRun = {
-  id: string; action: AiAction; status: string; chapterTitle: string; profileName: string;
+  id: string; taskKey: string; source: string; action: AiAction | string; status: string;
+  chapterTitle: string; profileName: string;
   attemptCount: number; retryReason: string | null; errorCode: string | null;
   estimatedInputTokens: number; estimatedOutputTokens: number;
+  estimatedCostMicros: number | null; priceCurrency: string;
   promptVersion: string; createdAt: string; finishedAt: string | null;
+};
+export type AiUsageCurrencySummary = {
+  currency: string;
+  runCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostMicros: number | null;
+};
+export type AiUsageDailySummary = AiUsageCurrencySummary & { date: string };
+export type AiUsageTaskSummary = AiUsageCurrencySummary & { taskKey: string };
+export type AiUsageSummary = {
+  days: number;
+  total: AiUsageCurrencySummary[];
+  daily: AiUsageDailySummary[];
+  byTask: AiUsageTaskSummary[];
+};
+export type AiBudgetSettings = {
+  currency: string;
+  dailyLimitMicros: number | null;
+  projectLimitMicros: number | null;
 };
 export type AiProposalFeedback = {
   proposalId: string; rating: "HELPFUL" | "NOT_HELPFUL"; note: string | null;
@@ -427,11 +451,20 @@ export function getAiTaskPreferences() {
 export function saveAiTaskPreferences(preferences: AiTaskPreferences) {
   return invoke<AiTaskPreferences>("save_ai_task_preferences", { preferences });
 }
+export function getAiBudgetSettings() {
+  return invoke<AiBudgetSettings>("get_ai_budget_settings");
+}
+export function saveAiBudgetSettings(settings: AiBudgetSettings) {
+  return invoke<AiBudgetSettings>("save_ai_budget_settings", { settings });
+}
 export function getProjectAiTaskOverrides() {
   return invoke<ProjectAiTaskOverrides>("get_project_ai_task_overrides");
 }
 export function saveProjectAiTaskOverride(task: keyof AiTaskPreferences, preference: AiTaskPreference) {
   return invoke<ProjectAiTaskOverrides>("save_project_ai_task_override", { task, preference });
+}
+export function saveProjectAiTaskOverrides(preferences: AiTaskPreferences) {
+  return invoke<ProjectAiTaskOverrides>("save_project_ai_task_overrides", { preferences });
 }
 export function removeProjectAiTaskOverride(task: keyof AiTaskPreferences) {
   return invoke<ProjectAiTaskOverrides>("remove_project_ai_task_override", { task });
@@ -462,6 +495,9 @@ export function listAiProposals(chapterId: string) {
 }
 export function listAiRuns(limit = 20) {
   return invoke<AiRun[]>("list_ai_runs", { limit });
+}
+export function getAiUsageSummary(days = 30) {
+  return invoke<AiUsageSummary>("get_ai_usage_summary", { days });
 }
 export function rateAiProposal(id: string, rating: "HELPFUL" | "NOT_HELPFUL", note?: string) {
   return invoke<AiProposalFeedback>("rate_ai_proposal", { id, rating, note });

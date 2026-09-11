@@ -13,11 +13,12 @@ mod state;
 use commands::ai::{
     assemble_context_with_project_knowledge, cancel_ai_task, decide_ai_proposal,
     delete_model_secret, enqueue_planning_ai_job, extract_entities_from_text, generate_ai_proposal,
-    generate_planning_content, get_ai_task_preferences, get_planning_ai_job_request,
-    get_project_ai_task_overrides, list_ai_proposals, list_ai_runs, list_model_profiles,
-    rate_ai_proposal, remove_project_ai_task_override, run_next_planning_ai_job,
-    save_ai_task_preferences, save_model_secret, save_project_ai_task_override, test_model_profile,
-    upsert_model_profile,
+    generate_planning_content, get_ai_budget_settings, get_ai_task_preferences,
+    get_ai_usage_summary, get_planning_ai_job_request, get_project_ai_task_overrides,
+    list_ai_proposals, list_ai_runs, list_model_profiles, rate_ai_proposal,
+    remove_project_ai_task_override, run_next_planning_ai_job, save_ai_budget_settings,
+    save_ai_task_preferences, save_model_secret, save_project_ai_task_override,
+    save_project_ai_task_overrides, test_model_profile, upsert_model_profile,
 };
 use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::entities::{
@@ -141,8 +142,11 @@ pub fn run() {
             list_model_profiles,
             get_ai_task_preferences,
             save_ai_task_preferences,
+            get_ai_budget_settings,
+            save_ai_budget_settings,
             get_project_ai_task_overrides,
             save_project_ai_task_override,
+            save_project_ai_task_overrides,
             remove_project_ai_task_override,
             upsert_model_profile,
             save_model_secret,
@@ -150,6 +154,7 @@ pub fn run() {
             test_model_profile,
             list_ai_proposals,
             list_ai_runs,
+            get_ai_usage_summary,
             rate_ai_proposal,
             decide_ai_proposal,
             generate_ai_proposal,

@@ -25,6 +25,7 @@ use crate::{DatabaseError, ProjectManager};
 
 const SECRET_SERVICE: &str = "AINovelTools";
 const AI_TASK_PREFERENCES_KEY: &str = "ai_task_model_preferences";
+const AI_BUDGET_SETTINGS_KEY: &str = "ai_budget_settings";
 
 #[derive(Debug, Error)]
 pub enum AiError {
@@ -96,6 +97,25 @@ pub enum AiTaskKind {
     ChapterSplit,
     Writing,
     KnowledgeExtraction,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AiRunSource {
+    Writing,
+    Planning,
+    KnowledgeExtraction,
+}
+
+impl AiRunSource {
+    #[must_use]
+    pub const fn storage_key(self) -> &'static str {
+        match self {
+            Self::Writing => "WRITING",
+            Self::Planning => "PLANNING",
+            Self::KnowledgeExtraction => "KNOWLEDGE_EXTRACTION",
+        }
+    }
 }
 
 impl AiTaskKind {
@@ -200,6 +220,8 @@ pub struct AiTaskContextPreference {
 #[serde(rename_all = "camelCase")]
 pub struct AiRun {
     pub id: Uuid,
+    pub task_key: String,
+    pub source: String,
     pub action: String,
     pub status: String,
     pub chapter_title: String,
@@ -209,9 +231,89 @@ pub struct AiRun {
     pub error_code: Option<String>,
     pub estimated_input_tokens: u32,
     pub estimated_output_tokens: u32,
+    pub estimated_cost_micros: Option<u64>,
+    pub price_currency: String,
     pub prompt_version: String,
     pub created_at: String,
     pub finished_at: Option<String>,
+}
+
+pub struct AiRunStart<'a> {
+    pub task: AiTaskKind,
+    pub source: AiRunSource,
+    pub job_id: Option<Uuid>,
+    pub chapter_id: Option<Uuid>,
+    pub display_title: &'a str,
+    pub profile_id: Uuid,
+    pub prompt_version: &'a str,
+    pub estimated_input_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiUsageSummary {
+    pub days: u32,
+    pub total: Vec<AiUsageCurrencySummary>,
+    pub daily: Vec<AiUsageDailySummary>,
+    pub by_task: Vec<AiUsageTaskSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiUsageCurrencySummary {
+    pub currency: String,
+    pub run_count: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub estimated_cost_micros: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiUsageDailySummary {
+    pub date: String,
+    #[serde(flatten)]
+    pub usage: AiUsageCurrencySummary,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiUsageTaskSummary {
+    pub task_key: String,
+    #[serde(flatten)]
+    pub usage: AiUsageCurrencySummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AiBudgetSettings {
+    pub currency: String,
+    pub daily_limit_micros: Option<u64>,
+    pub project_limit_micros: Option<u64>,
+}
+
+impl Default for AiBudgetSettings {
+    fn default() -> Self {
+        Self {
+            currency: "USD".into(),
+            daily_limit_micros: None,
+            project_limit_micros: None,
+        }
+    }
+}
+
+impl AiBudgetSettings {
+    fn validate(&self) -> Result<(), AiError> {
+        let currency = self.currency.trim();
+        if currency.is_empty()
+            || currency.chars().count() > 8
+            || self.daily_limit_micros == Some(0)
+            || self.project_limit_micros == Some(0)
+        {
+            return Err(AiContractError::InvalidGenerationOptions.into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1153,7 +1255,7 @@ impl ModelProfileStore {
 
     pub fn list(&self) -> Result<Vec<ModelProfile>, AiError> {
         let mut statement = self.database.connection.prepare(
-            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles ORDER BY updated_at DESC"
+            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, input_price_micros_per_million, output_price_micros_per_million, price_currency, secret_ref, created_at, updated_at FROM model_profiles ORDER BY updated_at DESC"
         ).map_err(DatabaseError::from)?;
         let rows = statement
             .query_map([], read_profile)
@@ -1205,9 +1307,51 @@ impl ModelProfileStore {
         Ok(preferences)
     }
 
+    pub fn get_ai_budget_settings(&self) -> Result<AiBudgetSettings, AiError> {
+        let stored = self
+            .database
+            .connection
+            .query_row(
+                "SELECT value FROM app_metadata WHERE key = ?1",
+                [AI_BUDGET_SETTINGS_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(DatabaseError::from)?;
+        stored.map_or_else(
+            || Ok(AiBudgetSettings::default()),
+            |value| {
+                let settings = serde_json::from_str::<AiBudgetSettings>(&value)
+                    .map_err(|_| AiError::ContextSerialization)?;
+                settings.validate()?;
+                Ok(settings)
+            },
+        )
+    }
+
+    pub fn save_ai_budget_settings(
+        &mut self,
+        settings: &AiBudgetSettings,
+    ) -> Result<AiBudgetSettings, AiError> {
+        settings.validate()?;
+        let mut normalized = settings.clone();
+        normalized.currency = normalized.currency.trim().to_uppercase();
+        let value =
+            serde_json::to_string(&normalized).map_err(|_| AiError::ContextSerialization)?;
+        self.database
+            .connection
+            .execute(
+                "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                rusqlite::params![AI_BUDGET_SETTINGS_KEY, value],
+            )
+            .map_err(DatabaseError::from)?;
+        Ok(normalized)
+    }
+
     pub fn get(&self, id: Uuid) -> Result<ModelProfile, AiError> {
         self.database.connection.query_row(
-            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles WHERE id = ?1",
+            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, input_price_micros_per_million, output_price_micros_per_million, price_currency, secret_ref, created_at, updated_at FROM model_profiles WHERE id = ?1",
             [id.to_string()], read_profile,
         ).optional().map_err(DatabaseError::from)?.ok_or(AiError::MissingProfile(id))
     }
@@ -1216,10 +1360,10 @@ impl ModelProfileStore {
         input.validate()?;
         let id = input.id.unwrap_or_else(Uuid::new_v4);
         self.database.connection.execute(
-            "INSERT INTO model_profiles (id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-             ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, capability=excluded.capability, base_url=excluded.base_url, model_id=excluded.model_id, context_window=excluded.context_window, max_output_tokens=excluded.max_output_tokens, privacy_level=excluded.privacy_level, timeout_seconds=excluded.timeout_seconds, retry_limit=excluded.retry_limit, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-            rusqlite::params![id.to_string(), input.name.trim(), provider_str(input.provider), capability_str(input.capability), input.base_url.trim_end_matches('/'), input.model_id.trim(), input.context_window, input.max_output_tokens, privacy_str(input.privacy_level), input.timeout_seconds, input.retry_limit],
+            "INSERT INTO model_profiles (id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, input_price_micros_per_million, output_price_micros_per_million, price_currency)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, capability=excluded.capability, base_url=excluded.base_url, model_id=excluded.model_id, context_window=excluded.context_window, max_output_tokens=excluded.max_output_tokens, privacy_level=excluded.privacy_level, timeout_seconds=excluded.timeout_seconds, retry_limit=excluded.retry_limit, input_price_micros_per_million=excluded.input_price_micros_per_million, output_price_micros_per_million=excluded.output_price_micros_per_million, price_currency=excluded.price_currency, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            rusqlite::params![id.to_string(), input.name.trim(), provider_str(input.provider), capability_str(input.capability), input.base_url.trim_end_matches('/'), input.model_id.trim(), input.context_window, input.max_output_tokens, privacy_str(input.privacy_level), input.timeout_seconds, input.retry_limit, i64::try_from(input.input_price_micros_per_million).unwrap_or(i64::MAX), i64::try_from(input.output_price_micros_per_million).unwrap_or(i64::MAX), input.price_currency.trim()],
         ).map_err(DatabaseError::from)?;
         self.get(id)
     }
@@ -1301,6 +1445,53 @@ impl ProjectManager {
         Ok(())
     }
 
+    pub fn save_project_ai_task_overrides(
+        &mut self,
+        preferences: &AiTaskPreferences,
+    ) -> Result<(), AiError> {
+        let profiles = self.list_model_profiles()?;
+        let entries = [
+            (AiTaskKind::WorkDesign, &preferences.work_design),
+            (AiTaskKind::Outline, &preferences.outline),
+            (AiTaskKind::VolumePlanning, &preferences.volume_planning),
+            (AiTaskKind::ChapterSplit, &preferences.chapter_split),
+            (AiTaskKind::Writing, &preferences.writing),
+            (
+                AiTaskKind::KnowledgeExtraction,
+                &preferences.knowledge_extraction,
+            ),
+        ];
+        let mut serialized = Vec::with_capacity(entries.len());
+        for (task, preference) in entries {
+            validate_ai_task_preference(preference, &profiles)?;
+            serialized.push((
+                task.storage_key(),
+                serde_json::to_string(preference).map_err(|_| AiError::ContextSerialization)?,
+            ));
+        }
+
+        let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        let transaction = session
+            .database
+            .connection
+            .transaction()
+            .map_err(DatabaseError::from)?;
+        for (task_key, preference_json) in serialized {
+            transaction
+                .execute(
+                    "INSERT INTO project_ai_task_overrides (task_key, preference_json)
+                     VALUES (?1, ?2)
+                     ON CONFLICT(task_key) DO UPDATE SET
+                        preference_json=excluded.preference_json,
+                        updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                    rusqlite::params![task_key, preference_json],
+                )
+                .map_err(DatabaseError::from)?;
+        }
+        transaction.commit().map_err(DatabaseError::from)?;
+        Ok(())
+    }
+
     pub fn remove_project_ai_task_override(&mut self, task: AiTaskKind) -> Result<(), AiError> {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
         session
@@ -1317,7 +1508,7 @@ impl ProjectManager {
     pub fn list_model_profiles(&self) -> Result<Vec<ModelProfile>, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
         let mut statement = session.database.connection.prepare(
-            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles ORDER BY updated_at DESC"
+            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, input_price_micros_per_million, output_price_micros_per_million, price_currency, secret_ref, created_at, updated_at FROM model_profiles ORDER BY updated_at DESC"
         ).map_err(DatabaseError::from)?;
         let rows = statement
             .query_map([], read_profile)
@@ -1330,7 +1521,7 @@ impl ProjectManager {
     pub fn get_model_profile(&self, id: Uuid) -> Result<ModelProfile, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
         session.database.connection.query_row(
-            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, secret_ref, created_at, updated_at FROM model_profiles WHERE id = ?1",
+            "SELECT id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, input_price_micros_per_million, output_price_micros_per_million, price_currency, secret_ref, created_at, updated_at FROM model_profiles WHERE id = ?1",
             [id.to_string()], read_profile,
         ).optional().map_err(DatabaseError::from)?.ok_or(AiError::MissingProfile(id))
     }
@@ -1343,10 +1534,10 @@ impl ProjectManager {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
         let id = input.id.unwrap_or_else(Uuid::new_v4);
         session.database.connection.execute(
-            "INSERT INTO model_profiles (id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-             ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, capability=excluded.capability, base_url=excluded.base_url, model_id=excluded.model_id, context_window=excluded.context_window, max_output_tokens=excluded.max_output_tokens, privacy_level=excluded.privacy_level, timeout_seconds=excluded.timeout_seconds, retry_limit=excluded.retry_limit, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-            rusqlite::params![id.to_string(), input.name.trim(), provider_str(input.provider), capability_str(input.capability), input.base_url.trim_end_matches('/'), input.model_id.trim(), input.context_window, input.max_output_tokens, privacy_str(input.privacy_level), input.timeout_seconds, input.retry_limit],
+            "INSERT INTO model_profiles (id, name, provider, capability, base_url, model_id, context_window, max_output_tokens, privacy_level, timeout_seconds, retry_limit, input_price_micros_per_million, output_price_micros_per_million, price_currency)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, capability=excluded.capability, base_url=excluded.base_url, model_id=excluded.model_id, context_window=excluded.context_window, max_output_tokens=excluded.max_output_tokens, privacy_level=excluded.privacy_level, timeout_seconds=excluded.timeout_seconds, retry_limit=excluded.retry_limit, input_price_micros_per_million=excluded.input_price_micros_per_million, output_price_micros_per_million=excluded.output_price_micros_per_million, price_currency=excluded.price_currency, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            rusqlite::params![id.to_string(), input.name.trim(), provider_str(input.provider), capability_str(input.capability), input.base_url.trim_end_matches('/'), input.model_id.trim(), input.context_window, input.max_output_tokens, privacy_str(input.privacy_level), input.timeout_seconds, input.retry_limit, i64::try_from(input.input_price_micros_per_million).unwrap_or(i64::MAX), i64::try_from(input.output_price_micros_per_million).unwrap_or(i64::MAX), input.price_currency.trim()],
         ).map_err(DatabaseError::from)?;
         self.get_model_profile(id)
     }
@@ -1373,31 +1564,135 @@ impl ProjectManager {
         context: &ContextPackage,
     ) -> Result<Uuid, AiError> {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
-        let capability: Option<String> = session
+        let profile_snapshot: Option<(String, String, u64, u64, String)> = session
             .database
             .connection
             .query_row(
-                "SELECT capability FROM model_profiles WHERE id = ?1",
-                [profile_id.to_string()],
-                |row| row.get(0),
+                "SELECT p.capability, COALESCE(c.title, '未命名章节'),
+                        p.input_price_micros_per_million, p.output_price_micros_per_million,
+                        p.price_currency
+                 FROM model_profiles p
+                 LEFT JOIN chapters c ON c.id = ?2
+                 WHERE p.id = ?1",
+                rusqlite::params![profile_id.to_string(), context.chapter_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        u64::try_from(row.get::<_, i64>(2)?.max(0)).unwrap_or(0),
+                        u64::try_from(row.get::<_, i64>(3)?.max(0)).unwrap_or(0),
+                        row.get(4)?,
+                    ))
+                },
             )
             .optional()
             .map_err(DatabaseError::from)?;
-        match capability.as_deref() {
-            None => return Err(AiError::MissingProfile(profile_id)),
-            Some("CHAT") => {}
-            Some(_) => return Err(AiContractError::InvalidProviderCapability.into()),
+        let Some((capability, chapter_title, input_price, output_price, price_currency)) =
+            profile_snapshot
+        else {
+            return Err(AiError::MissingProfile(profile_id));
+        };
+        match capability.as_str() {
+            "CHAT" => {}
+            _ => return Err(AiContractError::InvalidProviderCapability.into()),
         }
         let task_id = Uuid::new_v4();
         let task_contract_json = serde_json::to_string(&context.task_contract)
             .map_err(|_| AiError::ContextSerialization)?;
         let context_section_audit_json = serde_json::to_string(&context.section_audit)
             .map_err(|_| AiError::ContextSerialization)?;
-        session.database.connection.execute(
+        let transaction = session
+            .database
+            .connection
+            .transaction()
+            .map_err(DatabaseError::from)?;
+        transaction.execute(
             "INSERT INTO ai_tasks (id, profile_id, chapter_id, action, target_revision_id, context_version, prompt_version, task_contract_json, context_section_audit_json, status, estimated_input_tokens) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             rusqlite::params![task_id.to_string(), profile_id.to_string(), context.chapter_id.to_string(), action_str(context.action), context.target_revision_id.map(|id| id.to_string()), context.context_version, context.prompt_version, task_contract_json, context_section_audit_json, task_status_str(AiTaskStatus::Running), context.estimated_input_tokens],
         ).map_err(DatabaseError::from)?;
+        transaction
+            .execute(
+                "INSERT INTO ai_run_records (
+                id, task_key, source, chapter_id, display_title, profile_id, action, status,
+                estimated_input_tokens, input_price_micros_per_million,
+                output_price_micros_per_million, price_currency, prompt_version
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                rusqlite::params![
+                    task_id.to_string(),
+                    AiTaskKind::Writing.storage_key(),
+                    AiRunSource::Writing.storage_key(),
+                    context.chapter_id.to_string(),
+                    chapter_title,
+                    profile_id.to_string(),
+                    action_str(context.action),
+                    task_status_str(AiTaskStatus::Running),
+                    context.estimated_input_tokens,
+                    i64::try_from(input_price).unwrap_or(i64::MAX),
+                    i64::try_from(output_price).unwrap_or(i64::MAX),
+                    price_currency,
+                    context.prompt_version
+                ],
+            )
+            .map_err(DatabaseError::from)?;
+        transaction.commit().map_err(DatabaseError::from)?;
         Ok(task_id)
+    }
+
+    pub fn start_ai_run(&mut self, input: AiRunStart<'_>) -> Result<Uuid, AiError> {
+        let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        let capability_and_prices: Option<(String, u64, u64, String)> = session
+            .database
+            .connection
+            .query_row(
+                "SELECT capability, input_price_micros_per_million,
+                        output_price_micros_per_million, price_currency
+                 FROM model_profiles WHERE id = ?1",
+                [input.profile_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        u64::try_from(row.get::<_, i64>(1)?.max(0)).unwrap_or(0),
+                        u64::try_from(row.get::<_, i64>(2)?.max(0)).unwrap_or(0),
+                        row.get(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(DatabaseError::from)?;
+        let Some((capability, input_price, output_price, price_currency)) = capability_and_prices
+        else {
+            return Err(AiError::MissingProfile(input.profile_id));
+        };
+        if capability != "CHAT" {
+            return Err(AiContractError::InvalidProviderCapability.into());
+        }
+        let run_id = Uuid::new_v4();
+        session
+            .database
+            .connection
+            .execute(
+                "INSERT INTO ai_run_records (
+                id, task_key, source, job_id, chapter_id, display_title, profile_id, action,
+                status, estimated_input_tokens, input_price_micros_per_million,
+                output_price_micros_per_million, price_currency, prompt_version
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?2, 'RUNNING', ?8, ?9, ?10, ?11, ?12)",
+                rusqlite::params![
+                    run_id.to_string(),
+                    input.task.storage_key(),
+                    input.source.storage_key(),
+                    input.job_id.map(|id| id.to_string()),
+                    input.chapter_id.map(|id| id.to_string()),
+                    input.display_title.trim(),
+                    input.profile_id.to_string(),
+                    input.estimated_input_tokens,
+                    i64::try_from(input_price).unwrap_or(i64::MAX),
+                    i64::try_from(output_price).unwrap_or(i64::MAX),
+                    price_currency,
+                    input.prompt_version
+                ],
+            )
+            .map_err(DatabaseError::from)?;
+        Ok(run_id)
     }
 
     pub fn complete_ai_task(
@@ -1418,6 +1713,12 @@ impl ProjectManager {
             .transaction()
             .map_err(DatabaseError::from)?;
         transaction.execute("UPDATE ai_tasks SET status='COMPLETED', estimated_output_tokens=?2, finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1 AND status='RUNNING'", rusqlite::params![task_id.to_string(), estimated_output_tokens]).map_err(DatabaseError::from)?;
+        transaction.execute(
+            "UPDATE ai_run_records SET status='COMPLETED', estimated_output_tokens=?2,
+                finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1 AND status='RUNNING'",
+            rusqlite::params![task_id.to_string(), estimated_output_tokens],
+        )
+        .map_err(DatabaseError::from)?;
         let proposal_id = Uuid::new_v4();
         transaction.execute(
             "INSERT INTO ai_proposals (id, task_id, chapter_id, action, target_revision_id, context_version, prompt_version, output_text, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'PENDING')",
@@ -1428,16 +1729,54 @@ impl ProjectManager {
     }
 
     pub fn fail_ai_task(&mut self, task_id: Uuid, error: &AiError) -> Result<(), AiError> {
+        self.fail_ai_run(task_id, error)
+    }
+
+    pub fn fail_ai_run(&mut self, run_id: Uuid, error: &AiError) -> Result<(), AiError> {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
         let status = if matches!(error, AiError::Cancelled) {
             "CANCELLED"
         } else {
             "FAILED"
         };
-        session.database.connection.execute(
-            "UPDATE ai_tasks SET status=?2, error_code=?3, finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1",
-            rusqlite::params![task_id.to_string(), status, error.code()],
-        ).map_err(DatabaseError::from)?;
+        session
+            .database
+            .connection
+            .execute(
+                "UPDATE ai_tasks SET status=?2, error_code=?3, finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1",
+                rusqlite::params![run_id.to_string(), status, error.code()],
+            )
+            .map_err(DatabaseError::from)?;
+        session
+            .database
+            .connection
+            .execute(
+                "UPDATE ai_run_records SET status=?2, error_code=?3, finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1",
+                rusqlite::params![run_id.to_string(), status, error.code()],
+            )
+            .map_err(DatabaseError::from)?;
+        Ok(())
+    }
+
+    pub fn complete_ai_run(
+        &mut self,
+        run_id: Uuid,
+        estimated_output_tokens: u32,
+    ) -> Result<(), AiError> {
+        let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        let changed = session
+            .database
+            .connection
+            .execute(
+                "UPDATE ai_run_records SET status='COMPLETED', estimated_output_tokens=?2,
+                    finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                 WHERE id=?1 AND status='RUNNING'",
+                rusqlite::params![run_id.to_string(), estimated_output_tokens],
+            )
+            .map_err(DatabaseError::from)?;
+        if changed == 0 {
+            return Err(AiError::InvalidResponse);
+        }
         Ok(())
     }
 
@@ -1470,6 +1809,78 @@ impl ProjectManager {
         if changed == 0 {
             return Err(AiError::InvalidResponse);
         }
+        session
+            .database
+            .connection
+            .execute(
+                "UPDATE ai_run_records SET
+                profile_id=?2,
+                fallback_profile_id=?2,
+                attempt_count=attempt_count+1,
+                retry_reason=?3,
+                input_price_micros_per_million=COALESCE(
+                    (SELECT input_price_micros_per_million FROM model_profiles WHERE id=?2), 0
+                ),
+                output_price_micros_per_million=COALESCE(
+                    (SELECT output_price_micros_per_million FROM model_profiles WHERE id=?2), 0
+                ),
+                price_currency=COALESCE(
+                    (SELECT price_currency FROM model_profiles WHERE id=?2), 'USD'
+                )
+             WHERE id=?1 AND status='RUNNING'",
+                rusqlite::params![task_id.to_string(), fallback_profile_id.to_string(), reason],
+            )
+            .map_err(DatabaseError::from)?;
+        Ok(())
+    }
+
+    pub fn record_ai_run_fallback(
+        &mut self,
+        run_id: Uuid,
+        fallback_profile_id: Uuid,
+        reason: &str,
+    ) -> Result<(), AiError> {
+        let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        let capability: Option<String> = session
+            .database
+            .connection
+            .query_row(
+                "SELECT capability FROM model_profiles WHERE id = ?1",
+                [fallback_profile_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(DatabaseError::from)?;
+        match capability.as_deref() {
+            None => return Err(AiError::MissingProfile(fallback_profile_id)),
+            Some("CHAT") => {}
+            Some(_) => return Err(AiContractError::InvalidProviderCapability.into()),
+        }
+        let changed = session
+            .database
+            .connection
+            .execute(
+                "UPDATE ai_run_records SET
+                    profile_id=?2,
+                    fallback_profile_id=?2,
+                    attempt_count=attempt_count+1,
+                    retry_reason=?3,
+                    input_price_micros_per_million=COALESCE(
+                        (SELECT input_price_micros_per_million FROM model_profiles WHERE id=?2), 0
+                    ),
+                    output_price_micros_per_million=COALESCE(
+                        (SELECT output_price_micros_per_million FROM model_profiles WHERE id=?2), 0
+                    ),
+                    price_currency=COALESCE(
+                        (SELECT price_currency FROM model_profiles WHERE id=?2), 'USD'
+                    )
+                 WHERE id=?1 AND status='RUNNING'",
+                rusqlite::params![run_id.to_string(), fallback_profile_id.to_string(), reason],
+            )
+            .map_err(DatabaseError::from)?;
+        if changed == 0 {
+            return Err(AiError::InvalidResponse);
+        }
         Ok(())
     }
 
@@ -1479,11 +1890,12 @@ impl ProjectManager {
             .database
             .connection
             .prepare(
-                "SELECT t.id, t.action, t.status, COALESCE(c.title, '未命名章节'), COALESCE(p.name, '已删除模型'),
+                "SELECT t.id, t.action, t.status, t.display_title, COALESCE(p.name, '已删除模型'),
                         t.attempt_count, t.retry_reason, t.error_code, t.estimated_input_tokens,
-                        t.estimated_output_tokens, t.prompt_version, t.created_at, t.finished_at
-                 FROM ai_tasks t
-                 LEFT JOIN chapters c ON c.id = t.chapter_id
+                        t.estimated_output_tokens, t.prompt_version, t.created_at, t.finished_at,
+                        t.task_key, t.source, t.input_price_micros_per_million,
+                        t.output_price_micros_per_million, t.price_currency
+                 FROM ai_run_records t
                  LEFT JOIN model_profiles p ON p.id = t.profile_id
                  ORDER BY t.created_at DESC, t.rowid DESC
                  LIMIT ?1",
@@ -1500,6 +1912,8 @@ impl ProjectManager {
                 })?;
                 Ok(AiRun {
                     id,
+                    task_key: row.get(13)?,
+                    source: row.get(14)?,
                     action: row.get(1)?,
                     status: row.get(2)?,
                     chapter_title: row.get(3)?,
@@ -1509,6 +1923,13 @@ impl ProjectManager {
                     error_code: row.get(7)?,
                     estimated_input_tokens: row.get(8)?,
                     estimated_output_tokens: row.get(9)?,
+                    estimated_cost_micros: estimate_run_cost_micros(
+                        row.get(8)?,
+                        row.get(9)?,
+                        u64::try_from(row.get::<_, i64>(15)?.max(0)).unwrap_or(0),
+                        u64::try_from(row.get::<_, i64>(16)?.max(0)).unwrap_or(0),
+                    ),
+                    price_currency: row.get(17)?,
                     prompt_version: row.get(10)?,
                     created_at: row.get(11)?,
                     finished_at: row.get(12)?,
@@ -1518,6 +1939,119 @@ impl ProjectManager {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(DatabaseError::from)
             .map_err(AiError::from)
+    }
+
+    pub fn get_ai_usage_summary(&self, days: u32) -> Result<AiUsageSummary, AiError> {
+        let days = days.clamp(1, 365);
+        let session = self.current.as_ref().ok_or(AiError::NoProject)?;
+        let mut total_by_currency = HashMap::<String, UsageAggregate>::new();
+        let mut total_by_task = HashMap::<(String, String), UsageAggregate>::new();
+        let mut statement = session
+            .database
+            .connection
+            .prepare(
+                "SELECT task_key, estimated_input_tokens, estimated_output_tokens,
+                        input_price_micros_per_million, output_price_micros_per_million,
+                        price_currency
+                 FROM ai_run_records",
+            )
+            .map_err(DatabaseError::from)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(UsageRunRow {
+                    task_key: row.get(0)?,
+                    input_tokens: u64::from(row.get::<_, u32>(1)?),
+                    output_tokens: u64::from(row.get::<_, u32>(2)?),
+                    input_price: u64::try_from(row.get::<_, i64>(3)?.max(0)).unwrap_or(0),
+                    output_price: u64::try_from(row.get::<_, i64>(4)?.max(0)).unwrap_or(0),
+                    currency: row.get(5)?,
+                    date: None,
+                })
+            })
+            .map_err(DatabaseError::from)?;
+        for row in rows {
+            let row = row.map_err(DatabaseError::from)?;
+            total_by_currency
+                .entry(row.currency.clone())
+                .or_default()
+                .add(&row);
+            total_by_task
+                .entry((row.task_key.clone(), row.currency.clone()))
+                .or_default()
+                .add(&row);
+        }
+
+        let modifier = format!("-{} days", days.saturating_sub(1));
+        let mut daily_by_currency = HashMap::<(String, String), UsageAggregate>::new();
+        let mut statement = session
+            .database
+            .connection
+            .prepare(
+                "SELECT task_key, estimated_input_tokens, estimated_output_tokens,
+                        input_price_micros_per_million, output_price_micros_per_million,
+                        price_currency, date(created_at, 'localtime')
+                 FROM ai_run_records
+                 WHERE date(created_at, 'localtime') >= date('now', 'localtime', ?1)",
+            )
+            .map_err(DatabaseError::from)?;
+        let rows = statement
+            .query_map([modifier], |row| {
+                Ok(UsageRunRow {
+                    task_key: row.get(0)?,
+                    input_tokens: u64::from(row.get::<_, u32>(1)?),
+                    output_tokens: u64::from(row.get::<_, u32>(2)?),
+                    input_price: u64::try_from(row.get::<_, i64>(3)?.max(0)).unwrap_or(0),
+                    output_price: u64::try_from(row.get::<_, i64>(4)?.max(0)).unwrap_or(0),
+                    currency: row.get(5)?,
+                    date: Some(row.get(6)?),
+                })
+            })
+            .map_err(DatabaseError::from)?;
+        for row in rows {
+            let row = row.map_err(DatabaseError::from)?;
+            let date = row.date.clone().ok_or(AiError::InvalidResponse)?;
+            daily_by_currency
+                .entry((date, row.currency.clone()))
+                .or_default()
+                .add(&row);
+        }
+
+        let mut total = total_by_currency
+            .into_iter()
+            .map(|(currency, aggregate)| aggregate.into_currency(currency))
+            .collect::<Vec<_>>();
+        total.sort_by(|left, right| left.currency.cmp(&right.currency));
+        let mut daily = daily_by_currency
+            .into_iter()
+            .map(|((date, currency), aggregate)| AiUsageDailySummary {
+                date,
+                usage: aggregate.into_currency(currency),
+            })
+            .collect::<Vec<_>>();
+        daily.sort_by(|left, right| {
+            right
+                .date
+                .cmp(&left.date)
+                .then_with(|| left.usage.currency.cmp(&right.usage.currency))
+        });
+        let mut by_task = total_by_task
+            .into_iter()
+            .map(|((task_key, currency), aggregate)| AiUsageTaskSummary {
+                task_key,
+                usage: aggregate.into_currency(currency),
+            })
+            .collect::<Vec<_>>();
+        by_task.sort_by(|left, right| {
+            left.task_key
+                .cmp(&right.task_key)
+                .then_with(|| left.usage.currency.cmp(&right.usage.currency))
+        });
+        Ok(AiUsageSummary {
+            days,
+            total,
+            daily,
+            by_task,
+        })
     }
 
     pub fn list_ai_proposals(&self, chapter_id: Uuid) -> Result<Vec<AiProposal>, AiError> {
@@ -1657,7 +2191,7 @@ impl ProjectManager {
 }
 
 fn read_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelProfile> {
-    let secret_ref: Option<String> = row.get(11)?;
+    let secret_ref: Option<String> = row.get(14)?;
     Ok(ModelProfile {
         id: parse_uuid(row.get::<_, String>(0)?, 0)?,
         name: row.get(1)?,
@@ -1670,11 +2204,73 @@ fn read_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelProfile> {
         privacy_level: parse_privacy(&row.get::<_, String>(8)?),
         timeout_seconds: row.get(9)?,
         retry_limit: row.get(10)?,
+        input_price_micros_per_million: u64::try_from(row.get::<_, i64>(11)?.max(0)).unwrap_or(0),
+        output_price_micros_per_million: u64::try_from(row.get::<_, i64>(12)?.max(0)).unwrap_or(0),
+        price_currency: row.get(13)?,
         has_secret: secret_ref.is_some(),
         secret_ref,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
     })
+}
+
+struct UsageRunRow {
+    task_key: String,
+    input_tokens: u64,
+    output_tokens: u64,
+    input_price: u64,
+    output_price: u64,
+    currency: String,
+    date: Option<String>,
+}
+
+#[derive(Default)]
+struct UsageAggregate {
+    run_count: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    estimated_cost_micros: Option<u64>,
+}
+
+impl UsageAggregate {
+    fn add(&mut self, row: &UsageRunRow) {
+        self.run_count = self.run_count.saturating_add(1);
+        self.input_tokens = self.input_tokens.saturating_add(row.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(row.output_tokens);
+        if let Some(cost) = estimate_run_cost_micros(
+            u32::try_from(row.input_tokens).unwrap_or(u32::MAX),
+            u32::try_from(row.output_tokens).unwrap_or(u32::MAX),
+            row.input_price,
+            row.output_price,
+        ) {
+            self.estimated_cost_micros =
+                Some(self.estimated_cost_micros.unwrap_or(0).saturating_add(cost));
+        }
+    }
+
+    fn into_currency(self, currency: String) -> AiUsageCurrencySummary {
+        AiUsageCurrencySummary {
+            currency,
+            run_count: u32::try_from(self.run_count).unwrap_or(u32::MAX),
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            estimated_cost_micros: self.estimated_cost_micros,
+        }
+    }
+}
+
+fn estimate_run_cost_micros(
+    input_tokens: u32,
+    output_tokens: u32,
+    input_price_micros_per_million: u64,
+    output_price_micros_per_million: u64,
+) -> Option<u64> {
+    if input_price_micros_per_million == 0 && output_price_micros_per_million == 0 {
+        return None;
+    }
+    let cost = u128::from(input_tokens) * u128::from(input_price_micros_per_million)
+        + u128::from(output_tokens) * u128::from(output_price_micros_per_million);
+    u64::try_from(cost / 1_000_000).ok()
 }
 
 fn read_proposal(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiProposal> {
@@ -1958,6 +2554,9 @@ mod tests {
             privacy_level: novel_domain::PrivacyLevel::AllowCloud,
             timeout_seconds,
             retry_limit: 0,
+            input_price_micros_per_million: 0,
+            output_price_micros_per_million: 0,
+            price_currency: "USD".into(),
             secret_ref: None,
             has_secret: false,
             created_at: "0".into(),
@@ -2031,6 +2630,9 @@ mod tests {
                 privacy_level: novel_domain::PrivacyLevel::AllowCloud,
                 timeout_seconds: 120,
                 retry_limit: 1,
+                input_price_micros_per_million: 2_000_000,
+                output_price_micros_per_million: 4_000_000,
+                price_currency: "USD".into(),
             })
             .expect("save profile");
 
@@ -2057,6 +2659,9 @@ mod tests {
                 privacy_level: novel_domain::PrivacyLevel::AllowCloud,
                 timeout_seconds: 120,
                 retry_limit: 1,
+                input_price_micros_per_million: 2_000_000,
+                output_price_micros_per_million: 4_000_000,
+                price_currency: "USD".into(),
             })
             .expect("chat profile");
         let fallback = store
@@ -2072,6 +2677,9 @@ mod tests {
                 privacy_level: novel_domain::PrivacyLevel::AllowCloud,
                 timeout_seconds: 120,
                 retry_limit: 1,
+                input_price_micros_per_million: 1_000_000,
+                output_price_micros_per_million: 2_000_000,
+                price_currency: "USD".into(),
             })
             .expect("fallback profile");
         let preference = super::AiTaskPreference {
@@ -2109,6 +2717,24 @@ mod tests {
             store.get_ai_task_preferences().expect("read preferences"),
             preferences
         );
+    }
+
+    #[test]
+    fn ai_budget_settings_round_trip_and_normalize_currency() {
+        let mut store = super::ModelProfileStore::in_memory().expect("settings store");
+        assert_eq!(
+            store.get_ai_budget_settings().expect("default settings"),
+            super::AiBudgetSettings::default()
+        );
+        let saved = store
+            .save_ai_budget_settings(&super::AiBudgetSettings {
+                currency: " cny ".into(),
+                daily_limit_micros: Some(10_000_000),
+                project_limit_micros: Some(100_000_000),
+            })
+            .expect("save budget");
+        assert_eq!(saved.currency, "CNY");
+        assert_eq!(store.get_ai_budget_settings().expect("read budget"), saved);
     }
 
     #[test]

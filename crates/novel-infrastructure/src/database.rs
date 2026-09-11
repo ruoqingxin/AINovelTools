@@ -735,6 +735,57 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (34, 'ai_usage_stats_and_project_overrides');",
             )?;
         }
+        if applied.unwrap_or(0) < 35 {
+            self.connection.execute_batch(
+                "ALTER TABLE model_profiles ADD COLUMN input_price_micros_per_million INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE model_profiles ADD COLUMN output_price_micros_per_million INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE model_profiles ADD COLUMN price_currency TEXT NOT NULL DEFAULT 'USD';
+                CREATE TABLE IF NOT EXISTS ai_run_records (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    task_key TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    job_id TEXT,
+                    chapter_id TEXT REFERENCES chapters(id) ON DELETE SET NULL,
+                    display_title TEXT NOT NULL,
+                    profile_id TEXT REFERENCES model_profiles(id) ON DELETE SET NULL,
+                    fallback_profile_id TEXT REFERENCES model_profiles(id) ON DELETE SET NULL,
+                    action TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL DEFAULT 1 CHECK(attempt_count > 0),
+                    retry_reason TEXT,
+                    error_code TEXT,
+                    estimated_input_tokens INTEGER NOT NULL DEFAULT 0,
+                    estimated_output_tokens INTEGER NOT NULL DEFAULT 0,
+                    input_price_micros_per_million INTEGER NOT NULL DEFAULT 0,
+                    output_price_micros_per_million INTEGER NOT NULL DEFAULT 0,
+                    price_currency TEXT NOT NULL DEFAULT 'USD',
+                    prompt_version TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    finished_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_ai_run_records_created
+                    ON ai_run_records(created_at DESC);
+                INSERT OR IGNORE INTO ai_run_records (
+                    id, task_key, source, chapter_id, display_title, profile_id, fallback_profile_id,
+                    action, status, attempt_count, retry_reason, error_code,
+                    estimated_input_tokens, estimated_output_tokens,
+                    input_price_micros_per_million, output_price_micros_per_million, price_currency,
+                    prompt_version, created_at, finished_at
+                )
+                SELECT
+                    t.id, 'writing', 'WRITING', t.chapter_id, COALESCE(c.title, '未命名章节'),
+                    t.profile_id, t.fallback_profile_id, t.action, t.status, t.attempt_count,
+                    t.retry_reason, t.error_code, t.estimated_input_tokens, t.estimated_output_tokens,
+                    COALESCE(p.input_price_micros_per_million, 0),
+                    COALESCE(p.output_price_micros_per_million, 0),
+                    COALESCE(p.price_currency, 'USD'),
+                    t.prompt_version, t.created_at, t.finished_at
+                FROM ai_tasks t
+                LEFT JOIN chapters c ON c.id = t.chapter_id
+                LEFT JOIN model_profiles p ON p.id = t.profile_id;
+                INSERT INTO schema_migrations (version, name) VALUES (35, 'unified_ai_runs_and_model_pricing');",
+            )?;
+        }
         Ok(())
     }
 
