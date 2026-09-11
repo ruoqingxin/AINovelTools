@@ -160,6 +160,7 @@ export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
 export type ModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
 export type ModelCapability = "CHAT" | "EMBEDDING";
 export type PrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
+export type WritingReviewPolicy = "ADVISORY" | "BALANCED" | "REQUIRED";
 export type AiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE" | "CONSISTENCY_CHECK";
 export type AiProposalStatus = "PENDING" | "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED";
 export type ModelProfile = {
@@ -285,7 +286,7 @@ export type AiConsistencyReport = {
   findings: AiConsistencyFinding[];
   parseWarnings: string[];
 };
-export type ConsistencyReviewFreshness = "MISSING" | "FRESH" | "STALE";
+export type ConsistencyReviewFreshness = "MISSING" | "FRESH" | "STALE" | "UNVERIFIED";
 export type AiProposalReview = {
   proposal: AiProposal;
   validation: {
@@ -500,6 +501,12 @@ export function getAiBudgetSettings() {
 export function saveAiBudgetSettings(settings: AiBudgetSettings) {
   return invoke<AiBudgetSettings>("save_ai_budget_settings", { settings });
 }
+export function getWritingReviewPolicy() {
+  return invoke<WritingReviewPolicy>("get_writing_review_policy");
+}
+export function saveWritingReviewPolicy(policy: WritingReviewPolicy) {
+  return invoke<WritingReviewPolicy>("save_writing_review_policy", { policy });
+}
 export function getProjectAiTaskOverrides() {
   return invoke<ProjectAiTaskOverrides>("get_project_ai_task_overrides");
 }
@@ -603,6 +610,7 @@ export function invalidateProjectQueries(queryClient: { invalidateQueries: (opti
     ["relations"], ["events"], ["beliefs"], ["foreshadowings"], ["knowledge-candidates"],
     ["knowledge-conflicts"], ["project-search"], ["jobs"], ["recovery-all"], ["manuscript"],
     ["manuscript-history"], ["recovery-logs"], ["ai-proposals"], ["ai-runs"],
+    ["project-ai-task-overrides"], ["writing-review-policy"],
   ];
   return Promise.all([
     ...projectKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),

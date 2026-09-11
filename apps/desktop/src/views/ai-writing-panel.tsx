@@ -8,6 +8,7 @@ import {
   decideAiProposal,
   errorMessage,
   generateAiProposal,
+  getWritingReviewPolicy,
   listAiProposals,
   listEntities,
   listModelProfiles,
@@ -19,6 +20,8 @@ import {
   type AiConsistencyVerdict,
   type AiProposal,
   type AiProposalReview,
+  type ConsistencyReviewFreshness,
+  type WritingReviewPolicy,
 } from "../lib/tauri-client";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import { assessWritingReadiness, findWritingGapTargets } from "../lib/writing-readiness";
@@ -48,24 +51,79 @@ const consistencySeverityLabels: Record<AiConsistencySeverity, string> = {
   INFO: "提示",
 };
 
-function consistencyAdmissionText(report: AiConsistencyReport, stale = false) {
-  if (stale) {
-    return "审核依据已经变化，这份报告已过期，不再阻止正文生成。请按当前执行卡、正文和正式设定重新审核。";
+function consistencyAdmission(
+  report: AiConsistencyReport | null,
+  freshness: ConsistencyReviewFreshness | null,
+  policy: WritingReviewPolicy,
+) {
+  if (!report) {
+    return {
+      state: "blocked",
+      text: "当前作品采用严格准入，生成正文前必须完成一次与当前内容一致的一致性审核。",
+    };
   }
   const blockerCount = report.findings.filter((finding) => finding.severity === "BLOCKER").length;
+  if (policy === "ADVISORY" && (report.verdict === "BLOCKED" || report.verdict === "NEEDS_INPUT")) {
+    return {
+      state: "advisory",
+      text: report.verdict === "BLOCKED"
+        ? `当前为建议模式，审核发现 ${blockerCount} 个阻断问题，但不会阻止生成正文。`
+        : "当前为建议模式，审核提示资料不足，但不会阻止生成正文。",
+    };
+  }
+  if (freshness === "STALE") {
+    return policy === "REQUIRED"
+      ? {
+          state: "stale",
+          text: "审核依据已经变化，严格准入已暂停生成。请按当前执行卡、正文和正式设定重新审核。",
+        }
+      : {
+          state: "stale",
+          text: "审核依据已经变化，这份报告已过期，不再阻止正文生成。请按当前执行卡、正文和正式设定重新审核。",
+        };
+  }
+  if (freshness === "UNVERIFIED") {
+    return policy === "REQUIRED"
+      ? {
+          state: "unverified",
+          text: "无法确认现有审核是否对应当前正文与设定，严格准入已暂停生成。请重新审核。",
+        }
+      : {
+          state: "unverified",
+          text: "暂时无法确认审核与当前内容是否一致，这份报告仅作提示，不再阻止生成。",
+        };
+  }
+  if (policy === "REQUIRED" && report.verdict === "UNPARSED") {
+    return {
+      state: "unparsed",
+      text: "审核报告格式无法解析，严格准入已暂停生成。请重新审核并确认报告格式。",
+    };
+  }
   if (report.verdict === "BLOCKED") {
-    return `最近一次审核发现 ${blockerCount} 个阻断问题，整章创作与续写已暂停。请先处理问题并关闭本次审核。`;
+    return {
+      state: "blocked",
+      text: `最近一次审核发现 ${blockerCount} 个阻断问题，整章创作与续写已暂停。请先处理问题并关闭本次审核。`,
+    };
   }
   if (report.verdict === "NEEDS_INPUT") {
-    return "审核缺少判断准入所需的正式设定。补齐资料并关闭本次审核后，才能继续生成正文。";
+    return {
+      state: "needs_input",
+      text: "审核缺少判断准入所需的正式设定。补齐资料并关闭本次审核后，才能继续生成正文。",
+    };
   }
   if (report.verdict === "REVIEW") {
-    return `审核有 ${report.findings.length} 条问题需要复核，不阻止生成，但建议先确认依据。`;
+    return {
+      state: "review",
+      text: `审核有 ${report.findings.length} 条问题需要复核，不阻止生成，但建议先确认依据。`,
+    };
   }
   if (report.verdict === "PASS") {
-    return "审核通过，未发现阻断正文生成的冲突。";
+    return { state: "pass", text: "审核通过，未发现阻断正文生成的冲突。" };
   }
-  return "审核报告格式无法识别，请查看原始报告后再决定是否生成。";
+  return {
+    state: "unparsed",
+    text: "审核报告格式无法识别，请查看原始报告后再决定是否生成。",
+  };
 }
 
 function textContent(text: string) {
@@ -121,6 +179,7 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
   const client = useQueryClient();
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
+  const reviewPolicyQuery = useQuery({ queryKey: ["writing-review-policy"], queryFn: getWritingReviewPolicy });
   const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
   const entities = useQuery({ queryKey: ["entities", false], queryFn: () => listEntities(false) });
   const [instruction, setInstruction] = useState("");
@@ -358,10 +417,20 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
   const needsInputCandidates = actionablePending.filter((item) => item.validation.status === "NEEDS_INPUT");
   const latestConsistencyReview = pendingReviews[0] ?? null;
   const latestConsistencyReport = latestConsistencyReview?.consistency ?? null;
-  const consistencyStale = latestConsistencyReview?.consistencyFreshness === "STALE";
-  const consistencyBlocked = !consistencyStale
+  const consistencyFreshness = latestConsistencyReview?.consistencyFreshness ?? null;
+  const reviewPolicy = reviewPolicyQuery.data ?? "BALANCED";
+  const consistencyNotice = latestConsistencyReport || reviewPolicy === "REQUIRED"
+    ? consistencyAdmission(latestConsistencyReport, consistencyFreshness, reviewPolicy)
+    : null;
+  const freshVerdictBlocked = reviewPolicy !== "ADVISORY"
+    && consistencyFreshness === "FRESH"
     && (latestConsistencyReport?.verdict === "BLOCKED"
       || latestConsistencyReport?.verdict === "NEEDS_INPUT");
+  const strictReviewBlocked = reviewPolicy === "REQUIRED"
+    && (!latestConsistencyReview
+      || consistencyFreshness !== "FRESH"
+      || latestConsistencyReport?.verdict === "UNPARSED");
+  const consistencyBlocked = freshVerdictBlocked || strictReviewBlocked;
   const compareReviews = compareIds
     .map((id) => pendingCandidates.find((item) => item.proposal.id === id))
     .filter((item): item is AiProposalReview => Boolean(item));
@@ -393,7 +462,7 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
         <div><strong>审核执行卡与当前草稿</strong><span>核对人物身份、能力边界、世界规则、时间线、既定事实和叙述人称，问题会保留在独立审核区。</span></div>
         <button type="button" className="secondary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={busy || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />开始审核</button>
       </div>
-      {latestConsistencyReport ? <p className="consistency-admission" data-state={consistencyStale ? "stale" : latestConsistencyReport.verdict.toLowerCase()}>{consistencyAdmissionText(latestConsistencyReport, consistencyStale)}</p> : null}
+      {consistencyNotice ? <p className="consistency-admission" data-state={consistencyNotice.state}>{consistencyNotice.text}</p> : null}
     </section>
     {busy ? <div className="ai-running"><LoaderCircle size={15} className="spin" /><span>模型正在生成结果…</span><button type="button" className="secondary-action" onClick={() => void cancel()} disabled={!activeTaskId}><Ban size={14} />取消</button></div> : null}
     {fallbackNotice ? <p className="project-notice" role="status">{fallbackNotice}</p> : null}
@@ -461,7 +530,7 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
         return <article className="proposal consistency-review" data-state={stale ? "stale" : needsInput ? "needs-input" : undefined} data-verdict={consistency?.verdict.toLowerCase()} key={proposal.id}>
           <div className="proposal-meta"><strong>一致性审核</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{stale ? `审核已过期 · 原判断：${consistency ? consistencyVerdictLabels[consistency.verdict] : "需补资料"}` : consistency ? consistencyVerdictLabels[consistency.verdict] : needsInput ? "需补资料" : validation.status === "VALID" ? "审核完成" : validation.status === "WARNING" ? "需要检查" : "无效结果"} · {validation.characterCount} 字</span><code>{proposal.promptVersion}</code></div>
           {validation.messages.length ? <div className="proposal-validation-messages">{validation.messages.map((message) => <span key={message}>{message}</span>)}</div> : null}
-          {stale ? <div className="consistency-stale-notice"><strong>审核依据已经变化</strong><span>正文修订、章节执行卡、正式设定或审核模型配置已与生成报告时不同。这是一份历史报告，不再参与当前生成准入。</span></div> : needsInput ? <div className="proposal-needs-input"><strong>当前资料不足以判断准入</strong><span>请先补齐审核报告列出的正式设定，再重新运行审核。</span></div> : null}
+          {stale ? <div className="consistency-stale-notice"><strong>审核依据已经变化</strong><span>{reviewPolicy === "REQUIRED" ? "严格准入会暂停正文生成，直到按当前内容重新审核。" : "正文修订、章节执行卡、正式设定或审核模型配置已与生成报告时不同。这是一份历史报告，不再阻止当前生成。"}</span></div> : needsInput ? <div className="proposal-needs-input"><strong>当前资料不足以判断准入</strong><span>请先补齐审核报告列出的正式设定，再重新运行审核。</span></div> : null}
           {consistency ? <>
             <p className="consistency-summary">{consistency.summary}</p>
             {consistency.findings.length ? <div className="consistency-findings">{consistency.findings.map((finding, index) => <div className="consistency-finding" data-severity={finding.severity.toLowerCase()} key={`${proposal.id}-${index}`}>

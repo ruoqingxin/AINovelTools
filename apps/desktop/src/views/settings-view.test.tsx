@@ -15,9 +15,11 @@ const mocks = vi.hoisted(() => ({
   getAiUsageSummary: vi.fn(),
   getAiQualitySummary: vi.fn(),
   getProjectAiTaskOverrides: vi.fn(),
+  getWritingReviewPolicy: vi.fn(),
   saveProjectAiTaskOverride: vi.fn(),
   saveProjectAiTaskOverrides: vi.fn(),
   removeProjectAiTaskOverride: vi.fn(),
+  saveWritingReviewPolicy: vi.fn(),
 }));
 
 function recommendedAiTaskPreferenceSnapshot() {
@@ -39,9 +41,11 @@ vi.mock("../lib/tauri-client", async () => {
     getAiUsageSummary: mocks.getAiUsageSummary,
     getAiQualitySummary: mocks.getAiQualitySummary,
     getProjectAiTaskOverrides: mocks.getProjectAiTaskOverrides,
+    getWritingReviewPolicy: mocks.getWritingReviewPolicy,
     saveProjectAiTaskOverride: mocks.saveProjectAiTaskOverride,
     saveProjectAiTaskOverrides: mocks.saveProjectAiTaskOverrides,
     removeProjectAiTaskOverride: mocks.removeProjectAiTaskOverride,
+    saveWritingReviewPolicy: mocks.saveWritingReviewPolicy,
   };
 });
 
@@ -86,6 +90,8 @@ describe("SettingsView", () => {
       writing: null,
       knowledgeExtraction: null,
     });
+    mocks.getWritingReviewPolicy.mockResolvedValue("BALANCED");
+    mocks.saveWritingReviewPolicy.mockImplementation(async (policy) => policy);
     mocks.saveProjectAiTaskOverride.mockImplementation(async (_task, preference) => ({
       available: true,
       workDesign: preference,
@@ -606,5 +612,37 @@ describe("SettingsView", () => {
     expect(screen.getByText("有帮助 67%")).toBeVisible();
     expect(screen.getByText("需补资料 0 · 校验问题 33%")).toBeVisible();
     expect(screen.getByText("采用 67%")).toBeVisible();
+  });
+
+  it("saves the project writing admission policy", async () => {
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({
+      available: true,
+      workDesign: null,
+      outline: null,
+      volumePlanning: null,
+      chapterSplit: null,
+      chapterPlan: null,
+      consistencyReview: null,
+      writing: null,
+      knowledgeExtraction: null,
+    });
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "写作准入" }));
+
+    expect(await screen.findByRole("heading", { name: "写作准入" })).toBeVisible();
+    expect(await screen.findByRole("radio", { name: /平衡模式/ })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("radio", { name: /严格模式/ }));
+    fireEvent.click(screen.getByRole("button", { name: "保存策略" }));
+
+    await waitFor(() => expect(mocks.saveWritingReviewPolicy).toHaveBeenCalledWith("REQUIRED"));
+    expect(await screen.findByText("写作准入策略已保存，后续生成会立即按新策略判断。")).toBeVisible();
+  });
+
+  it("asks the author to open a project before configuring writing admission", async () => {
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "写作准入" }));
+
+    expect(await screen.findByText("请先打开或新建作品，写作准入策略按作品单独保存。")).toBeVisible();
+    expect(screen.queryByRole("radiogroup", { name: "写作准入策略" })).not.toBeInTheDocument();
   });
 });

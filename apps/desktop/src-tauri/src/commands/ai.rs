@@ -2099,6 +2099,31 @@ pub(crate) fn get_ai_budget_settings(
 }
 
 #[tauri::command]
+pub(crate) fn get_writing_review_policy(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<novel_infrastructure::WritingReviewPolicy, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.get_writing_review_policy().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn save_writing_review_policy(
+    state: tauri::State<'_, ProjectState>,
+    policy: novel_infrastructure::WritingReviewPolicy,
+) -> Result<novel_infrastructure::WritingReviewPolicy, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .save_writing_review_policy(policy)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn save_ai_budget_settings(
     state: tauri::State<'_, ProjectState>,
     settings: novel_infrastructure::AiBudgetSettings,
@@ -2607,8 +2632,15 @@ pub(crate) async fn generate_ai_proposal(
                 .manager
                 .lock()
                 .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+            let policy = manager
+                .get_writing_review_policy()
+                .map_err(ApiError::from)?;
             manager
-                .chapter_writing_admission(chapter_id, current_review_context_version.as_deref())
+                .chapter_writing_admission(
+                    chapter_id,
+                    current_review_context_version.as_deref(),
+                    policy,
+                )
                 .map_err(ApiError::from)?
         };
         if !admission.allowed {

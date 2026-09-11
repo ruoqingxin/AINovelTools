@@ -877,6 +877,37 @@ impl Database {
             .map_err(DatabaseError::from)
     }
 
+    pub(super) fn project_metadata(&self) -> Result<serde_json::Value, DatabaseError> {
+        let metadata_json: String = self.connection.query_row(
+            "SELECT metadata_json FROM project_settings WHERE project_id='current'",
+            [],
+            |row| row.get(0),
+        )?;
+        serde_json::from_str(&metadata_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+            .into()
+        })
+    }
+
+    pub(super) fn save_project_metadata(
+        &mut self,
+        metadata: &serde_json::Value,
+    ) -> Result<(), DatabaseError> {
+        let metadata_json = serde_json::to_string(metadata)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        self.connection.execute(
+            "UPDATE project_settings
+             SET metadata_json=?1, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+             WHERE project_id='current'",
+            [metadata_json],
+        )?;
+        Ok(())
+    }
+
     pub(super) fn save_planning_section(
         &mut self,
         section: PlanningSection,

@@ -11,7 +11,7 @@ use keyring::Entry;
 use novel_application::ContextPackage;
 use novel_domain::{
     AiAction, AiContractError, AiProposal, AiProposalStatus, AiTaskStatus, ModelCapability,
-    ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel,
+    ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel, WritingReviewPolicy,
 };
 use reqwest::StatusCode;
 use rusqlite::OptionalExtension;
@@ -432,6 +432,7 @@ pub enum ConsistencyReviewFreshness {
     Missing,
     Fresh,
     Stale,
+    Unverified,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -2347,20 +2348,19 @@ impl ProjectManager {
         reviews: &mut [AiProposalReview],
         current_context_version: Option<&str>,
     ) {
-        let Some(current_context_version) = current_context_version else {
-            return;
-        };
         for review in reviews {
             if review.proposal.action == AiAction::ConsistencyCheck
                 && review.proposal.status == AiProposalStatus::Pending
             {
-                review.consistency_freshness = Some(
-                    if review.proposal.context_version == current_context_version {
+                review.consistency_freshness = Some(match current_context_version {
+                    Some(current_context_version)
+                        if review.proposal.context_version == current_context_version =>
+                    {
                         ConsistencyReviewFreshness::Fresh
-                    } else {
-                        ConsistencyReviewFreshness::Stale
-                    },
-                );
+                    }
+                    Some(_) => ConsistencyReviewFreshness::Stale,
+                    None => ConsistencyReviewFreshness::Unverified,
+                });
             }
         }
     }
@@ -2369,6 +2369,7 @@ impl ProjectManager {
         &self,
         chapter_id: Uuid,
         current_context_version: Option<&str>,
+        policy: WritingReviewPolicy,
     ) -> Result<WritingAdmission, AiError> {
         let Some(review) = self
             .list_ai_proposal_reviews(chapter_id)?
@@ -2378,66 +2379,113 @@ impl ProjectManager {
                     && item.proposal.status == AiProposalStatus::Pending
             })
         else {
+            let allowed = policy != WritingReviewPolicy::Required;
             return Ok(WritingAdmission {
-                allowed: true,
+                allowed,
                 blocker_count: 0,
-                reason: None,
+                reason: (!allowed).then(|| {
+                    "当前作品要求生成正文前完成一致性审核，请先运行审核并确认结果。".to_owned()
+                }),
                 review_freshness: ConsistencyReviewFreshness::Missing,
             });
         };
-        if current_context_version.is_some_and(|version| version != review.proposal.context_version)
+        let freshness = match current_context_version {
+            Some(version) if version == review.proposal.context_version => {
+                ConsistencyReviewFreshness::Fresh
+            }
+            Some(_) => ConsistencyReviewFreshness::Stale,
+            None => ConsistencyReviewFreshness::Unverified,
+        };
+        if freshness == ConsistencyReviewFreshness::Stale {
+            let allowed = policy != WritingReviewPolicy::Required;
+            return Ok(WritingAdmission {
+                allowed,
+                blocker_count: 0,
+                reason: Some(if allowed {
+                    "审核依据已经变化，原审核结果已过期，不再参与正文生成准入。".to_owned()
+                } else {
+                    "审核依据已经变化，当前作品要求重新审核通过后才能生成正文。".to_owned()
+                }),
+                review_freshness: freshness,
+            });
+        }
+        if freshness == ConsistencyReviewFreshness::Unverified
+            && policy == WritingReviewPolicy::Required
         {
             return Ok(WritingAdmission {
-                allowed: true,
+                allowed: false,
                 blocker_count: 0,
                 reason: Some(
-                    "审核依据已经变化，原审核结果已过期，不再参与正文生成准入。".to_owned(),
+                    "系统无法确认现有审核是否对应当前正文与设定，请重新审核后再生成正文。"
+                        .to_owned(),
                 ),
-                review_freshness: ConsistencyReviewFreshness::Stale,
+                review_freshness: freshness,
             });
         }
         let Some(report) = review.consistency else {
+            let allowed = policy != WritingReviewPolicy::Required;
             return Ok(WritingAdmission {
-                allowed: true,
+                allowed,
                 blocker_count: 0,
-                reason: None,
+                reason: (!allowed)
+                    .then(|| "现有审核没有可用的审核报告，请重新审核后再生成正文。".to_owned()),
                 review_freshness: ConsistencyReviewFreshness::Missing,
             });
         };
-        match report.verdict {
+        let report_admission = match report.verdict {
             AiConsistencyVerdict::Blocked => {
                 let blocker_count = report
                     .findings
                     .iter()
                     .filter(|finding| finding.severity == AiConsistencySeverity::Blocker)
                     .count();
-                Ok(WritingAdmission {
+                WritingAdmission {
                     allowed: false,
                     blocker_count,
                     reason: Some(format!(
                         "最近一次一致性审核发现 {blocker_count} 个阻断问题，请先处理并关闭审核后再生成正文。"
                     )),
-                    review_freshness: ConsistencyReviewFreshness::Fresh,
-                })
+                    review_freshness: freshness,
+                }
             }
-            AiConsistencyVerdict::NeedsInput => Ok(WritingAdmission {
+            AiConsistencyVerdict::NeedsInput => WritingAdmission {
                 allowed: false,
                 blocker_count: 0,
                 reason: Some(
                     "最近一次一致性审核缺少判断准入所需的正式设定，请补齐并关闭审核后再生成正文。"
                         .to_owned(),
                 ),
-                review_freshness: ConsistencyReviewFreshness::Fresh,
-            }),
+                review_freshness: freshness,
+            },
+            AiConsistencyVerdict::Unparsed if policy == WritingReviewPolicy::Required => {
+                WritingAdmission {
+                    allowed: false,
+                    blocker_count: 0,
+                    reason: Some(
+                        "当前作品要求审核结论可解析，请重新审核并确认报告格式。".to_owned(),
+                    ),
+                    review_freshness: freshness,
+                }
+            }
             AiConsistencyVerdict::Pass
             | AiConsistencyVerdict::Review
-            | AiConsistencyVerdict::Unparsed => Ok(WritingAdmission {
+            | AiConsistencyVerdict::Unparsed => WritingAdmission {
                 allowed: true,
                 blocker_count: 0,
                 reason: None,
-                review_freshness: ConsistencyReviewFreshness::Fresh,
-            }),
+                review_freshness: freshness,
+            },
+        };
+        if policy == WritingReviewPolicy::Advisory {
+            return Ok(WritingAdmission {
+                allowed: true,
+                blocker_count: report_admission.blocker_count,
+                reason: (!report_admission.allowed)
+                    .then(|| "当前作品的一致性审核仅作建议，不阻止生成正文。".to_owned()),
+                review_freshness: freshness,
+            });
         }
+        Ok(report_admission)
     }
 
     pub fn rate_ai_proposal(

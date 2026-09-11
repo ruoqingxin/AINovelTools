@@ -52,7 +52,7 @@ pub use novel_domain::{
     KnowledgeExpansionError, KnowledgeLifecycleStatus, KnowledgeVersion, ModelCapability,
     ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel, Relation, RetrievalEvidence,
     RetrievalMethod, ReviewDecision, SummaryKind, SummaryMaterial, SummaryPrecision, WorldState,
-    WorldStateEntry, WritingCard,
+    WorldStateEntry, WritingCard, WritingReviewPolicy,
 };
 pub use search_store::{SearchResult, SearchStoreError};
 
@@ -463,6 +463,8 @@ pub struct Database {
 
 #[derive(Debug, Error)]
 pub enum ProjectError {
+    #[error("no project is open")]
+    NoProject,
     #[error("project path is invalid: {0}")]
     InvalidPath(PathBuf),
     #[error("project already exists: {0}")]
@@ -1678,6 +1680,35 @@ impl ProjectManager {
         Ok(session.database.list_plan_nodes()?)
     }
 
+    pub fn get_writing_review_policy(&self) -> Result<WritingReviewPolicy, ProjectError> {
+        let session = self.current.as_ref().ok_or(ProjectError::NoProject)?;
+        let metadata = session.database.project_metadata()?;
+        Ok(metadata
+            .get("writingReviewPolicy")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default())
+    }
+
+    pub fn save_writing_review_policy(
+        &mut self,
+        policy: WritingReviewPolicy,
+    ) -> Result<WritingReviewPolicy, ProjectError> {
+        let session = self.current.as_mut().ok_or(ProjectError::NoProject)?;
+        let mut metadata = session.database.project_metadata()?;
+        if !metadata.is_object() {
+            metadata = serde_json::json!({});
+        }
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert(
+                "writingReviewPolicy".to_owned(),
+                serde_json::to_value(policy)?,
+            );
+        }
+        session.database.save_project_metadata(&metadata)?;
+        Ok(policy)
+    }
+
     pub fn list_planning_sections(&self) -> Result<Vec<PlanningSection>, ProjectError> {
         let session = self
             .current
@@ -2277,9 +2308,22 @@ mod tests {
         assert!(root.join("project.sqlite").is_file());
         assert!(root.join("attachments").is_dir());
         assert!(manager.health().is_ok());
+        assert_eq!(
+            manager.get_writing_review_policy().expect("default policy"),
+            super::WritingReviewPolicy::Balanced
+        );
+        manager
+            .save_writing_review_policy(super::WritingReviewPolicy::Required)
+            .expect("save policy");
         assert_eq!(manager.close(), Some(manifest.clone()));
         let reopened = manager.open(&root).expect("reopen project");
         assert_eq!(reopened, manifest);
+        assert_eq!(
+            manager
+                .get_writing_review_policy()
+                .expect("persisted policy"),
+            super::WritingReviewPolicy::Required
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3418,7 +3462,11 @@ mod tests {
             Some(super::ConsistencyReviewFreshness::Stale)
         );
         let admission = manager
-            .chapter_writing_admission(chapter.id, Some(&review_context_version))
+            .chapter_writing_admission(
+                chapter.id,
+                Some(&review_context_version),
+                super::WritingReviewPolicy::Balanced,
+            )
             .expect("admission");
         assert!(!admission.allowed);
         assert_eq!(admission.blocker_count, 1);
@@ -3428,12 +3476,36 @@ mod tests {
             super::ConsistencyReviewFreshness::Fresh
         );
         let stale_admission = manager
-            .chapter_writing_admission(chapter.id, Some("changed-context-version"))
+            .chapter_writing_admission(
+                chapter.id,
+                Some("changed-context-version"),
+                super::WritingReviewPolicy::Balanced,
+            )
             .expect("stale admission");
         assert!(stale_admission.allowed);
         assert_eq!(
             stale_admission.review_freshness,
             super::ConsistencyReviewFreshness::Stale
+        );
+        assert!(
+            !manager
+                .chapter_writing_admission(
+                    chapter.id,
+                    Some("changed-context-version"),
+                    super::WritingReviewPolicy::Required,
+                )
+                .expect("strict stale admission")
+                .allowed
+        );
+        assert!(
+            manager
+                .chapter_writing_admission(
+                    chapter.id,
+                    Some(&review_context_version),
+                    super::WritingReviewPolicy::Advisory,
+                )
+                .expect("advisory admission")
+                .allowed
         );
         assert!(
             manager
@@ -3458,8 +3530,18 @@ mod tests {
         );
         assert!(
             manager
-                .chapter_writing_admission(chapter.id, Some(&review_context_version))
+                .chapter_writing_admission(
+                    chapter.id,
+                    Some(&review_context_version),
+                    super::WritingReviewPolicy::Balanced,
+                )
                 .expect("admission after close")
+                .allowed
+        );
+        assert!(
+            !manager
+                .chapter_writing_admission(chapter.id, None, super::WritingReviewPolicy::Required,)
+                .expect("strict admission without review")
                 .allowed
         );
         assert_eq!(

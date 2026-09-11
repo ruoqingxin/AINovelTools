@@ -19,6 +19,7 @@ impl ApiError {
 impl From<novel_infrastructure::ProjectError> for ApiError {
     fn from(error: novel_infrastructure::ProjectError) -> Self {
         let code = match error {
+            novel_infrastructure::ProjectError::NoProject => "NO_PROJECT_OPEN",
             novel_infrastructure::ProjectError::InvalidPath(_) => "INVALID_INPUT",
             novel_infrastructure::ProjectError::AlreadyExists(_) => "PROJECT_ALREADY_EXISTS",
             novel_infrastructure::ProjectError::NotInitialized(_) => "PROJECT_NOT_INITIALIZED",

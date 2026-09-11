@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getAiBudgetSettings: vi.fn(),
   getAiTaskPreferences: vi.fn(),
   getAiUsageSummary: vi.fn(),
+  getWritingReviewPolicy: vi.fn(),
   listen: vi.fn(),
   listAiProposals: vi.fn(),
   listEntities: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("../lib/tauri-client", async () => {
     getAiBudgetSettings: mocks.getAiBudgetSettings,
     getAiTaskPreferences: mocks.getAiTaskPreferences,
     getAiUsageSummary: mocks.getAiUsageSummary,
+    getWritingReviewPolicy: mocks.getWritingReviewPolicy,
     listAiProposals: mocks.listAiProposals,
     listEntities: mocks.listEntities,
     listJobs: mocks.listJobs,
@@ -127,6 +129,7 @@ describe("AiWritingPanel consistency review", () => {
       daily: [],
       byTask: [],
     });
+    mocks.getWritingReviewPolicy.mockResolvedValue("BALANCED");
     mocks.listAiProposals.mockResolvedValueOnce([]).mockResolvedValue([review]);
     mocks.listEntities.mockResolvedValue([]);
     mocks.listJobs.mockResolvedValue([]);
@@ -212,5 +215,35 @@ describe("AiWritingPanel consistency review", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "生成整章初稿" })).toBeEnabled());
     expect(screen.getByRole("button", { name: "按当前内容重新审核" })).toBeEnabled();
     expect(screen.queryByText(/整章创作与续写已暂停/)).not.toBeInTheDocument();
+  });
+
+  it("requires a fresh review when the project uses strict admission", async () => {
+    mocks.getWritingReviewPolicy.mockResolvedValue("REQUIRED");
+    mocks.listAiProposals.mockReset();
+    mocks.listAiProposals.mockResolvedValue([]);
+    mocks.listPlanningSections.mockResolvedValue([
+      { id: "seed-premise", content: "主角进入城市寻找失踪的师父。" },
+      { id: "engine-protagonist", content: "主角要找到师父并查明失踪原因。" },
+      { id: "frame-setting", content: "城市中的灵力会在夜间衰减。" },
+      { id: "frame-narrative", content: "全书固定使用第三人称。" },
+    ]);
+    mocks.listEntities.mockResolvedValue([{ entityType: "CHARACTER" }]);
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AiWritingPanel
+          chapterId="chapter-1"
+          chapterTitle="第1章·入城"
+          chapterPlan="主角进入城市并寻找失踪的师父。"
+          volumeId="volume-1"
+          volumePlan="第一卷规划"
+          draft="主角抵达城门。"
+          editor={null}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/严格准入/)).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "生成整章初稿" })).toBeDisabled());
   });
 });

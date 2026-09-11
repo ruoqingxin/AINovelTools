@@ -89,6 +89,15 @@ pub enum AiAction {
     ConsistencyCheck,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WritingReviewPolicy {
+    Advisory,
+    #[default]
+    Balanced,
+    Required,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RetrievalMethod {
