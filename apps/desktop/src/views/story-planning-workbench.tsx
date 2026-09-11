@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, DatabaseZap, FileUp, PenLine, RotateCcw, Save, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { classifyAiFailure } from "../lib/ai-failure";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
   errorMessage,
@@ -12,6 +13,7 @@ import {
   listPlanningEmbeddings,
   generatePlanningEmbedding,
   clearPlanningEmbedding,
+  retryJob,
   savePlanningSection,
   type PlanningSection,
   type Job,
@@ -119,6 +121,7 @@ export function StoryPlanningWorkbench(props: {
   const [showEditor, setShowEditor] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [startMode, setStartMode] = useState<PlanningStartMode | null>("WRITE");
   const [pendingAction, setPendingAction] = useState<"AI" | "IMPORT" | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -165,6 +168,9 @@ export function StoryPlanningWorkbench(props: {
   const latestJob = sectionJobs[0];
   const aiBusy = generating || importing || Boolean(activeJob);
   const visibleJob = activeJob ?? (latestJob?.status === "FAILED" || latestJob?.status === "CANCELLED" ? latestJob : null);
+  const visibleFailure = visibleJob?.status === "FAILED"
+    ? classifyAiFailure(visibleJob.errorSummary)
+    : null;
   const existingFormalContext = (storedSections.data ?? [])
     .filter((item) => sectionIds.has(item.id) && item.content.trim() && item.id !== selectedId)
     .map((item) => `${item.id}: ${item.content}`)
@@ -319,6 +325,22 @@ export function StoryPlanningWorkbench(props: {
     }
   }
 
+  async function retryVisibleJob() {
+    if (!visibleJob || visibleJob.status !== "FAILED" || retrying) return;
+    setRetrying(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await retryJob(visibleJob.id);
+      await client.invalidateQueries({ queryKey: ["jobs"] });
+      setNotice("失败任务已重新进入队列，将沿用原提示词和上下文继续执行");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   function restoreContent() {
     if (!previousForm) return;
     setForm(previousForm);
@@ -412,7 +434,7 @@ export function StoryPlanningWorkbench(props: {
             </div>
             <AiModelNote taskLabel="作品设定" profile={chatProfile} preference={chatPreference} />
             {pendingAction ? <div className="story-planning-confirmation" role="status"><div className="story-planning-confirmation-summary">{pendingAction === "AI" ? <Sparkles size={16} /> : <FileUp size={16} />}<span><strong>{pendingAction === "AI" ? "确认进行 AI 推导？" : `确认提取 ${pendingFiles.length} 个文件？`}</strong><small>{pendingAction === "AI" ? `将结合已有正式设定生成“${selectedDefinition.label}”的候选内容，结果只会保存到待定区。` : allowImportRewrite ? `AI 将以所选文件为依据进行筛选、改写和合理补全，生成符合“${selectedDefinition.label}”范围的内容。` : `AI 只会严格提取所选文件中与“${selectedDefinition.label}”直接相关的原文信息，不会补写。`}</small>{pendingAction === "IMPORT" && pendingFiles.length ? <small className="story-planning-file-list">{pendingFiles.map((file) => file.name).join("、")}</small> : null}</span></div><label className="story-planning-guidance"><span>{pendingAction === "AI" ? "补充你的意见（可选）" : "补充提取要求（可选）"}</span><textarea rows={3} value={operationGuidance} onChange={(event) => setOperationGuidance(event.target.value)} placeholder={pendingAction === "AI" ? "例如：更偏现实主义，保留现有力量限制，不要加入穿越设定" : "例如：重点提取力量来源和使用代价，忽略人物外貌描写"} /></label>{pendingAction === "IMPORT" ? <label className="story-planning-rewrite-option"><input type="checkbox" checked={allowImportRewrite} onChange={(event) => setAllowImportRewrite(event.target.checked)} /><span><strong>允许 AI 改写并合理补全</strong><small>以文件内容为依据，重新组织表达并补足必要细节，使结果符合当前节点范围</small></span></label> : null}<div className="story-planning-confirmation-actions"><button type="button" className="primary-action" onClick={() => pendingAction === "AI" ? void generateWithAi() : void importSectionFile()} disabled={aiBusy || (pendingAction === "IMPORT" && !pendingFiles.length)}><Check size={14} />{pendingAction === "AI" ? "提交推导任务" : allowImportRewrite ? "提交生成改写" : "提交提取任务"}</button><button type="button" className="secondary-action" onClick={() => { setStartMode(null); setPendingAction(null); setPendingFiles([]); setOperationGuidance(""); setAllowImportRewrite(false); }} disabled={generating || importing}><X size={14} />取消</button></div></div> : null}
-            {visibleJob ? <div className="story-planning-job-status" data-status={visibleJob.status.toLowerCase()}><div><strong>{visibleJob.jobType === "AI_PLANNING_EXTRACT" ? "文件处理任务" : "AI 推导任务"}</strong><span>{visibleJob.status === "QUEUED" ? "等待后台执行" : visibleJob.status === "RUNNING" ? "后台执行中，可安全切换页面" : visibleJob.status === "FAILED" ? visibleJob.errorSummary ?? "执行失败" : "任务已取消"}</span></div><div className="story-planning-job-progress"><span style={{ width: `${visibleJob.progress}%` }} /></div><small>{visibleJob.progress}%</small><div className="story-planning-job-actions"><a href="/jobs">查看任务日志</a>{activeJob ? <button type="button" onClick={() => void cancelActiveJob()}>取消任务</button> : null}</div></div> : null}
+            {visibleJob ? <div className="story-planning-job-status" data-status={visibleJob.status.toLowerCase()}><div><strong>{visibleJob.jobType === "AI_PLANNING_EXTRACT" ? "文件处理任务" : "AI 推导任务"}</strong><span>{visibleJob.status === "QUEUED" ? "等待后台执行" : visibleJob.status === "RUNNING" ? "后台执行中，可安全切换页面" : visibleJob.status === "FAILED" ? `${visibleFailure?.label ?? "执行失败"}：${visibleJob.errorSummary ?? "未提供错误信息"} ${visibleFailure?.hint ?? ""}` : "任务已取消，可重新提交当前任务"}</span></div><div className="story-planning-job-progress"><span style={{ width: `${visibleJob.progress}%` }} /></div><small>{visibleJob.progress}%</small><div className="story-planning-job-actions"><a href="/jobs">查看任务日志</a>{activeJob ? <button type="button" onClick={() => void cancelActiveJob()}>取消任务</button> : null}{visibleJob.status === "FAILED" ? <button type="button" onClick={() => void retryVisibleJob()} disabled={retrying}><RotateCcw size={12} />{retrying ? "重试中…" : "重试原任务"}</button> : null}</div></div> : null}
           </div>
           {!chatProfile ? <p className="story-planning-ai-hint">请先在设置中配置一个可用的聊天模型。</p> : null}
           {showEditor ? <div className="story-planning-content-editor"><div className="story-planning-content-tabs" role="tablist" aria-label="设定内容区域"><button type="button" role="tab" aria-selected={editorTab === "formal"} data-active={editorTab === "formal" || undefined} onClick={() => switchEditorTab("formal")}><span>正式设定</span><small>{form.content.trim() ? "已建立" : "未填写"}</small></button><button type="button" role="tab" aria-selected={editorTab === "pending"} data-active={editorTab === "pending" || undefined} onClick={() => switchEditorTab("pending")}><span>待定区</span><small>{form.pendingContent.trim() ? "有候选内容" : "暂无内容"}</small></button></div><label><span>{editorTab === "pending" ? "待定内容" : "正式设定"}</span><small>{editorTab === "pending" ? "AI 生成后会自动保存；手动修改后需点击“保存待定内容”，否则切换操作会恢复到已保存版本" : "正式设定只读。如需修改，请先转为待定内容，修改后再设为正式设定"}</small><textarea rows={12} autoFocus readOnly={editorTab === "formal"} value={editorTab === "pending" ? form.pendingContent : form.content} onChange={(event) => setForm((current) => ({ ...current, pendingContent: event.target.value }))} placeholder={editorTab === "pending" ? `等待生成或填写${selectedDefinition.label}的候选内容…` : `尚未建立${selectedDefinition.label}…`} /></label><div className="story-planning-actions">{editorTab === "pending" ? <><button type="button" className="primary-action" onClick={() => void confirmPending()} disabled={saving || !form.pendingContent.trim()}><Check size={15} />{saving ? "同步中…" : "设为正式设定"}</button><button type="button" className="secondary-action" onClick={() => void save()} disabled={saving || !pendingDirty}><Save size={14} />保存待定内容</button></> : <><button type="button" className="primary-action" onClick={() => { setForm((current) => ({ ...current, pendingContent: current.content })); setEditorTab("pending"); setNotice("已转为待定内容，请修改后保存"); }} disabled={!form.content.trim()}>转为待定内容</button><button type="button" className="secondary-action" onClick={() => void createEmbedding()} disabled={!form.content.trim() || !embeddingProfile}><DatabaseZap size={14} />{embeddingState === "已生成" ? "重新生成向量" : "生成向量"}</button><button type="button" className="secondary-action destructive-action" onClick={() => void removeEmbedding()} disabled={!currentEmbedding}><Trash2 size={14} />清除向量</button></>}{previousForm ? <button type="button" className="secondary-action" onClick={restoreContent}><RotateCcw size={14} />还原本次操作</button> : null}{editorTab === "pending" ? <button type="button" className="secondary-action destructive-action" onClick={clearContent} disabled={!form.pendingContent.trim()}><Trash2 size={14} />清除内容</button> : null}</div><div className="story-planning-state"><strong>向量状态：{embeddingState}</strong><span>{!embeddingProfile ? "请先配置带密钥的 Embedding 模型" : "正式设定优先复用持久向量，文件片段在任务执行时临时向量化，用于混合检索"}</span></div></div> : null}

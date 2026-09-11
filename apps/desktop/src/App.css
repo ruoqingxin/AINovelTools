@@ -2076,7 +2076,8 @@ button:focus-visible {
 .story-planning-job-progress { align-self:center; height:5px; overflow:hidden; border-radius:4px; background:#dfe8f7; }
 .story-planning-job-progress span { display:block; height:100%; background:#4f7fe0; transition:width .2s ease; }
 .story-planning-job-actions { grid-column:1 / -1; display:flex; gap:12px; align-items:center; }
-.story-planning-job-actions a,.story-planning-job-actions button { padding:0; border:0; color:#2f68d1; background:transparent; font-size:10px; text-decoration:none; }
+.story-planning-job-actions a,.story-planning-job-actions button { display:inline-flex; align-items:center; gap:4px; padding:0; border:0; color:#2f68d1; background:transparent; font-size:10px; text-decoration:none; }
+.story-planning-job-actions button:disabled { opacity:.58; }
 .story-planning-job-status[data-status="failed"] { border-color:#e4b8b8; background:#fff7f7; }
 .story-planning-job-status[data-status="cancelled"] { border-color:#dfd2b5; background:#fffaf0; }
 .story-planning-content-editor { padding-top:18px; }

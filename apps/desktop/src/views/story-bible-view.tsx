@@ -1,6 +1,7 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Check, FileUp, Plus, RotateCcw, Save, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { classifyAiFailure } from "../lib/ai-failure";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
   errorMessage,
@@ -67,6 +68,7 @@ export function StoryBibleView() {
   const [importItems, setImportItems] = useState<Array<{ name: string; description: string; aliases: string[]; tags: string[] }>>([]);
   const [importSourceText, setImportSourceText] = useState("");
   const [importBusy, setImportBusy] = useState(false);
+  const [extractionFailed, setExtractionFailed] = useState(false);
   const modelProfiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
   const extractionProfile = resolveTaskChatProfile(modelProfiles.data, aiPreferences.data, "knowledgeExtraction");
@@ -188,6 +190,7 @@ export function StoryBibleView() {
       setImportSourceText(text);
       setImportFileName(file.name);
       setImportItems([]);
+      setExtractionFailed(false);
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -196,13 +199,21 @@ export function StoryBibleView() {
   async function extractImportItems() {
     if (!importSourceText || importBusy) return;
     if (!extractionProfile) { setError("请先在设置中配置一个可用的聊天模型"); return; }
-    setImportBusy(true); setError(null); setNotice(null);
+    setImportBusy(true); setError(null); setNotice(null); setExtractionFailed(false);
     try {
       if (!form.name.trim() || !summaryText.trim() || !scopeText.trim()) { setError("AI 提炼前必须填写类型、名称、简要概述和适用范围"); return; }
       const items = await extractEntitiesFromText(extractionProfile.id, form.entityType, form.name.trim(), summaryText.trim(), scopeText.trim(), importSourceText, importGuidance.trim(), extractionPreference.temperature ?? undefined, extractionPreference.maxOutputTokens ?? undefined);
       setImportItems(items.slice(0, 200));
-      if (!items.length) setError("AI 没有提炼出符合主题的信息，请换一个主题或重试。");
-    } catch (cause) { setError(errorMessage(cause)); }
+      if (!items.length) {
+        setExtractionFailed(true);
+        setError("AI 没有提炼出符合主题的信息，请调整主题或补充意见后重试。");
+      }
+    } catch (cause) {
+      const detail = errorMessage(cause);
+      const failure = classifyAiFailure(detail);
+      setExtractionFailed(true);
+      setError(`知识提炼失败（${failure.label}）：${detail}。${failure.hint}`);
+    }
     finally { setImportBusy(false); }
   }
 
@@ -278,7 +289,7 @@ export function StoryBibleView() {
             <div className="story-bible-toolbar import-toolbar">
               <AiModelNote taskLabel="知识提炼" profile={extractionProfile} preference={extractionPreference} />
               <label className="file-picker"><FileUp size={15} />{importFileName || "选择 TXT / Markdown 文件"}<input type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readImportFile(file); }} /></label>
-              <button type="button" className="primary-action" onClick={() => void extractImportItems()} disabled={!importSourceText || !extractionProfile?.hasSecret || !form.name.trim() || !summaryText.trim() || !scopeText.trim() || importBusy}><FileUp size={15} />{importBusy ? "AI 提炼中…" : "按主题提炼"}</button>
+              <button type="button" className="primary-action" onClick={() => void extractImportItems()} disabled={!importSourceText || !extractionProfile?.hasSecret || !form.name.trim() || !summaryText.trim() || !scopeText.trim() || importBusy}><FileUp size={15} />{importBusy ? "AI 提炼中…" : extractionFailed ? "重试提炼" : "按主题提炼"}</button>
             </div>
             <label className="entity-import-guidance"><span>补充提炼意见（可选）</span><textarea rows={2} value={importGuidance} onChange={(event) => setImportGuidance(event.target.value)} placeholder="例如：优先提炼力量来源、使用代价和限制，忽略外貌与日常习惯" /></label>
             <p className="import-condition">提炼条件：{form.entityType ? typeLabels[form.entityType] : "未选择类型"} · {form.name || "未填写名称"} · {summaryText || "未填写简要概述"} · {scopeText || "未填写适用范围"}</p>
