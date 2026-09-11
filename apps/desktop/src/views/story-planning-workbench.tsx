@@ -267,7 +267,7 @@ export function StoryPlanningWorkbench(props: {
     setNotice(null);
     try {
       const content = (await Promise.all(files.map(async (file) => `===== 文件：${file.name} =====\n${await file.text()}`))).join("\n\n");
-      await enqueuePlanningAiJob({ profileId: chatProfile.id, mode: "EXTRACT", sectionId: selectedId, sectionTitle: selectedDefinition.label, sectionPrompt: selectedAiPrompt, existingContext: existingFormalContext, referenceContent: content, userGuidance: operationGuidance, allowRewrite: allowImportRewrite, temperature: chatPreference.temperature ?? undefined, maxOutputTokens: chatPreference.maxOutputTokens ?? undefined, sourceName: files.map((file) => file.name) });
+      await enqueuePlanningAiJob({ profileId: chatProfile.id, mode: "EXTRACT", sectionId: selectedId, sectionTitle: selectedDefinition.label, sectionPrompt: selectedAiPrompt, existingContext: existingFormalContext, referenceContent: content, userGuidance: operationGuidance, allowRewrite: allowImportRewrite, taskKey: "workDesign", temperature: chatPreference.temperature ?? undefined, maxOutputTokens: chatPreference.maxOutputTokens ?? undefined, sourceName: files.map((file) => file.name) });
       setPendingAction(null);
       setStartMode(null);
       setPendingFiles([]);
@@ -295,6 +295,7 @@ export function StoryPlanningWorkbench(props: {
         referenceContent: "",
         userGuidance: operationGuidance,
         allowRewrite: false,
+        taskKey: "workDesign",
         temperature: chatPreference.temperature ?? undefined,
         maxOutputTokens: chatPreference.maxOutputTokens ?? undefined,
       });

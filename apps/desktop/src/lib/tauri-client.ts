@@ -200,7 +200,7 @@ export type JobEvent = {
 export type PlanningAiJobInput = {
   profileId: string; mode: "GENERATE" | "EXTRACT"; sectionId: string; sectionTitle: string;
   sectionPrompt: string; existingContext: string; referenceContent: string; userGuidance: string;
-  allowRewrite: boolean; temperature?: number; maxOutputTokens?: number;
+  allowRewrite: boolean; taskKey?: "workDesign" | "outline" | "volumePlanning" | "chapterSplit"; temperature?: number; maxOutputTokens?: number;
   sourceName?: string[] | string; systemPromptSnapshot?: string; userPromptSnapshot?: string;
   finalRequestEndpoint?: string; finalRequestBody?: string; finalRequestEstimatedInputTokens?: number;
 };

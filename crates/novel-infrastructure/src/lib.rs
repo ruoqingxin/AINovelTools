@@ -32,7 +32,7 @@ mod knowledge_store;
 mod materials_store;
 mod search_store;
 pub use ai::{
-    AiError, AiTaskPreference, AiTaskPreferences, EmbeddingGateway, GenerationOptions,
+    AiError, AiTaskKind, AiTaskPreference, AiTaskPreferences, EmbeddingGateway, GenerationOptions,
     ModelGateway, ModelProfileStore, SecretStore,
 };
 pub use entity_store::EntityStoreError;

@@ -86,6 +86,40 @@ impl AiError {
 
 pub struct SecretStore;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AiTaskKind {
+    WorkDesign,
+    Outline,
+    VolumePlanning,
+    ChapterSplit,
+    Writing,
+    KnowledgeExtraction,
+}
+
+impl AiTaskKind {
+    #[must_use]
+    pub const fn default_temperature(self) -> f64 {
+        match self {
+            Self::WorkDesign => 0.45,
+            Self::Outline => 0.6,
+            Self::VolumePlanning => 0.55,
+            Self::ChapterSplit => 0.3,
+            Self::Writing => 0.9,
+            Self::KnowledgeExtraction => 0.1,
+        }
+    }
+
+    #[must_use]
+    pub const fn default_max_output_tokens(self) -> u32 {
+        match self {
+            Self::WorkDesign | Self::ChapterSplit | Self::KnowledgeExtraction => 4_096,
+            Self::Outline | Self::VolumePlanning => 6_144,
+            Self::Writing => 8_192,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AiTaskPreference {
     pub profile_id: Option<Uuid>,
@@ -143,7 +177,7 @@ impl<'de> Deserialize<'de> for AiTaskPreference {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiTaskPreferences {
     pub work_design: AiTaskPreference,
@@ -164,6 +198,48 @@ impl AiTaskPreferences {
             &self.writing,
             &self.knowledge_extraction,
         ]
+    }
+
+    fn set_recommended_defaults(&mut self) {
+        self.work_design
+            .set_recommended_defaults(AiTaskKind::WorkDesign);
+        self.outline.set_recommended_defaults(AiTaskKind::Outline);
+        self.volume_planning
+            .set_recommended_defaults(AiTaskKind::VolumePlanning);
+        self.chapter_split
+            .set_recommended_defaults(AiTaskKind::ChapterSplit);
+        self.writing.set_recommended_defaults(AiTaskKind::Writing);
+        self.knowledge_extraction
+            .set_recommended_defaults(AiTaskKind::KnowledgeExtraction);
+    }
+}
+
+impl AiTaskPreference {
+    fn recommended(task: AiTaskKind) -> Self {
+        Self {
+            profile_id: None,
+            temperature: Some(task.default_temperature()),
+            max_output_tokens: Some(task.default_max_output_tokens()),
+        }
+    }
+
+    fn set_recommended_defaults(&mut self, task: AiTaskKind) {
+        self.temperature.get_or_insert(task.default_temperature());
+        self.max_output_tokens
+            .get_or_insert(task.default_max_output_tokens());
+    }
+}
+
+impl Default for AiTaskPreferences {
+    fn default() -> Self {
+        Self {
+            work_design: AiTaskPreference::recommended(AiTaskKind::WorkDesign),
+            outline: AiTaskPreference::recommended(AiTaskKind::Outline),
+            volume_planning: AiTaskPreference::recommended(AiTaskKind::VolumePlanning),
+            chapter_split: AiTaskPreference::recommended(AiTaskKind::ChapterSplit),
+            writing: AiTaskPreference::recommended(AiTaskKind::Writing),
+            knowledge_extraction: AiTaskPreference::recommended(AiTaskKind::KnowledgeExtraction),
+        }
     }
 }
 
@@ -796,16 +872,20 @@ impl ModelProfileStore {
             )
             .optional()
             .map_err(DatabaseError::from)?;
-        stored.map_or_else(
+        let mut preferences = stored.map_or_else(
             || Ok(AiTaskPreferences::default()),
             |value| serde_json::from_str(&value).map_err(|_| AiError::ContextSerialization),
-        )
+        )?;
+        preferences.set_recommended_defaults();
+        Ok(preferences)
     }
 
     pub fn save_ai_task_preferences(
         &mut self,
         preferences: &AiTaskPreferences,
     ) -> Result<AiTaskPreferences, AiError> {
+        let mut preferences = preferences.clone();
+        preferences.set_recommended_defaults();
         let profiles = self.list()?;
         for preference in preferences.entries() {
             if preference
@@ -826,7 +906,7 @@ impl ModelProfileStore {
             }
         }
         let value =
-            serde_json::to_string(preferences).map_err(|_| AiError::ContextSerialization)?;
+            serde_json::to_string(&preferences).map_err(|_| AiError::ContextSerialization)?;
         self.database
             .connection
             .execute(
@@ -835,7 +915,7 @@ impl ModelProfileStore {
                 rusqlite::params![AI_TASK_PREFERENCES_KEY, value],
             )
             .map_err(DatabaseError::from)?;
-        Ok(preferences.clone())
+        Ok(preferences)
     }
 
     pub fn get(&self, id: Uuid) -> Result<ModelProfile, AiError> {
@@ -1263,6 +1343,23 @@ mod tests {
     }
 
     #[test]
+    fn ai_task_defaults_match_product_recommendations() {
+        let cases: [(super::AiTaskKind, f64, u32); 6] = [
+            (super::AiTaskKind::WorkDesign, 0.45, 4_096),
+            (super::AiTaskKind::Outline, 0.6, 6_144),
+            (super::AiTaskKind::VolumePlanning, 0.55, 6_144),
+            (super::AiTaskKind::ChapterSplit, 0.3, 4_096),
+            (super::AiTaskKind::Writing, 0.9, 8_192),
+            (super::AiTaskKind::KnowledgeExtraction, 0.1, 4_096),
+        ];
+
+        for (task, temperature, max_output_tokens) in cases {
+            assert_eq!(task.default_temperature().to_bits(), temperature.to_bits());
+            assert_eq!(task.default_max_output_tokens(), max_output_tokens);
+        }
+    }
+
+    #[test]
     fn model_profile_store_is_available_without_an_open_project() {
         let mut store = super::ModelProfileStore::in_memory().expect("settings store");
         let saved = store
@@ -1342,6 +1439,74 @@ mod tests {
         assert_eq!(preferences.work_design.temperature, None);
         assert_eq!(preferences.work_design.max_output_tokens, None);
         assert_eq!(preferences.outline, super::AiTaskPreference::default());
+    }
+
+    #[test]
+    fn ai_task_preferences_read_fills_missing_tuning_with_recommendations() {
+        let store = super::ModelProfileStore::in_memory().expect("settings store");
+        let profile_id = uuid::Uuid::new_v4();
+        store
+            .database
+            .connection
+            .execute(
+                "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)",
+                rusqlite::params![
+                    super::AI_TASK_PREFERENCES_KEY,
+                    format!(
+                        r#"{{"workDesign":"{profile_id}","outline":{{"profileId":null,"temperature":null,"maxOutputTokens":null}}}}"#
+                    )
+                ],
+            )
+            .expect("legacy preferences");
+
+        let preferences = store.get_ai_task_preferences().expect("read preferences");
+
+        assert_eq!(preferences.work_design.profile_id, Some(profile_id));
+        assert_eq!(preferences.work_design.temperature, Some(0.45));
+        assert_eq!(preferences.work_design.max_output_tokens, Some(4_096));
+        assert_eq!(preferences.outline.temperature, Some(0.6));
+        assert_eq!(preferences.outline.max_output_tokens, Some(6_144));
+        assert_eq!(preferences.volume_planning.temperature, Some(0.55));
+        assert_eq!(preferences.volume_planning.max_output_tokens, Some(6_144));
+        assert_eq!(preferences.chapter_split.temperature, Some(0.3));
+        assert_eq!(preferences.chapter_split.max_output_tokens, Some(4_096));
+        assert_eq!(preferences.writing.temperature, Some(0.9));
+        assert_eq!(preferences.writing.max_output_tokens, Some(8_192));
+        assert_eq!(preferences.knowledge_extraction.temperature, Some(0.1));
+        assert_eq!(
+            preferences.knowledge_extraction.max_output_tokens,
+            Some(4_096)
+        );
+    }
+
+    #[test]
+    fn ai_task_preferences_save_fills_defaults_without_overriding_user_tuning() {
+        let mut store = super::ModelProfileStore::in_memory().expect("settings store");
+        let mut preferences = super::AiTaskPreferences {
+            work_design: super::AiTaskPreference::default(),
+            outline: super::AiTaskPreference::default(),
+            volume_planning: super::AiTaskPreference::default(),
+            chapter_split: super::AiTaskPreference::default(),
+            writing: super::AiTaskPreference::default(),
+            knowledge_extraction: super::AiTaskPreference::default(),
+        };
+        preferences.outline.temperature = Some(0.75);
+        preferences.outline.max_output_tokens = Some(3_200);
+
+        let saved = store
+            .save_ai_task_preferences(&preferences)
+            .expect("save preferences");
+
+        assert_eq!(saved.work_design.temperature, Some(0.45));
+        assert_eq!(saved.work_design.max_output_tokens, Some(4_096));
+        assert_eq!(saved.outline.temperature, Some(0.75));
+        assert_eq!(saved.outline.max_output_tokens, Some(3_200));
+        assert_eq!(saved.writing.temperature, Some(0.9));
+        assert_eq!(saved.writing.max_output_tokens, Some(8_192));
+        assert_eq!(
+            store.get_ai_task_preferences().expect("read preferences"),
+            saved
+        );
     }
 
     #[test]

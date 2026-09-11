@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AI_TASK_DEFINITIONS, emptyAiTaskPreferences as recommendedAiTaskPreferences } from "../lib/ai-task-preferences";
 import { SettingsView } from "./settings-view";
 
 const mocks = vi.hoisted(() => ({
@@ -10,19 +11,10 @@ const mocks = vi.hoisted(() => ({
   saveAiTaskPreferences: vi.fn(),
 }));
 
-function emptyTaskPreference() {
-  return { profileId: null, temperature: null, maxOutputTokens: null };
-}
-
-function emptyAiTaskPreferences() {
-  return {
-    workDesign: emptyTaskPreference(),
-    outline: emptyTaskPreference(),
-    volumePlanning: emptyTaskPreference(),
-    chapterSplit: emptyTaskPreference(),
-    writing: emptyTaskPreference(),
-    knowledgeExtraction: emptyTaskPreference(),
-  };
+function recommendedAiTaskPreferenceSnapshot() {
+  return Object.fromEntries(
+    AI_TASK_DEFINITIONS.map(({ key }) => [key, { ...recommendedAiTaskPreferences[key] }]),
+  );
 }
 
 vi.mock("../lib/tauri-client", async () => {
@@ -43,7 +35,7 @@ describe("SettingsView", () => {
 
   beforeEach(() => {
     mocks.listModelProfiles.mockResolvedValue([]);
-    mocks.getAiTaskPreferences.mockResolvedValue(emptyAiTaskPreferences());
+    mocks.getAiTaskPreferences.mockResolvedValue(recommendedAiTaskPreferenceSnapshot());
     mocks.saveAiTaskPreferences.mockImplementation(async (preferences) => preferences);
   });
 
@@ -122,6 +114,36 @@ describe("SettingsView", () => {
     }));
   });
 
+  it("shows the six recommended defaults and restores an overridden task", async () => {
+    mocks.listModelProfiles.mockResolvedValue([
+      {
+        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+        secretRef: "model-profile:deepseek-profile", hasSecret: true, createdAt: "0", updatedAt: "0",
+      },
+    ]);
+
+    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    expect(await screen.findByRole("heading", { name: "AI 任务模型" })).toBeVisible();
+    await screen.findByLabelText("作品设定温度");
+
+    for (const task of AI_TASK_DEFINITIONS) {
+      expect(screen.getByLabelText(`${task.label}温度`)).toHaveValue(task.defaultTemperature);
+      expect(screen.getByLabelText(`${task.label}最大输出`)).toHaveValue(task.defaultMaxOutputTokens);
+    }
+    expect(screen.queryByRole("button", { name: "恢复推荐值" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("大纲主线温度"), { target: { value: "0.2" } });
+    fireEvent.change(screen.getByLabelText("大纲主线最大输出"), { target: { value: "2048" } });
+    fireEvent.click(screen.getByRole("button", { name: "恢复推荐值" }));
+
+    expect(screen.getByLabelText("大纲主线温度")).toHaveValue(0.6);
+    expect(screen.getByLabelText("大纲主线最大输出")).toHaveValue(6144);
+    expect(screen.queryByRole("button", { name: "恢复推荐值" })).not.toBeInTheDocument();
+  });
+
   it("opens AI task routing from a deep link and clears deleted model mappings", async () => {
     window.location.hash = "#ai-task-models";
     mocks.listModelProfiles.mockResolvedValue([
@@ -133,7 +155,7 @@ describe("SettingsView", () => {
       },
     ]);
     mocks.getAiTaskPreferences.mockResolvedValue({
-      ...emptyAiTaskPreferences(),
+      ...recommendedAiTaskPreferenceSnapshot(),
       outline: { profileId: "deleted-profile", temperature: null, maxOutputTokens: null },
     });
 
@@ -146,7 +168,7 @@ describe("SettingsView", () => {
 
     await screen.findByText("任务模型与生成参数已保存，后续生成会立即使用新配置");
     expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({
-      outline: { profileId: null, temperature: null, maxOutputTokens: null },
+      outline: { profileId: null, temperature: 0.6, maxOutputTokens: 6144 },
     }));
   });
 });

@@ -3,9 +3,9 @@ import { Check, RotateCcw, Save, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   AI_TASK_DEFINITIONS,
-  emptyAiTaskPreference,
   emptyAiTaskPreferences,
   providerLabel,
+  recommendedTaskPreference,
   useAiTaskPreferences,
   type AiTaskKey,
 } from "../lib/ai-task-preferences";
@@ -15,6 +15,7 @@ import {
   saveAiTaskPreferences,
   type AiTaskPreference,
   type AiTaskPreferences,
+  type ModelProfile,
 } from "../lib/tauri-client";
 
 function samePreference(left: AiTaskPreference, right: AiTaskPreference) {
@@ -41,6 +42,53 @@ function parseMaxOutputTokens(value: string, limit: number) {
   return Math.min(limit, Math.max(1, Math.floor(number)));
 }
 
+function hasCustomTuning(preference: AiTaskPreference, task: AiTaskKey, maxOutputLimit = 131_072) {
+  const defaults = recommendedTaskPreference(task);
+  return preference.temperature !== defaults.temperature
+    || preference.maxOutputTokens !== Math.min(defaults.maxOutputTokens ?? maxOutputLimit, maxOutputLimit);
+}
+
+function normalizeAiTaskPreferences(
+  preferences: AiTaskPreferences,
+  profiles: ModelProfile[],
+  preserveMissingProfileIds = false,
+): AiTaskPreferences {
+  const chatProfiles = profiles.filter((profile) => profile.capability === "CHAT");
+  const preferredProfile = chatProfiles.find((profile) => profile.hasSecret) ?? chatProfiles[0];
+  return Object.fromEntries(
+    AI_TASK_DEFINITIONS.map(({ key }) => {
+      const preference = preferences[key];
+      const defaults = recommendedTaskPreference(key);
+      const selectedProfile = preference.profileId
+        ? chatProfiles.find((profile) => profile.id === preference.profileId)
+        : undefined;
+      const effectiveProfile = selectedProfile ?? preferredProfile;
+      const profileId = preference.profileId
+        ? selectedProfile || preserveMissingProfileIds
+          ? preference.profileId
+          : null
+        : null;
+      const temperature = preference.temperature !== null
+        && Number.isFinite(preference.temperature)
+        && preference.temperature >= 0
+        && preference.temperature <= 2
+        ? preference.temperature
+        : defaults.temperature;
+      const maxOutputTokens = preference.maxOutputTokens && preference.maxOutputTokens > 0
+        ? preference.maxOutputTokens
+        : defaults.maxOutputTokens ?? 131_072;
+      return [
+        key,
+        {
+          profileId,
+          temperature,
+          maxOutputTokens: Math.min(maxOutputTokens, effectiveProfile?.maxOutputTokens ?? maxOutputTokens),
+        },
+      ];
+    }),
+  ) as AiTaskPreferences;
+}
+
 export function AiTaskModelSettings() {
   const client = useQueryClient();
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
@@ -52,38 +100,26 @@ export function AiTaskModelSettings() {
   const [notice, setNotice] = useState<string | null>(null);
   const chatProfiles = profiles.data?.filter((profile) => profile.capability === "CHAT") ?? [];
   const preferredProfile = chatProfiles.find((profile) => profile.hasSecret) ?? chatProfiles[0];
+  const normalizedPreferences = preferences.data && profiles.data
+    ? normalizeAiTaskPreferences(preferences.data, profiles.data)
+    : null;
+  const comparisonPreferences = preferences.data && profiles.data
+    ? normalizeAiTaskPreferences(preferences.data, profiles.data, true)
+    : null;
   const assignedCount = AI_TASK_DEFINITIONS.filter(({ key }) => Boolean(draft[key].profileId)).length;
-  const tunedCount = AI_TASK_DEFINITIONS.filter(({ key }) => draft[key].temperature !== null || draft[key].maxOutputTokens !== null).length;
-  const changed = preferences.data ? !samePreferences(draft, preferences.data) : assignedCount > 0;
+  const tunedCount = AI_TASK_DEFINITIONS.filter(({ key }) => hasCustomTuning(draft[key], key, maxOutputLimitForTask(key))).length;
+  const changed = comparisonPreferences ? !samePreferences(draft, comparisonPreferences) : assignedCount > 0;
+
+  function maxOutputLimitForTask(task: AiTaskKey) {
+    const selected = draft[task].profileId
+      ? chatProfiles.find((profile) => profile.id === draft[task].profileId)
+      : undefined;
+    return (selected ?? preferredProfile)?.maxOutputTokens ?? 131_072;
+  }
 
   useEffect(() => {
     if (initialized || !preferences.data || !profiles.data) return;
-    const availableProfileIds = new Set(
-      profiles.data
-        .filter((profile) => profile.capability === "CHAT")
-        .map((profile) => profile.id),
-    );
-    setDraft(
-      Object.fromEntries(
-        AI_TASK_DEFINITIONS.map(({ key }) => {
-          const preference = preferences.data[key];
-          const selectedProfile = profiles.data.find((profile) => profile.id === preference.profileId && availableProfileIds.has(profile.id));
-          const profileId = preference.profileId && selectedProfile
-            ? preference.profileId
-            : null;
-          const temperature = preference.temperature !== null
-            && Number.isFinite(preference.temperature)
-            && preference.temperature >= 0
-            && preference.temperature <= 2
-            ? preference.temperature
-            : null;
-          const maxOutputTokens = preference.maxOutputTokens && preference.maxOutputTokens > 0
-            ? Math.min(preference.maxOutputTokens, selectedProfile?.maxOutputTokens ?? preference.maxOutputTokens)
-            : null;
-          return [key, { profileId, temperature, maxOutputTokens }];
-        }),
-      ) as AiTaskPreferences,
-    );
+    setDraft(normalizeAiTaskPreferences(preferences.data, profiles.data));
     setInitialized(true);
   }, [initialized, preferences.data, profiles.data]);
 
@@ -95,31 +131,39 @@ export function AiTaskModelSettings() {
     setNotice(null);
   }
 
-  function clearTaskTuning(task: AiTaskKey) {
+  function clearTaskTuning(task: AiTaskKey, maxOutputLimit: number) {
+    const defaults = recommendedTaskPreference(task);
     updateTask(task, {
-      temperature: emptyAiTaskPreference.temperature,
-      maxOutputTokens: emptyAiTaskPreference.maxOutputTokens,
+      temperature: defaults.temperature,
+      maxOutputTokens: Math.min(defaults.maxOutputTokens ?? maxOutputLimit, maxOutputLimit),
     });
   }
 
   function selectTaskProfile(task: AiTaskKey, profileId: string) {
     const nextProfile = chatProfiles.find((profile) => profile.id === profileId);
     const current = draft[task];
+    const defaults = recommendedTaskPreference(task);
+    const nextProfileLimit = (nextProfile ?? preferredProfile)?.maxOutputTokens ?? 131_072;
     updateTask(task, {
       profileId: profileId || null,
-      maxOutputTokens: current.maxOutputTokens
-        ? Math.min(current.maxOutputTokens, nextProfile?.maxOutputTokens ?? current.maxOutputTokens)
-        : null,
+      maxOutputTokens: Math.min(current.maxOutputTokens ?? defaults.maxOutputTokens ?? nextProfileLimit, nextProfileLimit),
     });
   }
 
   function applyToAll() {
     if (!preferredProfile) return;
     setDraft((current) => Object.fromEntries(
-      AI_TASK_DEFINITIONS.map(({ key }) => [
-        key,
-        { ...current[key], profileId: preferredProfile.id },
-      ]),
+      AI_TASK_DEFINITIONS.map(({ key }) => {
+        const defaults = recommendedTaskPreference(key);
+        return [
+          key,
+          {
+            ...current[key],
+            profileId: preferredProfile.id,
+            maxOutputTokens: Math.min(current[key].maxOutputTokens ?? defaults.maxOutputTokens ?? preferredProfile.maxOutputTokens, preferredProfile.maxOutputTokens),
+          },
+        ];
+      }),
     ) as AiTaskPreferences);
     setNotice(`已将“${preferredProfile.name}”应用到全部 AI 任务`);
   }
@@ -130,7 +174,7 @@ export function AiTaskModelSettings() {
     setNotice(null);
     try {
       const saved = await saveAiTaskPreferences(draft);
-      setDraft(saved);
+      setDraft(profiles.data ? normalizeAiTaskPreferences(saved, profiles.data) : saved);
       await client.invalidateQueries({ queryKey: ["ai-task-preferences"] });
       setNotice("任务模型与生成参数已保存，后续生成会立即使用新配置");
     } catch (cause) {
@@ -144,7 +188,7 @@ export function AiTaskModelSettings() {
     <div className="settings-content-heading">
       <div>
         <h2>AI 任务模型</h2>
-        <p>为不同创作阶段分配聊天模型，并按任务设置温度与最大输出。留空表示使用模型默认值。</p>
+        <p>为不同创作阶段分配聊天模型。六类任务已配置推荐生成参数，你可以按需要单独覆盖。</p>
       </div>
       {chatProfiles.length ? <button type="button" className="secondary-action" onClick={applyToAll} disabled={!preferredProfile || saving}><Sparkles size={14} />全部使用首选模型</button> : null}
     </div>
@@ -164,10 +208,11 @@ export function AiTaskModelSettings() {
       <div className="ai-task-routing-list">
         {AI_TASK_DEFINITIONS.map(({ key, label, description }) => {
           const preference = draft[key];
+          const defaults = recommendedTaskPreference(key);
           const selectedId = preference.profileId ?? "";
           const selectedProfile = chatProfiles.find((profile) => profile.id === selectedId);
           const selectionMissing = Boolean(selectedId && !selectedProfile);
-          const maxOutputLimit = selectedProfile?.maxOutputTokens ?? 131_072;
+          const maxOutputLimit = maxOutputLimitForTask(key);
           return <div className="ai-task-routing-row" key={key}>
             <span className="ai-task-routing-copy"><strong>{label}</strong><small>{description}</small></span>
             <label className="ai-task-model-field"><span>任务模型</span><select value={selectedId} onChange={(event) => selectTaskProfile(key, event.target.value)} aria-label={`${label}模型`} data-missing={selectionMissing || undefined}>
@@ -184,14 +229,14 @@ export function AiTaskModelSettings() {
               <span className="ai-task-routing-state" data-ready={selectedProfile?.hasSecret || (!selectedId && preferredProfile?.hasSecret) || undefined}>
                 {selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "可用" : "缺少 Key" : preferredProfile ? `自动：${preferredProfile.name}` : "未配置"}
               </span>
-              {preference.temperature !== null || preference.maxOutputTokens !== null ? <button type="button" onClick={() => clearTaskTuning(key)} title={`恢复 ${label} 的默认生成参数`}><RotateCcw size={12} />恢复默认</button> : null}
+              {hasCustomTuning(preference, key, maxOutputLimit) ? <button type="button" onClick={() => clearTaskTuning(key, maxOutputLimit)} title={`恢复 ${label} 的推荐值：温度 ${defaults.temperature}，最大输出 ${Math.min(defaults.maxOutputTokens ?? maxOutputLimit, maxOutputLimit)}`}><RotateCcw size={12} />恢复推荐值</button> : null}
             </div>
           </div>;
         })}
       </div>
       <div className="ai-task-routing-actions">
         <button type="button" className="primary-action" onClick={() => void save()} disabled={!changed || saving}><Save size={14} />{saving ? "保存中…" : "保存任务配置"}</button>
-        {preferences.data && changed ? <button type="button" className="secondary-action" onClick={() => { setDraft(preferences.data ?? emptyAiTaskPreferences); setNotice("已撤销未保存的修改"); }} disabled={saving}>撤销修改</button> : null}
+        {normalizedPreferences && changed ? <button type="button" className="secondary-action" onClick={() => { setDraft(normalizedPreferences); setNotice("已撤销未保存的修改"); }} disabled={saving}>撤销修改</button> : null}
         {!changed && notice?.includes("已保存") ? <span className="ai-task-saved"><Check size={13} />已应用</span> : null}
       </div>
     </div> : null}

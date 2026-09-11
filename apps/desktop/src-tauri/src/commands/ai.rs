@@ -35,6 +35,8 @@ pub(crate) struct PlanningAiJobInput {
     pub(crate) temperature: Option<f64>,
     #[serde(default)]
     pub(crate) max_output_tokens: Option<u32>,
+    #[serde(default)]
+    pub(crate) task_key: Option<novel_infrastructure::AiTaskKind>,
     pub(crate) source_name: Option<Vec<String>>,
     pub(crate) system_prompt_snapshot: Option<String>,
     pub(crate) user_prompt_snapshot: Option<String>,
@@ -60,9 +62,14 @@ pub(crate) struct ExtractEntitiesInput {
 const PLANNING_CONTEXT_RESERVE_TOKENS: u32 = 2_048;
 
 fn task_generation_options(
+    task_key: Option<novel_infrastructure::AiTaskKind>,
     temperature: Option<f64>,
     max_output_tokens: Option<u32>,
 ) -> Result<novel_infrastructure::GenerationOptions, ApiError> {
+    let temperature =
+        temperature.or_else(|| task_key.map(novel_infrastructure::AiTaskKind::default_temperature));
+    let max_output_tokens = max_output_tokens
+        .or_else(|| task_key.map(novel_infrastructure::AiTaskKind::default_max_output_tokens));
     if temperature.is_some_and(|value| !value.is_finite() || !(0.0..=2.0).contains(&value)) {
         return Err(ApiError {
             code: "INVALID_INPUT",
@@ -79,6 +86,30 @@ fn task_generation_options(
         temperature,
         max_output_tokens,
     })
+}
+
+#[cfg(test)]
+mod task_generation_options_tests {
+    #[test]
+    fn applies_recommended_defaults_without_overriding_explicit_values() {
+        let recommended = super::task_generation_options(
+            Some(novel_infrastructure::AiTaskKind::Writing),
+            None,
+            None,
+        )
+        .expect("recommended options");
+        assert_eq!(recommended.temperature, Some(0.9));
+        assert_eq!(recommended.max_output_tokens, Some(8_192));
+
+        let explicit = super::task_generation_options(
+            Some(novel_infrastructure::AiTaskKind::Writing),
+            Some(0.4),
+            Some(2_048),
+        )
+        .expect("explicit options");
+        assert_eq!(explicit.temperature, Some(0.4));
+        assert_eq!(explicit.max_output_tokens, Some(2_048));
+    }
 }
 
 fn effective_max_output_tokens(
@@ -746,6 +777,7 @@ mod planning_context_tests {
             allow_rewrite: false,
             temperature: None,
             max_output_tokens: None,
+            task_key: None,
             source_name: None,
             system_prompt_snapshot: None,
             user_prompt_snapshot: None,
@@ -855,6 +887,7 @@ pub(crate) async fn generate_planning_content(
         allow_rewrite,
         temperature: None,
         max_output_tokens: None,
+        task_key: None,
         source_name: None,
         system_prompt_snapshot: None,
         user_prompt_snapshot: None,
@@ -1026,7 +1059,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         return true;
     }
     let generation_options =
-        match task_generation_options(input.temperature, input.max_output_tokens) {
+        match task_generation_options(input.task_key, input.temperature, input.max_output_tokens) {
             Ok(options) => options,
             Err(error) => {
                 fail_planning_job(&state, job.id, error.message);
@@ -1394,7 +1427,11 @@ pub(crate) async fn extract_entities_from_text(
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
-    let generation_options = task_generation_options(temperature, max_output_tokens)?;
+    let generation_options = task_generation_options(
+        Some(novel_infrastructure::AiTaskKind::KnowledgeExtraction),
+        temperature,
+        max_output_tokens,
+    )?;
     let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
     let secret = profile
         .secret_ref
@@ -1739,7 +1776,11 @@ pub(crate) async fn generate_ai_proposal(
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
-    let generation_options = task_generation_options(temperature, max_output_tokens)?;
+    let generation_options = task_generation_options(
+        Some(novel_infrastructure::AiTaskKind::Writing),
+        temperature,
+        max_output_tokens,
+    )?;
     let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
     let context_input = novel_application::AssembleContextInput {
         chapter_id,

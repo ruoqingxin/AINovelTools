@@ -517,7 +517,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
       const existing = (planningSections.data ?? []).filter((item) => item.content.trim()).map((item) => `${item.id}: ${item.content}`).join("\n");
       const targetGuidance = selected.kind === "VOLUME_MANAGER" ? buildVolumePlanTargetGuidance(volumePlanTargets) : "";
       const userGuidance = [nodePlanGuidance.trim(), targetGuidance].filter(Boolean).join("\n");
-      await enqueuePlanningAiJob({ profileId: nodeTaskProfile.id, mode: "GENERATE", sectionId: nodePlanId(selected.id), sectionTitle: selected.title, sectionPrompt: nodePlanPrompt(selected.kind), existingContext: existing, referenceContent: "", userGuidance: userGuidance || "请先给出可执行的候选方案，保留作者可修改的空间。", allowRewrite: false, temperature: nodeTaskPreference.temperature ?? undefined, maxOutputTokens: nodeTaskPreference.maxOutputTokens ?? undefined });
+      await enqueuePlanningAiJob({ profileId: nodeTaskProfile.id, mode: "GENERATE", sectionId: nodePlanId(selected.id), sectionTitle: selected.title, sectionPrompt: nodePlanPrompt(selected.kind), existingContext: existing, referenceContent: "", userGuidance: userGuidance || "请先给出可执行的候选方案，保留作者可修改的空间。", allowRewrite: false, taskKey: selected.kind === "OUTLINE" ? "outline" : "volumePlanning", temperature: nodeTaskPreference.temperature ?? undefined, maxOutputTokens: nodeTaskPreference.maxOutputTokens ?? undefined });
       await client.invalidateQueries({ queryKey: ["jobs"] });
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setGeneratingNodePlan(false); }
@@ -552,6 +552,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
         referenceContent: "",
         userGuidance: userGuidance || "请按剧情阶段拆分，避免重复章节目标。",
         allowRewrite: false,
+        taskKey: "chapterSplit",
         temperature: chapterSplitPreference.temperature ?? undefined,
         maxOutputTokens: chapterSplitPreference.maxOutputTokens ?? undefined,
       });
