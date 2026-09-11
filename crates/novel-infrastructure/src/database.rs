@@ -786,6 +786,12 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (35, 'unified_ai_runs_and_model_pricing');",
             )?;
         }
+        if applied.unwrap_or(0) < 36 {
+            self.connection.execute_batch(
+                "ALTER TABLE jobs ADD COLUMN acknowledged_at TEXT;
+                INSERT INTO schema_migrations (version, name) VALUES (36, 'job_failure_acknowledgements');",
+            )?;
+        }
         Ok(())
     }
 

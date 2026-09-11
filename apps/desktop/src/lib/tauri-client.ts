@@ -279,7 +279,7 @@ export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELL
 export type Job = {
   id: string; jobType: JobType; payload: string; status: JobStatus; progress: number;
   attemptCount: number; cancelRequested: boolean; errorSummary: string | null;
-  createdAt: string; updatedAt: string;
+  createdAt: string; updatedAt: string; acknowledgedAt: string | null;
 };
 export type JobEvent = {
   id: string; jobId: string; stage: string; message: string; progress: number; createdAt: string;
@@ -557,6 +557,7 @@ export function enqueueJob(jobType: JobType, payload = "{}") {
 }
 export function cancelJob(id: string) { return invoke<Job>("cancel_job", { id }); }
 export function retryJob(id: string) { return invoke<Job>("retry_job", { id }); }
+export function acknowledgeFailedJobs() { return invoke<number>("acknowledge_failed_jobs"); }
 export function claimNextJob() { return invoke<Job | null>("claim_next_job"); }
 export function runNextJob() { return invoke<Job | null>("run_next_job"); }
 export function healthScan() { return invoke<HealthScanReport>("health_scan"); }

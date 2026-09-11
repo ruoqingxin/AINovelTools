@@ -49,7 +49,7 @@ export function AppShell() {
       ? "本地数据不可用"
       : "正在连接核心服务";
   const activeJobCount = (jobs.data ?? []).filter((job) => job.status === "QUEUED" || job.status === "RUNNING").length;
-  const failedJobCount = (jobs.data ?? []).filter((job) => job.status === "FAILED").length;
+  const failedJobCount = (jobs.data ?? []).filter((job) => job.status === "FAILED" && !job.acknowledgedAt).length;
   const taskBadge = activeJobCount
     ? { count: activeJobCount, tone: "active", label: `${activeJobCount} 项任务正在进行` }
     : failedJobCount

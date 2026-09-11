@@ -88,6 +88,7 @@ pub struct Job {
     pub error_summary: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub acknowledged_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -176,7 +177,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 35;
+pub const CURRENT_SCHEMA_VERSION: i64 = 36;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -743,6 +744,7 @@ fn read_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
         error_summary: row.get(7)?,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
+        acknowledged_at: row.get(10)?,
     })
 }
 
@@ -899,7 +901,7 @@ impl ProjectManager {
             [],
         )?;
         let mut statement = session.database.connection.prepare(
-            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE status='QUEUED' OR status='CANCELLED' ORDER BY updated_at DESC, rowid DESC",
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs WHERE status='QUEUED' OR status='CANCELLED' ORDER BY updated_at DESC, rowid DESC",
         )?;
         let rows = statement.query_map([], read_job)?;
         rows.collect::<Result<Vec<_>, _>>()
@@ -932,7 +934,7 @@ impl ProjectManager {
             [&id],
         )?;
         let job = tx.query_row(
-            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs WHERE id=?1",
             [&id],
             read_job,
         )?;
@@ -1228,6 +1230,7 @@ impl ProjectManager {
             error_summary: None,
             created_at: now_timestamp(),
             updated_at: now_timestamp(),
+            acknowledged_at: None,
         };
         session.database.connection.execute(
             "INSERT INTO jobs (id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary) VALUES (?1, ?2, ?3, 'QUEUED', 0, 0, 0, NULL)",
@@ -1242,7 +1245,7 @@ impl ProjectManager {
             .as_ref()
             .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         let mut statement = session.database.connection.prepare(
-            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs ORDER BY updated_at DESC, rowid DESC",
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs ORDER BY updated_at DESC, rowid DESC",
         )?;
         let rows = statement.query_map([], read_job)?;
         rows.collect::<Result<Vec<_>, _>>()
@@ -1255,7 +1258,7 @@ impl ProjectManager {
             .as_ref()
             .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         session.database.connection.query_row(
-            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs WHERE id=?1",
             [id.to_string()],
             read_job,
         ).map_err(DatabaseError::from)
@@ -1279,7 +1282,7 @@ impl ProjectManager {
             rusqlite::params![payload, id.to_string()],
         )?;
         session.database.connection.query_row(
-            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs WHERE id=?1",
             [id.to_string()],
             read_job,
         ).map_err(DatabaseError::from)
@@ -1335,7 +1338,7 @@ impl ProjectManager {
             rusqlite::params![progress.min(99), id.to_string()],
         )?;
         session.database.connection.query_row(
-            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs WHERE id=?1",
             [id.to_string()],
             read_job,
         ).map_err(DatabaseError::from)
@@ -1369,10 +1372,30 @@ impl ProjectManager {
             rusqlite::params![job_status_str(status), progress, error_summary, id.to_string()],
         )?;
         session.database.connection.query_row(
-            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs WHERE id=?1",
             [id.to_string()],
             read_job,
         ).map_err(DatabaseError::from)
+    }
+
+    /// Marks the current failed jobs as reviewed without changing their status.
+    pub fn acknowledge_failed_jobs(&mut self) -> Result<u32, DatabaseError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        let count = session.database.connection.query_row(
+            "SELECT COUNT(*) FROM jobs WHERE status='FAILED' AND acknowledged_at IS NULL",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if count > 0 {
+            session.database.connection.execute(
+                "UPDATE jobs SET acknowledged_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status='FAILED' AND acknowledged_at IS NULL",
+                [],
+            )?;
+        }
+        Ok(count.max(0) as u32)
     }
 
     pub fn request_job_cancel(&mut self, id: Uuid) -> Result<Job, DatabaseError> {
@@ -1385,7 +1408,7 @@ impl ProjectManager {
             [id.to_string()],
         )?;
         session.database.connection.query_row(
-            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs WHERE id=?1",
             [id.to_string()],
             read_job,
         ).map_err(DatabaseError::from)
@@ -1397,11 +1420,11 @@ impl ProjectManager {
             .as_mut()
             .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
         session.database.connection.execute(
-            "UPDATE jobs SET status='QUEUED', progress=0, attempt_count=attempt_count+1, cancel_requested=0, error_summary=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status='FAILED'",
+            "UPDATE jobs SET status='QUEUED', progress=0, attempt_count=attempt_count+1, cancel_requested=0, error_summary=NULL, acknowledged_at=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status='FAILED'",
             [id.to_string()],
         )?;
         session.database.connection.query_row(
-            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at FROM jobs WHERE id=?1",
+            "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs WHERE id=?1",
             [id.to_string()],
             read_job,
         ).map_err(DatabaseError::from)
@@ -2722,9 +2745,20 @@ mod tests {
             )
             .expect("failed");
         assert_eq!(failed.error_summary.as_deref(), Some("索引不可用"));
+        assert!(failed.acknowledged_at.is_none());
+        assert_eq!(manager.acknowledge_failed_jobs().expect("acknowledge"), 1);
+        let acknowledged = manager.get_job(job.id).expect("acknowledged job");
+        assert!(acknowledged.acknowledged_at.is_some());
+        assert_eq!(
+            manager
+                .acknowledge_failed_jobs()
+                .expect("second acknowledge"),
+            0
+        );
         let retried = manager.retry_job(job.id).expect("retry");
         assert_eq!(retried.status, super::JobStatus::Queued);
         assert_eq!(retried.attempt_count, 1);
+        assert!(retried.acknowledged_at.is_none());
         assert!(
             manager
                 .update_job_status(job.id, super::JobStatus::Succeeded, 100, None)

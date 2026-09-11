@@ -26,8 +26,8 @@ use commands::entities::{
     list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
 };
 use commands::jobs::{
-    cancel_job, claim_next_job, create_diagnostic_package, enqueue_job, health_scan,
-    list_job_events, list_jobs, retry_job, run_next_job, startup_recovery_report,
+    acknowledge_failed_jobs, cancel_job, claim_next_job, create_diagnostic_package, enqueue_job,
+    health_scan, list_job_events, list_jobs, retry_job, run_next_job, startup_recovery_report,
 };
 use commands::knowledge::{
     create_belief, create_event, create_evidence_anchor, create_foreshadowing,
@@ -180,6 +180,7 @@ pub fn run() {
             enqueue_job,
             cancel_job,
             retry_job,
+            acknowledge_failed_jobs,
             claim_next_job,
             run_next_job,
             health_scan,

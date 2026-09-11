@@ -115,6 +115,19 @@ pub(crate) fn retry_job(
 }
 
 #[tauri::command]
+pub(crate) fn acknowledge_failed_jobs(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<u32, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .acknowledge_failed_jobs()
+        .map_err(|error| ApiError::internal(error.to_string()))
+}
+
+#[tauri::command]
 pub(crate) fn claim_next_job(
     state: tauri::State<'_, ProjectState>,
 ) -> Result<Option<novel_infrastructure::Job>, ApiError> {

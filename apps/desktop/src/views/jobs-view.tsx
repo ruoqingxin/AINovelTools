@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardList, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
+import { BellOff, ClipboardList, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
 import { useEffect, useState } from "react";
-import { cancelJob, enqueueJob, errorMessage, getPlanningAiJobRequest, listJobEvents, listJobs, retryJob, runNextJob, type Job, type JobType, type PlanningAiJobInput } from "../lib/tauri-client";
+import { acknowledgeFailedJobs, cancelJob, enqueueJob, errorMessage, getPlanningAiJobRequest, listJobEvents, listJobs, retryJob, runNextJob, type Job, type JobType, type PlanningAiJobInput } from "../lib/tauri-client";
 
 const systemTypes: JobType[] = ["BACKUP", "RESTORE_VERIFY", "HEALTH_SCAN", "REBUILD_SEARCH_INDEX"];
 const typeLabels: Record<JobType, string> = {
@@ -48,6 +48,7 @@ export function JobsView() {
   const [showRequest, setShowRequest] = useState(false);
   const action = useMutation({ mutationFn: (fn: () => Promise<unknown>) => fn(), onSettled: () => client.invalidateQueries({ queryKey: ["jobs"] }) });
   const filteredJobs = (jobs.data ?? []).filter((job) => filter === "ALL" || (filter === "AI" ? isAiJob(job) : !isAiJob(job)));
+  const unacknowledgedFailedCount = (jobs.data ?? []).filter((job) => job.status === "FAILED" && !job.acknowledgedAt).length;
   const selected = (jobs.data ?? []).find((job) => job.id === selectedId) ?? filteredJobs[0] ?? null;
   const events = useQuery({ queryKey: ["job-events", selected?.id], queryFn: () => listJobEvents(selected!.id), enabled: Boolean(selected), refetchInterval: selected?.status === "RUNNING" || selected?.status === "QUEUED" ? 1000 : false });
   const requestPreview = useQuery({
@@ -69,7 +70,7 @@ export function JobsView() {
 
   return <section className="jobs-view">
     <div className="page-heading"><div><p className="eyebrow">后台工作</p><h1>任务</h1><p className="page-subtitle">AI 生成与系统维护都在这里持续执行。离开原页面不会中断任务。</p></div><button className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => runNextJob())} disabled={action.isPending}><Play size={15} />执行下一项系统任务</button></div>
-    <div className="jobs-toolbar"><div className="jobs-filters" aria-label="任务分类">{(["ALL", "AI", "SYSTEM"] as const).map((value) => <button type="button" key={value} data-active={filter === value || undefined} onClick={() => { setFilter(value); setSelectedId(null); }}>{value === "ALL" ? "全部" : value === "AI" ? "AI 任务" : "系统任务"}</button>)}</div><button className="icon-command" type="button" onClick={() => void jobs.refetch()} disabled={jobs.isFetching} aria-label="刷新任务" title="刷新任务"><RefreshCw size={14} /></button></div>
+    <div className="jobs-toolbar"><div className="jobs-filters" aria-label="任务分类">{(["ALL", "AI", "SYSTEM"] as const).map((value) => <button type="button" key={value} data-active={filter === value || undefined} onClick={() => { setFilter(value); setSelectedId(null); }}>{value === "ALL" ? "全部" : value === "AI" ? "AI 任务" : "系统任务"}</button>)}</div><div className="jobs-toolbar-actions">{unacknowledgedFailedCount ? <button className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => acknowledgeFailedJobs())} disabled={action.isPending}><BellOff size={14} />清除失败提醒 {unacknowledgedFailedCount}</button> : null}<button className="icon-command" type="button" onClick={() => void jobs.refetch()} disabled={jobs.isFetching} aria-label="刷新任务" title="刷新任务"><RefreshCw size={14} /></button></div></div>
     <details className="jobs-system-create"><summary>新建系统任务</summary><div>{systemTypes.map((type) => <button key={type} className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => enqueueJob(type))} disabled={action.isPending}>{typeLabels[type]}</button>)}</div></details>
     {action.isError ? <p className="project-error" role="alert">任务操作失败：{errorMessage(action.error)}</p> : null}
     {jobs.isPending ? <p className="plan-empty">正在加载任务…</p> : jobs.isError ? <p className="project-error" role="alert">加载失败：{errorMessage(jobs.error)}</p> : <div className="jobs-workspace">
