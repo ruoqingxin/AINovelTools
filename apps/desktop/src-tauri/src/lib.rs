@@ -11,17 +11,24 @@ mod errors;
 mod state;
 
 use commands::ai::{
-    assemble_context_with_project_knowledge, cancel_ai_task, decide_ai_proposal,
-    delete_model_secret, enqueue_planning_ai_job, extract_entities_from_text, generate_ai_proposal,
+    adopt_extraction_item, assemble_context_with_project_knowledge, cancel_ai_task,
+    decide_ai_proposal, decide_extraction_item, delete_model_secret, enqueue_planning_ai_job,
+    extract_chapter_candidates, extract_entities_from_text, generate_ai_proposal,
     generate_planning_content, get_ai_budget_settings, get_ai_quality_summary,
     get_ai_task_preferences, get_ai_usage_summary, get_planning_ai_job_request,
     get_project_ai_task_overrides, get_writing_review_policy, list_ai_proposals, list_ai_runs,
-    list_model_profiles, rate_ai_proposal, remove_project_ai_task_override,
-    run_next_planning_ai_job, save_ai_budget_settings, save_ai_task_preferences, save_model_secret,
-    save_project_ai_task_override, save_project_ai_task_overrides, save_writing_review_policy,
-    test_model_profile, upsert_model_profile,
+    list_chapter_extractions, list_model_profiles, rate_ai_proposal,
+    remove_project_ai_task_override, run_next_planning_ai_job, save_ai_budget_settings,
+    save_ai_task_preferences, save_model_secret, save_project_ai_task_override,
+    save_project_ai_task_overrides, save_writing_review_policy, test_model_profile,
+    update_extraction_item, upsert_model_profile,
 };
 use commands::core::{bootstrap_status, feature_catalog, health_query};
+use commands::discussion::{
+    ask_project_discussion, create_discussion_candidate, create_discussion_session,
+    dismiss_discussion_candidate, list_discussion_candidates, list_discussion_messages,
+    list_discussion_sessions, promote_discussion_candidate,
+};
 use commands::entities::{
     list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
 };
@@ -166,8 +173,21 @@ pub fn run() {
             enqueue_planning_ai_job,
             get_planning_ai_job_request,
             extract_entities_from_text,
+            extract_chapter_candidates,
+            list_chapter_extractions,
+            update_extraction_item,
+            decide_extraction_item,
+            adopt_extraction_item,
             cancel_ai_task,
             assemble_context_with_project_knowledge,
+            list_discussion_sessions,
+            create_discussion_session,
+            list_discussion_messages,
+            list_discussion_candidates,
+            create_discussion_candidate,
+            dismiss_discussion_candidate,
+            promote_discussion_candidate,
+            ask_project_discussion,
             list_summary_materials,
             upsert_summary_material,
             list_writing_cards,

@@ -1,26 +1,28 @@
 import type { PlanningSection } from "./tauri-client";
 
-export const blockingWritingSections = [
+export const suggestedWritingSections = [
   { id: "seed-premise", label: "核心前提与开局情境" },
-  { id: "engine-protagonist", label: "主角目标与内在需求" },
-  { id: "frame-setting", label: "舞台、硬规则与资源限制" },
-  { id: "frame-narrative", label: "视角、信息与叙事节奏" },
-] as const;
-
-export const warningWritingSections = [
   { id: "seed-genre-promise", label: "类型、题材与阅读承诺" },
+  { id: "seed-hook", label: "核心卖点与独特钩子" },
+  { id: "seed-tone", label: "基调、尺度与篇幅体量" },
+  { id: "engine-protagonist", label: "主角目标与内在需求" },
   { id: "engine-antagonism", label: "对抗系统与升级机制" },
   { id: "engine-stakes", label: "赌注、代价与失败后果" },
+  { id: "engine-theme", label: "核心谜团与主题命题" },
   { id: "engine-ending", label: "结局状态与承诺兑现" },
+  { id: "cast-core-relationship", label: "核心关系与关系变化" },
+  { id: "cast-supporting", label: "关键角色与叙事功能" },
   { id: "cast-arcs", label: "人物弧光、秘密与信息差" },
+  { id: "frame-setting", label: "舞台、硬规则与资源限制" },
+  { id: "frame-history", label: "历史因果、势力与矛盾来源" },
+  { id: "frame-narrative", label: "视角、信息与叙事节奏" },
 ] as const;
 
 export type WritingReadiness = {
   canGenerate: boolean;
-  blockingCompletedCount: number;
-  blockingTotalCount: number;
-  blockingMissingSections: Array<{ id: string; label: string }>;
-  warningMissingSections: Array<{ id: string; label: string }>;
+  suggestedCompletedCount: number;
+  suggestedTotalCount: number;
+  suggestedMissingSections: Array<{ id: string; label: string }>;
   missingCharacterCard: boolean;
   missingChapterPlan: boolean;
   missingNarrativePerspective: boolean;
@@ -36,7 +38,7 @@ export type WritingReadinessItem = {
   id: string;
   label: string;
   description: string;
-  severity: "blocking" | "warning";
+  severity: "warning";
   kind: "section" | "character-card" | "chapter-plan";
   href: string;
 };
@@ -46,6 +48,18 @@ export type WritingPreflightNotice = {
   label: string;
   detail: string;
 };
+
+export function isPlanningSectionSettled(section?: PlanningSection) {
+  if (!section) return false;
+  return Boolean(section.content.trim()) || [
+    "UNKNOWN",
+    "DEFERRED",
+    "AUTHOR_RESERVED",
+    "CONFIRMED",
+    "LOCKED",
+    "RETIRED",
+  ].includes(section.storyState);
+}
 
 const writingGapPatterns: Array<WritingGapTarget & { keywords: string[] }> = [
   {
@@ -221,21 +235,23 @@ export function buildWritingReadinessItems(
   readiness: WritingReadiness,
   chapterId: string,
 ): WritingReadinessItem[] {
-  const items: WritingReadinessItem[] = readiness.blockingMissingSections.map((section) => ({
-    id: section.id,
-    label: section.label,
-    description: "正式设定 · 正文准入依赖",
-    severity: "blocking",
-    kind: "section",
-    href: `/planning#${section.id}`,
-  }));
+  const items: WritingReadinessItem[] = readiness.suggestedMissingSections.map(
+    (section) => ({
+      id: section.id,
+      label: section.label,
+      description: "规划建议 · 不影响开始写作",
+      severity: "warning",
+      kind: "section",
+      href: `/planning#${section.id}`,
+    }),
+  );
 
   if (readiness.missingCharacterCard) {
     items.push({
       id: "character-card",
       label: "人物卡",
-      description: "知识库 · 至少建立一张人物卡",
-      severity: "blocking",
+      description: "知识库建议 · 可以先写，再按正文沉淀角色",
+      severity: "warning",
       kind: "character-card",
       href: "/knowledge",
     });
@@ -244,8 +260,8 @@ export function buildWritingReadinessItems(
     items.push({
       id: "chapter-plan",
       label: "章节执行卡",
-      description: "章节规划 · 本章人物、冲突与结尾依据",
-      severity: "blocking",
+      description: "章节建议 · 可直接写正文，之后再补计划",
+      severity: "warning",
       kind: "chapter-plan",
       href: `/planning#${chapterId}`,
     });
@@ -254,23 +270,12 @@ export function buildWritingReadinessItems(
     items.push({
       id: "frame-narrative",
       label: "叙述人称未明确",
-      description: "正式设定 · 固定第一、第二或第三人称",
-      severity: "blocking",
+      description: "写作建议 · 未决定时可以保留未知",
+      severity: "warning",
       kind: "section",
       href: "/planning#frame-narrative",
     });
   }
-
-  items.push(
-    ...readiness.warningMissingSections.map((section) => ({
-      id: section.id,
-      label: section.label,
-      description: "规划建议 · 不阻断创作",
-      severity: "warning" as const,
-      kind: "section" as const,
-      href: `/planning#${section.id}`,
-    })),
-  );
   return items;
 }
 
@@ -281,13 +286,10 @@ export function assessWritingReadiness(input: {
 }): WritingReadiness {
   const completedIds = new Set(
     input.sections
-      .filter((section) => section.content.trim())
+      .filter(isPlanningSectionSettled)
       .map((section) => section.id),
   );
-  const blockingMissingSections = blockingWritingSections
-    .filter((section) => !completedIds.has(section.id))
-    .map((section) => ({ id: section.id, label: section.label }));
-  const warningMissingSections = warningWritingSections
+  const suggestedMissingSections = suggestedWritingSections
     .filter((section) => !completedIds.has(section.id))
     .map((section) => ({ id: section.id, label: section.label }));
   const missingCharacterCard = !input.hasCharacterCard;
@@ -300,16 +302,11 @@ export function assessWritingReadiness(input: {
     Boolean(narrativeSection?.content.trim()) && !hasExplicitNarrativePerspective;
 
   return {
-    canGenerate:
-      blockingMissingSections.length === 0 &&
-      !missingCharacterCard &&
-      !missingChapterPlan &&
-      !missingNarrativePerspective,
-    blockingCompletedCount:
-      blockingWritingSections.length - blockingMissingSections.length,
-    blockingTotalCount: blockingWritingSections.length,
-    blockingMissingSections,
-    warningMissingSections,
+    canGenerate: true,
+    suggestedCompletedCount:
+      suggestedWritingSections.length - suggestedMissingSections.length,
+    suggestedTotalCount: suggestedWritingSections.length,
+    suggestedMissingSections,
     missingCharacterCard,
     missingChapterPlan,
     missingNarrativePerspective,

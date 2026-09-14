@@ -45,10 +45,21 @@ export type PlanNode = {
   revision: number;
 };
 
+export type PlanningStoryState =
+  | "UNSET"
+  | "UNKNOWN"
+  | "DEFERRED"
+  | "AUTHOR_RESERVED"
+  | "AI_SUGGESTED"
+  | "CONFIRMED"
+  | "LOCKED"
+  | "RETIRED";
+
 export type PlanningSection = {
   id: string;
   content: string;
   pendingContent: string;
+  storyState: PlanningStoryState;
   rationale: string;
   consequence: string;
   references: string[];
@@ -131,6 +142,50 @@ export type KnowledgeCandidate = {
 export type KnowledgeConflict = {
   kind: "DUPLICATE_FACT" | "CONTRADICTORY_OBJECT"; candidateIds: string[];
   subject: string; predicate: string; objects: string[]; highRisk: boolean;
+};
+export type ExtractionItemKind = "ENTITY" | "FACT" | "RELATION" | "EVENT" | "FORESHADOWING";
+export type ExtractionItemStatus = "PENDING_REVIEW" | "ACCEPTED" | "DEFERRED" | "REJECTED";
+export type ChapterExtractionProposalStatus =
+  | "PENDING_REVIEW"
+  | "PARTIALLY_ACCEPTED"
+  | "DEFERRED"
+  | "ACCEPTED"
+  | "REJECTED";
+export type ChapterExtractionItem = {
+  id: string; proposalId: string; kind: ExtractionItemKind; payload: Record<string, unknown>;
+  evidenceAnchorId: string; status: ExtractionItemStatus; finalObjectId: string | null;
+  createdAt: string; updatedAt: string;
+};
+export type ChapterExtractionProposal = {
+  id: string; projectId: string; chapterId: string; sourceRevisionId: string;
+  aiRunId: string | null; status: ChapterExtractionProposalStatus;
+  items: ChapterExtractionItem[]; createdAt: string; updatedAt: string;
+};
+
+export type DiscussionScopeKind = "PROJECT" | "VOLUME" | "CHAPTER" | "SCENE" | "SELECTION";
+export type DiscussionMessageRole = "USER" | "ASSISTANT";
+export type DiscussionCandidateKind = "NOTE" | "PLANNING" | "SETTING" | "FORESHADOWING";
+export type DiscussionCandidateStatus = "PENDING" | "PROMOTED" | "DISMISSED";
+
+export type DiscussionSession = {
+  id: string; projectId: string; title: string; scopeKind: DiscussionScopeKind;
+  scopeId: string | null; scopeText: string | null; summary: string; createdAt: string; updatedAt: string;
+};
+
+export type DiscussionMessage = {
+  id: string; sessionId: string; role: DiscussionMessageRole; content: string;
+  profileId: string | null; contextVersion: string | null; contextSummary: string | null;
+  createdAt: string;
+};
+
+export type DiscussionCandidate = {
+  id: string; sessionId: string; messageId: string; kind: DiscussionCandidateKind;
+  content: string; targetSectionId: string | null; status: DiscussionCandidateStatus;
+  promotedObjectId: string | null; createdAt: string; updatedAt: string;
+};
+
+export type DiscussionExchange = {
+  userMessage: DiscussionMessage; assistantMessage: DiscussionMessage;
 };
 export type ChangeSet = {
   id: string; projectId: string; chapterId: string; sourceRevisionId: string;
@@ -363,6 +418,80 @@ export function listEvidenceAnchors() { return invoke<EvidenceAnchor[]>("list_ev
 export function listCurrentFacts() { return invoke<Fact[]>("list_current_facts"); }
 export function createKnowledgeCandidate(candidate: KnowledgeCandidate) { return invoke<KnowledgeCandidate>("create_knowledge_candidate", { candidate }); }
 export function listKnowledgeCandidates(chapterId: string) { return invoke<KnowledgeCandidate[]>("list_knowledge_candidates", { chapterId }); }
+export function extractChapterCandidates(input: {
+  profileId: string; chapterId: string; sourceRevisionId?: string;
+  userGuidance?: string; temperature?: number; maxOutputTokens?: number;
+}) {
+  return invoke<ChapterExtractionProposal>("extract_chapter_candidates", { input });
+}
+export function listChapterExtractions(chapterId: string) {
+  return invoke<ChapterExtractionProposal[]>("list_chapter_extractions", { chapterId });
+}
+export function updateExtractionItem(input: {
+  id: string; payload: Record<string, unknown>; expectedStatus: ExtractionItemStatus;
+}) {
+  return invoke<ChapterExtractionItem>("update_extraction_item", input);
+}
+export function decideExtractionItem(input: {
+  id: string; expectedStatus: ExtractionItemStatus; decision: "DEFERRED" | "REJECTED";
+}) {
+  return invoke<ChapterExtractionItem>("decide_extraction_item", input);
+}
+export function adoptExtractionItem(input: {
+  id: string; expectedStatus: ExtractionItemStatus;
+}) {
+  return invoke<ChapterExtractionItem>("adopt_extraction_item", input);
+}
+
+export function listDiscussionSessions() {
+  return invoke<DiscussionSession[]>("list_discussion_sessions");
+}
+
+export function createDiscussionSession(input: {
+  title: string; scopeKind: DiscussionScopeKind; scopeId: string | null; scopeText: string | null;
+}) {
+  return invoke<DiscussionSession>("create_discussion_session", input);
+}
+
+export function listDiscussionMessages(sessionId: string, limit = 100) {
+  return invoke<DiscussionMessage[]>("list_discussion_messages", { sessionId, limit });
+}
+
+export function listDiscussionCandidates(sessionId: string) {
+  return invoke<DiscussionCandidate[]>("list_discussion_candidates", { sessionId });
+}
+
+export function createDiscussionCandidate(input: {
+  sessionId: string;
+  messageId: string;
+  kind: DiscussionCandidateKind;
+  content: string;
+  targetSectionId?: string;
+}) {
+  return invoke<DiscussionCandidate>("create_discussion_candidate", input);
+}
+
+export function dismissDiscussionCandidate(input: {
+  id: string; expectedStatus: DiscussionCandidateStatus;
+}) {
+  return invoke<DiscussionCandidate>("dismiss_discussion_candidate", input);
+}
+
+export function promoteDiscussionCandidate(input: {
+  id: string; expectedStatus: DiscussionCandidateStatus;
+}) {
+  return invoke<DiscussionCandidate>("promote_discussion_candidate", input);
+}
+
+export function askProjectDiscussion(input: {
+  sessionId: string;
+  profileId: string;
+  message: string;
+  temperature?: number;
+  maxOutputTokens?: number;
+}) {
+  return invoke<DiscussionExchange>("ask_project_discussion", { input });
+}
 export function reviewKnowledgeCandidate(input: { id: string; expectedStatus: CandidateStatus; decision: ReviewDecision; reviewer: string }) {
   return invoke<KnowledgeCandidate>("review_knowledge_candidate", input);
 }
@@ -544,6 +673,7 @@ export function listAiProposals(input: {
   chapterId: string;
   chapterTitle: string;
   chapterPlan: string;
+  volumePlan: string;
   documentJson: string;
   instruction?: string;
 }) {
@@ -563,7 +693,7 @@ export function rateAiProposal(id: string, rating: "HELPFUL" | "NOT_HELPFUL", no
 }
 
 export function generateAiProposal(input: {
-  profileId: string; chapterId: string; action: AiAction; chapterTitle: string; chapterPlan: string;
+  profileId: string; chapterId: string; action: AiAction; chapterTitle: string; chapterPlan: string; volumePlan: string;
   documentJson: string; selection?: string; instruction?: string; stream: boolean;
   temperature?: number; maxOutputTokens?: number;
 }) {

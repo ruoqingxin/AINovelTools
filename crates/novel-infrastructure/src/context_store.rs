@@ -20,12 +20,6 @@ const WRITING_SETTING_SECTIONS: [(&str, &str); 15] = [
     ("frame-history", "历史因果、势力与矛盾来源"),
     ("frame-narrative", "视角、信息与叙事节奏"),
 ];
-const REQUIRED_WRITING_SETTING_SECTIONS: [(&str, &str); 4] = [
-    ("seed-premise", "核心前提与开局情境"),
-    ("engine-protagonist", "主角目标与内在需求"),
-    ("frame-setting", "舞台、硬规则与资源限制"),
-    ("frame-narrative", "视角、信息与叙事节奏"),
-];
 const MAX_WRITING_SETTING_SECTION_CHARS: usize = 1_400;
 const MAX_WRITING_SETTINGS_CHARS: usize = 10_000;
 const SETTING_TRUNCATION_MARKER: &str = "\n[正式设定片段已按上下文预算截断]";
@@ -40,6 +34,7 @@ impl ProjectManager {
         let query_text = [
             input.chapter_title.as_str(),
             input.chapter_plan.as_str(),
+            input.volume_plan.as_str(),
             input.instruction.as_deref().unwrap_or_default(),
             input.selection.as_deref().unwrap_or_default(),
             input.document_json.as_str(),
@@ -52,19 +47,29 @@ impl ProjectManager {
             .unwrap_or_default()
             .iter()
             .any(|entity| entity.entity_type == EntityType::Character);
+        let setting_context = build_writing_setting_context(&planning_sections, has_character_card);
+        let setting_source_revision = source_revision("planning:writing-context", &setting_context);
         candidates.push(build_candidate(
             ContextCandidateKind::ProjectSetting,
-            build_writing_setting_context(&planning_sections, has_character_card),
+            setting_context,
             Uuid::nil(),
-            "planning:writing-context:v1".to_owned(),
+            setting_source_revision,
             RetrievalMethod::Structured,
             ContextAuthority::ProjectSetting,
             10_000,
         ));
 
-        let mut facts = self
-            .list_current_facts()
-            .unwrap_or_default()
+        let current_facts = self.list_current_facts().unwrap_or_default();
+        let fact_labels = current_facts
+            .iter()
+            .map(|fact| {
+                (
+                    fact.knowledge_id,
+                    format!("{} {} {}", fact.subject, fact.predicate, fact.object),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut facts = current_facts
             .into_iter()
             .map(|fact| {
                 let score = score_values(
@@ -124,6 +129,63 @@ impl ProjectManager {
             }
         }
 
+        let mut relations = self
+            .list_relations()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|item| item.lifecycle_status == KnowledgeLifecycleStatus::Active)
+            .map(|item| {
+                let from = fact_labels
+                    .get(&item.from_knowledge_id)
+                    .map_or("未知对象", String::as_str);
+                let to = fact_labels
+                    .get(&item.to_knowledge_id)
+                    .map_or("未知对象", String::as_str);
+                let score = score_values(&normalized_query, &[&item.relation_type, from, to]);
+                (score, item, from.to_owned(), to.to_owned())
+            })
+            .collect::<Vec<_>>();
+        relations.sort_by_key(|left| std::cmp::Reverse(left.0));
+        relations.truncate(6);
+        for (score, item, from, to) in relations {
+            candidates.push(build_candidate(
+                ContextCandidateKind::Relation,
+                format!("正式关系：{from} -> {} -> {to}", item.relation_type),
+                item.id,
+                format!("relation:{}:v{}", item.id, item.relation_version),
+                RetrievalMethod::Structured,
+                ContextAuthority::TaskMaterial,
+                score.max(5_400),
+            ));
+        }
+
+        let mut beliefs = self
+            .list_beliefs()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|item| item.lifecycle_status == KnowledgeLifecycleStatus::Active)
+            .map(|item| {
+                let holder = fact_labels
+                    .get(&item.holder_knowledge_id)
+                    .map_or("未识别角色", String::as_str);
+                let score = score_values(&normalized_query, &[&item.proposition, holder]);
+                (score, item, holder.to_owned())
+            })
+            .collect::<Vec<_>>();
+        beliefs.sort_by_key(|left| std::cmp::Reverse(left.0));
+        beliefs.truncate(6);
+        for (score, item, holder) in beliefs {
+            candidates.push(build_candidate(
+                ContextCandidateKind::Belief,
+                format!("角色知识边界：{holder}认为：{}", item.proposition),
+                item.id,
+                format!("belief:{}:v{}", item.id, item.belief_version),
+                RetrievalMethod::Structured,
+                ContextAuthority::TaskMaterial,
+                score.max(5_200),
+            ));
+        }
+
         let mut entities = self
             .list_entities(false)
             .unwrap_or_default()
@@ -175,9 +237,9 @@ impl ProjectManager {
                 ContextCandidateKind::Entity,
                 content,
                 entity.id,
-                revision
-                    .source_version
-                    .unwrap_or_else(|| format!("entity:{}:r{}", entity.id, revision.revision)),
+                revision.source_version.clone().unwrap_or_else(|| {
+                    source_revision(&format!("entity:{}", entity.id), &revision.description)
+                }),
                 RetrievalMethod::Structured,
                 ContextAuthority::TaskMaterial,
                 score.max(6_000),
@@ -320,42 +382,44 @@ fn input_search_query(input: &novel_application::AssembleContextInput) -> String
 }
 
 fn build_writing_setting_context(sections: &[PlanningSection], has_character_card: bool) -> String {
-    let by_id = sections
+    let formal_by_id = sections
         .iter()
-        .filter(|section| !section.content.trim().is_empty())
+        .filter(|section| {
+            !section.content.trim().is_empty()
+                && matches!(
+                    section.story_state,
+                    PlanningStoryState::Confirmed | PlanningStoryState::Locked
+                )
+        })
         .map(|section| (section.id.as_str(), section))
         .collect::<std::collections::HashMap<_, _>>();
-    let missing = REQUIRED_WRITING_SETTING_SECTIONS
-        .iter()
-        .filter(|(id, _)| !by_id.contains_key(id))
-        .copied()
-        .collect::<Vec<_>>();
-    let narrative_person = by_id
+    let narrative_person = formal_by_id
         .get("frame-narrative")
         .and_then(|section| detect_narrative_person(&section.content));
-    let missing_narrative_person =
-        by_id.contains_key("frame-narrative") && narrative_person.is_none();
 
     let mut output = String::new();
-    if missing.is_empty() && has_character_card && !missing_narrative_person {
-        output.push_str("正式设定完整性：正文写作所需的核心设定和人物卡已建立。\n");
-    } else {
-        output.push_str("正式设定完整性：发现缺少正文生成依据。\n缺失项：\n");
-        for (id, label) in &missing {
-            let _ = writeln!(output, "- {label}（{id}）：未建立正式设定");
-        }
-        if !has_character_card {
-            output.push_str("- 人物卡：知识库尚未建立任何“人物”实体卡\n");
-        }
-        if missing_narrative_person {
-            output.push_str("- 叙述人称：正式设定未明确第一人称、第二人称或第三人称\n");
-        }
+    if formal_by_id.is_empty() && !has_character_card {
         output.push_str(
-            "生成判断：正文生成前只检查以上缺项。仅当缺项直接影响本章主角动机、能力边界、境界/力量规则、世界限制、人物行为或失败后果时，停止创作并只输出“[上下文不足]”，逐项说明缺少的正式设定和补齐位置；未列为缺失项的一般规划不得作为停止创作的理由；不得自行补全项目事实。\n",
+            "正式知识召回：未检索到相关正式知识。当前作品尚未建立正式设定或人物卡。\n",
+        );
+    } else {
+        output.push_str(
+            "正式知识召回：以下内容来自当前作品已记录的正式设定或实体；未列出的内容按未知处理。\n",
+        );
+    }
+    output.push_str(
+        "未决内容规则：未记录、明确未知、暂不决定、作者保留和 AI 建议都是有效状态。不得把未列出的信息补成已确认事实；可以提出候选，但必须明确标注为建议。\n",
+    );
+    if !has_character_card {
+        output.push_str("人物卡状态：尚未建立人物实体卡，可继续写作，并在正文保存后提取候选角色。\n");
+    }
+    if formal_by_id.contains_key("frame-narrative") && narrative_person.is_none() {
+        output.push_str(
+            "叙述人称状态：当前记录未明确第一、第二或第三人称；不要自行把未决人称写成确定规则。\n",
         );
     }
     if let Some(person) = narrative_person {
-        let narrative = by_id
+        let narrative = formal_by_id
             .get("frame-narrative")
             .map_or("", |section| section.content.trim());
         let _ = write!(
@@ -370,12 +434,17 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
     let mut omitted = Vec::new();
     let mut used_chars = output.chars().count();
     for (id, label) in WRITING_SETTING_SECTIONS {
-        let Some(section) = by_id.get(id) else {
+        let Some(section) = formal_by_id.get(id) else {
             continue;
         };
         let content =
             truncate_setting_content(section.content.trim(), MAX_WRITING_SETTING_SECTION_CHARS);
-        let block = format!("正式设定「{label}」（{id}）：\n{content}\n\n");
+        let state = if section.story_state == PlanningStoryState::Locked {
+            "，作者锁定"
+        } else {
+            ""
+        };
+        let block = format!("正式设定「{label}」（{id}{state}）：\n{content}\n\n");
         let block_chars = block.chars().count();
         if included > 0 && used_chars.saturating_add(block_chars) > MAX_WRITING_SETTINGS_CHARS {
             omitted.push(label);
@@ -395,7 +464,77 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
             omitted.join("、")
         );
     }
+
+    let restrictions = sections
+        .iter()
+        .filter(|section| {
+            matches!(
+                section.story_state,
+                PlanningStoryState::Unknown
+                    | PlanningStoryState::Deferred
+                    | PlanningStoryState::AuthorReserved
+            )
+        })
+        .map(|section| {
+            let label = WRITING_SETTING_SECTIONS
+                .iter()
+                .find(|(id, _)| *id == section.id)
+                .map_or(section.id.as_str(), |(_, label)| *label);
+            let state = match section.story_state {
+                PlanningStoryState::Unknown => "明确未知",
+                PlanningStoryState::Deferred => "暂不决定",
+                PlanningStoryState::AuthorReserved => "作者保留",
+                _ => unreachable!(),
+            };
+            let detail = section.content.trim();
+            if detail.is_empty() {
+                format!("- {label}：{state}")
+            } else {
+                format!(
+                    "- {label}：{state}。{}",
+                    truncate_setting_content(detail, 240)
+                )
+            }
+        })
+        .collect::<Vec<_>>();
+    if !restrictions.is_empty() {
+        let _ = write!(
+            output,
+            "\n\n未决与作者保留边界：\n{}\n以上项目不得由模型自行补全为确定事实。",
+            restrictions.join("\n")
+        );
+    }
+
+    let suggestions = sections
+        .iter()
+        .filter(|section| {
+            section.story_state == PlanningStoryState::AiSuggested
+                && !section.pending_content.trim().is_empty()
+        })
+        .map(|section| {
+            let label = WRITING_SETTING_SECTIONS
+                .iter()
+                .find(|(id, _)| *id == section.id)
+                .map_or(section.id.as_str(), |(_, label)| *label);
+            format!(
+                "- {label}：{}",
+                truncate_setting_content(section.pending_content.trim(), 320)
+            )
+        })
+        .collect::<Vec<_>>();
+    if !suggestions.is_empty() {
+        let _ = write!(
+            output,
+            "\n\nAI 建议（未确认，不得当作正式事实）：\n{}",
+            suggestions.join("\n")
+        );
+    }
     output.trim_end().to_owned()
+}
+
+fn source_revision(prefix: &str, content: &str) -> String {
+    let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+    format!("{prefix}:{}", &hash[..16])
 }
 
 fn truncate_setting_content(content: &str, limit: usize) -> String {

@@ -139,6 +139,43 @@ impl From<novel_infrastructure::KnowledgeStoreError> for ApiError {
     }
 }
 
+impl From<novel_infrastructure::ExtractionStoreError> for ApiError {
+    fn from(error: novel_infrastructure::ExtractionStoreError) -> Self {
+        let code = match error {
+            novel_infrastructure::ExtractionStoreError::NoProject => "NO_PROJECT_OPEN",
+            novel_infrastructure::ExtractionStoreError::MissingItem(_) => "NOT_FOUND",
+            novel_infrastructure::ExtractionStoreError::Conflict => "VERSION_CONFLICT",
+            novel_infrastructure::ExtractionStoreError::InvalidPayload => "INVALID_INPUT",
+            novel_infrastructure::ExtractionStoreError::Sqlite(_)
+            | novel_infrastructure::ExtractionStoreError::Database(_) => "DATABASE_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
+impl From<novel_infrastructure::DiscussionStoreError> for ApiError {
+    fn from(error: novel_infrastructure::DiscussionStoreError) -> Self {
+        let code = match error {
+            novel_infrastructure::DiscussionStoreError::NoProject => "NO_PROJECT_OPEN",
+            novel_infrastructure::DiscussionStoreError::MissingSession(_)
+            | novel_infrastructure::DiscussionStoreError::MissingMessage(_)
+            | novel_infrastructure::DiscussionStoreError::MissingCandidate(_) => "NOT_FOUND",
+            novel_infrastructure::DiscussionStoreError::Conflict => "VERSION_CONFLICT",
+            novel_infrastructure::DiscussionStoreError::InvalidPromotion
+            | novel_infrastructure::DiscussionStoreError::InvalidScope => "INVALID_INPUT",
+            novel_infrastructure::DiscussionStoreError::Sqlite(_)
+            | novel_infrastructure::DiscussionStoreError::Database(_) => "DATABASE_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
 impl From<novel_infrastructure::AiError> for ApiError {
     fn from(error: novel_infrastructure::AiError) -> Self {
         Self {

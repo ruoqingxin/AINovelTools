@@ -17,6 +17,7 @@ import {
   type WritingReadiness,
   type WritingReadinessItem,
 } from "../lib/writing-readiness";
+import { ChapterExtractionPanel } from "./chapter-extraction-panel";
 import { planningSectionGroups } from "./story-planning-workbench";
 
 const planningItems = planningSectionGroups.flatMap((group) => group.children);
@@ -63,18 +64,11 @@ export function WritingReadinessPanel(props: {
   const chapterPlanReady = Boolean(chapterPlanProfile?.hasSecret);
   const chapterPlanPreference = resolveTaskPreference(aiPreferences.data, "chapterPlan");
   const items = buildWritingReadinessItems(props.readiness, props.chapterId);
-  const blockingItems = items.filter((item) => item.severity === "blocking");
-  const warningItems = items.filter((item) => item.severity === "warning");
-  const chapterPlanPrerequisite = blockingItems.find((item) => item.kind !== "chapter-plan")
-    ?? (props.volumeId && !props.volumePlan.trim()
-      ? { label: "分卷规划", href: `/planning#${props.volumeId}` }
-      : undefined);
-  const completedRequired = props.readiness.blockingCompletedCount
+  const completedSuggested = props.readiness.suggestedCompletedCount
     + Number(!props.readiness.missingCharacterCard)
-    + Number(!props.readiness.missingChapterPlan)
-    + Number(!props.readiness.missingNarrativePerspective);
-  const requiredTotal = props.readiness.blockingTotalCount + 3;
-  const progress = Math.round((completedRequired / requiredTotal) * 100);
+    + Number(!props.readiness.missingChapterPlan);
+  const suggestedTotal = props.readiness.suggestedTotalCount + 2;
+  const progress = Math.round((completedSuggested / suggestedTotal) * 100);
   const chapterPlanSection = props.sections.find(
     (section) => section.id === `plan-node:${props.chapterId}`,
   );
@@ -133,10 +127,6 @@ export function WritingReadinessPanel(props: {
         : "请先配置作品设定任务可用的聊天模型。");
       return;
     }
-    if (item.kind === "chapter-plan" && chapterPlanPrerequisite) {
-      setError(`请先补齐“${chapterPlanPrerequisite.label}”，再生成章节执行卡。`);
-      return;
-    }
     setGeneratingSectionId(item.id);
     setError(null);
     setNotice(null);
@@ -150,17 +140,15 @@ export function WritingReadinessPanel(props: {
       const volumeGuidance = item.kind === "chapter-plan" && props.volumePlan.trim()
         ? `所属分卷规划：${props.volumePlan.trim()}`
         : "";
-      const prerequisiteGuard = item.kind === "chapter-plan"
-        ? "如果已有正式设定无法支持本章人物、能力、世界规则或后果，只输出 [上下文不足] 和缺少项，不得自行补造关键设定。"
-        : "";
+      const unknownPolicy = "未记录、未知和作者保留项都按有效状态处理；可以提出候选，但不得把推测写成已确认事实。";
       await enqueuePlanningAiJob({
         profileId: profile.id,
         mode: "GENERATE",
         sectionId,
         sectionTitle: item.kind === "chapter-plan" ? `${props.chapterTitle}·章节执行卡` : definition.label,
         sectionPrompt: item.kind === "chapter-plan"
-          ? `当前章节“${props.chapterTitle}”：${definition.prompt}。填写参考：${definition.guidance}${prerequisiteGuard}`
-          : `当前节点“${definition.label}”：${definition.prompt}。填写参考：${definition.guidance}`,
+          ? `当前章节“${props.chapterTitle}”：${definition.prompt}。填写参考：${definition.guidance}${unknownPolicy}`
+          : `当前节点“${definition.label}”：${definition.prompt}。填写参考：${definition.guidance}${unknownPolicy}`,
         existingContext,
         referenceContent: "",
         userGuidance: [
@@ -222,9 +210,7 @@ export function WritingReadinessPanel(props: {
               ? <a className="primary-action" href={manualHref}>{item.kind === "chapter-plan" && chapterPlanNeedsInput ? "查看缺项" : "确认候选"}<ArrowRight size={12} /></a>
               : failed && job
                 ? <button type="button" className="secondary-action" onClick={() => void retryReadinessJob(job)} disabled={retryingJobId !== null}><RotateCcw size={12} />{retryingJobId === job.id ? "提交中…" : "重新生成"}</button>
-                : item.kind === "chapter-plan" && chapterPlanPrerequisite
-                  ? <a className="primary-action" href={chapterPlanPrerequisite.href}>先补{chapterPlanPrerequisite.label}<ArrowRight size={12} /></a>
-                  : itemProfileReady
+                : itemProfileReady
                     ? <button type="button" className="primary-action" onClick={() => void generateSection(item)} disabled={generatingSectionId !== null}><Sparkles size={12} />{item.kind === "chapter-plan" ? "AI 生成执行卡" : "AI 补这项"}</button>
                     : <a className="primary-action" href="/settings#ai-task-models">配置{item.kind === "chapter-plan" ? "章节规划" : "规划"}模型<ArrowRight size={12} /></a>}
         {item.kind === "section" || item.kind === "chapter-plan" ? <a className="secondary-action" href={manualHref}>手动填写</a> : null}
@@ -234,33 +220,28 @@ export function WritingReadinessPanel(props: {
 
   const state = props.loading
     ? "loading"
-    : props.readiness.canGenerate
-      ? props.readiness.warningMissingSections.length
-        ? "warning"
-        : "ready"
-      : "blocked";
+    : items.length
+      ? "warning"
+      : "ready";
   const message = props.loading
-    ? "正在核对正式设定、人物卡和章节执行卡。"
-    : props.readiness.canGenerate
-      ? props.readiness.warningMissingSections.length
-        ? `${completedRequired}/${requiredTotal} 项创作依据已就绪；另有 ${props.readiness.warningMissingSections.length} 项建议补充。`
-        : "关键设定、人物卡、章节执行卡和叙述人称均已确认，可以进入正文创作。"
-      : `${completedRequired}/${requiredTotal} 项创作依据已就绪；补齐必须项后即可开始创作。`;
+    ? "正在整理相关创作依据。"
+    : items.length
+      ? `${completedSuggested}/${suggestedTotal} 项创作依据已就绪；其余 ${items.length} 项只作建议，不影响写作。`
+      : "相关创作依据已齐备，可以继续写作。";
 
   return <section className="writing-readiness" id="writing-readiness" data-state={state} aria-label="创作准备">
     <div className="writing-readiness-heading">
-      {props.loading ? <LoaderCircle size={16} className="spin" /> : props.readiness.canGenerate ? <Check size={16} /> : <CircleAlert size={16} />}
-      <div><strong>创作准备</strong><span>{message}</span></div>
-      <small>{props.loading ? "检查中" : props.readiness.canGenerate ? props.readiness.warningMissingSections.length ? "可写·有建议" : "可写" : "待补齐"}</small>
+      {props.loading ? <LoaderCircle size={16} className="spin" /> : items.length ? <CircleAlert size={16} /> : <Check size={16} />}
+      <div><strong>创作建议</strong><span>{message}</span></div>
+      <small>{props.loading ? "整理中" : items.length ? "可写·有建议" : "可写"}</small>
     </div>
     {!props.loading && items.length ? <div className="writing-readiness-body">
-      <div className="writing-readiness-progress" aria-label={`创作准备度 ${progress}%`}>
+      <div className="writing-readiness-progress" aria-label={`创作依据 ${progress}%`}>
         <span style={{ width: `${progress}%` }} />
         <small>{progress}%</small>
       </div>
       <div className="writing-readiness-list">
-        {blockingItems.length ? <div className="writing-readiness-group"><div className="writing-readiness-group-heading"><strong>必须补齐</strong><small>{blockingItems.length} 项</small></div>{blockingItems.map(renderItem)}</div> : null}
-        {warningItems.length ? <div className="writing-readiness-group"><div className="writing-readiness-group-heading"><strong>建议补充</strong><small>{warningItems.length} 项</small></div>{warningItems.map(renderItem)}</div> : null}
+        <div className="writing-readiness-group"><div className="writing-readiness-group-heading"><strong>可选完善</strong><small>{items.length} 项</small></div>{items.map(renderItem)}</div>
       </div>
       {activeChapterPlan ? <div className="writing-readiness-audit" data-state={preflightNotices.length ? "warning" : "ready"}>
         <div className="writing-readiness-group-heading"><strong>执行卡结构自检</strong><small>{preflightNotices.length ? `${preflightNotices.length} 项待确认` : "未发现明确缺口"}</small></div>
@@ -269,5 +250,6 @@ export function WritingReadinessPanel(props: {
       {notice ? <p className="writing-readiness-notice" role="status">{notice}</p> : null}
       {error ? <p className="project-error writing-readiness-notice" role="alert">{error}</p> : null}
     </div> : null}
+    {!props.loading ? <ChapterExtractionPanel chapterId={props.chapterId} /> : null}
   </section>;
 }

@@ -9,7 +9,8 @@ import { cancelJob, clearRecoveryLogs, createPlanNode, currentManuscript, enqueu
 import { AiWritingPanel } from "./ai-writing-panel";
 import { AiModelNote } from "./ai-model-note";
 import { ChapterWorkspaceTabs, type ChapterWorkspaceTab } from "./chapter-workspace-tabs";
-import { essentialPlanningSectionIds, planningSectionGroups, StoryPlanningWorkbench } from "./story-planning-workbench";
+import { essentialPlanningSectionIds, planningSectionGroups, planningStoryStateLabels, StoryPlanningWorkbench } from "./story-planning-workbench";
+import { isPlanningSectionSettled } from "../lib/writing-readiness";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 const kindLabels: Record<PlanNodeKind, string> = {
@@ -288,14 +289,14 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
   const volumeManagerNode = activeNodes.find((node) => node.kind === "VOLUME_MANAGER");
   const volumeNodes = activeNodes.filter((node) => node.kind === "VOLUME");
   const chapterNodes = activeNodes.filter((node) => node.kind === "CHAPTER");
-  const completedPlanningSectionIds = new Set((planningSections.data ?? []).filter((section) => section.content.trim()).map((section) => section.id));
+  const completedPlanningSectionIds = new Set((planningSections.data ?? []).filter(isPlanningSectionSettled).map((section) => section.id));
   const essentialCompletedCount = essentialPlanningSectionIds.filter((id) => completedPlanningSectionIds.has(id)).length;
   const nextEssentialSectionId = essentialPlanningSectionIds.find((id) => !completedPlanningSectionIds.has(id)) ?? essentialPlanningSectionIds[0];
   const coreSettingItems = essentialPlanningSectionIds.map((id) => ({ id, definition: planningSectionGroups.flatMap((group) => group.children).find((item) => item.id === id), section: planningSections.data?.find((item) => item.id === id) })).filter((item) => item.definition);
   const workDesignReady = essentialCompletedCount === essentialPlanningSectionIds.length;
   const outlinePlan = outlineNode ? planningSections.data?.find((section) => section.id === nodePlanId(outlineNode.id)) : undefined;
-  const chaptersWithPlan = chapterNodes.filter((node) => planningSections.data?.find((section) => section.id === nodePlanId(node.id))?.content.trim()).length;
-  const chapterWithoutPlan = chapterNodes.find((node) => !planningSections.data?.find((section) => section.id === nodePlanId(node.id))?.content.trim());
+  const chaptersWithPlan = chapterNodes.filter((node) => isPlanningSectionSettled(planningSections.data?.find((section) => section.id === nodePlanId(node.id)))).length;
+  const chapterWithoutPlan = chapterNodes.find((node) => !isPlanningSectionSettled(planningSections.data?.find((section) => section.id === nodePlanId(node.id))));
   const volumesWithoutChapters = volumeNodes.filter((volume) => !chapterNodes.some((chapter) => chapter.parentId === volume.id));
   const volumePlanReady = volumeNodes.length > 0;
   const creatableNodeKinds = Object.entries(kindLabels).filter(([value]) => value !== "VOLUME_MANAGER" && value !== "OUTLINE" && value !== "WORK_DESIGN" && (!volumePlanReady || showVolumePlanning || value === "CHAPTER"));
@@ -346,7 +347,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
   const planningHeadline = !workDesignNode
     ? "从作品定位开始"
     : !workDesignReady
-      ? `补齐 ${essentialPlanningSectionIds.length - essentialCompletedCount} 个核心设定`
+      ? `明确 ${essentialPlanningSectionIds.length - essentialCompletedCount} 个核心设定`
       : !outlineNode
         ? "开放故事大纲"
         : !outlinePlan?.content.trim()
@@ -356,7 +357,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
             : !chapterNodes.length
               ? "开始拆分章节"
             : chapterWithoutPlan
-              ? `补齐「${chapterWithoutPlan.title}」执行卡`
+              ? `补充「${chapterWithoutPlan.title}」执行卡`
               : "规划已能支撑正文写作";
   const manuscript = useQuery({
     queryKey: ["manuscript", selected?.id],
@@ -525,8 +526,8 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
     setError(null);
     try {
       const existing = planningSections.data?.find((section) => section.id === nodePlanId(selected.id));
-      const section: PlanningSection = existing ?? { id: nodePlanId(selected.id), content: "", pendingContent: "", rationale: "", consequence: "", references: [], updatedAt: "" };
-      await savePlanningSection({ ...section, ...(selected.kind === "OUTLINE" && nodePlanTab === "pending" ? { pendingContent: nodePlanPendingDraft.trim() } : { content: nodePlanDraft.trim() }) });
+      const section: PlanningSection = existing ?? { id: nodePlanId(selected.id), content: "", pendingContent: "", storyState: "UNSET", rationale: "", consequence: "", references: [], updatedAt: "" };
+      await savePlanningSection({ ...section, ...(selected.kind === "OUTLINE" && nodePlanTab === "pending" ? { pendingContent: nodePlanPendingDraft.trim(), storyState: "AI_SUGGESTED" as const } : { content: nodePlanDraft.trim(), storyState: "CONFIRMED" as const }) });
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
     } catch (cause) {
       setError(errorMessage(cause));
@@ -614,6 +615,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
             id: nodePlanId(node.id),
             content: candidate.content.trim(),
             pendingContent: "",
+            storyState: "CONFIRMED",
             rationale: "",
             consequence: "",
             references: [],
@@ -622,7 +624,11 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
         }
       }
       if (chapterSplitStoredPlan) {
-        await savePlanningSection({ ...chapterSplitStoredPlan, pendingContent: "" });
+        await savePlanningSection({
+          ...chapterSplitStoredPlan,
+          pendingContent: "",
+          storyState: chapterSplitStoredPlan.content.trim() ? chapterSplitStoredPlan.storyState : "UNSET",
+        });
       }
       setChapterSplitPendingDraft("");
       await Promise.all([
@@ -642,8 +648,8 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
     if (!selected || !pending.trim()) return;
     setSavingNodePlan(true);
     try {
-      const section = selectedStoredPlan ?? { id: nodePlanId(selected.id), content: "", pendingContent: "", rationale: "", consequence: "", references: [], updatedAt: "" };
-      await savePlanningSection({ ...section, content: pending.trim(), pendingContent: "" });
+      const section = selectedStoredPlan ?? { id: nodePlanId(selected.id), content: "", pendingContent: "", storyState: "UNSET" as const, rationale: "", consequence: "", references: [], updatedAt: "" };
+      await savePlanningSection({ ...section, content: pending.trim(), pendingContent: "", storyState: "CONFIRMED" });
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setSavingNodePlan(false); }
@@ -675,6 +681,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
             id: nodePlanId(node.id),
             content: candidate.content.trim(),
             pendingContent: "",
+            storyState: "CONFIRMED",
             rationale: "",
             consequence: "",
             references: [],
@@ -686,12 +693,13 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
         id: nodePlanId(selected.id),
         content: "",
         pendingContent: "",
+        storyState: "UNSET" as const,
         rationale: "",
         consequence: "",
         references: [],
         updatedAt: "",
       };
-      await savePlanningSection({ ...managerSection, content: nodePlanPendingDraft.trim(), pendingContent: "" });
+      await savePlanningSection({ ...managerSection, content: nodePlanPendingDraft.trim(), pendingContent: "", storyState: "CONFIRMED" });
       setNodePlanDraft(nodePlanPendingDraft.trim());
       setNodePlanPendingDraft("");
       setKind("CHAPTER");
@@ -793,7 +801,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "writing" } = 
         <button type="button" className="plan-row" data-kind={node.kind.toLowerCase()} data-selected={selectedId === node.id && node.kind !== "WORK_DESIGN" || undefined} data-archived={node.archived || undefined} style={{ paddingLeft: `${10 + depth * 22}px` }} onClick={() => { selectNode(node); if (node.kind === "WORK_DESIGN") setWorkDesignExpanded((value) => !value); }}>
           {node.kind === "WORK_DESIGN" ? workDesignExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} /> : null}{!isTopLevelPlanningNode ? <span className="plan-kind">{kindLabels[node.kind]}</span> : null}<span className="plan-title">{node.title}</span>
         </button>
-        {node.kind === "WORK_DESIGN" && !node.archived && workDesignExpanded ? <div className="plan-design-tree">{planningSectionGroups.map((group) => { const expanded = expandedPlanningGroups.has(group.id); return <div className="plan-design-group" key={group.id}><button type="button" className="plan-design-group-heading" aria-expanded={expanded} onClick={() => setExpandedPlanningGroups((current) => { const next = new Set(current); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; })}>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<strong>{group.label}</strong><span>{group.children.filter((item) => planningSections.data?.find((section) => section.id === item.id)?.content.trim()).length}/{group.children.length}</span></button>{expanded ? group.children.map((item) => { const completed = Boolean(planningSections.data?.find((section) => section.id === item.id)?.content.trim()); const essential = essentialPlanningSectionIds.includes(item.id as (typeof essentialPlanningSectionIds)[number]); return <button type="button" className="plan-design-item" data-selected={selectedId === node.id && selectedPlanningSectionId === item.id || undefined} key={item.id} onClick={() => selectPlanningSection(node, item.id)}><span>{item.label}</span><small>{completed ? "完成" : essential ? "核心" : "待填写"}</small></button>; }) : null}</div>; })}</div> : null}
+        {node.kind === "WORK_DESIGN" && !node.archived && workDesignExpanded ? <div className="plan-design-tree">{planningSectionGroups.map((group) => { const expanded = expandedPlanningGroups.has(group.id); return <div className="plan-design-group" key={group.id}><button type="button" className="plan-design-group-heading" aria-expanded={expanded} onClick={() => setExpandedPlanningGroups((current) => { const next = new Set(current); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; })}>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<strong>{group.label}</strong><span>{group.children.filter((item) => isPlanningSectionSettled(planningSections.data?.find((section) => section.id === item.id))).length}/{group.children.length}</span></button>{expanded ? group.children.map((item) => { const section = planningSections.data?.find((candidate) => candidate.id === item.id); const completed = isPlanningSectionSettled(section); const essential = essentialPlanningSectionIds.includes(item.id as (typeof essentialPlanningSectionIds)[number]); return <button type="button" className="plan-design-item" data-selected={selectedId === node.id && selectedPlanningSectionId === item.id || undefined} key={item.id} onClick={() => selectPlanningSection(node, item.id)}><span>{item.label}</span><small>{completed && section ? planningStoryStateLabels[section.storyState] : essential ? "核心" : "待明确"}</small></button>; }) : null}</div>; })}</div> : null}
         {visibleNodes.filter((child) => child.parentId === node.id && (workspaceMode === "writing" || child.kind !== "SCENE")).map((child) => renderNode(child, depth + 1))}
       </div>
     );

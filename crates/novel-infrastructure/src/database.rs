@@ -792,6 +792,126 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (36, 'job_failure_acknowledgements');",
             )?;
         }
+        if applied.unwrap_or(0) < 37 {
+            self.connection.execute_batch(
+                "ALTER TABLE planning_sections ADD COLUMN story_state TEXT NOT NULL DEFAULT 'UNSET'
+                    CHECK(story_state IN ('UNSET','UNKNOWN','DEFERRED','AUTHOR_RESERVED','AI_SUGGESTED','CONFIRMED','LOCKED','RETIRED'));
+                UPDATE planning_sections
+                SET story_state = CASE
+                    WHEN trim(content) <> '' THEN 'CONFIRMED'
+                    WHEN trim(pending_content) <> '' THEN 'AI_SUGGESTED'
+                    ELSE 'UNSET'
+                END;
+                INSERT INTO schema_migrations (version, name) VALUES (37, 'planning_story_state');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 38 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS chapter_extraction_proposals (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    chapter_id TEXT NOT NULL REFERENCES chapters(id),
+                    source_revision_id TEXT NOT NULL REFERENCES manuscript_revisions(id),
+                    ai_run_id TEXT,
+                    status TEXT NOT NULL CHECK(status IN ('PENDING_REVIEW','PARTIALLY_ACCEPTED','DEFERRED','ACCEPTED','REJECTED')),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_chapter_extractions_chapter
+                    ON chapter_extraction_proposals(project_id, chapter_id, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS chapter_extraction_items (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    proposal_id TEXT NOT NULL REFERENCES chapter_extraction_proposals(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL CHECK(kind IN ('ENTITY','FACT','RELATION','EVENT','FORESHADOWING')),
+                    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+                    evidence_anchor_id TEXT NOT NULL REFERENCES evidence_anchors(id),
+                    status TEXT NOT NULL CHECK(status IN ('PENDING_REVIEW','ACCEPTED','DEFERRED','REJECTED')),
+                    final_object_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_chapter_extraction_items_proposal
+                    ON chapter_extraction_items(proposal_id, status, created_at);
+                INSERT INTO schema_migrations (version, name) VALUES (38, 'chapter_extraction_candidates');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 39 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS discussion_sessions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    scope_kind TEXT NOT NULL CHECK(scope_kind IN ('PROJECT','VOLUME','CHAPTER')),
+                    scope_id TEXT,
+                    summary TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_discussion_sessions_project
+                    ON discussion_sessions(project_id, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS discussion_messages (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    session_id TEXT NOT NULL REFERENCES discussion_sessions(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK(role IN ('USER','ASSISTANT')),
+                    content TEXT NOT NULL,
+                    profile_id TEXT,
+                    context_version TEXT,
+                    context_summary TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_discussion_messages_session
+                    ON discussion_messages(session_id, created_at, id);
+                CREATE TRIGGER IF NOT EXISTS prevent_discussion_message_update
+                    BEFORE UPDATE ON discussion_messages
+                    BEGIN SELECT RAISE(ABORT, 'immutable discussion message'); END;
+                CREATE TRIGGER IF NOT EXISTS prevent_discussion_message_delete
+                    BEFORE DELETE ON discussion_messages
+                    BEGIN SELECT RAISE(ABORT, 'immutable discussion message'); END;
+                CREATE TABLE IF NOT EXISTS discussion_candidates (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    session_id TEXT NOT NULL REFERENCES discussion_sessions(id) ON DELETE CASCADE,
+                    message_id TEXT NOT NULL REFERENCES discussion_messages(id),
+                    kind TEXT NOT NULL CHECK(kind IN ('NOTE','PLANNING','SETTING','FORESHADOWING')),
+                    content TEXT NOT NULL,
+                    target_section_id TEXT,
+                    status TEXT NOT NULL CHECK(status IN ('PENDING','PROMOTED','DISMISSED')),
+                    promoted_object_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_discussion_candidates_session
+                    ON discussion_candidates(session_id, status, created_at DESC);
+                INSERT INTO schema_migrations (version, name) VALUES (39, 'project_discussion_sessions');",
+            )?;
+        }
+        if applied.unwrap_or(0) < 40 {
+            self.connection.execute_batch(
+                "PRAGMA foreign_keys=OFF;
+                BEGIN;
+                CREATE TABLE discussion_sessions_v40 (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    scope_kind TEXT NOT NULL CHECK(scope_kind IN ('PROJECT','VOLUME','CHAPTER','SCENE','SELECTION')),
+                    scope_id TEXT,
+                    scope_text TEXT,
+                    summary TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT INTO discussion_sessions_v40
+                    (id, project_id, title, scope_kind, scope_id, scope_text, summary, created_at, updated_at)
+                SELECT id, project_id, title, scope_kind, scope_id, NULL, summary, created_at, updated_at
+                FROM discussion_sessions;
+                DROP TABLE discussion_sessions;
+                ALTER TABLE discussion_sessions_v40 RENAME TO discussion_sessions;
+                CREATE INDEX IF NOT EXISTS idx_discussion_sessions_project
+                    ON discussion_sessions(project_id, updated_at DESC);
+                INSERT INTO schema_migrations (version, name) VALUES (40, 'discussion_scene_and_selection_scopes');
+                COMMIT;
+                PRAGMA foreign_keys=ON;",
+            )?;
+        }
         Ok(())
     }
 
@@ -850,15 +970,15 @@ impl Database {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, content, pending_content, rationale, consequence, references_json, updated_at
+                "SELECT id, content, pending_content, story_state, rationale, consequence, references_json, updated_at
                  FROM planning_sections ORDER BY updated_at DESC, id",
             )
             .map_err(DatabaseError::from)?;
         let rows = statement.query_map([], |row| {
-            let references_json: String = row.get(5)?;
+            let references_json: String = row.get(6)?;
             let references = serde_json::from_str(&references_json).map_err(|error| {
                 rusqlite::Error::FromSqlConversionFailure(
-                    5,
+                    6,
                     rusqlite::types::Type::Text,
                     Box::new(error),
                 )
@@ -867,10 +987,13 @@ impl Database {
                 id: row.get(0)?,
                 content: row.get(1)?,
                 pending_content: row.get(2)?,
-                rationale: row.get(3)?,
-                consequence: row.get(4)?,
+                story_state: PlanningStoryState::parse(
+                    &row.get::<_, String>(3)?,
+                ),
+                rationale: row.get(4)?,
+                consequence: row.get(5)?,
                 references,
-                updated_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()
@@ -947,11 +1070,12 @@ impl Database {
         })?;
         self.connection
             .execute(
-                "INSERT INTO planning_sections (id, content, pending_content, rationale, consequence, references_json, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                "INSERT INTO planning_sections (id, content, pending_content, story_state, rationale, consequence, references_json, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
                  ON CONFLICT(id) DO UPDATE SET
                    content = excluded.content,
                    pending_content = excluded.pending_content,
+                   story_state = excluded.story_state,
                    rationale = excluded.rationale,
                    consequence = excluded.consequence,
                    references_json = excluded.references_json,
@@ -960,6 +1084,7 @@ impl Database {
                     section.id,
                     section.content,
                     section.pending_content,
+                    section.story_state.as_str(),
                     section.rationale,
                     section.consequence,
                     references_json
@@ -1621,5 +1746,131 @@ impl Database {
             journal_mode,
             foreign_keys_enabled,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migration_40_preserves_existing_discussion_sessions() {
+        let database = Database::in_memory().expect("in-memory database");
+        let session_id = Uuid::new_v4();
+        let message_id = Uuid::new_v4();
+        database
+            .connection
+            .execute(
+                "INSERT INTO discussion_sessions
+                 (id, project_id, title, scope_kind, scope_id, scope_text, summary)
+                 VALUES (?1, ?2, ?3, 'PROJECT', NULL, NULL, '')",
+                rusqlite::params![
+                    session_id.to_string(),
+                    Uuid::new_v4().to_string(),
+                    "已有讨论"
+                ],
+            )
+            .expect("seed discussion session");
+        database
+            .connection
+            .execute(
+                "INSERT INTO discussion_messages
+                 (id, session_id, role, content, context_version, context_summary)
+                 VALUES (?1, ?2, 'USER', '保留消息', 'context-1', '全书讨论')",
+                rusqlite::params![message_id.to_string(), session_id.to_string()],
+            )
+            .expect("seed discussion message");
+        database
+            .connection
+            .execute(
+                "INSERT INTO discussion_candidates
+                 (id, session_id, message_id, kind, content, status)
+                 VALUES (?1, ?2, ?3, 'NOTE', '保留候选', 'PENDING')",
+                rusqlite::params![
+                    Uuid::new_v4().to_string(),
+                    session_id.to_string(),
+                    message_id.to_string()
+                ],
+            )
+            .expect("seed discussion candidate");
+        database
+            .connection
+            .execute_batch(
+                "PRAGMA foreign_keys=OFF;
+                BEGIN;
+                CREATE TABLE discussion_sessions_v39 (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    scope_kind TEXT NOT NULL CHECK(scope_kind IN ('PROJECT','VOLUME','CHAPTER')),
+                    scope_id TEXT,
+                    summary TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT INTO discussion_sessions_v39
+                    (id, project_id, title, scope_kind, scope_id, summary, created_at, updated_at)
+                SELECT id, project_id, title, scope_kind, scope_id, summary, created_at, updated_at
+                FROM discussion_sessions;
+                DROP TABLE discussion_sessions;
+                ALTER TABLE discussion_sessions_v39 RENAME TO discussion_sessions;
+                CREATE INDEX idx_discussion_sessions_project
+                    ON discussion_sessions(project_id, updated_at DESC);
+                DELETE FROM schema_migrations WHERE version = 40;
+                COMMIT;
+                PRAGMA foreign_keys=ON;",
+            )
+            .expect("downgrade discussion schema");
+
+        database.migrate().expect("apply migration 40");
+
+        let (title, scope_text): (String, Option<String>) = database
+            .connection
+            .query_row(
+                "SELECT title, scope_text FROM discussion_sessions",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("preserved discussion session");
+        assert_eq!(title, "已有讨论");
+        assert_eq!(scope_text, None);
+        assert_eq!(
+            database
+                .connection
+                .query_row("SELECT count(*) FROM discussion_messages", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("preserved discussion message"),
+            1
+        );
+        assert_eq!(
+            database
+                .connection
+                .query_row("SELECT count(*) FROM discussion_candidates", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("preserved discussion candidate"),
+            1
+        );
+        database
+            .connection
+            .execute(
+                "INSERT INTO discussion_messages
+                 (id, session_id, role, content)
+                 VALUES (?1, ?2, 'ASSISTANT', '迁移后可继续写入')",
+                rusqlite::params![Uuid::new_v4().to_string(), session_id.to_string()],
+            )
+            .expect("foreign key points to rebuilt session table");
+        assert_eq!(
+            database
+                .connection
+                .query_row(
+                    "SELECT MAX(version) FROM schema_migrations",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .expect("schema version"),
+            40
+        );
     }
 }

@@ -108,7 +108,7 @@ function consistencyAdmission(
   if (report.verdict === "NEEDS_INPUT") {
     return {
       state: "needs_input",
-      text: "审核缺少判断准入所需的正式设定。补齐资料并关闭本次审核后，才能继续生成正文。",
+      text: "审核发现部分正式依据未记录或无法确认。未知项可以保留，正文生成不会被阻断；请避免把推测写成既成事实。",
     };
   }
   if (report.verdict === "REVIEW") {
@@ -187,11 +187,12 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
   const currentDocumentJson = props.draft || (props.editor ? JSON.stringify(props.editor.getJSON()) : "");
   const deferredDocumentJson = useDeferredValue(currentDocumentJson);
   const proposals = useQuery({
-    queryKey: ["ai-proposals", props.chapterId, props.chapterPlan, deferredDocumentJson, deferredInstruction],
+    queryKey: ["ai-proposals", props.chapterId, props.chapterPlan, props.volumePlan, deferredDocumentJson, deferredInstruction],
     queryFn: () => listAiProposals({
       chapterId: props.chapterId,
       chapterTitle: props.chapterTitle,
       chapterPlan: props.chapterPlan,
+      volumePlan: props.volumePlan,
       documentJson: deferredDocumentJson,
       ...(deferredInstruction.trim() ? { instruction: deferredInstruction.trim() } : {}),
     }),
@@ -245,11 +246,6 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     const chatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, taskKey);
     const chatPreference = resolveTaskPreference(aiPreferences.data, taskKey);
     if (!chatProfile || (!props.editor && !consistencyCheck)) return;
-    if ((action === "DRAFT" || action === "CONTINUE") && !readinessLoading && !readiness.canGenerate) {
-      setError("请先补齐创作准入中列出的关键设定，再生成正文。");
-      document.getElementById("writing-readiness")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
     if ((action === "DRAFT" || action === "CONTINUE") && consistencyBlocked) {
       setError("最近一次一致性审核存在阻断问题，请先处理并关闭审核，再生成或续写正文。");
       document.getElementById("consistency-review-list")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -282,6 +278,7 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
         action,
         chapterTitle: props.chapterTitle,
         chapterPlan: props.chapterPlan,
+        volumePlan: props.volumePlan,
         documentJson,
         ...(selection ? { selection } : {}),
         ...(instruction.trim() ? { instruction: instruction.trim() } : {}),
@@ -424,8 +421,7 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     : null;
   const freshVerdictBlocked = reviewPolicy !== "ADVISORY"
     && consistencyFreshness === "FRESH"
-    && (latestConsistencyReport?.verdict === "BLOCKED"
-      || latestConsistencyReport?.verdict === "NEEDS_INPUT");
+    && latestConsistencyReport?.verdict === "BLOCKED";
   const strictReviewBlocked = reviewPolicy === "REQUIRED"
     && (!latestConsistencyReview
       || consistencyFreshness !== "FRESH"
@@ -440,12 +436,11 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
     hasCharacterCard: (entities.data ?? []).some((entity) => entity.entityType === "CHARACTER"),
     hasChapterPlan: Boolean(props.chapterPlan.trim()),
   });
-  const admissionBlocked = !readinessLoading && !readiness.canGenerate;
   const canRunConsistencyCheck = Boolean(
     props.chapterPlan.trim() || props.draft.trim() || props.editor?.getText().trim(),
   );
   const writingActionBlocked = (action: AiAction) =>
-    (admissionBlocked || consistencyBlocked) && (action === "DRAFT" || action === "CONTINUE");
+    consistencyBlocked && (action === "DRAFT" || action === "CONTINUE");
 
   return <section className="ai-panel" aria-label="AI 创作">
     <div className="section-heading"><h2><Sparkles size={15} />AI 创作</h2><div className="proposal-heading-actions"><span>云端 API · Proposal 审核</span>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>

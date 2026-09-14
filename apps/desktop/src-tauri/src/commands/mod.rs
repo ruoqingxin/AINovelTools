@@ -1,5 +1,6 @@
 pub(crate) mod ai;
 pub(crate) mod core;
+pub(crate) mod discussion;
 pub(crate) mod entities;
 pub(crate) mod jobs;
 pub(crate) mod knowledge;

@@ -98,7 +98,7 @@ describe("WritingReadinessPanel", () => {
     );
   });
 
-  it("generates a chapter execution card with the volume context after prerequisites are ready", async () => {
+  it("generates a chapter execution card with available volume context", async () => {
     const sections = [
       "seed-premise",
       "engine-protagonist",
@@ -108,6 +108,7 @@ describe("WritingReadinessPanel", () => {
       id,
       content: id === "frame-narrative" ? "第三人称有限视角" : "已确认设定",
       pendingContent: "",
+      storyState: "UNSET" as const,
       rationale: "",
       consequence: "",
       references: [],
@@ -149,24 +150,10 @@ describe("WritingReadinessPanel", () => {
     );
   });
 
-  it("blocks execution-card generation until the formal volume plan exists", async () => {
-    const sections = [
-      "seed-premise",
-      "engine-protagonist",
-      "frame-setting",
-      "frame-narrative",
-    ].map((id) => ({
-      id,
-      content: id === "frame-narrative" ? "第三人称有限视角" : "已确认设定",
-      pendingContent: "",
-      rationale: "",
-      consequence: "",
-      references: [],
-      updatedAt: "",
-    }));
+  it("still generates an execution-card candidate when the volume plan is unknown", async () => {
     const readiness = assessWritingReadiness({
-      sections,
-      hasCharacterCard: true,
+      sections: [],
+      hasCharacterCard: false,
       hasChapterPlan: false,
     });
     render(
@@ -178,16 +165,22 @@ describe("WritingReadinessPanel", () => {
           volumePlan=""
           readiness={readiness}
           loading={false}
-          sections={sections}
+          sections={[]}
         />
       </QueryClientProvider>,
     );
 
     const row = (await screen.findByText("章节执行卡")).closest("article");
     expect(row).not.toBeNull();
-    expect(await within(row!).findByRole("link", { name: "先补分卷规划" })).toHaveAttribute(
-      "href",
-      "/planning#volume-1",
+    fireEvent.click(await within(row!).findByRole("button", { name: "AI 生成执行卡" }));
+
+    await waitFor(() =>
+      expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sectionId: "plan-node:chapter-1",
+          taskKey: "chapterPlan",
+        }),
+      ),
     );
   });
 });

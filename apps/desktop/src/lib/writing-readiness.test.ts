@@ -2,10 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   assessWritingReadiness,
   auditChapterPlan,
-  blockingWritingSections,
   buildWritingReadinessItems,
   findWritingGapTargets,
-  warningWritingSections,
+  suggestedWritingSections,
 } from "./writing-readiness";
 import type { PlanningSection } from "./tauri-client";
 
@@ -14,6 +13,7 @@ function section(id: string, content: string, pendingContent = ""): PlanningSect
     id,
     content,
     pendingContent,
+    storyState: "UNSET",
     rationale: "",
     consequence: "",
     references: [],
@@ -22,9 +22,9 @@ function section(id: string, content: string, pendingContent = ""): PlanningSect
 }
 
 describe("assessWritingReadiness", () => {
-  it("allows writing when all blocking settings, a character card and a chapter plan exist", () => {
+  it("allows writing when all suggested settings, a character card and a chapter plan exist", () => {
     const readiness = assessWritingReadiness({
-      sections: blockingWritingSections.map((item) =>
+      sections: suggestedWritingSections.map((item) =>
         section(
           item.id,
           item.id === "frame-narrative" ? "第三人称有限视角" : "已确认设定",
@@ -35,31 +35,26 @@ describe("assessWritingReadiness", () => {
     });
 
     expect(readiness.canGenerate).toBe(true);
-    expect(readiness.blockingCompletedCount).toBe(blockingWritingSections.length);
-    expect(readiness.blockingMissingSections).toEqual([]);
-    expect(readiness.warningMissingSections.map((item) => item.id)).toEqual(
-      warningWritingSections.map((item) => item.id),
+    expect(readiness.suggestedCompletedCount).toBe(suggestedWritingSections.length);
+    expect(readiness.suggestedMissingSections).toEqual([]);
+  });
+
+  it("treats planning gaps as suggestions instead of stopping generation", () => {
+    const readiness = assessWritingReadiness({
+      sections: [],
+      hasCharacterCard: false,
+      hasChapterPlan: false,
+    });
+
+    expect(readiness.canGenerate).toBe(true);
+    expect(readiness.suggestedMissingSections.length).toBe(
+      suggestedWritingSections.length,
     );
+    expect(readiness.missingCharacterCard).toBe(true);
+    expect(readiness.missingChapterPlan).toBe(true);
   });
 
-  it("treats non-blocking planning gaps as warnings instead of stopping generation", () => {
-    const readiness = assessWritingReadiness({
-      sections: blockingWritingSections.map((item) =>
-        section(
-          item.id,
-          item.id === "frame-narrative" ? "第三人称有限视角" : "已确认设定",
-        ),
-      ),
-      hasCharacterCard: true,
-      hasChapterPlan: true,
-    });
-
-    expect(readiness.canGenerate).toBe(true);
-    expect(readiness.blockingMissingSections).toEqual([]);
-    expect(readiness.warningMissingSections.length).toBeGreaterThan(0);
-  });
-
-  it("does not treat pending content as finalized and reports card and chapter gaps", () => {
+  it("does not treat pending content as finalized but keeps writing available", () => {
     const readiness = assessWritingReadiness({
       sections: [
         section("seed-premise", ""),
@@ -69,15 +64,17 @@ describe("assessWritingReadiness", () => {
       hasChapterPlan: false,
     });
 
-    expect(readiness.canGenerate).toBe(false);
-    expect(readiness.blockingMissingSections.map((item) => item.id)).toContain("engine-protagonist");
+    expect(readiness.canGenerate).toBe(true);
+    expect(readiness.suggestedMissingSections.map((item) => item.id)).toContain(
+      "engine-protagonist",
+    );
     expect(readiness.missingCharacterCard).toBe(true);
     expect(readiness.missingChapterPlan).toBe(true);
   });
 
-  it("requires the narrative section to specify the actual person", () => {
+  it("reports an unspecified narrative person without blocking", () => {
     const readiness = assessWritingReadiness({
-      sections: blockingWritingSections.map((item) =>
+      sections: suggestedWritingSections.map((item) =>
         section(
           item.id,
           item.id === "frame-narrative" ? "节奏要快，章末留钩子。" : "已确认设定",
@@ -87,13 +84,13 @@ describe("assessWritingReadiness", () => {
       hasChapterPlan: true,
     });
 
-    expect(readiness.canGenerate).toBe(false);
+    expect(readiness.canGenerate).toBe(true);
     expect(readiness.missingNarrativePerspective).toBe(true);
   });
 
   it("does not confuse a negated person with the selected narrative person", () => {
     const readiness = assessWritingReadiness({
-      sections: blockingWritingSections.map((item) =>
+      sections: suggestedWritingSections.map((item) =>
         section(
           item.id,
           item.id === "frame-narrative"
@@ -137,7 +134,7 @@ describe("findWritingGapTargets", () => {
 });
 
 describe("buildWritingReadinessItems", () => {
-  it("puts all blocking gaps before optional suggestions and preserves direct destinations", () => {
+  it("turns every planning gap into a suggestion and preserves direct destinations", () => {
     const readiness = assessWritingReadiness({
       sections: [],
       hasCharacterCard: false,
@@ -145,15 +142,13 @@ describe("buildWritingReadinessItems", () => {
     });
     const items = buildWritingReadinessItems(readiness, "chapter-1");
 
-    expect(items.slice(0, 7).map((item) => item.id)).toEqual([
-      "seed-premise",
-      "engine-protagonist",
-      "frame-setting",
-      "frame-narrative",
+    expect(
+      items.slice(suggestedWritingSections.length).map((item) => item.id),
+    ).toEqual([
       "character-card",
       "chapter-plan",
-      ...warningWritingSections.slice(0, 1).map((item) => item.id),
     ]);
+    expect(items.every((item) => item.severity === "warning")).toBe(true);
     expect(items.find((item) => item.id === "character-card")?.href).toBe("/knowledge");
     expect(items.find((item) => item.id === "chapter-plan")?.href).toBe("/planning#chapter-1");
     expect(items.find((item) => item.id === "frame-setting")?.href).toBe(

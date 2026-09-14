@@ -28,6 +28,7 @@ mod tests {
             action: novel_domain::AiAction::Continue,
             chapter_title: "第一章".into(),
             chapter_plan: "主角抵达车站".into(),
+            volume_plan: "第一卷围绕失踪案展开。".into(),
             document_json: r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"雨停了。"}]}]}"#.into(),
             selection: None,
             instruction: None,
@@ -40,6 +41,11 @@ mod tests {
         changed_plan.chapter_plan = "主角改在码头下车".into();
         let changed_plan = super::ContextAssembler::assemble(&changed_plan).expect("changed plan");
         assert_ne!(first.context_version, changed_plan.context_version);
+        let mut changed_volume = input.clone();
+        changed_volume.volume_plan = "第一卷改为在港城收束。".into();
+        let changed_volume =
+            super::ContextAssembler::assemble(&changed_volume).expect("changed volume plan");
+        assert_ne!(first.context_version, changed_volume.context_version);
         let mut changed_document = input.clone();
         changed_document.document_json = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"雨又下起来了。"}]}]}"#.into();
         let changed_document =
@@ -63,6 +69,7 @@ mod tests {
             action: novel_domain::AiAction::Continue,
             chapter_title: "第十章".into(),
             chapter_plan: "宴会冲突".into(),
+            volume_plan: "第一卷围绕失踪案展开。".into(),
             document_json: r#"{"type":"doc","content":[]}"#.into(),
             selection: None,
             instruction: Some("保持人物习惯".into()),
@@ -132,6 +139,7 @@ mod tests {
             action: novel_domain::AiAction::Continue,
             chapter_title: "第一章".into(),
             chapter_plan: String::new(),
+            volume_plan: String::new(),
             document_json: r#"{"type":"doc","content":[]}"#.into(),
             selection: None,
             instruction: None,
@@ -165,6 +173,7 @@ mod tests {
             action: novel_domain::AiAction::Continue,
             chapter_title: "第三章".into(),
             chapter_plan: "主角必须在雨夜抵达码头。".into(),
+            volume_plan: "第一卷围绕失踪案展开。".into(),
             document_json: format!(
                 r#"{{"type":"doc","content":[{{"type":"paragraph","content":[{{"type":"text","text":"{}结尾锚点"}}]}}]}}"#,
                 "远处的雨声。".repeat(1_000)
@@ -174,7 +183,7 @@ mod tests {
             input_token_budget: 1_024,
         };
         let package = super::ContextAssembler::assemble(&input).expect("assemble contract");
-        assert_eq!(package.prompt_version, "r3-writing-v6");
+        assert_eq!(package.prompt_version, "r5.1-writing-v1");
         assert_eq!(package.task_contract.role, super::AiTaskRole::DraftWriter);
         assert!(
             package
@@ -198,6 +207,8 @@ mod tests {
         );
         assert!(package.user_prompt.contains("[P0 任务合同]"));
         assert!(package.user_prompt.contains("[P0 用户本次明确指令]"));
+        assert!(package.user_prompt.contains("[P2 当前章节与分卷规划]"));
+        assert!(package.user_prompt.contains("第一卷围绕失踪案展开。"));
         assert!(package.user_prompt.contains("不要新增命名人物。"));
         assert!(package.user_prompt.contains("结尾锚点"));
         assert!(package.truncated);
@@ -251,6 +262,7 @@ mod tests {
             action: novel_domain::AiAction::ConsistencyCheck,
             chapter_title: "第三章".into(),
             chapter_plan: "主角必须在雨夜抵达码头。".into(),
+            volume_plan: "第一卷围绕失踪案展开。".into(),
             document_json: r#"{"type":"doc","content":[]}"#.into(),
             selection: None,
             instruction: None,
@@ -337,5 +349,55 @@ mod tests {
         assert_eq!(selected[6].chunk.content, "历史事件");
         assert_eq!(selected[7].chunk.content, "高相关关键词");
         assert!(selected.iter().all(|item| item.chunk.content != "参考片段"));
+    }
+
+    #[test]
+    fn discussion_context_is_read_only_and_separates_formal_material_from_history() {
+        let input = super::DiscussionContextInput {
+            scope_label: "第二卷讨论".into(),
+            scope_content: "第二卷末揭露真相。".into(),
+            history: "作者：先比较三种方案。\nAI：方案甲推进更快。".into(),
+            user_message: "如果推迟到第三卷会怎样？".into(),
+            input_token_budget: 4_096,
+        };
+        let evidence = novel_domain::RetrievalEvidence {
+            chunk: novel_domain::KnowledgeChunk {
+                id: uuid::Uuid::new_v4(),
+                source_id: uuid::Uuid::new_v4(),
+                source_revision: "fact:test:v1".into(),
+                source_hash: "sha256:test".into(),
+                chunk_index: 0,
+                chunking_version: "test-v1".into(),
+                content: "林澈还不知道使者已经死亡。".into(),
+                embedding: None,
+            },
+            method: novel_domain::RetrievalMethod::Structured,
+            authority: novel_domain::ContextAuthority::AuthoritativeFact,
+            relevance: 9_000,
+        };
+        let package = super::ContextAssembler::assemble_discussion(&input, &[evidence])
+            .expect("assemble discussion context");
+        assert_eq!(
+            package.task_contract.role,
+            super::AiTaskRole::DiscussionFacilitator
+        );
+        assert_eq!(package.prompt_version, "r5.1-discussion-v1");
+        assert!(package.user_prompt.contains("[P0 作者本次问题]"));
+        assert!(package.user_prompt.contains("如果推迟到第三卷会怎样？"));
+        assert!(package.user_prompt.contains("林澈还不知道使者已经死亡。"));
+        assert!(package.user_prompt.contains("最近讨论"));
+        assert!(
+            package
+                .task_contract
+                .forbidden_actions
+                .iter()
+                .any(|item| item.contains("正式正文"))
+        );
+        assert!(
+            package
+                .task_contract
+                .output_contract
+                .contains("不输出修改后的正式对象")
+        );
     }
 }

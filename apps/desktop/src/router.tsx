@@ -11,6 +11,7 @@ import { MaterialsView } from "./views/materials-view";
 import { SearchView } from "./views/search-view";
 import { JobsView } from "./views/jobs-view";
 import { SettingsView } from "./views/settings-view";
+import { DiscussionView } from "./views/discussion-view";
 import { KnowledgeReviewView } from "./views/knowledge-review-view";
 import { KnowledgeRecordsView } from "./views/knowledge-records-view";
 import { useQuery } from "@tanstack/react-query";
@@ -51,6 +52,12 @@ function WritingEntryView() {
   return project.data ? <ProjectWorkspaceView mode="writing" /> : <EmptyProjectView />;
 }
 
+function DiscussionEntryView() {
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
+  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
+  return project.data ? <DiscussionView /> : <EmptyProjectView />;
+}
+
 const rootRoute = createRootRoute({
   component: AppShell,
   notFoundComponent: EmptyProjectView,
@@ -75,6 +82,12 @@ const writingRoute = createRoute({
   component: WritingEntryView,
 });
 
+const discussionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/discussion",
+  component: DiscussionEntryView,
+});
+
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/knowledge",
@@ -87,7 +100,7 @@ const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/searc
 const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: JobsView });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsView });
 
-const routeTree = rootRoute.addChildren([indexRoute, planningRoute, writingRoute, knowledgeRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, planningRoute, writingRoute, discussionRoute, knowledgeRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
 
 export const router = createRouter({ routeTree });
 

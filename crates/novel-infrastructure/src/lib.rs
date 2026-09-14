@@ -27,7 +27,9 @@ use uuid::Uuid;
 mod ai;
 mod context_store;
 mod database;
+mod discussion_store;
 mod entity_store;
+mod extraction_store;
 mod knowledge_store;
 mod materials_store;
 mod search_store;
@@ -43,6 +45,14 @@ pub use ai::{
     render_prompt_template,
 };
 pub use entity_store::EntityStoreError;
+pub use discussion_store::{
+    DiscussionCandidate, DiscussionCandidateKind, DiscussionCandidateStatus, DiscussionMessage,
+    DiscussionMessageRole, DiscussionScopeKind, DiscussionSession, DiscussionStoreError,
+};
+pub use extraction_store::{
+    ChapterExtractionItem, ChapterExtractionProposal, ChapterExtractionProposalStatus,
+    ExtractionItemKind, ExtractionItemStatus, ExtractionStoreError,
+};
 pub use knowledge_store::KnowledgeStoreError;
 pub use materials_store::MaterialsStoreError;
 pub use novel_domain::{
@@ -180,7 +190,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 36;
+pub const CURRENT_SCHEMA_VERSION: i64 = 40;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -450,6 +460,48 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         unavailable_reason: None,
     },
     FeatureDescriptor {
+        id: "r5_1_progressive_writing",
+        display_name: "R5.1 渐进式写作入口",
+        stage: "R5.1",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "r5_1_planning_story_state",
+        display_name: "R5.1 规划显式状态",
+        stage: "R5.1",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "r5_1_chapter_extraction",
+        display_name: "R5.1 正文提取候选",
+        stage: "R5.1",
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some("实体与事实候选已接入采用流程；关系、事件候选首版仅支持延期或拒绝"),
+    },
+    FeatureDescriptor {
+        id: "r5_1_context_slice",
+        display_name: "R5.1 相关上下文切片",
+        stage: "R5.1",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
+        id: "r5_1_project_discussion",
+        display_name: "R5.1 作品级剧情讨论",
+        stage: "R5.1",
+        status: FeatureStatus::Partial,
+        unavailable_reason: Some("会话、消息和候选已持久化；讨论候选尚未接入知识审核与伏笔正式化"),
+    },
+    FeatureDescriptor {
+        id: "r5_1_unified_metadata",
+        display_name: "R5.1 统一候选元数据",
+        stage: "R5.1",
+        status: FeatureStatus::Declared,
+        unavailable_reason: Some("待真实使用验证后再决定是否扩展统一元数据"),
+    },
+    FeatureDescriptor {
         id: "r6_capability_admission",
         display_name: "R6 高级能力准入与评测基线",
         stage: "R6",
@@ -537,12 +589,57 @@ pub struct PlanNode {
     pub revision: i64,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PlanningStoryState {
+    #[default]
+    Unset,
+    Unknown,
+    Deferred,
+    AuthorReserved,
+    AiSuggested,
+    Confirmed,
+    Locked,
+    Retired,
+}
+
+impl PlanningStoryState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unset => "UNSET",
+            Self::Unknown => "UNKNOWN",
+            Self::Deferred => "DEFERRED",
+            Self::AuthorReserved => "AUTHOR_RESERVED",
+            Self::AiSuggested => "AI_SUGGESTED",
+            Self::Confirmed => "CONFIRMED",
+            Self::Locked => "LOCKED",
+            Self::Retired => "RETIRED",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "UNKNOWN" => Self::Unknown,
+            "DEFERRED" => Self::Deferred,
+            "AUTHOR_RESERVED" => Self::AuthorReserved,
+            "AI_SUGGESTED" => Self::AiSuggested,
+            "CONFIRMED" => Self::Confirmed,
+            "LOCKED" => Self::Locked,
+            "RETIRED" => Self::Retired,
+            _ => Self::Unset,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanningSection {
     pub id: String,
     pub content: String,
     pub pending_content: String,
+    pub story_state: PlanningStoryState,
     pub rationale: String,
     pub consequence: String,
     pub references: Vec<String>,
@@ -783,6 +880,13 @@ impl Default for ProjectManager {
 }
 
 impl ProjectManager {
+    pub fn project_id(&self) -> Result<Uuid, ProjectError> {
+        self.current
+            .as_ref()
+            .map(|session| session.manifest.project_id)
+            .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))
+    }
+
     pub fn write_crash_marker(&self, marker: &CrashMarker) -> Result<(), ProjectError> {
         let session = self
             .current
@@ -1464,6 +1568,27 @@ impl ProjectManager {
         );
         novel_application::ContextAssembler::assemble_with_retrieval(input, &evidence)
     }
+
+    pub fn assemble_discussion_context(
+        &self,
+        input: &novel_application::DiscussionContextInput,
+    ) -> Result<novel_application::ContextPackage, novel_application::ContextError> {
+        let retrieval_input = novel_application::AssembleContextInput {
+            chapter_id: Uuid::nil(),
+            target_revision_id: None,
+            action: AiAction::Summarize,
+            chapter_title: input.scope_label.clone(),
+            chapter_plan: input.scope_content.clone(),
+            volume_plan: String::new(),
+            document_json: r#"{"type":"doc","content":[]}"#.to_owned(),
+            selection: None,
+            instruction: Some(format!("{}\n{}", input.user_message, input.history)),
+            input_token_budget: input.input_token_budget,
+        };
+        let candidates = self.collect_context_candidates(&retrieval_input, &[]);
+        let evidence = novel_application::ContextPlanner::plan(&candidates, 24, 10);
+        novel_application::ContextAssembler::assemble_discussion(input, &evidence)
+    }
 }
 
 fn walk_files(root: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
@@ -1720,8 +1845,22 @@ impl ProjectManager {
 
     pub fn save_planning_section(
         &mut self,
-        section: PlanningSection,
+        mut section: PlanningSection,
     ) -> Result<PlanningSection, ProjectError> {
+        if !section.content.trim().is_empty()
+            && section.story_state == PlanningStoryState::AiSuggested
+        {
+            section.story_state = PlanningStoryState::Confirmed;
+        }
+        if section.content.trim().is_empty()
+            && section.pending_content.trim().is_empty()
+            && matches!(
+                section.story_state,
+                PlanningStoryState::Confirmed | PlanningStoryState::Locked
+            )
+        {
+            section.story_state = PlanningStoryState::Unset;
+        }
         let session = self
             .current
             .as_mut()
@@ -2452,6 +2591,7 @@ mod tests {
                 id: "story-core".to_owned(),
                 content: "修仙题材，主题是反抗既定命运。".to_owned(),
                 pending_content: "保留作为候选的另一版主题。".to_owned(),
+                story_state: super::PlanningStoryState::Confirmed,
                 rationale: "灵根等级决定资源分配。".to_owned(),
                 consequence: "主角会与宗门秩序发生冲突。".to_owned(),
                 references: vec!["planning.txt:1-3".to_owned()],
@@ -2467,9 +2607,39 @@ mod tests {
             .expect("saved section");
         assert_eq!(restored.content, saved.content);
         assert_eq!(restored.pending_content, saved.pending_content);
+        assert_eq!(restored.story_state, saved.story_state);
         assert_eq!(restored.rationale, saved.rationale);
         assert_eq!(restored.consequence, saved.consequence);
         assert_eq!(restored.references, saved.references);
+        let explicit_unknown = manager
+            .save_planning_section(super::PlanningSection {
+                id: "engine-ending".to_owned(),
+                content: String::new(),
+                pending_content: String::new(),
+                story_state: super::PlanningStoryState::Unknown,
+                rationale: "作者尚未决定结局".to_owned(),
+                consequence: String::new(),
+                references: Vec::new(),
+                updated_at: String::new(),
+            })
+            .expect("save explicit unknown");
+        assert_eq!(
+            explicit_unknown.story_state,
+            super::PlanningStoryState::Unknown
+        );
+        let promoted = manager
+            .save_planning_section(super::PlanningSection {
+                id: "seed-hook".to_owned(),
+                content: "卖点：主角用记忆交换力量。".to_owned(),
+                pending_content: String::new(),
+                story_state: super::PlanningStoryState::AiSuggested,
+                rationale: String::new(),
+                consequence: String::new(),
+                references: Vec::new(),
+                updated_at: String::new(),
+            })
+            .expect("save confirmed content");
+        assert_eq!(promoted.story_state, super::PlanningStoryState::Confirmed);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2487,6 +2657,7 @@ mod tests {
             id: "seed-premise".to_owned(),
             content: "主角在灾后城市寻找失踪姐姐。".to_owned(),
             pending_content: String::new(),
+            story_state: super::PlanningStoryState::Confirmed,
             rationale: String::new(),
             consequence: String::new(),
             references: Vec::new(),
@@ -2645,6 +2816,7 @@ mod tests {
                         action,
                         chapter_title: "第一章".into(),
                         chapter_plan: "调查失踪案".into(),
+                        volume_plan: "第一卷调查失踪案的全过程。".into(),
                         document_json: r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"沈砚来到车站。"}]}]}"#.into(),
                         selection: action
                             .requires_selection()
@@ -2667,7 +2839,7 @@ mod tests {
     }
 
     #[test]
-    fn context_assembly_includes_formal_settings_and_reports_missing_writing_basis() {
+    fn context_assembly_includes_formal_settings_and_preserves_unknown_state() {
         let root = std::path::PathBuf::from("target")
             .join(format!("ainovel-context-settings-{}", uuid::Uuid::new_v4()));
         let mut manager = super::ProjectManager::new();
@@ -2693,6 +2865,7 @@ mod tests {
                     id: id.to_owned(),
                     content: content.to_owned(),
                     pending_content: "这段候选不得进入正文上下文。".to_owned(),
+                    story_state: super::PlanningStoryState::Confirmed,
                     rationale: String::new(),
                     consequence: String::new(),
                     references: Vec::new(),
@@ -2700,6 +2873,42 @@ mod tests {
                 })
                 .expect("save planning section");
         }
+        manager
+            .save_planning_section(super::PlanningSection {
+                id: "engine-ending".to_owned(),
+                content: "结局暂不决定。".to_owned(),
+                pending_content: String::new(),
+                story_state: super::PlanningStoryState::Deferred,
+                rationale: String::new(),
+                consequence: String::new(),
+                references: Vec::new(),
+                updated_at: String::new(),
+            })
+            .expect("save deferred state");
+        manager
+            .save_planning_section(super::PlanningSection {
+                id: "cast-arcs".to_owned(),
+                content: "配角秘密由作者保留。".to_owned(),
+                pending_content: String::new(),
+                story_state: super::PlanningStoryState::AuthorReserved,
+                rationale: String::new(),
+                consequence: String::new(),
+                references: Vec::new(),
+                updated_at: String::new(),
+            })
+            .expect("save author-reserved state");
+        manager
+            .save_planning_section(super::PlanningSection {
+                id: "seed-hook".to_owned(),
+                content: String::new(),
+                pending_content: "候选钩子：失踪者留下第二封信。".to_owned(),
+                story_state: super::PlanningStoryState::AiSuggested,
+                rationale: String::new(),
+                consequence: String::new(),
+                references: Vec::new(),
+                updated_at: String::new(),
+            })
+            .expect("save AI suggestion");
 
         let package = manager
             .assemble_context_with_project_knowledge(&novel_application::AssembleContextInput {
@@ -2708,6 +2917,7 @@ mod tests {
                 action: super::AiAction::Draft,
                 chapter_title: "第一章".into(),
                 chapter_plan: "主角首次越境战斗。".into(),
+                volume_plan: "第一卷建立境界规则与越境代价。".into(),
                 document_json: r#"{"type":"doc","content":[]}"#.into(),
                 selection: None,
                 instruction: Some("按正式设定创作".into()),
@@ -2733,9 +2943,26 @@ mod tests {
                 .user_prompt
                 .contains("叙述视角硬约束：本作品固定使用第三人称")
         );
-        assert!(package.user_prompt.contains("人物卡：知识库尚未建立"));
-        assert!(package.user_prompt.contains("核心前提与开局情境"));
-        assert!(package.user_prompt.contains("未列为缺失项的一般规划"));
+        assert!(package.user_prompt.contains("人物卡状态：尚未建立人物实体卡"));
+        assert!(package.user_prompt.contains("未决内容规则"));
+        assert!(package.user_prompt.contains("可以提出候选"));
+        assert!(
+            package
+                .user_prompt
+                .contains("未决与作者保留边界")
+        );
+        assert!(package.user_prompt.contains("结局状态与承诺兑现：暂不决定"));
+        assert!(package.user_prompt.contains("人物弧光、秘密与信息差：作者保留"));
+        assert!(
+            package
+                .user_prompt
+                .contains("AI 建议（未确认，不得当作正式事实）")
+        );
+        assert!(
+            package
+                .user_prompt
+                .contains("候选钩子：失踪者留下第二封信。")
+        );
         assert!(!package.user_prompt.contains("这段候选不得进入正文上下文"));
         assert!(
             package
@@ -2824,6 +3051,35 @@ mod tests {
         manager
             .rebuild_world_state("tester".into())
             .expect("rebuild world state");
+        manager
+            .create_relation(super::Relation {
+                id: uuid::Uuid::new_v4(),
+                project_id: manifest.project_id,
+                relation_version: 1,
+                from_knowledge_id: candidate.fact.knowledge_id,
+                to_knowledge_id: candidate.fact.knowledge_id,
+                relation_type: "自我约束".into(),
+                evidence_anchor_ids: vec![anchor.id],
+                lifecycle_status: super::KnowledgeLifecycleStatus::Active,
+                created_by: "tester".into(),
+                created_at: super::now_timestamp(),
+                updated_at: super::now_timestamp(),
+            })
+            .expect("create relation");
+        manager
+            .create_belief(super::Belief {
+                id: uuid::Uuid::new_v4(),
+                project_id: manifest.project_id,
+                belief_version: 1,
+                holder_knowledge_id: candidate.fact.knowledge_id,
+                proposition: "饮酒会暴露自己的旧伤".into(),
+                evidence_anchor_ids: vec![anchor.id],
+                lifecycle_status: super::KnowledgeLifecycleStatus::Active,
+                created_by: "tester".into(),
+                created_at: super::now_timestamp(),
+                updated_at: super::now_timestamp(),
+            })
+            .expect("create belief");
 
         let package = manager
             .assemble_context_with_project_knowledge(
@@ -2833,6 +3089,7 @@ mod tests {
                     action: super::AiAction::Continue,
                     chapter_title: "第一章".into(),
                     chapter_plan: "林澈拒绝饮酒".into(),
+                    volume_plan: "第一卷围绕林澈调查旧案。".into(),
                     document_json: r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"林澈接过茶盏。"}]}]}"#.into(),
                     selection: None,
                     instruction: Some("续写林澈拒绝饮酒的场面".into()),
@@ -2843,9 +3100,23 @@ mod tests {
 
         assert!(package.user_prompt.contains("[P1 已批准事实]"));
         assert!(package.user_prompt.contains("林澈 不饮酒 保持"));
+        assert!(package.user_prompt.contains("所属分卷规划：第一卷围绕林澈调查旧案。"));
+        assert!(package.user_prompt.contains("正式关系："));
+        assert!(package.user_prompt.contains("角色知识边界："));
+        assert!(
+            package
+                .user_prompt
+                .contains("饮酒会暴露自己的旧伤")
+        );
         assert!(package.retrieval_evidence.iter().any(|item| {
             item.authority == super::ContextAuthority::AuthoritativeFact
                 && item.source_revision.starts_with("fact:")
+        }));
+        assert!(package.retrieval_evidence.iter().any(|item| {
+            item.source_revision.starts_with("relation:")
+        }));
+        assert!(package.retrieval_evidence.iter().any(|item| {
+            item.source_revision.starts_with("belief:")
         }));
         let _ = std::fs::remove_dir_all(root);
     }
@@ -3222,6 +3493,7 @@ mod tests {
                 action: super::AiAction::Continue,
                 chapter_title: chapter.title,
                 chapter_plan: "继续推进冲突".into(),
+                volume_plan: "第一卷推进主线冲突。".into(),
                 document_json: r#"{"type":"doc","content":[]}"#.into(),
                 selection: None,
                 instruction: None,
@@ -3409,6 +3681,7 @@ mod tests {
                 action: super::AiAction::ConsistencyCheck,
                 chapter_title: chapter.title,
                 chapter_plan: "主角进入城市并寻找失踪的师父。".into(),
+                volume_plan: "第一卷围绕寻找师父展开。".into(),
                 document_json:
                     r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"主角抵达城门。"}]}]}"#
                         .into(),
@@ -3650,6 +3923,7 @@ mod tests {
                 action: super::AiAction::Summarize,
                 chapter_title: "第一章".into(),
                 chapter_plan: String::new(),
+                volume_plan: String::new(),
                 document_json: r#"{"type":"doc","content":[]}"#.into(),
                 selection: None,
                 instruction: None,
@@ -3774,6 +4048,7 @@ mod tests {
                 action: super::AiAction::Continue,
                 chapter_title: "第一章".into(),
                 chapter_plan: String::new(),
+                volume_plan: String::new(),
                 document_json: r#"{"type":"doc","content":[]}"#.into(),
                 selection: None,
                 instruction: None,

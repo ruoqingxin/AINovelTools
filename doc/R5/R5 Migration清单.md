@@ -16,7 +16,28 @@
 | 25 | `r5_beliefs` | 持有者与命题的信念知识版本 | 18/22 |
 | 26 | `r5_foreshadowings` | 伏笔状态和目标章节的不可变版本 | 18/22 |
 
-R4 版本 15 已补齐为可靠性契约的 schema ledger 收尾标记；R5 从 16 开始，当前 R5 schema version 为 26。每个迁移必须支持空库、已有项目和失败回滚演练。
+R4 版本 15 已补齐为可靠性契约的 schema ledger 收尾标记；R5 从 16 开始，R5 首批知识治理在版本 26 完成自动化验收。
+
+版本 27-40 是 R5 关闭后用于规划设定、AI 规划任务、运行审计、费用治理、任务失败确认和 R5.1 渐进式共创体验的增量迁移：
+
+| 版本 | 名称 | 说明 |
+|---|---|---|
+| 27 | `planning_sections` | 规划设定内容与来源 |
+| 28 | `planning_sections_pending_content` | AI 候选待定区 |
+| 29 | `ai_planning_jobs_and_events` | 规划 AI 后台任务与事件 |
+| 30 | `planning_embeddings` | 规划设定向量元数据 |
+| 31 | `planning_chunk_embeddings` | 文件分块向量元数据 |
+| 32 | `ai_run_attempt_tracking` | AI 调用尝试与回退记录 |
+| 33 | `ai_proposal_quality_feedback` | Proposal 质量反馈 |
+| 34 | `ai_usage_stats_and_project_overrides` | 用量统计和项目任务覆盖 |
+| 35 | `unified_ai_runs_and_model_pricing` | 统一 AI 运行记录与价格快照 |
+| 36 | `job_failure_acknowledgements` | 失败任务确认 |
+| 37 | `planning_story_state` | 规划项显式状态和未知语义 |
+| 38 | `chapter_extraction_candidates` | 正文提取候选、证据绑定和审核状态 |
+| 39 | `project_discussion_sessions` | 作品级讨论会话、消息和候选 |
+| 40 | `discussion_scene_and_selection_scopes` | 讨论场景范围与选区文本持久化 |
+
+因此，运行时 `CURRENT_SCHEMA_VERSION` 为 40；后续 R5.1 或 R6 迁移不得继续沿用 26 或 36 作为当前基线。每个迁移必须支持空库、已有项目和失败回滚演练。R5.1 详细阶段边界见 `doc/R5.1/R5.1 Migration清单.md`。
 
 ## 统一字段
 

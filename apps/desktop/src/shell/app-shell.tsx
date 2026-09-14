@@ -10,6 +10,7 @@ import {
   Settings,
   ShieldCheck,
   ListChecks,
+  MessageSquareText,
 } from "lucide-react";
 import { getBootstrapStatus, getCurrentProject, getHealth, listAllRecoveryLogs, listJobs } from "../lib/tauri-client";
 import { UnsavedChangesProvider } from "./unsaved-changes-provider";
@@ -18,6 +19,7 @@ const navigation = [
   { label: "项目", icon: LibraryBig, path: "/" as const },
   { label: "规划", icon: ListTree, path: "/planning" as const },
   { label: "正文", icon: BookOpenText, path: "/writing" as const },
+  { label: "讨论", icon: MessageSquareText, path: "/discussion" as const },
   { label: "知识", icon: FileSearch, path: "/knowledge" as const },
   { label: "审核", icon: ShieldCheck, path: "/knowledge/review" as const },
   { label: "搜索", icon: Search, path: "/search" as const },

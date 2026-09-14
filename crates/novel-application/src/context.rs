@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROMPT_VERSION: &str = "r3-writing-v6";
+pub const PROMPT_VERSION: &str = "r5.1-writing-v1";
 const TRUNCATION_MARKER: &str = "[已按 TokenBudget 截断]";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -46,6 +46,8 @@ pub enum ContextCandidateKind {
     AuthoritativeFact,
     CurrentState,
     Entity,
+    Relation,
+    Belief,
     Foreshadowing,
     Summary,
     Event,
@@ -59,10 +61,12 @@ impl ContextCandidateKind {
             Self::AuthoritativeFact => 1,
             Self::CurrentState => 2,
             Self::Entity => 3,
-            Self::Foreshadowing => 4,
-            Self::Summary => 5,
-            Self::Event => 6,
-            Self::Keyword => 7,
+            Self::Relation => 4,
+            Self::Belief => 5,
+            Self::Foreshadowing => 6,
+            Self::Summary => 7,
+            Self::Event => 8,
+            Self::Keyword => 9,
         }
     }
 
@@ -70,7 +74,7 @@ impl ContextCandidateKind {
         match self {
             Self::ProjectSetting | Self::Foreshadowing | Self::Summary | Self::Event => 1,
             Self::AuthoritativeFact | Self::Keyword => 4,
-            Self::CurrentState | Self::Entity => 2,
+            Self::CurrentState | Self::Entity | Self::Relation | Self::Belief => 2,
         }
     }
 }
@@ -142,7 +146,7 @@ impl ContextPlanner {
         }
 
         let mut seen = HashSet::new();
-        let mut grouped = std::array::from_fn::<_, 8, _>(|_| Vec::new());
+        let mut grouped = std::array::from_fn::<_, 10, _>(|_| Vec::new());
         for candidate in candidates {
             let normalized_content = candidate
                 .evidence
@@ -202,9 +206,20 @@ pub struct AssembleContextInput {
     pub action: AiAction,
     pub chapter_title: String,
     pub chapter_plan: String,
+    pub volume_plan: String,
     pub document_json: String,
     pub selection: Option<String>,
     pub instruction: Option<String>,
+    pub input_token_budget: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscussionContextInput {
+    pub scope_label: String,
+    pub scope_content: String,
+    pub history: String,
+    pub user_message: String,
     pub input_token_budget: u32,
 }
 
@@ -215,6 +230,7 @@ pub enum AiTaskRole {
     SelectionReviser,
     ChapterSummarizer,
     ContinuityAuditor,
+    DiscussionFacilitator,
     ApiConnectionTester,
 }
 
@@ -425,6 +441,168 @@ impl ContextAssembler {
             section_audit,
         })
     }
+
+    /// Compiles a project-bound discussion request without granting write access.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextError`] when the budget or retrieval evidence is invalid.
+    pub fn assemble_discussion(
+        input: &DiscussionContextInput,
+        evidence: &[RetrievalEvidence],
+    ) -> Result<ContextPackage, ContextError> {
+        if input.input_token_budget < 256 {
+            return Err(ContextError::BudgetTooSmall);
+        }
+        for item in evidence {
+            item.validate()?;
+        }
+        let task_contract = AiTaskContract {
+            role: AiTaskRole::DiscussionFacilitator,
+            goal: "结合作品正式依据和最近讨论，提出剧情方案、影响分析与待作者决定事项。"
+                .to_owned(),
+            target_type: "PROJECT_DISCUSSION".to_owned(),
+            target_id: Uuid::nil(),
+            target_revision_id: None,
+            permissions: vec![
+                "读取本次提供的正式依据、讨论范围和最近讨论。".to_owned(),
+                "提出方案、质疑、比较和候选建议。".to_owned(),
+            ],
+            forbidden_actions: vec![
+                "不得修改或声称已修改正式正文、正式规划、正式实体或正式知识。".to_owned(),
+                "不得把讨论假设、模型推测或新建议写成已批准事实。".to_owned(),
+                "不得要求作者先补全未知设定才能继续讨论。".to_owned(),
+            ],
+            acceptance_criteria: vec![
+                "明确区分已有正式内容、讨论中的推测、新建议和待作者决定事项。".to_owned(),
+                "提出多个方向时说明核心体验、收益、代价和受影响内容。".to_owned(),
+                "允许结论为暂不决定，并明确哪些内容需要作者确认。".to_owned(),
+            ],
+            uncertainty_policy:
+                "只使用本次提供的正式依据；没有正式依据时明确说明未检索到，不得声称已经读取完整设定。"
+                    .to_owned(),
+            output_contract:
+                "纯文本讨论回复；先给结论，再按需说明方案、影响和待决定项，不输出修改后的正式对象。"
+                    .to_owned(),
+        };
+        let system_prompt = format!(
+            "你是{}。你负责与作者讨论剧情方向、比较方案和分析影响，不是项目事实数据库，也没有正式对象写权限。严格区分已有正式内容、讨论中的推测、新建议和待作者决定；低优先级讨论建议不得覆盖高优先级正式依据。",
+            role_label(task_contract.role)
+        );
+        let retrieval = compile_retrieval_evidence(evidence);
+        let mut sections = vec![
+            PromptSection::new(
+                ContextSectionKind::TaskContract,
+                0,
+                "讨论任务合同",
+                format_task_contract(&task_contract, &input.scope_label),
+                1,
+            ),
+            PromptSection::new(
+                ContextSectionKind::UserInstruction,
+                0,
+                "作者本次问题",
+                input.user_message.trim().to_owned(),
+                1,
+            ),
+            PromptSection::new(
+                ContextSectionKind::ChapterPlan,
+                1,
+                "本次讨论范围",
+                format!(
+                    "{}\n{}",
+                    non_empty_or(input.scope_label.trim().to_owned(), "当前作品"),
+                    non_empty_or(input.scope_content.trim().to_owned(), "未提供额外范围材料。")
+                ),
+                u16::from(!input.scope_content.trim().is_empty()),
+            ),
+            PromptSection::new(
+                ContextSectionKind::ProjectSettings,
+                1,
+                "已有正式设定",
+                non_empty_or(
+                    retrieval.project_settings.clone(),
+                    "本次没有可用的正式作品设定；未检索到的内容按未知处理。",
+                ),
+                retrieval.project_setting_count,
+            ),
+            PromptSection::new(
+                ContextSectionKind::AuthoritativeFacts,
+                1,
+                "已有正式知识和状态",
+                format!(
+                    "{}\n\n{}",
+                    non_empty_or(
+                        retrieval.authoritative_facts.clone(),
+                        "本次没有已批准事实来源。",
+                    ),
+                    non_empty_or(retrieval.task_materials.clone(), "本次没有独立状态来源。")
+                ),
+                retrieval
+                    .authoritative_count
+                    .saturating_add(retrieval.task_material_count),
+            ),
+            PromptSection::new(
+                ContextSectionKind::CurrentDraft,
+                3,
+                "最近讨论",
+                non_empty_or(input.history.trim().to_owned(), "尚无历史讨论。"),
+                1,
+            )
+            .truncate_from_tail(true),
+            PromptSection::new(
+                ContextSectionKind::References,
+                6,
+                "其他参考",
+                non_empty_or(
+                    retrieval.references.clone(),
+                    "本次没有其他参考资料。",
+                ),
+                retrieval.reference_count,
+            ),
+        ];
+        let character_budget = usize::try_from(input.input_token_budget)
+            .unwrap_or(usize::MAX)
+            .saturating_mul(4);
+        let (user_prompt, section_audit, truncated) = compile_sections(
+            &mut sections,
+            character_budget.saturating_sub(system_prompt.chars().count()),
+        );
+        let retrieval_evidence = retrieval.evidence_refs;
+        let entity_source_status = retrieval.source_status;
+        let canonical = serde_json::json!({
+            "scopeLabel": input.scope_label,
+            "scopeContent": input.scope_content,
+            "history": input.history,
+            "userMessage": input.user_message,
+            "promptVersion": PROMPT_VERSION,
+            "system": system_prompt,
+            "user": user_prompt,
+            "retrievalEvidence": retrieval_evidence,
+            "taskContract": task_contract,
+            "sectionAudit": section_audit,
+        });
+        let context_version = format!("{:x}", Sha256::digest(canonical.to_string().as_bytes()));
+        let estimated_input_tokens = u32::try_from(
+            (system_prompt.chars().count() + user_prompt.chars().count()).div_ceil(4),
+        )
+        .unwrap_or(u32::MAX);
+        Ok(ContextPackage {
+            chapter_id: Uuid::nil(),
+            target_revision_id: None,
+            action: AiAction::Summarize,
+            context_version,
+            prompt_version: "r5.1-discussion-v1".to_owned(),
+            system_prompt,
+            user_prompt,
+            estimated_input_tokens,
+            truncated,
+            entity_source_status,
+            retrieval_evidence,
+            task_contract,
+            section_audit,
+        })
+    }
 }
 
 struct PromptSection {
@@ -527,9 +705,14 @@ fn build_prompt_sections(
         PromptSection::new(
             ContextSectionKind::ChapterPlan,
             2,
-            "已批准章节规划",
-            non_empty_or(input.chapter_plan.trim().to_owned(), "未提供章节规划。"),
-            u16::from(!input.chapter_plan.trim().is_empty()),
+            "当前章节与分卷规划",
+            format!(
+                "当前章节执行卡：{}\n所属分卷规划：{}",
+                non_empty_or(input.chapter_plan.trim().to_owned(), "未提供章节规划。"),
+                non_empty_or(input.volume_plan.trim().to_owned(), "未提供分卷规划。")
+            ),
+            u16::from(!input.chapter_plan.trim().is_empty())
+                + u16::from(!input.volume_plan.trim().is_empty()),
         ),
         PromptSection::new(
             ContextSectionKind::CurrentState,
@@ -655,11 +838,11 @@ fn build_task_contract(input: &AssembleContextInput) -> AiTaskContract {
                 .to_owned()
         }
         AiAction::ConsistencyCheck => {
-            "只使用本次提供的正式设定、已批准事实、章节执行卡和当前草稿；证据不足时标记“无法确认”，不得把推测写成冲突。若关键正式设定缺失到无法判断准入，只输出“[上下文不足]”并列出缺失项。"
+            "只使用本次提供的正式设定、已批准事实、章节执行卡和当前草稿；未记录项按未知处理，证据不足时标记“无法确认”，不得把推测写成冲突。资料不完整不阻止审核，也不要求作者先补全规划。"
                 .to_owned()
         }
         _ => {
-            "生成前先检查 [P1 作品正式设定与生成前判断]；仅当其中“缺失项”直接影响本章人物动机、主角能力、境界/力量规则、世界限制或失败后果时，才停止推断并只输出“[上下文不足]”，逐项列出缺失的正式设定及补齐位置；未列为缺失项的一般规划不得作为停止创作的理由；不得自行补全项目事实。".to_owned()
+            "生成前检查 [P1 作品正式设定与生成前判断]；未记录、未知、暂不决定和作者保留都是有效状态，不要求先补全规划。可以把未决内容作为候选提出，但不得把推测写成已确认事实；只有用户指令或当前正文与已锁定正式内容直接冲突时，才说明冲突并给出可选处理。" .to_owned()
         }
     };
     AiTaskContract {
@@ -693,6 +876,7 @@ fn role_label(role: AiTaskRole) -> &'static str {
         AiTaskRole::SelectionReviser => "小说选区修订执行器",
         AiTaskRole::ChapterSummarizer => "小说章节摘要执行器",
         AiTaskRole::ContinuityAuditor => "小说连续性与生成准入审核器",
+        AiTaskRole::DiscussionFacilitator => "作品共创讨论协作者",
         AiTaskRole::ApiConnectionTester => "API 连接测试器",
     }
 }

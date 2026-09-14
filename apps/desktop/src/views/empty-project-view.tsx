@@ -1,15 +1,18 @@
-import { ArrowRight, FilePlus2, FolderOpen, ListTree, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpenText, FilePlus2, FolderOpen, ListTree, PenLine, Sparkles } from "lucide-react";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import {
   createProject,
+  createPlanNode,
   errorMessage,
   getCurrentProject,
   invalidateProjectQueries,
   listRecentProjects,
+  listPlanNodes,
   openProject,
+  savePlanningSection,
   type RecentProject,
 } from "../lib/tauri-client";
 
@@ -30,6 +33,10 @@ function lastOpenedLabel(timestamp: string) {
 export function EmptyProjectView() {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<"create" | "open" | null>(null);
+  const [quickStartOpen, setQuickStartOpen] = useState(false);
+  const [premise, setPremise] = useState("");
+  const [scale, setScale] = useState("");
+  const [volumeDirection, setVolumeDirection] = useState("");
   const [error, setError] = useState<string | null>(null);
   const recentProjects = useQuery({
     queryKey: ["recent-projects"],
@@ -39,6 +46,14 @@ export function EmptyProjectView() {
     queryKey: ["current-project"],
     queryFn: getCurrentProject,
   });
+  const planNodes = useQuery({
+    queryKey: ["plan-nodes"],
+    queryFn: listPlanNodes,
+    enabled: Boolean(currentProject.data),
+  });
+  const firstChapter = planNodes.data?.find(
+    (node) => node.kind === "CHAPTER" && !node.archived,
+  );
 
   async function handleCreate() {
     setBusy("create");
@@ -90,6 +105,87 @@ export function EmptyProjectView() {
     }
   }
 
+  async function handleQuickStart() {
+    if (!currentProject.data || !premise.trim()) return;
+    setBusy("create");
+    setError(null);
+    try {
+      let nodes = planNodes.data ?? [];
+      let workDesign = nodes.find(
+        (node) => node.parentId === null && node.kind === "WORK_DESIGN" && !node.archived,
+      );
+      if (!workDesign) {
+        workDesign = await createPlanNode({ kind: "WORK_DESIGN", title: "作品设定" });
+        nodes = [...nodes, workDesign];
+      }
+      await savePlanningSection({
+        id: "seed-premise",
+        content: premise.trim(),
+        pendingContent: "",
+        storyState: "CONFIRMED",
+        rationale: "快速起步",
+        consequence: "",
+        references: [],
+        updatedAt: "",
+      });
+      if (scale.trim()) {
+        await savePlanningSection({
+          id: "seed-tone",
+          content: `大致规模：${scale.trim()}`,
+          pendingContent: "",
+          storyState: "CONFIRMED",
+          rationale: "快速起步",
+          consequence: "",
+          references: [],
+          updatedAt: "",
+        });
+      }
+
+      let volumeManager = nodes.find(
+        (node) => node.parentId === null && node.kind === "VOLUME_MANAGER" && !node.archived,
+      );
+      if (!volumeManager) {
+        volumeManager = await createPlanNode({ kind: "VOLUME_MANAGER", title: "分卷管理" });
+        nodes = [...nodes, volumeManager];
+      }
+      let firstVolume = nodes.find(
+        (node) => node.parentId === volumeManager.id && node.kind === "VOLUME" && !node.archived,
+      );
+      if (!firstVolume) {
+        firstVolume = await createPlanNode({
+          kind: "VOLUME",
+          title: "第一卷",
+          parentId: volumeManager.id,
+        });
+      }
+      if (volumeDirection.trim()) {
+        await savePlanningSection({
+          id: `plan-node:${firstVolume.id}`,
+          content: volumeDirection.trim(),
+          pendingContent: "",
+          storyState: "CONFIRMED",
+          rationale: "快速起步",
+          consequence: "",
+          references: [],
+          updatedAt: "",
+        });
+      }
+      const chapter = nodes.find(
+        (node) => node.parentId === firstVolume?.id && node.kind === "CHAPTER" && !node.archived,
+      ) ?? await createPlanNode({
+        kind: "CHAPTER",
+        title: "第1章",
+        parentId: firstVolume.id,
+      });
+      await invalidateProjectQueries(queryClient);
+      window.location.assign(`/writing#${chapter.id}`);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <section className="empty-project-view">
       <div className="workspace-heading">
@@ -131,9 +227,22 @@ export function EmptyProjectView() {
             <span>当前工程</span>
             <strong>{currentProject.data.name}</strong>
           </div>
-          <Link to="/planning" className="secondary-action current-project-open">
-            <ListTree size={15} />进入规划
-          </Link>
+          <div className="current-project-actions">
+            {firstChapter ? <a href={`/writing#${firstChapter.id}`} className="primary-action"><BookOpenText size={15} />继续写作</a> : null}
+            <Link to="/planning" className="secondary-action current-project-open">
+              <ListTree size={15} />一起规划
+            </Link>
+            {!firstChapter ? <button type="button" className="primary-action" onClick={() => setQuickStartOpen((value) => !value)}><PenLine size={15} />先写一段看看</button> : null}
+          </div>
+          {!firstChapter && quickStartOpen ? <form className="quick-writing-start" onSubmit={(event) => { event.preventDefault(); void handleQuickStart(); }}>
+            <div className="section-heading"><div><h2>先写一段看看</h2><p>一句话核心是唯一必填项，规模和第一卷方向都可以保留未知。</p></div></div>
+            <label className="quick-writing-wide"><span>一句话核心</span><textarea rows={3} value={premise} onChange={(event) => setPremise(event.target.value)} placeholder="例如：一个能看见因果线的少年，在灵气枯竭的世界里被卷入一场跨越百年的旧案。" autoFocus /></label>
+            <div className="entity-form-grid">
+              <label>大致规模（可选）<select value={scale} onChange={(event) => setScale(event.target.value)}><option value="">先不定</option><option value="短篇，1 至 5 万字">短篇</option><option value="中篇，10 至 30 万字">中篇</option><option value="长篇，50 至 150 万字">长篇</option><option value="超长篇，150 万字以上">超长篇</option></select></label>
+              <label>第一卷方向（可选）<input value={volumeDirection} onChange={(event) => setVolumeDirection(event.target.value)} placeholder="留白即表示以后再决定" /></label>
+            </div>
+            <div className="inspector-actions"><button type="submit" className="primary-action" disabled={!premise.trim() || busy !== null}><ArrowRight size={15} />{busy === "create" ? "创建中…" : "创建第一章并开始写"}</button><button type="button" className="secondary-action" onClick={() => setQuickStartOpen(false)} disabled={busy !== null}>取消</button></div>
+          </form> : null}
         </div>
       ) : null}
 

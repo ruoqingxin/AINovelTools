@@ -59,9 +59,41 @@ pub(crate) struct ExtractEntitiesInput {
     max_output_tokens: Option<u32>,
 }
 
-const PLANNING_CONTEXT_RESERVE_TOKENS: u32 = 2_048;
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExtractChapterCandidatesInput {
+    profile_id: uuid::Uuid,
+    chapter_id: uuid::Uuid,
+    source_revision_id: Option<uuid::Uuid>,
+    user_guidance: Option<String>,
+    temperature: Option<f64>,
+    max_output_tokens: Option<u32>,
+}
 
-fn task_generation_options(
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChapterExtractionAiItem {
+    kind: String,
+    block_id: String,
+    quote: String,
+    entity_type: Option<novel_infrastructure::EntityType>,
+    name: Option<String>,
+    description: Option<String>,
+    #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    subject: Option<String>,
+    predicate: Option<String>,
+    object: Option<String>,
+    title: Option<String>,
+    status: Option<String>,
+}
+
+const PLANNING_CONTEXT_RESERVE_TOKENS: u32 = 2_048;
+const EXTRACTION_PROMPT_VERSION: &str = "r5.1-chapter-extraction-v1";
+
+pub(crate) fn task_generation_options(
     task_key: Option<novel_infrastructure::AiTaskKind>,
     temperature: Option<f64>,
     max_output_tokens: Option<u32>,
@@ -88,7 +120,7 @@ fn task_generation_options(
     })
 }
 
-fn load_ai_task_preference(
+pub(crate) fn load_ai_task_preference(
     state: &ProjectState,
     task: novel_infrastructure::AiTaskKind,
 ) -> Result<novel_infrastructure::AiTaskPreference, ApiError> {
@@ -114,7 +146,7 @@ fn load_ai_task_preference(
     Ok(preference)
 }
 
-fn effective_task_input_budget(
+pub(crate) fn effective_task_input_budget(
     profile: &novel_infrastructure::ModelProfile,
     max_output_tokens: u32,
     preference: &novel_infrastructure::AiTaskPreference,
@@ -132,7 +164,7 @@ fn context_option(value: Option<bool>, default: bool) -> bool {
     value.unwrap_or(default)
 }
 
-fn resolve_task_profile(
+pub(crate) fn resolve_task_profile(
     state: &ProjectState,
     preference: &novel_infrastructure::AiTaskPreference,
 ) -> Result<Option<novel_infrastructure::ModelProfile>, ApiError> {
@@ -195,6 +227,7 @@ fn assemble_task_context(
         &[
             ("chapterTitle", input.chapter_title.as_str()),
             ("chapterPlan", input.chapter_plan.as_str()),
+            ("volumePlan", input.volume_plan.as_str()),
             (
                 "userInstruction",
                 input.instruction.as_deref().unwrap_or(""),
@@ -213,6 +246,7 @@ fn current_consistency_review_context_version(
     target_revision_id: Option<uuid::Uuid>,
     chapter_title: String,
     chapter_plan: String,
+    volume_plan: String,
     document_json: String,
     instruction: Option<String>,
 ) -> Result<Option<String>, ApiError> {
@@ -252,6 +286,11 @@ fn current_consistency_review_context_version(
         } else {
             String::new()
         },
+        volume_plan: if include_chapter_plan {
+            volume_plan
+        } else {
+            String::new()
+        },
         document_json: if include_current_draft {
             normalized_document_json(document_json)
         } else {
@@ -268,12 +307,12 @@ fn current_consistency_review_context_version(
     Ok(Some(context.context_version))
 }
 
-struct AiGenerationOutcome {
-    output: String,
-    completion: novel_infrastructure::GenerationCompletion,
-    finish_reason: Option<String>,
-    fallback_profile: Option<novel_infrastructure::ModelProfile>,
-    fallback_reason: Option<String>,
+pub(crate) struct AiGenerationOutcome {
+    pub(crate) output: String,
+    pub(crate) completion: novel_infrastructure::GenerationCompletion,
+    pub(crate) finish_reason: Option<String>,
+    pub(crate) fallback_profile: Option<novel_infrastructure::ModelProfile>,
+    pub(crate) fallback_reason: Option<String>,
 }
 
 fn should_try_fallback(error: &novel_infrastructure::AiError) -> bool {
@@ -288,7 +327,7 @@ fn should_try_fallback(error: &novel_infrastructure::AiError) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn generate_with_task_fallback<F>(
+pub(crate) async fn generate_with_task_fallback<F>(
     state: &ProjectState,
     preference: &novel_infrastructure::AiTaskPreference,
     primary: &novel_infrastructure::ModelProfile,
@@ -430,7 +469,7 @@ mod task_generation_options_tests {
     }
 }
 
-fn effective_max_output_tokens(
+pub(crate) fn effective_max_output_tokens(
     profile: &novel_domain::ModelProfile,
     options: novel_infrastructure::GenerationOptions,
 ) -> u32 {
@@ -1853,6 +1892,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                 id: input.section_id.clone(),
                 content: String::new(),
                 pending_content: String::new(),
+                story_state: novel_infrastructure::PlanningStoryState::Unset,
                 rationale: String::new(),
                 consequence: String::new(),
                 references: Vec::new(),
@@ -1861,6 +1901,15 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             let output_chars = output.chars().count();
             let likely_truncated = planning_output_looks_truncated(&output);
             section.pending_content = output;
+            if section.content.trim().is_empty()
+                && matches!(
+                    section.story_state,
+                    novel_infrastructure::PlanningStoryState::Unset
+                        | novel_infrastructure::PlanningStoryState::AiSuggested
+                )
+            {
+                section.story_state = novel_infrastructure::PlanningStoryState::AiSuggested;
+            }
             section.references = input.source_name.clone().unwrap_or_default();
             let output_tokens = u32::try_from(section.pending_content.chars().count().div_ceil(4))
                 .unwrap_or(u32::MAX);
@@ -2105,6 +2154,640 @@ pub(crate) async fn extract_entities_from_text(
             message: "AI 返回的提炼结果不是有效 JSON，请重试".to_owned(),
         })
     }
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_lines)]
+pub(crate) async fn extract_chapter_candidates(
+    state: tauri::State<'_, ProjectState>,
+    input: ExtractChapterCandidatesInput,
+) -> Result<novel_infrastructure::ChapterExtractionProposal, ApiError> {
+    let profile = {
+        let store = state
+            .model_profiles
+            .lock()
+            .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+        store.get(input.profile_id).map_err(ApiError::from)?
+    };
+    if profile.capability != novel_infrastructure::ModelCapability::Chat {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "请选择聊天模型配置".to_owned(),
+        });
+    }
+    if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
+        return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
+    }
+
+    let revision = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        let revisions = manager
+            .list_manuscript_revisions(input.chapter_id)
+            .map_err(ApiError::from)?;
+        input.source_revision_id.map_or_else(
+            || revisions.first().cloned(),
+            |revision_id| {
+                revisions
+                    .iter()
+                    .find(|item| item.id == revision_id)
+                    .cloned()
+            },
+        )
+            .ok_or_else(|| ApiError {
+                code: "NOT_FOUND",
+                message: "指定的正文修订不存在".to_owned(),
+            })?
+    };
+    let blocks = manuscript_blocks(&revision.document_json)?;
+    if blocks.is_empty() {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "当前正文修订没有可提取的文字".to_owned(),
+        });
+    }
+    let block_payload = serde_json::to_string(
+        &blocks
+            .iter()
+            .map(|block| serde_json::json!({"blockId": block.0, "text": block.1}))
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|error| ApiError::internal(error.to_string()))?;
+
+    let task_kind = novel_infrastructure::AiTaskKind::KnowledgeExtraction;
+    let task_preference = load_ai_task_preference(&state, task_kind)?;
+    let generation_options =
+        task_generation_options(Some(task_kind), input.temperature, input.max_output_tokens)?;
+    let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
+    let input_token_budget =
+        effective_task_input_budget(&profile, max_output_tokens, &task_preference);
+    let secret_ref = profile
+        .secret_ref
+        .as_deref()
+        .ok_or(novel_infrastructure::AiError::MissingSecret)
+        .map_err(ApiError::from)?;
+    let secret = novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?;
+    let guidance = input.user_guidance.unwrap_or_default();
+    let source_text = truncate_text_to_char_budget(
+        &block_payload,
+        usize::try_from(input_token_budget)
+            .unwrap_or(usize::MAX)
+            .saturating_mul(4)
+            .saturating_sub(8_192)
+            .max(1_024),
+        "\n[已按上下文预算截断正文块]",
+    );
+    let mut context = novel_application::ContextPackage::connection_test();
+    "你是小说正文知识提取器。只提取给定正文中有明确原文证据的内容，不补写、不推断未写出的设定。"
+        .clone_into(&mut context.system_prompt);
+    context.user_prompt = format!(
+        "请从正文块中提取值得作者审核的新角色、地点、势力、物品、概念、事实或伏笔。\n\
+         作者补充要求：{}\n\
+         输出严格 JSON 数组，不要 Markdown，不要解释。每项格式：\n\
+         {{\"kind\":\"ENTITY|FACT|FORESHADOWING\",\"blockId\":\"原块 ID\",\"quote\":\"逐字原文片段\",\
+         \"entityType\":\"CHARACTER|LOCATION|FACTION|ITEM|CONCEPT\",\"name\":\"实体名\",\
+         \"aliases\":[],\"tags\":[],\"description\":\"仅依据原文的描述\",\
+         \"subject\":\"事实主体\",\"predicate\":\"事实谓词\",\"object\":\"事实结论\",\
+         \"title\":\"伏笔标题\",\"status\":\"OPEN\"}}\n\
+         只填写与 kind 对应的字段。quote 必须逐字来自对应 block 的 text，不得改写。\n\n正文块：\n{source_text}",
+        if guidance.trim().is_empty() { "无" } else { guidance.trim() }
+    );
+    novel_infrastructure::apply_task_prompt_preferences(
+        &mut context,
+        &task_preference,
+        &[
+            ("userGuidance", guidance.as_str()),
+            ("sourceText", source_text.as_str()),
+        ],
+    );
+    context.prompt_version = EXTRACTION_PROMPT_VERSION.to_owned();
+    context.estimated_input_tokens = u32::try_from(
+        (context.system_prompt.chars().count() + context.user_prompt.chars().count()).div_ceil(4),
+    )
+    .unwrap_or(u32::MAX)
+    .min(input_token_budget);
+
+    let run_id = {
+        let mut manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        manager
+            .start_ai_run(novel_infrastructure::AiRunStart {
+                task: task_kind,
+                source: novel_infrastructure::AiRunSource::KnowledgeExtraction,
+                job_id: None,
+                chapter_id: Some(input.chapter_id),
+                display_title: "正文候选提取",
+                profile_id: profile.id,
+                prompt_version: EXTRACTION_PROMPT_VERSION,
+                estimated_input_tokens: context.estimated_input_tokens,
+            })
+            .map_err(ApiError::from)?
+    };
+    let outcome = generate_with_task_fallback(
+        &state,
+        &task_preference,
+        &profile,
+        Some(&secret),
+        &context,
+        generation_options,
+        false,
+        false,
+        Arc::new(AtomicBool::new(false)),
+        |_| {},
+    )
+    .await;
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if let Ok(mut manager) = state.manager.lock() {
+                let _ = manager.fail_ai_run(run_id, &error);
+            }
+            return Err(ApiError::from(error));
+        }
+    };
+    if let Some(fallback) = outcome.fallback_profile.as_ref()
+        && let Ok(mut manager) = state.manager.lock()
+    {
+        let _ = manager.record_ai_run_fallback(
+            run_id,
+            fallback.id,
+            outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+        );
+    }
+
+    let parsed = parse_json_array::<ChapterExtractionAiItem>(&outcome.output).map_err(|_| {
+        ApiError {
+            code: "INVALID_RESPONSE",
+            message: "AI 返回的正文候选不是有效 JSON，请重试".to_owned(),
+        }
+    })?;
+    let proposal_id = uuid::Uuid::new_v4();
+    let source_version = format!("manuscript:{}", revision.id);
+    let project_id = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        manager.project_id().map_err(ApiError::from)?
+    };
+    let mut anchors = Vec::new();
+    let mut items = Vec::new();
+    for candidate in parsed.into_iter().take(80) {
+        let Some((block_id, block_text)) = blocks
+            .iter()
+            .find(|(block_id, _)| block_id == &candidate.block_id)
+        else {
+            continue;
+        };
+        let Some((start_offset, end_offset)) = locate_quote(block_text, &candidate.quote) else {
+            continue;
+        };
+        let (kind, payload) = match candidate.kind.trim().to_ascii_uppercase().as_str() {
+            "ENTITY" => {
+                let Some(entity_type) = candidate.entity_type else {
+                    continue;
+                };
+                let Some(name) = candidate.name.filter(|value| !value.trim().is_empty()) else {
+                    continue;
+                };
+                (
+                    novel_infrastructure::ExtractionItemKind::Entity,
+                    serde_json::json!({
+                        "entityType": entity_type,
+                        "name": name.trim(),
+                        "aliases": candidate.aliases,
+                        "tags": candidate.tags,
+                        "description": candidate.description.unwrap_or_default().trim(),
+                    }),
+                )
+            }
+            "FACT" => {
+                let Some(subject) = candidate.subject.filter(|value| !value.trim().is_empty()) else {
+                    continue;
+                };
+                let Some(predicate) = candidate.predicate.filter(|value| !value.trim().is_empty()) else {
+                    continue;
+                };
+                let Some(object) = candidate.object.filter(|value| !value.trim().is_empty()) else {
+                    continue;
+                };
+                (
+                    novel_infrastructure::ExtractionItemKind::Fact,
+                    serde_json::json!({
+                        "subject": subject.trim(),
+                        "predicate": predicate.trim(),
+                        "object": object.trim(),
+                    }),
+                )
+            }
+            "FORESHADOWING" => {
+                let Some(title) = candidate.title.filter(|value| !value.trim().is_empty()) else {
+                    continue;
+                };
+                (
+                    novel_infrastructure::ExtractionItemKind::Foreshadowing,
+                    serde_json::json!({
+                        "title": title.trim(),
+                        "status": candidate.status.unwrap_or_else(|| "OPEN".to_owned()),
+                    }),
+                )
+            }
+            _ => continue,
+        };
+        let anchor_id = uuid::Uuid::new_v4();
+        anchors.push(novel_infrastructure::EvidenceAnchor {
+            id: anchor_id,
+            project_id,
+            chapter_id: input.chapter_id,
+            source_revision_id: revision.id,
+            block_id: block_id.clone(),
+            start_offset,
+            end_offset,
+            source_version: source_version.clone(),
+            source_hash: revision.content_hash.clone(),
+            lifecycle_status: novel_infrastructure::KnowledgeLifecycleStatus::Active,
+            created_by: "ai-extraction".to_owned(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        });
+        items.push(novel_infrastructure::ChapterExtractionItem {
+            id: uuid::Uuid::new_v4(),
+            proposal_id,
+            kind,
+            payload,
+            evidence_anchor_id: anchor_id,
+            status: novel_infrastructure::ExtractionItemStatus::PendingReview,
+            final_object_id: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        });
+    }
+    if items.is_empty() {
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.fail_ai_run(run_id, &novel_infrastructure::AiError::InvalidResponse);
+        }
+        return Err(ApiError {
+            code: "NO_EVIDENCE",
+            message: "没有识别到带逐字正文证据的候选，请调整提取要求后重试".to_owned(),
+        });
+    }
+    let proposal = novel_infrastructure::ChapterExtractionProposal {
+        id: proposal_id,
+        project_id,
+        chapter_id: input.chapter_id,
+        source_revision_id: revision.id,
+        ai_run_id: Some(run_id),
+        status: novel_infrastructure::ChapterExtractionProposalStatus::PendingReview,
+        items,
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+    let proposal = {
+        let mut manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        let mut proposal = proposal;
+        proposal.project_id = project_id;
+        for anchor in &mut anchors {
+            anchor.project_id = proposal.project_id;
+        }
+        manager
+            .create_chapter_extraction(proposal, anchors)
+            .map_err(ApiError::from)?
+    };
+    if let Ok(mut manager) = state.manager.lock() {
+        let output_tokens =
+            u32::try_from(outcome.output.chars().count().div_ceil(4)).unwrap_or(u32::MAX);
+        let _ = manager.complete_ai_run(run_id, output_tokens);
+    }
+    Ok(proposal)
+}
+
+#[tauri::command]
+pub(crate) fn list_chapter_extractions(
+    state: tauri::State<'_, ProjectState>,
+    chapter_id: uuid::Uuid,
+) -> Result<Vec<novel_infrastructure::ChapterExtractionProposal>, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .list_chapter_extractions(chapter_id)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn update_extraction_item(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    payload: serde_json::Value,
+    expected_status: novel_infrastructure::ExtractionItemStatus,
+) -> Result<novel_infrastructure::ChapterExtractionItem, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .update_extraction_item_payload(id, payload, expected_status)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn decide_extraction_item(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    expected_status: novel_infrastructure::ExtractionItemStatus,
+    decision: novel_infrastructure::ExtractionItemStatus,
+) -> Result<novel_infrastructure::ChapterExtractionItem, ApiError> {
+    if !matches!(
+        decision,
+        novel_infrastructure::ExtractionItemStatus::Deferred
+            | novel_infrastructure::ExtractionItemStatus::Rejected
+    ) {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "请使用采用操作创建正式对象".to_owned(),
+        });
+    }
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .decide_extraction_item(id, expected_status, decision, None)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn adopt_extraction_item(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    expected_status: novel_infrastructure::ExtractionItemStatus,
+) -> Result<novel_infrastructure::ChapterExtractionItem, ApiError> {
+    let item = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        manager.get_extraction_item(id).map_err(ApiError::from)?
+    };
+    if item.status != expected_status {
+        return Err(ApiError {
+            code: "VERSION_CONFLICT",
+            message: "候选状态已变化，请刷新后重试".to_owned(),
+        });
+    }
+    let anchor = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        manager
+            .list_evidence_anchors()
+            .map_err(ApiError::from)?
+            .into_iter()
+            .find(|anchor| anchor.id == item.evidence_anchor_id)
+            .ok_or_else(|| ApiError {
+                code: "NOT_FOUND",
+                message: "候选对应的正文证据不存在".to_owned(),
+            })?
+    };
+    let final_object_id = match item.kind {
+        novel_infrastructure::ExtractionItemKind::Entity => {
+            let entity_type = item
+                .payload
+                .get("entityType")
+                .and_then(serde_json::Value::as_str)
+                .and_then(parse_entity_type)
+                .ok_or_else(|| ApiError {
+                    code: "INVALID_INPUT",
+                    message: "实体候选缺少有效类型".to_owned(),
+                })?;
+            let name = item
+                .payload
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            let description = item
+                .payload
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            let mut manager = state
+                .manager
+                .lock()
+                .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+            let entity = manager
+                .upsert_entity(novel_infrastructure::EntityInput {
+                    id: None,
+                    entity_type,
+                    name: name.to_owned(),
+                    aliases: string_array(&item.payload, "aliases"),
+                    description: description.to_owned(),
+                    fixed_attributes_json: "{}".to_owned(),
+                    tags: string_array(&item.payload, "tags"),
+                    base_revision_id: None,
+                    source_version: Some(anchor.source_version.clone()),
+                    expected_version: None,
+                })
+                .map_err(ApiError::from)?;
+            entity.id.to_string()
+        }
+        novel_infrastructure::ExtractionItemKind::Fact => {
+            let subject = string_field(&item.payload, "subject")?;
+            let predicate = string_field(&item.payload, "predicate")?;
+            let object = string_field(&item.payload, "object")?;
+            let mut manager = state
+                .manager
+                .lock()
+                .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+            let candidate = manager
+                .create_knowledge_candidate(novel_infrastructure::KnowledgeCandidate {
+                    id: uuid::Uuid::new_v4(),
+                    project_id: anchor.project_id,
+                    chapter_id: anchor.chapter_id,
+                    proposal_id: None,
+                    candidate_status: novel_infrastructure::CandidateStatus::Pending,
+                    review_decision: None,
+                    reviewer: None,
+                    reviewed_at: None,
+                    fact: novel_infrastructure::Fact {
+                        knowledge_id: uuid::Uuid::new_v4(),
+                        project_id: anchor.project_id,
+                        knowledge_version: 1,
+                        subject,
+                        predicate,
+                        object,
+                        source_revision_id: anchor.source_revision_id,
+                        evidence_anchor_ids: vec![anchor.id],
+                        lifecycle_status:
+                            novel_infrastructure::KnowledgeLifecycleStatus::Active,
+                        created_by: "ai-extraction".to_owned(),
+                        created_at: String::new(),
+                        updated_at: String::new(),
+                    },
+                    created_at: String::new(),
+                    updated_at: String::new(),
+                })
+                .map_err(ApiError::from)?;
+            candidate.id.to_string()
+        }
+        novel_infrastructure::ExtractionItemKind::Foreshadowing => {
+            let title = string_field(&item.payload, "title")?;
+            let mut manager = state
+                .manager
+                .lock()
+                .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+            let foreshadowing = manager
+                .create_foreshadowing(novel_infrastructure::Foreshadowing {
+                    id: uuid::Uuid::new_v4(),
+                    project_id: anchor.project_id,
+                    foreshadowing_version: 1,
+                    title,
+                    target_chapter_id: None,
+                    status: "OPEN".to_owned(),
+                    evidence_anchor_ids: vec![anchor.id],
+                    lifecycle_status: novel_infrastructure::KnowledgeLifecycleStatus::Active,
+                    created_by: "ai-extraction".to_owned(),
+                    created_at: String::new(),
+                    updated_at: String::new(),
+                })
+                .map_err(ApiError::from)?;
+            foreshadowing.id.to_string()
+        }
+        novel_infrastructure::ExtractionItemKind::Relation
+        | novel_infrastructure::ExtractionItemKind::Event => {
+            return Err(ApiError {
+                code: "NOT_IMPLEMENTED",
+                message: "该候选类型暂未接入正式对象，请先延期或编辑为支持的类型".to_owned(),
+            });
+        }
+    };
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .decide_extraction_item(
+            id,
+            expected_status,
+            novel_infrastructure::ExtractionItemStatus::Accepted,
+            Some(final_object_id),
+        )
+        .map_err(ApiError::from)
+}
+
+fn string_field(payload: &serde_json::Value, key: &str) -> Result<String, ApiError> {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| ApiError {
+            code: "INVALID_INPUT",
+            message: format!("候选缺少必填字段：{key}"),
+        })
+}
+
+fn string_array(payload: &serde_json::Value, key: &str) -> Vec<String> {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_entity_type(value: &str) -> Option<novel_infrastructure::EntityType> {
+    match value {
+        "CHARACTER" => Some(novel_infrastructure::EntityType::Character),
+        "LOCATION" => Some(novel_infrastructure::EntityType::Location),
+        "FACTION" => Some(novel_infrastructure::EntityType::Faction),
+        "ITEM" => Some(novel_infrastructure::EntityType::Item),
+        "CONCEPT" => Some(novel_infrastructure::EntityType::Concept),
+        _ => None,
+    }
+}
+
+fn parse_json_array<T: serde::de::DeserializeOwned>(output: &str) -> Result<Vec<T>, ()> {
+    let cleaned = output
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    let json = cleaned
+        .find('[')
+        .and_then(|start| cleaned.rfind(']').map(|end| &cleaned[start..=end]))
+        .unwrap_or(cleaned);
+    serde_json::from_str(json).map_err(|_| ())
+}
+
+fn manuscript_blocks(document_json: &str) -> Result<Vec<(String, String)>, ApiError> {
+    let document: serde_json::Value =
+        serde_json::from_str(document_json).map_err(|_| ApiError {
+            code: "INVALID_DOCUMENT",
+            message: "正文文档不是有效 JSON".to_owned(),
+        })?;
+    let mut blocks = Vec::new();
+    for (index, node) in document
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let id = node
+            .get("attrs")
+            .and_then(|attrs| attrs.get("blockId"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("block-{index}"));
+        let mut text = String::new();
+        collect_node_text(node, &mut text);
+        if !text.trim().is_empty() {
+            blocks.push((id, text));
+        }
+    }
+    Ok(blocks)
+}
+
+fn collect_node_text(node: &serde_json::Value, output: &mut String) {
+    if let Some(text) = node.get("text").and_then(serde_json::Value::as_str) {
+        output.push_str(text);
+    }
+    if let Some(content) = node.get("content").and_then(serde_json::Value::as_array) {
+        for child in content {
+            collect_node_text(child, output);
+        }
+    }
+}
+
+fn locate_quote(text: &str, quote: &str) -> Option<(u32, u32)> {
+    let quote = quote.trim();
+    if quote.is_empty() {
+        return None;
+    }
+    let byte_start = text.find(quote)?;
+    let start = u32::try_from(text[..byte_start].chars().count()).ok()?;
+    let end = start.checked_add(u32::try_from(quote.chars().count()).ok()?)?;
+    (end > start).then_some((start, end))
 }
 
 fn sync_model_profile(
@@ -2487,6 +3170,7 @@ pub(crate) fn list_ai_proposals(
     chapter_id: uuid::Uuid,
     chapter_title: String,
     chapter_plan: String,
+    volume_plan: String,
     document_json: String,
     instruction: Option<String>,
 ) -> Result<Vec<novel_infrastructure::AiProposalReview>, ApiError> {
@@ -2515,6 +3199,7 @@ pub(crate) fn list_ai_proposals(
             target_revision_id,
             chapter_title,
             chapter_plan,
+            volume_plan,
             document_json,
             instruction,
         )
@@ -2630,6 +3315,7 @@ pub(crate) async fn generate_ai_proposal(
     action: novel_infrastructure::AiAction,
     chapter_title: String,
     chapter_plan: String,
+    volume_plan: String,
     document_json: String,
     selection: Option<String>,
     instruction: Option<String>,
@@ -2696,6 +3382,11 @@ pub(crate) async fn generate_ai_proposal(
         } else {
             String::new()
         },
+        volume_plan: if include_chapter_plan {
+            volume_plan.clone()
+        } else {
+            String::new()
+        },
         document_json: effective_document_json,
         selection: if action == novel_infrastructure::AiAction::ConsistencyCheck {
             None
@@ -2726,6 +3417,7 @@ pub(crate) async fn generate_ai_proposal(
             target_revision_id,
             chapter_title,
             chapter_plan,
+            volume_plan,
             document_json,
             instruction,
         )?;

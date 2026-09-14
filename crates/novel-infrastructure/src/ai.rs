@@ -2602,10 +2602,10 @@ impl ProjectManager {
                 }
             }
             AiConsistencyVerdict::NeedsInput => WritingAdmission {
-                allowed: false,
+                allowed: true,
                 blocker_count: 0,
                 reason: Some(
-                    "最近一次一致性审核缺少判断准入所需的正式设定，请补齐并关闭审核后再生成正文。"
+                    "最近一次一致性审核发现部分正式依据未记录或无法确认。未知项可以保留，不会阻断正文生成。"
                         .to_owned(),
                 ),
                 review_freshness: freshness,
