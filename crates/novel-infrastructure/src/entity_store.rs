@@ -196,6 +196,17 @@ impl Database {
         project_id: Uuid,
         input: EntityInput,
     ) -> Result<Entity, EntityStoreError> {
+        let transaction = self.connection.transaction()?;
+        let entity_id = Self::upsert_entity_in_tx(&transaction, project_id, input)?;
+        transaction.commit()?;
+        self.get_entity(project_id, entity_id)
+    }
+
+    pub(super) fn upsert_entity_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        project_id: Uuid,
+        input: EntityInput,
+    ) -> Result<Uuid, EntityStoreError> {
         let entity_id = input.id.unwrap_or_else(Uuid::new_v4);
         let aliases_json = serde_json::to_string(&input.aliases).map_err(|error| {
             EntityStoreError::Database(DatabaseError::Sqlite(
@@ -208,8 +219,7 @@ impl Database {
             ))
         })?;
         let revision_id = Uuid::new_v4();
-        let transaction = self.connection.transaction()?;
-        let existing: Option<(i64, String)> = transaction
+        let existing: Option<(i64, String)> = tx
             .query_row(
                 "SELECT version, entity_type FROM entities WHERE id = ?1 AND project_id = ?2",
                 rusqlite::params![entity_id.to_string(), project_id.to_string()],
@@ -229,7 +239,7 @@ impl Database {
                     rusqlite::Error::InvalidParameterName("entity_type cannot change".to_owned()),
                 )));
             }
-            let current_revision: i64 = transaction.query_row(
+            let current_revision: i64 = tx.query_row(
                 "SELECT revision FROM entity_revisions WHERE id = (SELECT current_revision_id FROM entities WHERE id = ?1)",
                 [entity_id.to_string()],
                 |row| row.get(0),
@@ -242,12 +252,12 @@ impl Database {
             (1, 1, input.base_revision_id)
         };
         if !is_existing {
-            transaction.execute(
+            tx.execute(
                 "INSERT INTO entities (id, project_id, entity_type, current_revision_id, version) VALUES (?1, ?2, ?3, ?4, ?5)",
                 rusqlite::params![entity_id.to_string(), project_id.to_string(), entity_type_str(input.entity_type), revision_id.to_string(), version],
             )?;
         }
-        transaction.execute(
+        tx.execute(
             "INSERT INTO entity_revisions (id, entity_id, revision, name, aliases_json, description, fixed_attributes_json, tags_json, base_revision_id, source_version)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
@@ -257,13 +267,12 @@ impl Database {
             ],
         )?;
         if is_existing {
-            transaction.execute(
+            tx.execute(
                 "UPDATE entities SET current_revision_id = ?1, version = ?2, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?3 AND project_id = ?4",
                 rusqlite::params![revision_id.to_string(), version, entity_id.to_string(), project_id.to_string()],
             )?;
         }
-        transaction.commit()?;
-        self.get_entity(project_id, entity_id)
+        Ok(entity_id)
     }
 
     fn get_entity(&self, project_id: Uuid, id: Uuid) -> Result<Entity, EntityStoreError> {

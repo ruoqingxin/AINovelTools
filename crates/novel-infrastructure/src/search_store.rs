@@ -60,13 +60,21 @@ impl ProjectManager {
 impl Database {
     pub(super) fn rebuild_search_index(&mut self, project_id: Uuid) -> Result<(), DatabaseError> {
         let tx = self.connection.transaction()?;
+        Self::rebuild_search_index_in_tx(&tx, project_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(super) fn rebuild_search_index_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        project_id: Uuid,
+    ) -> Result<(), DatabaseError> {
         tx.execute("DELETE FROM search_index", [])?;
         tx.execute("INSERT INTO search_index (object_type, object_id, project_id, source_version, content) SELECT 'PLAN', id, ?1, CAST(revision AS TEXT), title FROM plan_nodes WHERE archived = 0", [project_id.to_string()])?;
         tx.execute("INSERT INTO search_index SELECT 'ENTITY', e.id, e.project_id, er.source_version, er.name || char(10) || er.description || char(10) || er.tags_json FROM entities e JOIN entity_revisions er ON er.id = e.current_revision_id WHERE e.project_id = ?1 AND e.lifecycle_status = 'ACTIVE'", [project_id.to_string()])?;
         tx.execute("INSERT INTO search_index SELECT 'SUMMARY', id, project_id, source_version, content FROM summary_materials WHERE project_id = ?1 AND lifecycle_status = 'ACTIVE'", [project_id.to_string()])?;
         tx.execute("INSERT INTO search_index SELECT 'CARD', id, project_id, source_version, title || char(10) || content FROM writing_cards WHERE project_id = ?1 AND enabled = 1", [project_id.to_string()])?;
         tx.execute("INSERT INTO search_index SELECT 'MANUSCRIPT', id, ?1, CAST(document_schema_version AS TEXT), document_json FROM manuscript_revisions WHERE chapter_id IN (SELECT id FROM chapters)", [project_id.to_string()])?;
-        tx.commit()?;
         Ok(())
     }
 

@@ -28,6 +28,7 @@ use commands::discussion::{
     ask_project_discussion, create_discussion_candidate, create_discussion_session,
     dismiss_discussion_candidate, list_discussion_candidates, list_discussion_messages,
     list_discussion_sessions, promote_discussion_candidate,
+    promote_discussion_candidate_to_foreshadowing_review,
 };
 use commands::entities::{
     list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
@@ -187,6 +188,7 @@ pub fn run() {
             create_discussion_candidate,
             dismiss_discussion_candidate,
             promote_discussion_candidate,
+            promote_discussion_candidate_to_foreshadowing_review,
             ask_project_discussion,
             list_summary_materials,
             upsert_summary_material,

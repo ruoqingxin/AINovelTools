@@ -11,10 +11,12 @@ import {
   listDiscussionCandidates,
   listDiscussionMessages,
   listDiscussionSessions,
+  listEvidenceAnchors,
   listModelProfiles,
   listPlanNodes,
   listPlanningSections,
   promoteDiscussionCandidate,
+  promoteDiscussionCandidateToForeshadowingReview,
   type DiscussionCandidate,
   type DiscussionCandidateKind,
   type DiscussionMessage,
@@ -37,6 +39,9 @@ function messageLabel(message: DiscussionMessage) {
 }
 
 function candidateTarget(candidate: DiscussionCandidate) {
+  if (candidate.kind === "FORESHADOWING" && candidate.status === "PROMOTED") {
+    return "已送入正文审核";
+  }
   if (!candidate.targetSectionId) return "未指定目标";
   return planningOptions.find((section) => section.id === candidate.targetSectionId)?.label
     ?? candidate.targetSectionId;
@@ -58,6 +63,7 @@ export function DiscussionView() {
   const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes });
   const sections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
+  const anchors = useQuery({ queryKey: ["evidence-anchors"], queryFn: listEvidenceAnchors });
   const aiPreferences = useAiTaskPreferences();
   const profile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "workDesign");
   const preference = resolveTaskPreference(aiPreferences.data, "workDesign");
@@ -70,6 +76,7 @@ export function DiscussionView() {
   const [candidateTargetId, setCandidateTargetId] = useState("seed-premise");
   const [candidateKinds, setCandidateKinds] = useState<Record<string, DiscussionCandidateKind>>({});
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({});
+  const [reviewAnchorIds, setReviewAnchorIds] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -228,6 +235,32 @@ export function DiscussionView() {
     }
   }
 
+  async function promoteForeshadowing(candidate: DiscussionCandidate) {
+    const evidenceAnchorId = reviewAnchorIds[candidate.id];
+    if (!evidenceAnchorId) {
+      setError("请先选择这条伏笔候选对应的正文证据。");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await promoteDiscussionCandidateToForeshadowingReview({
+        id: candidate.id,
+        expectedStatus: candidate.status,
+        evidenceAnchorId,
+      });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["discussion-candidates", sessionId] }),
+        client.invalidateQueries({ queryKey: ["chapter-extractions"] }),
+      ]);
+      setNotice("候选伏笔已送入正文审核，仍需在对应章节中确认后才会成为正式伏笔。");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function dismiss(candidate: DiscussionCandidate) {
     setBusy(true);
     setError(null);
@@ -274,6 +307,10 @@ export function DiscussionView() {
               <p>{candidate.content}</p>
               {candidate.status === "PENDING" ? <div className="discussion-candidate-actions">
                 {candidate.kind === "PLANNING" || candidate.kind === "SETTING" ? <button type="button" className="primary-action" onClick={() => void promote(candidate)} disabled={busy}><CheckCircle2 size={12} />写入规划待定区</button> : null}
+                {candidate.kind === "FORESHADOWING" ? <>
+                  <label><span>正文证据</span><select aria-label={`选择${candidate.content}的正文证据`} value={reviewAnchorIds[candidate.id] ?? ""} onChange={(event) => setReviewAnchorIds((current) => ({ ...current, [candidate.id]: event.target.value }))}><option value="">选择证据锚点</option>{(anchors.data ?? []).map((anchor) => <option key={anchor.id} value={anchor.id}>{anchor.sourceVersion} · {anchor.blockId}</option>)}</select></label>
+                  <button type="button" className="primary-action" onClick={() => void promoteForeshadowing(candidate)} disabled={busy || !reviewAnchorIds[candidate.id]}><CheckCircle2 size={12} />送入正文审核</button>
+                </> : null}
                 <button type="button" className="secondary-action destructive-action" onClick={() => void dismiss(candidate)} disabled={busy}><X size={12} />忽略</button>
               </div> : null}
             </article>)}

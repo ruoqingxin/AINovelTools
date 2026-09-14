@@ -483,6 +483,12 @@ export function promoteDiscussionCandidate(input: {
   return invoke<DiscussionCandidate>("promote_discussion_candidate", input);
 }
 
+export function promoteDiscussionCandidateToForeshadowingReview(input: {
+  id: string; expectedStatus: DiscussionCandidateStatus; evidenceAnchorId: string;
+}) {
+  return invoke<DiscussionCandidate>("promote_discussion_candidate_to_foreshadowing_review", input);
+}
+
 export function askProjectDiscussion(input: {
   sessionId: string;
   profileId: string;

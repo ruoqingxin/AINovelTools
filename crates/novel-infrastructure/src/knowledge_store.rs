@@ -12,6 +12,8 @@ pub enum KnowledgeStoreError {
     MissingCandidate(Uuid),
     #[error("knowledge evidence anchor does not exist: {0}")]
     MissingAnchor(Uuid),
+    #[error("current fact does not exist: {0}")]
+    MissingFact(Uuid),
     #[error("source revision does not exist: {0}")]
     MissingSourceRevision(Uuid),
     #[error("knowledge candidate version conflict")]
@@ -514,8 +516,18 @@ impl Database {
         expected_version: Option<u32>,
     ) -> Result<(), KnowledgeStoreError> {
         let tx = self.connection.transaction()?;
+        Self::insert_relation_in_tx(&tx, value, expected_version)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(super) fn insert_relation_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        value: &Relation,
+        expected_version: Option<u32>,
+    ) -> Result<(), KnowledgeStoreError> {
         ensure_next_version(
-            &tx,
+            tx,
             "relations",
             "relation_version",
             value.id,
@@ -523,13 +535,14 @@ impl Database {
             value.relation_version,
             expected_version,
         )?;
-        let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
+        ensure_current_fact(tx, value.project_id, value.from_knowledge_id)?;
+        ensure_current_fact(tx, value.project_id, value.to_knowledge_id)?;
+        let anchors = Self::ensure_anchors(tx, value.project_id, &value.evidence_anchor_ids)?;
         tx.execute(
             "INSERT INTO relations (id, project_id, relation_version, from_knowledge_id, to_knowledge_id, relation_type, evidence_anchor_ids_json, lifecycle_status, created_by)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             rusqlite::params![value.id.to_string(), value.project_id.to_string(), value.relation_version, value.from_knowledge_id.to_string(), value.to_knowledge_id.to_string(), value.relation_type, anchors, knowledge_lifecycle_str(value.lifecycle_status), value.created_by],
         )?;
-        tx.commit()?;
         Ok(())
     }
 
@@ -539,8 +552,18 @@ impl Database {
         expected_version: Option<u32>,
     ) -> Result<(), KnowledgeStoreError> {
         let tx = self.connection.transaction()?;
+        Self::insert_event_in_tx(&tx, value, expected_version)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(super) fn insert_event_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        value: &Event,
+        expected_version: Option<u32>,
+    ) -> Result<(), KnowledgeStoreError> {
         ensure_next_version(
-            &tx,
+            tx,
             "events",
             "event_version",
             value.id,
@@ -548,7 +571,10 @@ impl Database {
             value.event_version,
             expected_version,
         )?;
-        let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
+        for fact_id in &value.participant_fact_ids {
+            ensure_current_fact(tx, value.project_id, *fact_id)?;
+        }
+        let anchors = Self::ensure_anchors(tx, value.project_id, &value.evidence_anchor_ids)?;
         let participants = serde_json::to_string(&value.participant_fact_ids)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         tx.execute(
@@ -556,7 +582,6 @@ impl Database {
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             rusqlite::params![value.id.to_string(), value.project_id.to_string(), value.event_version, value.name, value.occurred_at, participants, anchors, knowledge_lifecycle_str(value.lifecycle_status), value.created_by],
         )?;
-        tx.commit()?;
         Ok(())
     }
 
@@ -591,8 +616,18 @@ impl Database {
         expected_version: Option<u32>,
     ) -> Result<(), KnowledgeStoreError> {
         let tx = self.connection.transaction()?;
+        Self::insert_foreshadowing_in_tx(&tx, value, expected_version)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(super) fn insert_foreshadowing_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        value: &Foreshadowing,
+        expected_version: Option<u32>,
+    ) -> Result<(), KnowledgeStoreError> {
         ensure_next_version(
-            &tx,
+            tx,
             "foreshadowings",
             "foreshadowing_version",
             value.id,
@@ -600,13 +635,12 @@ impl Database {
             value.foreshadowing_version,
             expected_version,
         )?;
-        let anchors = Self::ensure_anchors(&tx, value.project_id, &value.evidence_anchor_ids)?;
+        let anchors = Self::ensure_anchors(tx, value.project_id, &value.evidence_anchor_ids)?;
         tx.execute(
             "INSERT INTO foreshadowings (id, project_id, foreshadowing_version, title, target_chapter_id, status, evidence_anchor_ids_json, lifecycle_status, created_by)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             rusqlite::params![value.id.to_string(), value.project_id.to_string(), value.foreshadowing_version, value.title, value.target_chapter_id.map(|id| id.to_string()), value.status, anchors, knowledge_lifecycle_str(value.lifecycle_status), value.created_by],
         )?;
-        tx.commit()?;
         Ok(())
     }
 
@@ -657,9 +691,18 @@ impl Database {
         &mut self,
         candidate: &KnowledgeCandidate,
     ) -> Result<(), KnowledgeStoreError> {
+        let tx = self.connection.transaction()?;
+        Self::insert_knowledge_candidate_in_tx(&tx, candidate)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(super) fn insert_knowledge_candidate_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        candidate: &KnowledgeCandidate,
+    ) -> Result<(), KnowledgeStoreError> {
         let evidence_json = serde_json::to_string(&candidate.fact.evidence_anchor_ids)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-        let tx = self.connection.transaction()?;
         let source_exists: Option<String> = tx
             .query_row(
                 "SELECT id FROM manuscript_revisions WHERE id = ?1 AND chapter_id = ?2",
@@ -719,7 +762,6 @@ impl Database {
                 candidate.reviewed_at,
             ],
         )?;
-        tx.commit()?;
         Ok(())
     }
 
@@ -1162,6 +1204,25 @@ fn ensure_next_version(
     } else {
         Err(KnowledgeStoreError::Conflict)
     }
+}
+
+fn ensure_current_fact(
+    tx: &rusqlite::Transaction<'_>,
+    project_id: Uuid,
+    knowledge_id: Uuid,
+) -> Result<(), KnowledgeStoreError> {
+    let found: Option<String> = tx
+        .query_row(
+            "SELECT knowledge_id FROM facts
+             WHERE knowledge_id = ?1 AND project_id = ?2 AND lifecycle_status = 'ACTIVE'",
+            rusqlite::params![knowledge_id.to_string(), project_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if found.is_none() {
+        return Err(KnowledgeStoreError::MissingFact(knowledge_id));
+    }
+    Ok(())
 }
 
 fn parse_uuid_column(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Uuid> {

@@ -1672,6 +1672,74 @@ textarea:focus-visible,
   font-weight: 700;
 }
 
+.chapter-extraction-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid #e5edf7;
+  border-radius: 5px;
+  background: #f8fbff;
+}
+
+.chapter-extraction-fields > label,
+.chapter-extraction-fields fieldset {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.chapter-extraction-fields > label > span,
+.chapter-extraction-fields legend {
+  color: #637999;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.chapter-extraction-fields input,
+.chapter-extraction-fields select {
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid #d8e2ef;
+  border-radius: 5px;
+  color: #405a7f;
+  background: #fff;
+  font: inherit;
+  font-size: 9px;
+}
+
+.chapter-extraction-fields fieldset {
+  grid-column: 1 / -1;
+  max-height: 118px;
+  margin: 0;
+  padding: 6px 7px;
+  overflow: auto;
+  border: 1px solid #e1e8f2;
+  border-radius: 5px;
+}
+
+.chapter-extraction-fields fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #526b8d;
+  font-size: 9px;
+}
+
+.chapter-extraction-fields fieldset input {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+}
+
+.chapter-extraction-fields > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #7487a2;
+  font-size: 9px;
+}
+
 .chapter-extraction-item textarea {
   min-height: 92px;
   padding: 8px 9px;
@@ -3962,6 +4030,28 @@ textarea:focus-visible,
   flex-wrap: wrap;
   align-items: center;
   gap: 7px;
+}
+
+.discussion-candidate-actions label {
+  display: grid;
+  flex: 1 1 150px;
+  min-width: 0;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.discussion-candidate-actions select {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: #31534c;
+  background: #fff;
+  font: inherit;
+  font-size: 9px;
 }
 
 .discussion-candidate-actions button,

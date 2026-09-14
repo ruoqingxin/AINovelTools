@@ -90,6 +90,11 @@ impl DiscussionCandidateKind {
     pub const fn can_promote_to_planning(self) -> bool {
         matches!(self, Self::Planning | Self::Setting)
     }
+
+    #[must_use]
+    pub const fn can_promote_to_foreshadowing_review(self) -> bool {
+        matches!(self, Self::Foreshadowing)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -171,9 +176,11 @@ pub enum DiscussionStoreError {
     MissingMessage(Uuid),
     #[error("discussion candidate does not exist: {0}")]
     MissingCandidate(Uuid),
+    #[error("discussion evidence anchor does not exist: {0}")]
+    MissingEvidenceAnchor(Uuid),
     #[error("discussion candidate status conflict")]
     Conflict,
-    #[error("discussion candidate cannot be promoted to planning")]
+    #[error("discussion candidate cannot be promoted to this target")]
     InvalidPromotion,
     #[error("discussion scope is invalid")]
     InvalidScope,
@@ -310,9 +317,7 @@ impl Database {
             )
             .optional()?;
         if message_session != Some(candidate.session_id.to_string()) {
-            return Err(DatabaseError::Sqlite(
-                rusqlite::Error::QueryReturnedNoRows,
-            ));
+            return Err(DatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows));
         }
         self.connection.execute(
             "INSERT INTO discussion_candidates
@@ -444,6 +449,98 @@ impl Database {
         tx.commit()?;
         Ok(promoted)
     }
+
+    pub(super) fn promote_discussion_candidate_to_foreshadowing_review(
+        &mut self,
+        id: Uuid,
+        expected_status: DiscussionCandidateStatus,
+        evidence_anchor_id: Uuid,
+    ) -> Result<DiscussionCandidate, DiscussionStoreError> {
+        let tx = self.connection.transaction()?;
+        let candidate = tx
+            .query_row(
+                "SELECT id, session_id, message_id, kind, content, target_section_id,
+                        status, promoted_object_id, created_at, updated_at
+                 FROM discussion_candidates WHERE id = ?1 AND status = ?2",
+                rusqlite::params![id.to_string(), expected_status.as_str()],
+                map_discussion_candidate,
+            )
+            .optional()?
+            .ok_or(DiscussionStoreError::Conflict)?;
+        if !candidate.kind.can_promote_to_foreshadowing_review() {
+            return Err(DiscussionStoreError::InvalidPromotion);
+        }
+        let project_id: String = tx.query_row(
+            "SELECT session.project_id
+             FROM discussion_candidates candidate
+             JOIN discussion_sessions session ON session.id = candidate.session_id
+             WHERE candidate.id = ?1",
+            [id.to_string()],
+            |row| row.get(0),
+        )?;
+        let anchor = tx
+            .query_row(
+                "SELECT chapter_id, source_revision_id, source_version
+                 FROM evidence_anchors
+                 WHERE id = ?1 AND project_id = ?2 AND lifecycle_status = 'ACTIVE'",
+                rusqlite::params![evidence_anchor_id.to_string(), project_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(DiscussionStoreError::MissingEvidenceAnchor(
+                evidence_anchor_id,
+            ))?;
+        let proposal_id = Uuid::new_v4();
+        let item_id = Uuid::new_v4();
+        let payload = serde_json::json!({
+            "title": candidate.content,
+            "status": "OPEN",
+            "source": "discussion",
+            "sourceDiscussionCandidateId": candidate.id,
+            "sourceVersion": anchor.2,
+        });
+        let payload_json = serde_json::to_string(&payload)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        tx.execute(
+            "INSERT INTO chapter_extraction_proposals
+             (id, project_id, chapter_id, source_revision_id, ai_run_id, status)
+             VALUES (?1,?2,?3,?4,NULL,'PENDING_REVIEW')",
+            rusqlite::params![proposal_id.to_string(), project_id, anchor.0, anchor.1,],
+        )?;
+        tx.execute(
+            "INSERT INTO chapter_extraction_items
+             (id, proposal_id, kind, payload_json, evidence_anchor_id, status)
+             VALUES (?1,?2,'FORESHADOWING',?3,?4,'PENDING_REVIEW')",
+            rusqlite::params![
+                item_id.to_string(),
+                proposal_id.to_string(),
+                payload_json,
+                evidence_anchor_id.to_string(),
+            ],
+        )?;
+        tx.execute(
+            "UPDATE discussion_candidates
+             SET status = 'PROMOTED', target_section_id = NULL, promoted_object_id = ?1,
+                 updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+             WHERE id = ?2",
+            rusqlite::params![item_id.to_string(), id.to_string()],
+        )?;
+        let promoted = tx.query_row(
+            "SELECT id, session_id, message_id, kind, content, target_section_id,
+                    status, promoted_object_id, created_at, updated_at
+             FROM discussion_candidates WHERE id = ?1",
+            [id.to_string()],
+            map_discussion_candidate,
+        )?;
+        tx.commit()?;
+        Ok(promoted)
+    }
 }
 
 impl ProjectManager {
@@ -464,7 +561,9 @@ impl ProjectManager {
             return Err(DiscussionStoreError::InvalidScope);
         }
         if scope_kind == DiscussionScopeKind::Selection
-            && scope_text.as_deref().is_none_or(|value| value.trim().is_empty())
+            && scope_text
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
         {
             return Err(DiscussionStoreError::InvalidScope);
         }
@@ -483,17 +582,19 @@ impl ProjectManager {
             created_at: now_timestamp(),
             updated_at: now_timestamp(),
         };
-        let session_ref = self.current.as_ref().ok_or(DiscussionStoreError::NoProject)?;
-        session_ref
-            .database
-            .create_discussion_session(&session)?;
+        let session_ref = self
+            .current
+            .as_ref()
+            .ok_or(DiscussionStoreError::NoProject)?;
+        session_ref.database.create_discussion_session(&session)?;
         Ok(session)
     }
 
-    pub fn list_discussion_sessions(
-        &self,
-    ) -> Result<Vec<DiscussionSession>, DiscussionStoreError> {
-        let session = self.current.as_ref().ok_or(DiscussionStoreError::NoProject)?;
+    pub fn list_discussion_sessions(&self) -> Result<Vec<DiscussionSession>, DiscussionStoreError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(DiscussionStoreError::NoProject)?;
         Ok(session
             .database
             .list_discussion_sessions(session.manifest.project_id)?)
@@ -503,7 +604,10 @@ impl ProjectManager {
         &self,
         id: Uuid,
     ) -> Result<DiscussionSession, DiscussionStoreError> {
-        let session = self.current.as_ref().ok_or(DiscussionStoreError::NoProject)?;
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(DiscussionStoreError::NoProject)?;
         session
             .database
             .get_discussion_session(id)?
@@ -529,7 +633,10 @@ impl ProjectManager {
             context_summary,
             created_at: now_timestamp(),
         };
-        let session = self.current.as_mut().ok_or(DiscussionStoreError::NoProject)?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(DiscussionStoreError::NoProject)?;
         session
             .database
             .append_discussion_message(&message)
@@ -573,7 +680,10 @@ impl ProjectManager {
             context_summary: assistant_context_summary,
             created_at: now_timestamp(),
         };
-        let session = self.current.as_mut().ok_or(DiscussionStoreError::NoProject)?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(DiscussionStoreError::NoProject)?;
         session
             .database
             .append_discussion_exchange(&user_message, &assistant_message)
@@ -591,7 +701,10 @@ impl ProjectManager {
         session_id: Uuid,
         limit: u32,
     ) -> Result<Vec<DiscussionMessage>, DiscussionStoreError> {
-        let session = self.current.as_ref().ok_or(DiscussionStoreError::NoProject)?;
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(DiscussionStoreError::NoProject)?;
         session
             .database
             .get_discussion_session(session_id)?
@@ -624,7 +737,10 @@ impl ProjectManager {
         if candidate.content.is_empty() {
             return Err(DiscussionStoreError::InvalidPromotion);
         }
-        let session = self.current.as_ref().ok_or(DiscussionStoreError::NoProject)?;
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(DiscussionStoreError::NoProject)?;
         session
             .database
             .create_discussion_candidate(&candidate)
@@ -641,7 +757,10 @@ impl ProjectManager {
         &self,
         session_id: Uuid,
     ) -> Result<Vec<DiscussionCandidate>, DiscussionStoreError> {
-        let session = self.current.as_ref().ok_or(DiscussionStoreError::NoProject)?;
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(DiscussionStoreError::NoProject)?;
         Ok(session.database.list_discussion_candidates(session_id)?)
     }
 
@@ -650,7 +769,10 @@ impl ProjectManager {
         id: Uuid,
         expected_status: DiscussionCandidateStatus,
     ) -> Result<DiscussionCandidate, DiscussionStoreError> {
-        let session = self.current.as_mut().ok_or(DiscussionStoreError::NoProject)?;
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(DiscussionStoreError::NoProject)?;
         session.database.decide_discussion_candidate(
             id,
             expected_status,
@@ -675,12 +797,32 @@ impl ProjectManager {
             .as_deref()
             .filter(|value| !value.trim().is_empty())
             .ok_or(DiscussionStoreError::InvalidPromotion)?;
-        let session = self.current.as_mut().ok_or(DiscussionStoreError::NoProject)?;
-        session.database.promote_discussion_candidate_to_planning(
-            id,
-            expected_status,
-            section_id,
-        )
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(DiscussionStoreError::NoProject)?;
+        session
+            .database
+            .promote_discussion_candidate_to_planning(id, expected_status, section_id)
+    }
+
+    pub fn promote_discussion_candidate_to_foreshadowing_review(
+        &mut self,
+        id: Uuid,
+        expected_status: DiscussionCandidateStatus,
+        evidence_anchor_id: Uuid,
+    ) -> Result<DiscussionCandidate, DiscussionStoreError> {
+        let session = self
+            .current
+            .as_mut()
+            .ok_or(DiscussionStoreError::NoProject)?;
+        session
+            .database
+            .promote_discussion_candidate_to_foreshadowing_review(
+                id,
+                expected_status,
+                evidence_anchor_id,
+            )
     }
 }
 
@@ -904,11 +1046,7 @@ mod tests {
             .find(|section| section.id == "seed-hook")
             .expect("promoted planning section");
         assert_eq!(planning.story_state, PlanningStoryState::AiSuggested);
-        assert!(
-            planning
-                .pending_content
-                .contains("第二卷末揭露真相")
-        );
+        assert!(planning.pending_content.contains("第二卷末揭露真相"));
         assert!(planning.content.trim().is_empty());
 
         let dismissed = manager
@@ -925,12 +1063,130 @@ mod tests {
             .expect("dismiss candidate");
         assert_eq!(dismissed.status, DiscussionCandidateStatus::Dismissed);
         assert!(matches!(
-            manager.dismiss_discussion_candidate(
-                dismissed.id,
-                DiscussionCandidateStatus::Pending,
-            ),
+            manager.dismiss_discussion_candidate(dismissed.id, DiscussionCandidateStatus::Pending,),
             Err(DiscussionStoreError::Conflict)
         ));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discussion_foreshadowing_enters_existing_extraction_review() {
+        let root =
+            std::env::temp_dir().join(format!("ainovel-discussion-review-{}", Uuid::new_v4()));
+        let mut manager = ProjectManager::new();
+        let manifest = manager
+            .create(&root, "Discussion review test")
+            .expect("create project");
+        let chapter = manager
+            .create_plan_node(None, PlanNodeKind::Chapter, "第一章".into())
+            .expect("create chapter");
+        let revision = manager
+            .save_manuscript(
+                chapter.id,
+                r#"{"type":"doc","content":[{"type":"paragraph","attrs":{"blockId":"paragraph-1"},"content":[{"type":"text","text":"那封信没有署名。"}]}]}"#.into(),
+                "MANUAL_SAVE".into(),
+            )
+            .expect("save manuscript");
+        let anchor = EvidenceAnchor {
+            id: Uuid::new_v4(),
+            project_id: manifest.project_id,
+            chapter_id: chapter.id,
+            source_revision_id: revision.id,
+            block_id: "paragraph-1".into(),
+            start_offset: 0,
+            end_offset: 2,
+            source_version: revision.id.to_string(),
+            source_hash: revision.content_hash.clone(),
+            lifecycle_status: KnowledgeLifecycleStatus::Active,
+            created_by: "tester".into(),
+            created_at: now_timestamp(),
+            updated_at: now_timestamp(),
+        };
+        manager
+            .create_evidence_anchor(anchor.clone())
+            .expect("create evidence anchor");
+        let session = manager
+            .create_discussion_session(
+                "伏笔讨论".into(),
+                DiscussionScopeKind::Chapter,
+                Some(chapter.id),
+                None,
+            )
+            .expect("create session");
+        let message = manager
+            .append_discussion_message(
+                session.id,
+                DiscussionMessageRole::Assistant,
+                "第二封信可能是误导。".into(),
+                None,
+                Some("context-review".into()),
+                Some("第一章讨论".into()),
+            )
+            .expect("append message");
+        let candidate = manager
+            .create_discussion_candidate(
+                session.id,
+                message.id,
+                DiscussionCandidateKind::Foreshadowing,
+                "第二封信可能是误导。".into(),
+                None,
+            )
+            .expect("create foreshadowing candidate");
+
+        let promoted = manager
+            .promote_discussion_candidate_to_foreshadowing_review(
+                candidate.id,
+                DiscussionCandidateStatus::Pending,
+                anchor.id,
+            )
+            .expect("send candidate to extraction review");
+        assert_eq!(promoted.status, DiscussionCandidateStatus::Promoted);
+        assert!(promoted.promoted_object_id.is_some());
+        assert!(
+            manager
+                .list_foreshadowings()
+                .expect("formal foreshadowings")
+                .is_empty()
+        );
+
+        let item = manager
+            .list_chapter_extractions(chapter.id)
+            .expect("list extraction proposals")
+            .into_iter()
+            .flat_map(|proposal| proposal.items)
+            .find(|item| item.id.to_string() == promoted.promoted_object_id.clone().unwrap())
+            .expect("discussion extraction item");
+        assert_eq!(item.kind, ExtractionItemKind::Foreshadowing);
+        assert_eq!(item.status, ExtractionItemStatus::PendingReview);
+        assert_eq!(item.evidence_anchor_id, anchor.id);
+        assert_eq!(item.payload["title"], "第二封信可能是误导。");
+
+        let foreshadowing_id = Uuid::new_v4();
+        manager
+            .adopt_extraction_item(
+                item.id,
+                ExtractionItemStatus::PendingReview,
+                ExtractionAdoption::Foreshadowing(Foreshadowing {
+                    id: foreshadowing_id,
+                    project_id: manifest.project_id,
+                    foreshadowing_version: 1,
+                    title: "第二封信可能是误导。".into(),
+                    target_chapter_id: Some(chapter.id),
+                    status: "OPEN".into(),
+                    evidence_anchor_ids: vec![anchor.id],
+                    lifecycle_status: KnowledgeLifecycleStatus::Active,
+                    created_by: "tester".into(),
+                    created_at: now_timestamp(),
+                    updated_at: now_timestamp(),
+                }),
+            )
+            .expect("adopt foreshadowing candidate");
+        let formal = manager
+            .list_foreshadowings()
+            .expect("formal foreshadowings");
+        assert_eq!(formal.len(), 1);
+        assert_eq!(formal[0].id, foreshadowing_id);
 
         let _ = std::fs::remove_dir_all(root);
     }

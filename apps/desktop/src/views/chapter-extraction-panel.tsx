@@ -9,11 +9,13 @@ import {
   errorMessage,
   extractChapterCandidates,
   listChapterExtractions,
+  listCurrentFacts,
   listEvidenceAnchors,
   listModelProfiles,
   updateExtractionItem,
   type ChapterExtractionItem,
   type ExtractionItemStatus,
+  type Fact,
 } from "../lib/tauri-client";
 import { AiModelNote } from "./ai-model-note";
 
@@ -41,8 +43,28 @@ function itemTitle(item: ChapterExtractionItem) {
   if (typeof subject === "string" && typeof predicate === "string" && typeof object === "string") {
     return `${subject} · ${predicate} · ${object}`;
   }
+  const fromHint = item.payload.fromHint;
+  const toHint = item.payload.toHint;
+  const relationType = item.payload.relationType;
+  if (typeof fromHint === "string" && typeof toHint === "string" && typeof relationType === "string") {
+    return `${fromHint} · ${relationType} · ${toHint}`;
+  }
   const title = item.payload.title;
   return typeof title === "string" && title.trim() ? title : "未命名候选";
+}
+
+function factLabel(fact: Fact) {
+  return `${fact.subject} · ${fact.predicate} · ${fact.object}`;
+}
+
+function stringValue(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "string" ? value : "";
+}
+
+function uuidValues(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 export function ChapterExtractionPanel(props: { chapterId: string }) {
@@ -64,6 +86,11 @@ export function ChapterExtractionPanel(props: { chapterId: string }) {
     queryFn: listEvidenceAnchors,
     enabled: Boolean(props.chapterId),
   });
+  const facts = useQuery({
+    queryKey: ["current-facts"],
+    queryFn: listCurrentFacts,
+    enabled: Boolean(props.chapterId),
+  });
   const profile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "knowledgeExtraction");
   const preference = resolveTaskPreference(aiPreferences.data, "knowledgeExtraction");
   const [guidance, setGuidance] = useState("");
@@ -71,6 +98,40 @@ export function ChapterExtractionPanel(props: { chapterId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  function draftPayload(item: ChapterExtractionItem) {
+    const draft = drafts[item.id];
+    if (!draft) return item.payload;
+    try {
+      const value = JSON.parse(draft) as unknown;
+      return value && typeof value === "object" && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : item.payload;
+    } catch {
+      return item.payload;
+    }
+  }
+
+  function updateDraftField(item: ChapterExtractionItem, key: string, value: unknown) {
+    const payload = { ...draftPayload(item), [key]: value };
+    setDrafts((current) => ({ ...current, [item.id]: JSON.stringify(payload, null, 2) }));
+  }
+
+  function canAdopt(item: ChapterExtractionItem) {
+    if (item.kind === "RELATION") {
+      const payload = draftPayload(item);
+      return Boolean(
+        stringValue(payload, "fromKnowledgeId")
+        && stringValue(payload, "toKnowledgeId")
+        && stringValue(payload, "relationType").trim(),
+      );
+    }
+    if (item.kind === "EVENT") {
+      const payload = draftPayload(item);
+      return Boolean(stringValue(payload, "name").trim() && stringValue(payload, "occurredAt").trim());
+    }
+    return true;
+  }
 
   async function extract() {
     if (!profile || !revision.data) {
@@ -132,18 +193,31 @@ export function ChapterExtractionPanel(props: { chapterId: string }) {
     setBusy(`adopt:${item.id}`);
     setError(null);
     try {
+      if (drafts[item.id]) {
+        await updateExtractionItem({
+          id: item.id,
+          payload: draftPayload(item),
+          expectedStatus: item.status,
+        });
+      }
       const adopted = await adoptExtractionItem({ id: item.id, expectedStatus: item.status });
       await Promise.all([
         client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] }),
         client.invalidateQueries({ queryKey: ["entities", false] }),
         client.invalidateQueries({ queryKey: ["knowledge-candidates", props.chapterId] }),
         client.invalidateQueries({ queryKey: ["foreshadowings"] }),
+        client.invalidateQueries({ queryKey: ["relations"] }),
+        client.invalidateQueries({ queryKey: ["events"] }),
       ]);
       setNotice(item.kind === "FACT"
         ? "已转入章节审核候选，仍需批准并在知识审核页定稿。"
         : item.kind === "ENTITY"
           ? "已创建实体修订，可在实体库继续调整。"
-          : `已采用候选 ${adopted.finalObjectId?.slice(0, 8) ?? ""}。`);
+          : item.kind === "RELATION"
+            ? `已创建关系记录 ${adopted.finalObjectId?.slice(0, 8) ?? ""}。`
+            : item.kind === "EVENT"
+              ? `已创建事件记录 ${adopted.finalObjectId?.slice(0, 8) ?? ""}。`
+              : `已创建伏笔记录 ${adopted.finalObjectId?.slice(0, 8) ?? ""}。`);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -174,11 +248,23 @@ export function ChapterExtractionPanel(props: { chapterId: string }) {
       {items.map((item) => {
         const anchor = anchors.data?.find((candidate) => candidate.id === item.evidenceAnchorId);
         const editable = item.status === "PENDING_REVIEW" || item.status === "DEFERRED";
+        const payload = draftPayload(item);
         return <article className="chapter-extraction-item" data-status={item.status.toLowerCase()} key={item.id}>
           <div className="chapter-extraction-item-heading">
             <div><span>{kindLabels[item.kind]}</span><strong>{itemTitle(item)}</strong></div>
             <small>{statusLabels[item.status]}</small>
           </div>
+          {editable && item.kind === "RELATION" ? <div className="chapter-extraction-fields">
+            <label><span>起点事实</span><select aria-label={`${itemTitle(item)}起点事实`} value={stringValue(payload, "fromKnowledgeId")} onChange={(event) => updateDraftField(item, "fromKnowledgeId", event.target.value)}><option value="">选择当前事实</option>{(facts.data ?? []).map((fact) => <option key={fact.knowledgeId} value={fact.knowledgeId}>{factLabel(fact)}</option>)}</select></label>
+            <label><span>终点事实</span><select aria-label={`${itemTitle(item)}终点事实`} value={stringValue(payload, "toKnowledgeId")} onChange={(event) => updateDraftField(item, "toKnowledgeId", event.target.value)}><option value="">选择当前事实</option>{(facts.data ?? []).map((fact) => <option key={fact.knowledgeId} value={fact.knowledgeId}>{factLabel(fact)}</option>)}</select></label>
+            <label><span>关系类型</span><input aria-label={`${itemTitle(item)}关系类型`} value={stringValue(payload, "relationType")} onChange={(event) => updateDraftField(item, "relationType", event.target.value)} placeholder="例如：师徒、敌对、隶属" /></label>
+            {stringValue(payload, "fromHint") || stringValue(payload, "toHint") ? <p>原文线索：{stringValue(payload, "fromHint") || "未注明"} → {stringValue(payload, "toHint") || "未注明"}</p> : null}
+          </div> : null}
+          {editable && item.kind === "EVENT" ? <div className="chapter-extraction-fields">
+            <label><span>事件名称</span><input aria-label={`${itemTitle(item)}事件名称`} value={stringValue(payload, "name")} onChange={(event) => updateDraftField(item, "name", event.target.value)} placeholder="例如：初入北境" /></label>
+            <label><span>发生时间</span><input aria-label={`${itemTitle(item)}发生时间`} value={stringValue(payload, "occurredAt")} onChange={(event) => updateDraftField(item, "occurredAt", event.target.value)} placeholder="例如：第三日清晨 / 原文未注明" /></label>
+            <fieldset><legend>参与事实（可选）</legend>{(facts.data ?? []).map((fact) => <label key={fact.knowledgeId}><input type="checkbox" checked={uuidValues(payload, "participantFactIds").includes(fact.knowledgeId)} onChange={() => updateDraftField(item, "participantFactIds", uuidValues(payload, "participantFactIds").includes(fact.knowledgeId) ? uuidValues(payload, "participantFactIds").filter((id) => id !== fact.knowledgeId) : [...uuidValues(payload, "participantFactIds"), fact.knowledgeId])} />{factLabel(fact)}</label>)}</fieldset>
+          </div> : null}
           <textarea rows={5} value={drafts[item.id] ?? JSON.stringify(item.payload, null, 2)} readOnly={!editable} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))} aria-label={`${itemTitle(item)} payload`} />
           <footer>
             <span>{anchor ? `${anchor.sourceVersion} · ${anchor.blockId}` : "证据待载入"}</span>
@@ -189,7 +275,7 @@ export function ChapterExtractionPanel(props: { chapterId: string }) {
             <button type="button" className="secondary-action" onClick={() => void saveItem(item)} disabled={busy !== null}><Save size={13} />保存修改</button>
             <button type="button" className="secondary-action" onClick={() => void decide(item, "DEFERRED")} disabled={busy !== null}><Clock3 size={13} />延期</button>
             <button type="button" className="secondary-action destructive-action" onClick={() => void decide(item, "REJECTED")} disabled={busy !== null}><X size={13} />拒绝</button>
-            <button type="button" className="primary-action" onClick={() => void adopt(item)} disabled={busy !== null}><Check size={13} />采用</button>
+            <button type="button" className="primary-action" onClick={() => void adopt(item)} disabled={busy !== null || !canAdopt(item)}><Check size={13} />采用</button>
           </div> : null}
         </article>;
       })}

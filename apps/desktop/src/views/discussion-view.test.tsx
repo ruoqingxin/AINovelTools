@@ -21,10 +21,12 @@ const mocks = vi.hoisted(() => ({
   listDiscussionCandidates: vi.fn(),
   listDiscussionMessages: vi.fn(),
   listDiscussionSessions: vi.fn(),
+  listEvidenceAnchors: vi.fn(),
   listModelProfiles: vi.fn(),
   listPlanNodes: vi.fn(),
   listPlanningSections: vi.fn(),
   promoteDiscussionCandidate: vi.fn(),
+  promoteDiscussionCandidateToForeshadowingReview: vi.fn(),
 }));
 
 vi.mock("../lib/tauri-client", async () => {
@@ -39,10 +41,13 @@ vi.mock("../lib/tauri-client", async () => {
     listDiscussionCandidates: mocks.listDiscussionCandidates,
     listDiscussionMessages: mocks.listDiscussionMessages,
     listDiscussionSessions: mocks.listDiscussionSessions,
+    listEvidenceAnchors: mocks.listEvidenceAnchors,
     listModelProfiles: mocks.listModelProfiles,
     listPlanNodes: mocks.listPlanNodes,
     listPlanningSections: mocks.listPlanningSections,
     promoteDiscussionCandidate: mocks.promoteDiscussionCandidate,
+    promoteDiscussionCandidateToForeshadowingReview:
+      mocks.promoteDiscussionCandidateToForeshadowingReview,
   };
 });
 
@@ -152,6 +157,13 @@ describe("DiscussionView", () => {
     mocks.listDiscussionCandidates.mockResolvedValue([]);
     mocks.listDiscussionMessages.mockResolvedValue([]);
     mocks.listDiscussionSessions.mockResolvedValue([session]);
+    mocks.listEvidenceAnchors.mockResolvedValue([
+      {
+        id: "anchor-1",
+        sourceVersion: "manuscript:revision-1",
+        blockId: "paragraph-1",
+      },
+    ]);
     mocks.listModelProfiles.mockResolvedValue([profile]);
     mocks.listPlanNodes.mockResolvedValue([]);
     mocks.listPlanningSections.mockResolvedValue([]);
@@ -164,6 +176,18 @@ describe("DiscussionView", () => {
       targetSectionId: "engine-theme",
       status: "PROMOTED",
       promotedObjectId: "engine-theme",
+      createdAt: "0",
+      updatedAt: "0",
+    }));
+    mocks.promoteDiscussionCandidateToForeshadowingReview.mockImplementation(async ({ id }) => ({
+      id,
+      sessionId: session.id,
+      messageId: assistantMessage.id,
+      kind: "FORESHADOWING",
+      content: "第二封信可能是误导。",
+      targetSectionId: null,
+      status: "PROMOTED",
+      promotedObjectId: "extraction-item-1",
       createdAt: "0",
       updatedAt: "0",
     }));
@@ -261,7 +285,7 @@ describe("DiscussionView", () => {
     );
   });
 
-  it("promotes a planning candidate and dismisses a foreshadowing candidate", async () => {
+  it("promotes a planning candidate and sends foreshadowing to extraction review", async () => {
     const planningCandidate: DiscussionCandidate = {
       id: "candidate-planning",
       sessionId: session.id,
@@ -299,11 +323,18 @@ describe("DiscussionView", () => {
       .getByText(foreshadowingCandidate.content)
       .closest("article");
     expect(foreshadowing).not.toBeNull();
-    fireEvent.click(within(foreshadowing!).getByRole("button", { name: "忽略" }));
+    fireEvent.change(
+      within(foreshadowing!).getByLabelText(
+        `选择${foreshadowingCandidate.content}的正文证据`,
+      ),
+      { target: { value: "anchor-1" } },
+    );
+    fireEvent.click(within(foreshadowing!).getByRole("button", { name: "送入正文审核" }));
     await waitFor(() =>
-      expect(mocks.dismissDiscussionCandidate).toHaveBeenCalledWith({
+      expect(mocks.promoteDiscussionCandidateToForeshadowingReview).toHaveBeenCalledWith({
         id: foreshadowingCandidate.id,
         expectedStatus: "PENDING",
+        evidenceAnchorId: "anchor-1",
       }),
     );
   });

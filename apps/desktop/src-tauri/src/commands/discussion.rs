@@ -31,9 +31,7 @@ pub(crate) fn list_discussion_sessions(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
-        .list_discussion_sessions()
-        .map_err(ApiError::from)
+    manager.list_discussion_sessions().map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -102,13 +100,7 @@ pub(crate) fn create_discussion_candidate(
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
-        .create_discussion_candidate(
-            session_id,
-            message_id,
-            kind,
-            content,
-            target_section_id,
-        )
+        .create_discussion_candidate(session_id, message_id, kind, content, target_section_id)
         .map_err(ApiError::from)
 }
 
@@ -143,6 +135,26 @@ pub(crate) fn promote_discussion_candidate(
 }
 
 #[tauri::command]
+pub(crate) fn promote_discussion_candidate_to_foreshadowing_review(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    expected_status: novel_infrastructure::DiscussionCandidateStatus,
+    evidence_anchor_id: uuid::Uuid,
+) -> Result<novel_infrastructure::DiscussionCandidate, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .promote_discussion_candidate_to_foreshadowing_review(
+            id,
+            expected_status,
+            evidence_anchor_id,
+        )
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn ask_project_discussion(
     state: tauri::State<'_, ProjectState>,
@@ -170,10 +182,8 @@ pub(crate) async fn ask_project_discussion(
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
-    let preference = super::ai::load_ai_task_preference(
-        &state,
-        novel_infrastructure::AiTaskKind::WorkDesign,
-    )?;
+    let preference =
+        super::ai::load_ai_task_preference(&state, novel_infrastructure::AiTaskKind::WorkDesign)?;
     let options = super::ai::task_generation_options(
         Some(novel_infrastructure::AiTaskKind::WorkDesign),
         input.temperature,

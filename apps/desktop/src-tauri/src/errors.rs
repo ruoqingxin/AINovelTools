@@ -123,6 +123,7 @@ impl From<novel_infrastructure::KnowledgeStoreError> for ApiError {
             novel_infrastructure::KnowledgeStoreError::NoProject => "NO_PROJECT_OPEN",
             novel_infrastructure::KnowledgeStoreError::MissingCandidate(_)
             | novel_infrastructure::KnowledgeStoreError::MissingAnchor(_)
+            | novel_infrastructure::KnowledgeStoreError::MissingFact(_)
             | novel_infrastructure::KnowledgeStoreError::MissingSourceRevision(_) => "NOT_FOUND",
             novel_infrastructure::KnowledgeStoreError::Conflict => "VERSION_CONFLICT",
             novel_infrastructure::KnowledgeStoreError::HighRiskConflict => "KNOWLEDGE_CONFLICT",
@@ -146,6 +147,8 @@ impl From<novel_infrastructure::ExtractionStoreError> for ApiError {
             novel_infrastructure::ExtractionStoreError::MissingItem(_) => "NOT_FOUND",
             novel_infrastructure::ExtractionStoreError::Conflict => "VERSION_CONFLICT",
             novel_infrastructure::ExtractionStoreError::InvalidPayload => "INVALID_INPUT",
+            novel_infrastructure::ExtractionStoreError::Entity(error) => return error.into(),
+            novel_infrastructure::ExtractionStoreError::Knowledge(error) => return error.into(),
             novel_infrastructure::ExtractionStoreError::Sqlite(_)
             | novel_infrastructure::ExtractionStoreError::Database(_) => "DATABASE_ERROR",
         };
@@ -162,7 +165,8 @@ impl From<novel_infrastructure::DiscussionStoreError> for ApiError {
             novel_infrastructure::DiscussionStoreError::NoProject => "NO_PROJECT_OPEN",
             novel_infrastructure::DiscussionStoreError::MissingSession(_)
             | novel_infrastructure::DiscussionStoreError::MissingMessage(_)
-            | novel_infrastructure::DiscussionStoreError::MissingCandidate(_) => "NOT_FOUND",
+            | novel_infrastructure::DiscussionStoreError::MissingCandidate(_)
+            | novel_infrastructure::DiscussionStoreError::MissingEvidenceAnchor(_) => "NOT_FOUND",
             novel_infrastructure::DiscussionStoreError::Conflict => "VERSION_CONFLICT",
             novel_infrastructure::DiscussionStoreError::InvalidPromotion
             | novel_infrastructure::DiscussionStoreError::InvalidScope => "INVALID_INPUT",

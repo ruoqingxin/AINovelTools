@@ -86,12 +86,14 @@ struct ChapterExtractionAiItem {
     subject: Option<String>,
     predicate: Option<String>,
     object: Option<String>,
+    relation_type: Option<String>,
     title: Option<String>,
+    occurred_at: Option<String>,
     status: Option<String>,
 }
 
 const PLANNING_CONTEXT_RESERVE_TOKENS: u32 = 2_048;
-const EXTRACTION_PROMPT_VERSION: &str = "r5.1-chapter-extraction-v1";
+const EXTRACTION_PROMPT_VERSION: &str = "r5.1-chapter-extraction-v2";
 
 pub(crate) fn task_generation_options(
     task_key: Option<novel_infrastructure::AiTaskKind>,
@@ -2187,15 +2189,17 @@ pub(crate) async fn extract_chapter_candidates(
         let revisions = manager
             .list_manuscript_revisions(input.chapter_id)
             .map_err(ApiError::from)?;
-        input.source_revision_id.map_or_else(
-            || revisions.first().cloned(),
-            |revision_id| {
-                revisions
-                    .iter()
-                    .find(|item| item.id == revision_id)
-                    .cloned()
-            },
-        )
+        input
+            .source_revision_id
+            .map_or_else(
+                || revisions.first().cloned(),
+                |revision_id| {
+                    revisions
+                        .iter()
+                        .find(|item| item.id == revision_id)
+                        .cloned()
+                },
+            )
             .ok_or_else(|| ApiError {
                 code: "NOT_FOUND",
                 message: "指定的正文修订不存在".to_owned(),
@@ -2243,16 +2247,22 @@ pub(crate) async fn extract_chapter_candidates(
     "你是小说正文知识提取器。只提取给定正文中有明确原文证据的内容，不补写、不推断未写出的设定。"
         .clone_into(&mut context.system_prompt);
     context.user_prompt = format!(
-        "请从正文块中提取值得作者审核的新角色、地点、势力、物品、概念、事实或伏笔。\n\
+        "请从正文块中提取值得作者审核的新角色、地点、势力、物品、概念、事实、关系、事件或伏笔。\n\
          作者补充要求：{}\n\
          输出严格 JSON 数组，不要 Markdown，不要解释。每项格式：\n\
-         {{\"kind\":\"ENTITY|FACT|FORESHADOWING\",\"blockId\":\"原块 ID\",\"quote\":\"逐字原文片段\",\
+         {{\"kind\":\"ENTITY|FACT|RELATION|EVENT|FORESHADOWING\",\"blockId\":\"原块 ID\",\"quote\":\"逐字原文片段\",\
          \"entityType\":\"CHARACTER|LOCATION|FACTION|ITEM|CONCEPT\",\"name\":\"实体名\",\
          \"aliases\":[],\"tags\":[],\"description\":\"仅依据原文的描述\",\
          \"subject\":\"事实主体\",\"predicate\":\"事实谓词\",\"object\":\"事实结论\",\
-         \"title\":\"伏笔标题\",\"status\":\"OPEN\"}}\n\
-         只填写与 kind 对应的字段。quote 必须逐字来自对应 block 的 text，不得改写。\n\n正文块：\n{source_text}",
-        if guidance.trim().is_empty() { "无" } else { guidance.trim() }
+         \"relationType\":\"关系类型\",\"title\":\"事件或伏笔标题\",\
+         \"occurredAt\":\"原文事件时间；未注明时写“原文未注明”\",\"status\":\"OPEN\"}}\n\
+         只填写与 kind 对应的字段。RELATION 的 subject/object 只是待作者绑定的起点与终点事实线索，\
+         不得编造知识 ID；EVENT 的参与者也由作者后续绑定。quote 必须逐字来自对应 block 的 text，不得改写。\n\n正文块：\n{source_text}",
+        if guidance.trim().is_empty() {
+            "无"
+        } else {
+            guidance.trim()
+        }
     );
     novel_infrastructure::apply_task_prompt_preferences(
         &mut context,
@@ -2319,12 +2329,11 @@ pub(crate) async fn extract_chapter_candidates(
         );
     }
 
-    let parsed = parse_json_array::<ChapterExtractionAiItem>(&outcome.output).map_err(|_| {
-        ApiError {
+    let parsed =
+        parse_json_array::<ChapterExtractionAiItem>(&outcome.output).map_err(|_| ApiError {
             code: "INVALID_RESPONSE",
             message: "AI 返回的正文候选不是有效 JSON，请重试".to_owned(),
-        }
-    })?;
+        })?;
     let proposal_id = uuid::Uuid::new_v4();
     let source_version = format!("manuscript:{}", revision.id);
     let project_id = {
@@ -2366,10 +2375,12 @@ pub(crate) async fn extract_chapter_candidates(
                 )
             }
             "FACT" => {
-                let Some(subject) = candidate.subject.filter(|value| !value.trim().is_empty()) else {
+                let Some(subject) = candidate.subject.filter(|value| !value.trim().is_empty())
+                else {
                     continue;
                 };
-                let Some(predicate) = candidate.predicate.filter(|value| !value.trim().is_empty()) else {
+                let Some(predicate) = candidate.predicate.filter(|value| !value.trim().is_empty())
+                else {
                     continue;
                 };
                 let Some(object) = candidate.object.filter(|value| !value.trim().is_empty()) else {
@@ -2381,6 +2392,49 @@ pub(crate) async fn extract_chapter_candidates(
                         "subject": subject.trim(),
                         "predicate": predicate.trim(),
                         "object": object.trim(),
+                    }),
+                )
+            }
+            "RELATION" => {
+                let Some(from_hint) = candidate.subject.filter(|value| !value.trim().is_empty())
+                else {
+                    continue;
+                };
+                let Some(relation_type) = candidate
+                    .relation_type
+                    .filter(|value| !value.trim().is_empty())
+                else {
+                    continue;
+                };
+                let Some(to_hint) = candidate.object.filter(|value| !value.trim().is_empty())
+                else {
+                    continue;
+                };
+                (
+                    novel_infrastructure::ExtractionItemKind::Relation,
+                    serde_json::json!({
+                        "fromKnowledgeId": "",
+                        "toKnowledgeId": "",
+                        "fromHint": from_hint.trim(),
+                        "toHint": to_hint.trim(),
+                        "relationType": relation_type.trim(),
+                    }),
+                )
+            }
+            "EVENT" => {
+                let Some(name) = candidate.title.filter(|value| !value.trim().is_empty()) else {
+                    continue;
+                };
+                (
+                    novel_infrastructure::ExtractionItemKind::Event,
+                    serde_json::json!({
+                        "name": name.trim(),
+                        "occurredAt": candidate
+                            .occurred_at
+                            .filter(|value| !value.trim().is_empty())
+                            .unwrap_or_else(|| "原文未注明".to_owned())
+                            .trim(),
+                        "participantFactIds": [],
                     }),
                 )
             }
@@ -2558,7 +2612,7 @@ pub(crate) fn adopt_extraction_item(
                 message: "候选对应的正文证据不存在".to_owned(),
             })?
     };
-    let final_object_id = match item.kind {
+    let adoption = match item.kind {
         novel_infrastructure::ExtractionItemKind::Entity => {
             let entity_type = item
                 .payload
@@ -2569,48 +2623,31 @@ pub(crate) fn adopt_extraction_item(
                     code: "INVALID_INPUT",
                     message: "实体候选缺少有效类型".to_owned(),
                 })?;
-            let name = item
-                .payload
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .trim();
-            let description = item
-                .payload
-                .get("description")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .trim();
-            let mut manager = state
-                .manager
-                .lock()
-                .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-            let entity = manager
-                .upsert_entity(novel_infrastructure::EntityInput {
-                    id: None,
-                    entity_type,
-                    name: name.to_owned(),
-                    aliases: string_array(&item.payload, "aliases"),
-                    description: description.to_owned(),
-                    fixed_attributes_json: "{}".to_owned(),
-                    tags: string_array(&item.payload, "tags"),
-                    base_revision_id: None,
-                    source_version: Some(anchor.source_version.clone()),
-                    expected_version: None,
-                })
-                .map_err(ApiError::from)?;
-            entity.id.to_string()
+            novel_infrastructure::ExtractionAdoption::Entity(novel_infrastructure::EntityInput {
+                id: None,
+                entity_type,
+                name: string_field(&item.payload, "name")?,
+                aliases: string_array(&item.payload, "aliases"),
+                description: item
+                    .payload
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned(),
+                fixed_attributes_json: "{}".to_owned(),
+                tags: string_array(&item.payload, "tags"),
+                base_revision_id: None,
+                source_version: Some(anchor.source_version.clone()),
+                expected_version: None,
+            })
         }
         novel_infrastructure::ExtractionItemKind::Fact => {
             let subject = string_field(&item.payload, "subject")?;
             let predicate = string_field(&item.payload, "predicate")?;
             let object = string_field(&item.payload, "object")?;
-            let mut manager = state
-                .manager
-                .lock()
-                .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-            let candidate = manager
-                .create_knowledge_candidate(novel_infrastructure::KnowledgeCandidate {
+            novel_infrastructure::ExtractionAdoption::Fact(
+                novel_infrastructure::KnowledgeCandidate {
                     id: uuid::Uuid::new_v4(),
                     project_id: anchor.project_id,
                     chapter_id: anchor.chapter_id,
@@ -2629,46 +2666,71 @@ pub(crate) fn adopt_extraction_item(
                         source_revision_id: anchor.source_revision_id,
                         evidence_anchor_ids: vec![anchor.id],
                         lifecycle_status:
-                            novel_infrastructure::KnowledgeLifecycleStatus::Active,
+                            novel_infrastructure::KnowledgeLifecycleStatus::NeedsReview,
                         created_by: "ai-extraction".to_owned(),
                         created_at: String::new(),
                         updated_at: String::new(),
                     },
                     created_at: String::new(),
                     updated_at: String::new(),
-                })
-                .map_err(ApiError::from)?;
-            candidate.id.to_string()
+                },
+            )
+        }
+        novel_infrastructure::ExtractionItemKind::Relation => {
+            let relation_type = string_field(&item.payload, "relationType")?;
+            novel_infrastructure::ExtractionAdoption::Relation(novel_infrastructure::Relation {
+                id: uuid::Uuid::new_v4(),
+                project_id: anchor.project_id,
+                relation_version: 1,
+                from_knowledge_id: uuid_field(&item.payload, "fromKnowledgeId")?,
+                to_knowledge_id: uuid_field(&item.payload, "toKnowledgeId")?,
+                relation_type,
+                evidence_anchor_ids: vec![anchor.id],
+                lifecycle_status: novel_infrastructure::KnowledgeLifecycleStatus::Active,
+                created_by: "ai-extraction".to_owned(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            })
+        }
+        novel_infrastructure::ExtractionItemKind::Event => {
+            novel_infrastructure::ExtractionAdoption::Event(novel_infrastructure::Event {
+                id: uuid::Uuid::new_v4(),
+                project_id: anchor.project_id,
+                event_version: 1,
+                name: string_field(&item.payload, "name")?,
+                occurred_at: string_field(&item.payload, "occurredAt")?,
+                participant_fact_ids: uuid_array(&item.payload, "participantFactIds")?,
+                evidence_anchor_ids: vec![anchor.id],
+                lifecycle_status: novel_infrastructure::KnowledgeLifecycleStatus::Active,
+                created_by: "ai-extraction".to_owned(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            })
         }
         novel_infrastructure::ExtractionItemKind::Foreshadowing => {
             let title = string_field(&item.payload, "title")?;
-            let mut manager = state
-                .manager
-                .lock()
-                .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-            let foreshadowing = manager
-                .create_foreshadowing(novel_infrastructure::Foreshadowing {
+            novel_infrastructure::ExtractionAdoption::Foreshadowing(
+                novel_infrastructure::Foreshadowing {
                     id: uuid::Uuid::new_v4(),
                     project_id: anchor.project_id,
                     foreshadowing_version: 1,
                     title,
                     target_chapter_id: None,
-                    status: "OPEN".to_owned(),
+                    status: item
+                        .payload
+                        .get("status")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("OPEN")
+                        .to_owned(),
                     evidence_anchor_ids: vec![anchor.id],
                     lifecycle_status: novel_infrastructure::KnowledgeLifecycleStatus::Active,
                     created_by: "ai-extraction".to_owned(),
                     created_at: String::new(),
                     updated_at: String::new(),
-                })
-                .map_err(ApiError::from)?;
-            foreshadowing.id.to_string()
-        }
-        novel_infrastructure::ExtractionItemKind::Relation
-        | novel_infrastructure::ExtractionItemKind::Event => {
-            return Err(ApiError {
-                code: "NOT_IMPLEMENTED",
-                message: "该候选类型暂未接入正式对象，请先延期或编辑为支持的类型".to_owned(),
-            });
+                },
+            )
         }
     };
     let mut manager = state
@@ -2676,12 +2738,7 @@ pub(crate) fn adopt_extraction_item(
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
-        .decide_extraction_item(
-            id,
-            expected_status,
-            novel_infrastructure::ExtractionItemStatus::Accepted,
-            Some(final_object_id),
-        )
+        .adopt_extraction_item(id, expected_status, adoption)
         .map_err(ApiError::from)
 }
 
@@ -2712,6 +2769,32 @@ fn string_array(payload: &serde_json::Value, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn uuid_field(payload: &serde_json::Value, key: &str) -> Result<uuid::Uuid, ApiError> {
+    let value = string_field(payload, key)?;
+    uuid::Uuid::parse_str(&value).map_err(|_| ApiError {
+        code: "INVALID_INPUT",
+        message: format!("候选字段 {key} 不是有效 ID"),
+    })
+}
+
+fn uuid_array(payload: &serde_json::Value, key: &str) -> Result<Vec<uuid::Uuid>, ApiError> {
+    let Some(items) = payload.get(key).and_then(serde_json::Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    items
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                .ok_or_else(|| ApiError {
+                    code: "INVALID_INPUT",
+                    message: format!("候选字段 {key} 包含无效 ID"),
+                })
+        })
+        .collect()
 }
 
 fn parse_entity_type(value: &str) -> Option<novel_infrastructure::EntityType> {

@@ -44,14 +44,14 @@ pub use ai::{
     ProjectAiTaskOverrides, SecretStore, WritingAdmission, apply_task_prompt_preferences,
     render_prompt_template,
 };
-pub use entity_store::EntityStoreError;
 pub use discussion_store::{
     DiscussionCandidate, DiscussionCandidateKind, DiscussionCandidateStatus, DiscussionMessage,
     DiscussionMessageRole, DiscussionScopeKind, DiscussionSession, DiscussionStoreError,
 };
+pub use entity_store::EntityStoreError;
 pub use extraction_store::{
     ChapterExtractionItem, ChapterExtractionProposal, ChapterExtractionProposalStatus,
-    ExtractionItemKind, ExtractionItemStatus, ExtractionStoreError,
+    ExtractionAdoption, ExtractionItemKind, ExtractionItemStatus, ExtractionStoreError,
 };
 pub use knowledge_store::KnowledgeStoreError;
 pub use materials_store::MaterialsStoreError;
@@ -477,8 +477,8 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         id: "r5_1_chapter_extraction",
         display_name: "R5.1 正文提取候选",
         stage: "R5.1",
-        status: FeatureStatus::Partial,
-        unavailable_reason: Some("实体与事实候选已接入采用流程；关系、事件候选首版仅支持延期或拒绝"),
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
     },
     FeatureDescriptor {
         id: "r5_1_context_slice",
@@ -491,8 +491,8 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         id: "r5_1_project_discussion",
         display_name: "R5.1 作品级剧情讨论",
         stage: "R5.1",
-        status: FeatureStatus::Partial,
-        unavailable_reason: Some("会话、消息和候选已持久化；讨论候选尚未接入知识审核与伏笔正式化"),
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
     },
     FeatureDescriptor {
         id: "r5_1_unified_metadata",
@@ -2943,16 +2943,20 @@ mod tests {
                 .user_prompt
                 .contains("叙述视角硬约束：本作品固定使用第三人称")
         );
-        assert!(package.user_prompt.contains("人物卡状态：尚未建立人物实体卡"));
-        assert!(package.user_prompt.contains("未决内容规则"));
-        assert!(package.user_prompt.contains("可以提出候选"));
         assert!(
             package
                 .user_prompt
-                .contains("未决与作者保留边界")
+                .contains("人物卡状态：尚未建立人物实体卡")
         );
+        assert!(package.user_prompt.contains("未决内容规则"));
+        assert!(package.user_prompt.contains("可以提出候选"));
+        assert!(package.user_prompt.contains("未决与作者保留边界"));
         assert!(package.user_prompt.contains("结局状态与承诺兑现：暂不决定"));
-        assert!(package.user_prompt.contains("人物弧光、秘密与信息差：作者保留"));
+        assert!(
+            package
+                .user_prompt
+                .contains("人物弧光、秘密与信息差：作者保留")
+        );
         assert!(
             package
                 .user_prompt
@@ -3100,24 +3104,30 @@ mod tests {
 
         assert!(package.user_prompt.contains("[P1 已批准事实]"));
         assert!(package.user_prompt.contains("林澈 不饮酒 保持"));
-        assert!(package.user_prompt.contains("所属分卷规划：第一卷围绕林澈调查旧案。"));
-        assert!(package.user_prompt.contains("正式关系："));
-        assert!(package.user_prompt.contains("角色知识边界："));
         assert!(
             package
                 .user_prompt
-                .contains("饮酒会暴露自己的旧伤")
+                .contains("所属分卷规划：第一卷围绕林澈调查旧案。")
         );
+        assert!(package.user_prompt.contains("正式关系："));
+        assert!(package.user_prompt.contains("角色知识边界："));
+        assert!(package.user_prompt.contains("饮酒会暴露自己的旧伤"));
         assert!(package.retrieval_evidence.iter().any(|item| {
             item.authority == super::ContextAuthority::AuthoritativeFact
                 && item.source_revision.starts_with("fact:")
         }));
-        assert!(package.retrieval_evidence.iter().any(|item| {
-            item.source_revision.starts_with("relation:")
-        }));
-        assert!(package.retrieval_evidence.iter().any(|item| {
-            item.source_revision.starts_with("belief:")
-        }));
+        assert!(
+            package
+                .retrieval_evidence
+                .iter()
+                .any(|item| { item.source_revision.starts_with("relation:") })
+        );
+        assert!(
+            package
+                .retrieval_evidence
+                .iter()
+                .any(|item| { item.source_revision.starts_with("belief:") })
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
