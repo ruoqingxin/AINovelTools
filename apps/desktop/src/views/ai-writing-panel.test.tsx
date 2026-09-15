@@ -312,6 +312,8 @@ describe("AiWritingPanel consistency review", () => {
           sourceKind: "LLM",
           ruleId: null,
           ruleVersion: null,
+          ruleScope: null,
+          ruleEffectiveAt: null,
           priority: 5,
           problem: "事件满足合同要求。",
           evidenceIds: [evidenceId],

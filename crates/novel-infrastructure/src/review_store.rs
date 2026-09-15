@@ -117,7 +117,7 @@ impl ProjectManager {
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
-                        "ENTITY",
+                        ReviewEvidenceSource::Entity,
                         entity.id,
                         EvidenceAuthority::ConfirmedFact,
                         content,
@@ -133,7 +133,7 @@ impl ProjectManager {
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
-                        "FACT",
+                        ReviewEvidenceSource::Fact,
                         fact.knowledge_id,
                         EvidenceAuthority::ConfirmedFact,
                         format!("{} {} {}", fact.subject, fact.predicate, fact.object),
@@ -149,7 +149,7 @@ impl ProjectManager {
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
-                        "WORLD_STATE",
+                        ReviewEvidenceSource::WorldState,
                         entry.fact_knowledge_id,
                         EvidenceAuthority::CurrentState,
                         format!("{} {} {}", entry.subject, entry.predicate, entry.object),
@@ -174,7 +174,7 @@ impl ProjectManager {
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
-                        "RELATION",
+                        ReviewEvidenceSource::Relation,
                         relation.id,
                         EvidenceAuthority::ConfirmedFact,
                         content,
@@ -192,7 +192,7 @@ impl ProjectManager {
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
-                        "BELIEF",
+                        ReviewEvidenceSource::Belief,
                         belief.id,
                         EvidenceAuthority::ConfirmedFact,
                         format!("角色认知：{holder}认为：{}", belief.proposition),
@@ -215,7 +215,7 @@ impl ProjectManager {
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
-                        "EVENT",
+                        ReviewEvidenceSource::Event,
                         event.id,
                         EvidenceAuthority::ApprovedEvent,
                         format!(
@@ -243,7 +243,7 @@ impl ProjectManager {
                 {
                     claim_evidence.push(make_evidence(
                         claim,
-                        "FORESHADOWING",
+                        ReviewEvidenceSource::Foreshadowing,
                         foreshadowing.id,
                         EvidenceAuthority::ConfirmedFact,
                         format!(
@@ -282,7 +282,7 @@ impl ProjectManager {
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
-                        "LOCKED_RULE",
+                        ReviewEvidenceSource::LockedRule,
                         Uuid::nil(),
                         EvidenceAuthority::LockedRule,
                         truncate_excerpt(rule, 500),
@@ -295,7 +295,7 @@ impl ProjectManager {
             let mut seen = HashSet::new();
             claim_evidence.retain(|item| {
                 seen.insert((
-                    item.source_kind.clone(),
+                    item.source_kind,
                     item.source_record_id,
                     item.excerpt.clone(),
                 ))
@@ -304,7 +304,7 @@ impl ProjectManager {
                 right
                     .relevance
                     .cmp(&left.relevance)
-                    .then_with(|| left.source_kind.cmp(&right.source_kind))
+                    .then_with(|| left.source_kind.as_str().cmp(right.source_kind.as_str()))
             });
             if claim_evidence.len() > 8 {
                 omitted.push(ReviewOmittedItem {
@@ -434,7 +434,7 @@ fn parse_uuid(value: String, column: usize) -> rusqlite::Result<Uuid> {
 
 fn make_evidence(
     claim: &ReviewClaim,
-    source_kind: &str,
+    source_kind: ReviewEvidenceSource,
     source_record_id: Uuid,
     authority: EvidenceAuthority,
     excerpt: String,
@@ -444,7 +444,7 @@ fn make_evidence(
     ReviewEvidence {
         id: Uuid::new_v4(),
         claim_id: claim.id,
-        source_kind: source_kind.to_owned(),
+        source_kind,
         source_record_id,
         authority,
         excerpt: truncate_excerpt(&excerpt, 1_000),
@@ -562,11 +562,9 @@ mod tests {
         let (evidence, _) = manager
             .resolve_review_evidence(chapter.id, std::slice::from_ref(&claim), "")
             .expect("evidence");
-        assert!(
-            evidence
-                .iter()
-                .any(|item| { item.source_kind == "ENTITY" && item.excerpt.contains("林澈") })
-        );
+        assert!(evidence.iter().any(|item| {
+            item.source_kind == ReviewEvidenceSource::Entity && item.excerpt.contains("林澈")
+        }));
 
         let profile = manager
             .upsert_model_profile(ModelProfileInput {
@@ -624,6 +622,8 @@ mod tests {
                 source_kind: FindingSource::Llm,
                 rule_id: None,
                 rule_version: None,
+                rule_scope: None,
+                rule_effective_at: None,
                 priority: 3,
                 problem: "待确认".to_owned(),
                 evidence_ids: Vec::new(),

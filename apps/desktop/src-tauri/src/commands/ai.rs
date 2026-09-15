@@ -3599,33 +3599,6 @@ fn parse_json_object<T: serde::de::DeserializeOwned>(output: &str) -> Result<T, 
     serde_json::from_str(json).map_err(|_| ())
 }
 
-fn review_claim_type_allowed(
-    purpose: novel_infrastructure::ReviewPurpose,
-    claim_type: novel_infrastructure::ReviewClaimType,
-) -> bool {
-    match purpose {
-        novel_infrastructure::ReviewPurpose::Admission => matches!(
-            claim_type,
-            novel_infrastructure::ReviewClaimType::RequiredEvent
-                | novel_infrastructure::ReviewClaimType::ForbiddenEvent
-                | novel_infrastructure::ReviewClaimType::AllowedCharacter
-                | novel_infrastructure::ReviewClaimType::TimeWindow
-                | novel_infrastructure::ReviewClaimType::StageBoundary
-                | novel_infrastructure::ReviewClaimType::ForeshadowingWindow
-                | novel_infrastructure::ReviewClaimType::PlanDependency
-        ),
-        novel_infrastructure::ReviewPurpose::Manuscript => matches!(
-            claim_type,
-            novel_infrastructure::ReviewClaimType::CharacterStatus
-                | novel_infrastructure::ReviewClaimType::CharacterLocation
-                | novel_infrastructure::ReviewClaimType::AbilityOrRealm
-                | novel_infrastructure::ReviewClaimType::ItemPossession
-                | novel_infrastructure::ReviewClaimType::Relation
-                | novel_infrastructure::ReviewClaimType::KnowledgeBoundary
-        ),
-    }
-}
-
 fn parse_review_claims(
     purpose: novel_infrastructure::ReviewPurpose,
     output: &str,
@@ -3652,7 +3625,7 @@ fn parse_review_claims(
             });
             continue;
         };
-        if !review_claim_type_allowed(purpose, claim_type) {
+        if !claim_type.supports(purpose) {
             omitted.push(novel_infrastructure::ReviewOmittedItem {
                 item_type: "CLAIM".to_owned(),
                 label: candidate.quote.clone(),
@@ -3840,6 +3813,8 @@ fn parse_semantic_review(
             source_kind: novel_infrastructure::FindingSource::Llm,
             rule_id: None,
             rule_version: None,
+            rule_scope: None,
+            rule_effective_at: None,
             priority: claim_priority(claim_id, claims),
             problem: if problem.is_empty() {
                 "模型未提供问题说明。".to_owned()
@@ -3861,6 +3836,8 @@ fn parse_semantic_review(
                 source_kind: novel_infrastructure::FindingSource::Llm,
                 rule_id: None,
                 rule_version: None,
+                rule_scope: None,
+                rule_effective_at: None,
                 priority: claim.importance,
                 problem: "语义复核没有返回这条声明的结论，保留为待确认。".to_owned(),
                 evidence_ids: evidence
@@ -3968,7 +3945,7 @@ fn chapter_contract_review_items(
         evidence.push(novel_infrastructure::ReviewEvidence {
             id: uuid::Uuid::new_v4(),
             claim_id: claim.id,
-            source_kind: "CHAPTER_CONTRACT".to_owned(),
+            source_kind: novel_infrastructure::ReviewEvidenceSource::ChapterContract,
             source_record_id: uuid::Uuid::nil(),
             authority: novel_infrastructure::EvidenceAuthority::ChapterContract,
             excerpt: format!("{predicate}：{value}"),
@@ -4046,7 +4023,9 @@ fn review_finding_to_report(
         .map(|item| {
             format!(
                 "[{} · {:?}] {}",
-                item.source_kind, item.authority, item.excerpt
+                item.source_kind.as_str(),
+                item.authority,
+                item.excerpt
             )
         })
         .collect::<Vec<_>>()
@@ -4513,6 +4492,8 @@ async fn generate_consistency_review_proposal(
                         source_kind: novel_infrastructure::FindingSource::Llm,
                         rule_id: None,
                         rule_version: None,
+                        rule_scope: None,
+                        rule_effective_at: None,
                         priority: claim.importance,
                         problem: "语义复核批次调用失败，保留为待确认。".to_owned(),
                         evidence_ids: batch_evidence.iter().map(|item| item.id).collect(),
@@ -4572,6 +4553,8 @@ async fn generate_consistency_review_proposal(
                     source_kind: novel_infrastructure::FindingSource::Llm,
                     rule_id: None,
                     rule_version: None,
+                    rule_scope: None,
+                    rule_effective_at: None,
                     priority: claim.importance,
                     problem: "语义复核没有返回可解析的固定 JSON，保留为待确认。".to_owned(),
                     evidence_ids: batch_evidence.iter().map(|item| item.id).collect(),
@@ -5048,6 +5031,8 @@ mod review_pipeline_tests {
             source_kind: novel_infrastructure::FindingSource::Rule,
             rule_id: Some("FACT_OBJECT_CONFLICT".to_owned()),
             rule_version: Some("1".to_owned()),
+            rule_scope: Some("MANUSCRIPT".to_owned()),
+            rule_effective_at: None,
             priority: 5,
             problem: "与正式事实冲突。".to_owned(),
             evidence_ids: vec![uuid::Uuid::new_v4()],
@@ -5062,6 +5047,8 @@ mod review_pipeline_tests {
             source_kind: novel_infrastructure::FindingSource::Llm,
             rule_id: None,
             rule_version: None,
+            rule_scope: None,
+            rule_effective_at: None,
             priority: 5,
             problem: "模型认为没有冲突。".to_owned(),
             evidence_ids: Vec::new(),

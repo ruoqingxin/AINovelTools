@@ -362,6 +362,16 @@ export type ReviewClaimType =
   | "PLAN_DEPENDENCY";
 export type ReviewStatus = "PASS" | "NOTICE" | "WARNING" | "BLOCK" | "UNKNOWN";
 export type FindingSource = "RULE" | "LLM" | "MERGED";
+export type ReviewEvidenceSource =
+  | "ENTITY"
+  | "FACT"
+  | "WORLD_STATE"
+  | "RELATION"
+  | "BELIEF"
+  | "EVENT"
+  | "FORESHADOWING"
+  | "LOCKED_RULE"
+  | "CHAPTER_CONTRACT";
 export type EvidenceAuthority =
   | "LOCKED_RULE"
   | "CONFIRMED_FACT"
@@ -387,7 +397,7 @@ export type ReviewClaim = {
 export type ReviewEvidence = {
   id: string;
   claimId: string;
-  sourceKind: string;
+  sourceKind: ReviewEvidenceSource;
   sourceRecordId: string;
   authority: EvidenceAuthority;
   excerpt: string;
@@ -402,6 +412,8 @@ export type ReviewFinding = {
   sourceKind: FindingSource;
   ruleId: string | null;
   ruleVersion: string | null;
+  ruleScope: string | null;
+  ruleEffectiveAt: string | null;
   priority: number;
   problem: string;
   evidenceIds: string[];

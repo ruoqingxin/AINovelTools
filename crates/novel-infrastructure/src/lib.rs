@@ -66,9 +66,9 @@ pub use novel_domain::{
     KnowledgeConflictKind, KnowledgeContractError, KnowledgeExpansionError,
     KnowledgeLifecycleStatus, KnowledgeVersion, ModelCapability, ModelProfile, ModelProfileInput,
     ModelProvider, PrivacyLevel, Relation, RetrievalEvidence, RetrievalMethod, ReviewClaim,
-    ReviewClaimType, ReviewDecision, ReviewEvidence, ReviewFinding, ReviewOmittedItem,
-    ReviewPurpose, ReviewStage, ReviewStageRequest, ReviewStatus, ReviewTrace, SummaryKind,
-    SummaryMaterial, SummaryPrecision, WorldState, WorldStateEntry, WritingCard,
+    ReviewClaimType, ReviewDecision, ReviewEvidence, ReviewEvidenceSource, ReviewFinding,
+    ReviewOmittedItem, ReviewPurpose, ReviewStage, ReviewStageRequest, ReviewStatus, ReviewTrace,
+    SummaryKind, SummaryMaterial, SummaryPrecision, WorldState, WorldStateEntry, WritingCard,
     WritingReviewPolicy,
 };
 pub use review_rules::{

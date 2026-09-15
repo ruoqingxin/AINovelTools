@@ -282,7 +282,8 @@ impl From<ReviewContextError> for ContextError {
 mod tests {
     use super::*;
     use novel_domain::{
-        EvidenceAuthority, ReviewClaim, ReviewClaimType, ReviewEvidence, ReviewPurpose,
+        EvidenceAuthority, ReviewClaim, ReviewClaimType, ReviewEvidence, ReviewEvidenceSource,
+        ReviewPurpose,
     };
 
     #[test]
@@ -330,7 +331,7 @@ mod tests {
             evidence: vec![ReviewEvidence {
                 id: Uuid::new_v4(),
                 claim_id,
-                source_kind: "WORLD_STATE".to_owned(),
+                source_kind: ReviewEvidenceSource::WorldState,
                 source_record_id: Uuid::new_v4(),
                 authority: EvidenceAuthority::CurrentState,
                 excerpt: "林澈位于城门。".to_owned(),

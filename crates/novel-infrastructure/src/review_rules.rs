@@ -48,7 +48,9 @@ impl DeterministicReviewEvaluator {
                 _ => {}
             }
             for evidence in &evidence {
-                if evidence.source_kind == "ENTITY" && entity_is_inactive(&evidence.excerpt) {
+                if evidence.source_kind == ReviewEvidenceSource::Entity
+                    && entity_is_inactive(&evidence.excerpt)
+                {
                     findings.push(rule_finding(
                         claim,
                         "ENTITY_NOT_ACTIVE",
@@ -76,10 +78,14 @@ fn evaluate_fact_conflict(
     evidence: &[&ReviewEvidence],
     findings: &mut Vec<ReviewFinding>,
 ) {
-    for item in evidence
-        .iter()
-        .filter(|item| matches!(item.source_kind.as_str(), "FACT" | "WORLD_STATE" | "EVENT"))
-    {
+    for item in evidence.iter().filter(|item| {
+        matches!(
+            item.source_kind,
+            ReviewEvidenceSource::Fact
+                | ReviewEvidenceSource::WorldState
+                | ReviewEvidenceSource::Event
+        )
+    }) {
         let Some((subject, predicate, object)) = fact_triplet(&item.excerpt) else {
             continue;
         };
@@ -107,10 +113,12 @@ fn evaluate_location_conflict(
     evidence: &[&ReviewEvidence],
     findings: &mut Vec<ReviewFinding>,
 ) {
-    for item in evidence
-        .iter()
-        .filter(|item| matches!(item.source_kind.as_str(), "WORLD_STATE" | "FACT"))
-    {
+    for item in evidence.iter().filter(|item| {
+        matches!(
+            item.source_kind,
+            ReviewEvidenceSource::WorldState | ReviewEvidenceSource::Fact
+        )
+    }) {
         let Some((subject, predicate, object)) = fact_triplet(&item.excerpt) else {
             continue;
         };
@@ -139,9 +147,13 @@ fn evaluate_ability(
     findings: &mut Vec<ReviewFinding>,
 ) {
     let supporting = evidence.iter().any(|item| {
-        matches!(item.source_kind.as_str(), "FACT" | "ENTITY" | "LOCKED_RULE")
-            && (text_matches(&item.excerpt, &claim.object)
-                || text_matches(&item.excerpt, &claim.predicate))
+        matches!(
+            item.source_kind,
+            ReviewEvidenceSource::Fact
+                | ReviewEvidenceSource::Entity
+                | ReviewEvidenceSource::LockedRule
+        ) && (text_matches(&item.excerpt, &claim.object)
+            || text_matches(&item.excerpt, &claim.predicate))
             && (item.excerpt.contains("能力")
                 || item.excerpt.contains("境界")
                 || item.excerpt.contains("突破")
@@ -149,7 +161,7 @@ fn evaluate_ability(
                 || item.excerpt.contains("允许"))
     });
     let prohibited = evidence.iter().any(|item| {
-        item.source_kind == "LOCKED_RULE"
+        item.source_kind == ReviewEvidenceSource::LockedRule
             && contains_prohibition(&item.excerpt)
             && text_matches(&item.excerpt, &claim.object)
     });
@@ -195,8 +207,12 @@ fn evaluate_item_ownership(
     findings: &mut Vec<ReviewFinding>,
 ) {
     let conflict = evidence.iter().find(|item| {
-        matches!(item.source_kind.as_str(), "FACT" | "EVENT" | "WORLD_STATE")
-            && text_matches(&item.excerpt, &claim.object)
+        matches!(
+            item.source_kind,
+            ReviewEvidenceSource::Fact
+                | ReviewEvidenceSource::Event
+                | ReviewEvidenceSource::WorldState
+        ) && text_matches(&item.excerpt, &claim.object)
             && ["消耗", "失去", "丢失", "毁坏", "转交", "被夺", "不在身上"]
                 .iter()
                 .any(|marker| item.excerpt.contains(marker))
@@ -233,7 +249,7 @@ fn evaluate_relation(
 ) {
     for item in evidence
         .iter()
-        .filter(|item| item.source_kind == "RELATION")
+        .filter(|item| item.source_kind == ReviewEvidenceSource::Relation)
     {
         let Some(relation_type) = item
             .excerpt
@@ -271,7 +287,7 @@ fn evaluate_knowledge_boundary(
 ) {
     let beliefs = evidence
         .iter()
-        .filter(|item| item.source_kind == "BELIEF")
+        .filter(|item| item.source_kind == ReviewEvidenceSource::Belief)
         .collect::<Vec<_>>();
     let other_holder = beliefs.iter().find(|item| {
         !item.excerpt.contains(&claim.subject) && text_matches(&item.excerpt, &claim.object)
@@ -340,7 +356,9 @@ fn evaluate_locked_event_rules(
         let evidence = input
             .evidence
             .iter()
-            .filter(|item| item.source_kind == "LOCKED_RULE" && line.contains(&item.excerpt))
+            .filter(|item| {
+                item.source_kind == ReviewEvidenceSource::LockedRule && line.contains(&item.excerpt)
+            })
             .map(|item| item.id)
             .collect::<Vec<_>>();
         if contains_prohibition(line)
@@ -496,7 +514,8 @@ fn contract_evidence_ids(input: &DeterministicReviewInput<'_>, claim: &ReviewCla
         .evidence
         .iter()
         .filter(|evidence| {
-            evidence.claim_id == claim.id && evidence.source_kind == "CHAPTER_CONTRACT"
+            evidence.claim_id == claim.id
+                && evidence.source_kind == ReviewEvidenceSource::ChapterContract
         })
         .map(|evidence| evidence.id)
         .collect()
@@ -521,11 +540,23 @@ fn rule_finding(
         source_kind: FindingSource::Rule,
         rule_id: Some(rule_id.to_owned()),
         rule_version: Some(FIXED_RULE_VERSION.to_owned()),
+        rule_scope: Some(rule_scope(rule_id).to_owned()),
+        rule_effective_at: None,
         priority: claim.importance,
         problem: problem.to_owned(),
         evidence_ids,
         suggestion: suggestion.to_owned(),
         confidence,
+    }
+}
+
+fn rule_scope(rule_id: &str) -> &'static str {
+    match rule_id {
+        "CHAPTER_REQUIRED_EVENT_MISSING"
+        | "CHAPTER_FORBIDDEN_EVENT"
+        | "CHAPTER_TIME_WINDOW_MISSING"
+        | "STAGE_BOUNDARY_VIOLATION" => "CHAPTER_CONTRACT",
+        _ => "MANUSCRIPT",
     }
 }
 
@@ -694,7 +725,7 @@ mod tests {
         let evidence = ReviewEvidence {
             id: Uuid::new_v4(),
             claim_id: claim.id,
-            source_kind: "CHAPTER_CONTRACT".to_owned(),
+            source_kind: ReviewEvidenceSource::ChapterContract,
             source_record_id: Uuid::nil(),
             authority: EvidenceAuthority::ChapterContract,
             excerpt: object.to_owned(),
@@ -722,7 +753,7 @@ mod tests {
         let evidence = ReviewEvidence {
             id: Uuid::new_v4(),
             claim_id: claim.id,
-            source_kind: "FACT".to_owned(),
+            source_kind: ReviewEvidenceSource::Fact,
             source_record_id: Uuid::new_v4(),
             authority: EvidenceAuthority::ConfirmedFact,
             excerpt: "林澈 状态 存活".to_owned(),
@@ -740,6 +771,8 @@ mod tests {
         assert!(findings.iter().any(|finding| {
             finding.rule_id.as_deref() == Some("FACT_OBJECT_CONFLICT")
                 && finding.status == ReviewStatus::Block
+                && finding.rule_version.as_deref() == Some(FIXED_RULE_VERSION)
+                && finding.rule_scope.as_deref() == Some("MANUSCRIPT")
                 && finding.evidence_ids == vec![evidence.id]
         }));
     }
@@ -790,7 +823,7 @@ mod tests {
         let evidence = ReviewEvidence {
             id: Uuid::new_v4(),
             claim_id: claim.id,
-            source_kind: "FACT".to_owned(),
+            source_kind: ReviewEvidenceSource::Fact,
             source_record_id: Uuid::new_v4(),
             authority: EvidenceAuthority::ConfirmedFact,
             excerpt: "林澈 状态 存活".to_owned(),
@@ -858,6 +891,7 @@ mod tests {
         });
         assert!(findings.iter().any(|finding| {
             finding.rule_id.as_deref() == Some("CHAPTER_REQUIRED_EVENT_MISSING")
+                && finding.rule_scope.as_deref() == Some("CHAPTER_CONTRACT")
         }));
         assert!(
             findings
