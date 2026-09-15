@@ -167,10 +167,9 @@ impl AiTaskKind {
             Self::WorkDesign
             | Self::ChapterSplit
             | Self::ChapterPlan
-            | Self::ConsistencyReview
             | Self::KnowledgeExtraction => 4_096,
             Self::Outline | Self::VolumePlanning => 6_144,
-            Self::Writing => 8_192,
+            Self::ConsistencyReview | Self::Writing => 8_192,
         }
     }
 
@@ -1472,9 +1471,6 @@ where
             on_chunk(&text);
         }
     }
-    if output.trim().is_empty() {
-        return Err(AiError::InvalidResponse);
-    }
     let completion = classify_finish_reason(finish_reason.as_deref()).unwrap_or({
         if saw_done {
             GenerationCompletion::Complete
@@ -1482,6 +1478,9 @@ where
             GenerationCompletion::Interrupted
         }
     });
+    if output.trim().is_empty() && completion.is_complete() {
+        return Err(AiError::InvalidResponse);
+    }
     Ok(GenerationOutput {
         output,
         completion,
@@ -3329,7 +3328,7 @@ mod tests {
             (super::AiTaskKind::VolumePlanning, 0.55, 6_144),
             (super::AiTaskKind::ChapterSplit, 0.3, 4_096),
             (super::AiTaskKind::ChapterPlan, 0.35, 4_096),
-            (super::AiTaskKind::ConsistencyReview, 0.2, 4_096),
+            (super::AiTaskKind::ConsistencyReview, 0.2, 8_192),
             (super::AiTaskKind::Writing, 0.9, 8_192),
             (super::AiTaskKind::KnowledgeExtraction, 0.1, 4_096),
         ];
@@ -3517,7 +3516,7 @@ mod tests {
         assert_eq!(preferences.consistency_review.temperature, Some(0.2));
         assert_eq!(
             preferences.consistency_review.max_output_tokens,
-            Some(4_096)
+            Some(8_192)
         );
         assert_eq!(preferences.writing.temperature, Some(0.9));
         assert_eq!(preferences.writing.max_output_tokens, Some(8_192));
@@ -3564,7 +3563,7 @@ mod tests {
         assert_eq!(saved.chapter_plan.temperature, Some(0.35));
         assert_eq!(saved.chapter_plan.max_output_tokens, Some(4_096));
         assert_eq!(saved.consistency_review.temperature, Some(0.2));
-        assert_eq!(saved.consistency_review.max_output_tokens, Some(4_096));
+        assert_eq!(saved.consistency_review.max_output_tokens, Some(8_192));
         assert_eq!(saved.writing.temperature, Some(0.9));
         assert_eq!(saved.writing.max_output_tokens, Some(8_192));
         assert_eq!(
@@ -3762,6 +3761,27 @@ mod tests {
             .expect("stream length limit");
         assert_eq!(output.output, "流式半截");
         assert_eq!(output.completion, super::GenerationCompletion::LengthLimit);
+
+        let reasoning_only_length_url = serve(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先分析人物、规则和时间线\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n",
+            "text/event-stream",
+            Duration::ZERO,
+        );
+        let output = gateway
+            .generate_detailed(
+                &profile(reasoning_only_length_url, 3),
+                None,
+                &context(),
+                true,
+                false,
+                Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .await
+            .expect("reasoning-only stream length limit");
+        assert!(output.output.is_empty());
+        assert_eq!(output.completion, super::GenerationCompletion::LengthLimit);
+        assert_eq!(output.finish_reason.as_deref(), Some("length"));
 
         let interrupted_url = serve(
             "data: {\"choices\":[{\"delta\":{\"content\":\"连接中断\"}}]}\n\n",

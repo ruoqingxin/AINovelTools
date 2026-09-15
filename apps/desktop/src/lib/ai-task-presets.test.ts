@@ -15,6 +15,12 @@ describe("AI task presets", () => {
     }
   });
 
+  it("keeps enough output budget for reasoning during consistency review", () => {
+    for (const preset of AI_TASK_PRESETS) {
+      expect(preset.tasks.consistencyReview.maxOutputTokens).toBe(8192);
+    }
+  });
+
   it("preserves models and custom prompts while applying task tuning", () => {
     const current = {
       ...emptyAiTaskPreferences,

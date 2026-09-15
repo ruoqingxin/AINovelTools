@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BellOff, ClipboardList, History, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
 import { useEffect, useState } from "react";
+import { classifyAiFailure } from "../lib/ai-failure";
 import { formatCost } from "../lib/ai-cost-estimate";
 import { acknowledgeFailedJobs, cancelJob, enqueueJob, errorMessage, getPlanningAiJobRequest, listAiRuns, listJobEvents, listJobs, retryJob, runNextJob, type AiRun, type Job, type JobType, type PlanningAiJobInput } from "../lib/tauri-client";
 
@@ -114,13 +115,14 @@ function AiRunsHistory() {
       {filteredRuns.map((run) => {
         const duration = formatRunDuration(run.createdAt, run.finishedAt);
         const estimatedTokens = run.estimatedInputTokens + run.estimatedOutputTokens;
+        const failure = run.errorCode ? classifyAiFailure(run.errorCode) : null;
         return <article className="ai-run-row" key={run.id}>
           <div>
             <strong>{runActionLabels[run.action] ?? run.taskKey} · {run.chapterTitle}</strong>
             <small>{new Date(run.createdAt).toLocaleString()} · {run.profileName} · {runSourceLabels[run.source] ?? run.source}</small>
           </div>
           <span className={`job-status job-${runStatusClass(run)}`}>{runStatusLabels[run.status] ?? run.status}</span>
-          <small>尝试 {run.attemptCount}{duration ? ` · 耗时 ${duration}` : ""} · 约 {estimatedTokens.toLocaleString()} tokens · {formatCost(run.estimatedCostMicros, run.priceCurrency)}{run.retryReason ? ` · 回退原因 ${run.retryReason}` : ""}{run.errorCode ? ` · ${run.errorCode}` : ""}</small>
+          <small>尝试 {run.attemptCount}{duration ? ` · 耗时 ${duration}` : ""} · 约 {estimatedTokens.toLocaleString()} tokens · {formatCost(run.estimatedCostMicros, run.priceCurrency)}{run.retryReason ? ` · 回退原因 ${run.retryReason}` : ""}{run.errorCode ? ` · ${failure?.kind === "UNKNOWN" ? run.errorCode : `${failure?.label}（${run.errorCode}）`}` : ""}</small>
         </article>;
       })}
     </div> : <div className="jobs-empty"><History size={22} /><span>当前分类还没有 AI 运行记录</span></div>}

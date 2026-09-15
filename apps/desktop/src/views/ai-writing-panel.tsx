@@ -23,6 +23,7 @@ import {
   type ConsistencyReviewFreshness,
   type WritingReviewPolicy,
 } from "../lib/tauri-client";
+import { classifyAiFailure } from "../lib/ai-failure";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import { assessWritingReadiness, findWritingGapTargets } from "../lib/writing-readiness";
 import { AiModelNote } from "./ai-model-note";
@@ -146,6 +147,14 @@ function documentHasText(documentJson: string) {
   } catch {
     return true;
   }
+}
+
+function aiFailureMessage(cause: unknown) {
+  const detail = errorMessage(cause).trim();
+  const failure = classifyAiFailure(detail);
+  if (failure.kind === "UNKNOWN") return detail || failure.label;
+  if (detail.startsWith(`${failure.label}：`)) return `${detail} ${failure.hint}`;
+  return `${failure.label}：${detail} ${failure.hint}`;
 }
 
 function buildLineDiff(left: string, right: string) {
@@ -305,7 +314,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
         }));
       }
       await client.invalidateQueries({ queryKey: ["ai-proposals", props.chapterId] });
-    } catch (cause) { setError(errorMessage(cause)); }
+    } catch (cause) { setError(aiFailureMessage(cause)); }
     finally {
       void client.invalidateQueries({ queryKey: ["ai-runs"] });
       setBusy(false);
@@ -482,6 +491,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
         <div><strong>{reviewingManuscript ? "审核当前正文" : "检查本次创作条件"}</strong><span>{reviewingManuscript ? "以当前正文为主体，对照章节执行卡和正式知识，审核结果不会自动修改正文。" : "对照分卷规划和正式知识检查执行卡；已有正文时也会纳入，结果用于生成准入。"}</span></div>
         <button type="button" className="secondary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={busy || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />{reviewingManuscript ? "审核当前正文" : "检查创作条件"}</button>
       </div>
+      {error ? <p className="project-error ai-review-error" role="alert" aria-live="assertive">{error}</p> : null}
       {reviewingManuscript && !currentDraftAvailable ? <p className="consistency-admission" data-state="needs_input">请先完成正文内容，再运行正文审核。</p> : null}
       {consistencyNotice ? <p className="consistency-admission" data-state={consistencyNotice.state}>{consistencyNotice.text}</p> : null}
       </section>
@@ -489,7 +499,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     {(isCreationMode || isReviewMode) && busy ? <div className="ai-running"><LoaderCircle size={15} className="spin" /><span>模型正在生成结果…</span><button type="button" className="secondary-action" onClick={() => void cancel()} disabled={!activeTaskId}><Ban size={14} />取消</button></div> : null}
     {!isReadinessMode && fallbackNotice ? <p className="project-notice" role="status">{fallbackNotice}</p> : null}
     {!isReadinessMode && preview ? <pre className="ai-preview">{preview}</pre> : null}
-    {!isReadinessMode && error ? <p className="project-error" role="alert">{error}</p> : null}
+    {!isReadinessMode && !isReviewMode && error ? <p className="project-error" role="alert">{error}</p> : null}
 
     {isCreationMode ? <div className="proposal-list" aria-label="候选确认">
       <div className="section-heading"><h3><ShieldCheck size={14} />候选确认</h3><span>{proposals.isPending ? "正在加载" : `${pendingCandidates.length} 条待确认${needsInputCandidates.length ? ` · ${needsInputCandidates.length} 条需补资料` : ""}${pendingCandidates.length >= 2 ? ` · 已选 ${compareIds.length}/2 对比` : ""}`}</span></div>

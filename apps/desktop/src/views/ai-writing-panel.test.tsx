@@ -164,7 +164,7 @@ describe("AiWritingPanel consistency review", () => {
           action: "CONSISTENCY_CHECK",
           profileId: profile.id,
           temperature: 0.2,
-          maxOutputTokens: 4096,
+          maxOutputTokens: 8192,
           chapterPlan: "主角进入城市并寻找失踪的师父。",
         }),
       ),
@@ -215,6 +215,39 @@ describe("AiWritingPanel consistency review", () => {
     expect(screen.getByText(/这份报告已过期，不再阻止正文生成/)).toBeVisible();
     expect(screen.getByRole("button", { name: "按当前内容重新审核" })).toBeEnabled();
     expect(screen.queryByText(/整章创作与续写已暂停/)).not.toBeInTheDocument();
+  });
+
+  it("shows an actionable message when manuscript review fails", async () => {
+    mocks.generateAiProposal.mockRejectedValueOnce({
+      code: "AI_OUTPUT_LENGTH_LIMIT",
+      message: "输出预算不足：模型达到最大输出长度，返回内容未写完；模型没有返回任何可用正文（finish_reason: length）。",
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AiWritingPanel
+          mode="review"
+          reviewPurpose="manuscript"
+          chapterId="chapter-1"
+          chapterTitle="第1章·入城"
+          chapterPlan="主角进入城市并寻找失踪的师父。"
+          volumeId="volume-1"
+          volumePlan="第一卷规划"
+          draft="主角抵达城门。"
+          editor={null}
+        />
+      </QueryClientProvider>,
+    );
+
+    const reviewButton = screen.getByRole("button", { name: "审核当前正文" });
+    await waitFor(() => expect(reviewButton).toBeEnabled());
+    fireEvent.click(reviewButton);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("输出预算不足");
+    expect(alert).toHaveTextContent("模型没有返回任何可用正文");
+    expect(alert).toHaveTextContent("请在“AI 任务模型”中提高该任务的最大输出后重试");
+    expect(alert.textContent).not.toContain("输出预算不足：输出预算不足");
   });
 
   it("requires a fresh review when the project uses strict admission", async () => {

@@ -469,6 +469,25 @@ mod task_generation_options_tests {
             "每卷保留一个核心冲突"
         ));
     }
+
+    #[test]
+    fn explains_reasoning_only_output_length_failures() {
+        let (error, message) = super::incomplete_generation_failure(
+            novel_infrastructure::GenerationCompletion::LengthLimit,
+            0,
+            Some("length"),
+        );
+        assert_eq!(
+            error.code(),
+            novel_infrastructure::AiError::OutputLengthLimit.code()
+        );
+        assert!(message.contains("输出预算不足"));
+        assert!(message.contains("思考内容也会占用同一份输出预算"));
+        assert!(message.contains("模型没有返回任何可用正文"));
+        assert!(message.contains("提高该任务的最大输出"));
+        assert!(!message.contains("关闭思考模式"));
+        assert!(message.contains("finish_reason: length"));
+    }
 }
 
 pub(crate) fn effective_max_output_tokens(
@@ -1380,29 +1399,32 @@ fn incomplete_generation_failure(
         .filter(|reason| !reason.trim().is_empty())
         .map(|reason| format!("（finish_reason: {reason}）"))
         .unwrap_or_default();
+    let output_detail = if output_chars == 0 {
+        "模型没有返回任何可用正文".to_owned()
+    } else {
+        format!("已将已生成的 {output_chars} 字保留到待定区")
+    };
     match completion {
         novel_infrastructure::GenerationCompletion::LengthLimit => (
             novel_infrastructure::AiError::OutputLengthLimit,
             format!(
-                "模型达到最大输出长度，返回内容未写完。已将已生成的 {output_chars} 字保留到待定区；请提高“作品设定”的最大输出 tokens 后重试。{finish_detail}"
+                "输出预算不足：模型达到最大输出长度，返回内容未写完；{output_detail}。请在“AI 任务模型”中提高该任务的最大输出 tokens 后重试；开启思考时，思考内容也会占用同一份输出预算。{finish_detail}"
             ),
         ),
         novel_infrastructure::GenerationCompletion::ContentFiltered => (
             novel_infrastructure::AiError::ContentFiltered,
             format!(
-                "模型因内容安全策略停止生成，已将已生成的 {output_chars} 字保留到待定区；请调整设定或补充意见后重试。{finish_detail}"
+                "模型因内容安全策略停止生成；{output_detail}。请调整设定或补充意见后重试。{finish_detail}"
             ),
         ),
         novel_infrastructure::GenerationCompletion::Interrupted => (
             novel_infrastructure::AiError::StreamInterrupted,
-            format!(
-                "模型响应在完整结束前中断，已将已生成的 {output_chars} 字保留到待定区；请检查网络后重试。{finish_detail}"
-            ),
+            format!("模型响应在完整结束前中断；{output_detail}。请检查网络后重试。{finish_detail}"),
         ),
         novel_infrastructure::GenerationCompletion::LikelyTruncated => (
             novel_infrastructure::AiError::OutputIncomplete,
             format!(
-                "模型虽然结束了响应，但正文结尾停在半句，已将已生成的 {output_chars} 字保留到待定区；请检查结尾并重试或继续补写。{finish_detail}"
+                "模型虽然结束了响应，但正文结尾停在半句；{output_detail}。请检查结尾并重试或继续补写。{finish_detail}"
             ),
         ),
         novel_infrastructure::GenerationCompletion::Complete => {
@@ -3586,6 +3608,28 @@ pub(crate) async fn generate_ai_proposal(
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     match result {
         Ok(outcome) => {
+            let review_output_incomplete = task_kind
+                == novel_infrastructure::AiTaskKind::ConsistencyReview
+                && !outcome.completion.is_complete();
+            if outcome.output.trim().is_empty() || review_output_incomplete {
+                let (error, message) = if outcome.completion.is_complete() {
+                    (
+                        novel_infrastructure::AiError::InvalidResponse,
+                        "模型返回了空内容，没有生成可用的审核报告或候选正文。".to_owned(),
+                    )
+                } else {
+                    incomplete_generation_failure(
+                        outcome.completion,
+                        outcome.output.chars().count(),
+                        outcome.finish_reason.as_deref(),
+                    )
+                };
+                let _ = manager.fail_ai_task(task_id, &error);
+                return Err(ApiError {
+                    code: error.code(),
+                    message,
+                });
+            }
             if let Some(fallback) = outcome.fallback_profile.as_ref() {
                 let reason = outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN");
                 sync_model_profile(&mut manager, fallback)?;
