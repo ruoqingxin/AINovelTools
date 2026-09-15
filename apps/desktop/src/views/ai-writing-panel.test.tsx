@@ -245,6 +245,12 @@ describe("AiWritingPanel consistency review", () => {
     );
 
     expect(await screen.findByText(/严格准入/)).toBeVisible();
-    await waitFor(() => expect(screen.getByRole("button", { name: "生成整章初稿" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "生成新版整章" })).toBeDisabled());
+    expect(screen.queryByRole("button", { name: "生成续写候选" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重写选区" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "润色选区" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "章节摘要" })).not.toBeInTheDocument();
+    expect(screen.queryByText("按段选择")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "仅采用已选段落" })).not.toBeInTheDocument();
   });
 });

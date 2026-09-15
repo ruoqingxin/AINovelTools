@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import type { Editor } from "@tiptap/react";
-import { Ban, Check, ClipboardCheck, Columns2, LoaderCircle, Play, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { Ban, Check, ClipboardCheck, Columns2, LoaderCircle, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useDeferredValue, useEffect, useState } from "react";
 import {
   cancelAiTask,
@@ -36,7 +36,6 @@ const actionLabels: Record<AiAction, string> = {
   SUMMARIZE: "章节摘要",
   CONSISTENCY_CHECK: "一致性检查",
 };
-const editingActions: AiAction[] = ["CONTINUE", "REWRITE", "POLISH", "SUMMARIZE"];
 const consistencyVerdictLabels: Record<AiConsistencyVerdict, string> = {
   PASS: "审核通过",
   REVIEW: "需要复核",
@@ -102,7 +101,7 @@ function consistencyAdmission(
   if (report.verdict === "BLOCKED") {
     return {
       state: "blocked",
-      text: `最近一次审核发现 ${blockerCount} 个阻断问题，整章创作与续写已暂停。请先处理问题并关闭本次审核。`,
+      text: `最近一次审核发现 ${blockerCount} 个阻断问题，整章创作已暂停。请先处理问题并关闭本次审核。`,
     };
   }
   if (report.verdict === "NEEDS_INPUT") {
@@ -133,8 +132,20 @@ function textContent(text: string) {
   }));
 }
 
-function candidateSegments(text: string) {
-  return text.split(/\n{2,}/).map((segment) => segment.trim()).filter(Boolean);
+function documentHasText(documentJson: string) {
+  if (!documentJson.trim()) return false;
+  try {
+    const visit = (value: unknown): boolean => {
+      if (!value || typeof value !== "object") return false;
+      if (Array.isArray(value)) return value.some(visit);
+      const record = value as Record<string, unknown>;
+      return typeof record.text === "string" && Boolean(record.text.trim())
+        || Object.values(record).some(visit);
+    };
+    return visit(JSON.parse(documentJson) as unknown);
+  } catch {
+    return true;
+  }
 }
 
 function buildLineDiff(left: string, right: string) {
@@ -209,7 +220,6 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   const [feedbackNotes, setFeedbackNotes] = useState<Record<string, string>>({});
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [proposalAnchors, setProposalAnchors] = useState<Record<string, ProposalAnchor>>({});
-  const [segmentSelections, setSegmentSelections] = useState<Record<string, number[]>>({});
   const [lastApplied, setLastApplied] = useState<{ documentJson: string; label: string } | null>(null);
 
   useEffect(() => {
@@ -238,7 +248,6 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     setFallbackNotice(null);
     setCompareIds([]);
     setProposalAnchors({});
-    setSegmentSelections({});
     setLastApplied(null);
   }, [props.chapterId]);
 
@@ -249,7 +258,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     const chatPreference = resolveTaskPreference(aiPreferences.data, taskKey);
     if (!chatProfile || (!props.editor && !consistencyCheck)) return;
     if ((action === "DRAFT" || action === "CONTINUE") && consistencyBlocked) {
-      setError("最近一次创作准入检查存在阻断问题，请先处理并关闭报告，再生成或续写正文。");
+      setError("最近一次创作准入检查存在阻断问题，请先处理并关闭报告，再生成正文。");
       document.getElementById("consistency-review-list")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
@@ -340,13 +349,6 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     return true;
   }
 
-  function selectedCandidateText(proposal: AiProposal) {
-    const text = partialTexts[proposal.id] ?? proposal.outputText;
-    const segments = candidateSegments(text);
-    const selected = segmentSelections[proposal.id] ?? segments.map((_, index) => index);
-    return segments.filter((_, index) => selected.includes(index)).join("\n\n");
-  }
-
   function undoLastApplied() {
     if (!props.editor || !lastApplied) return;
     try {
@@ -358,7 +360,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     }
   }
 
-  async function decide(proposal: AiProposal, mode: "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED", acceptedTextOverride?: string) {
+  async function decide(proposal: AiProposal, mode: "ACCEPTED" | "REJECTED") {
     setError(null);
     const proposalValidation = proposals.data?.find((item) => item.proposal.id === proposal.id)?.validation;
     if (mode !== "REJECTED" && proposalValidation?.status === "NEEDS_INPUT") {
@@ -379,10 +381,13 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     }
     setDecidingProposalId(proposal.id);
     try {
-      const acceptedText = mode === "PARTIALLY_ACCEPTED"
-        ? acceptedTextOverride ?? selectedCandidateText(proposal)
-        : undefined;
-      const decided = await decideAiProposal({ id: proposal.id, status: mode, ...(acceptedText ? { acceptedText } : {}) });
+      const candidateText = partialTexts[proposal.id] ?? proposal.outputText;
+      const candidateWasEdited = mode === "ACCEPTED" && candidateText !== proposal.outputText;
+      const decided = await decideAiProposal({
+        id: proposal.id,
+        status: candidateWasEdited ? "PARTIALLY_ACCEPTED" : mode,
+        ...(candidateWasEdited ? { acceptedText: candidateText } : {}),
+      });
       if (mode !== "REJECTED") applyText(proposal, decided.acceptedText ?? proposal.outputText, replacementRange ?? undefined);
       await client.invalidateQueries({ queryKey: ["ai-proposals", props.chapterId] });
     } catch (cause) { setError(errorMessage(cause)); }
@@ -440,7 +445,8 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   });
   const reviewPurpose = props.reviewPurpose ?? "admission";
   const reviewingManuscript = reviewPurpose === "manuscript";
-  const currentDraftAvailable = Boolean(props.draft.trim() || props.editor?.getText().trim());
+  const currentDraftAvailable = Boolean(props.editor?.getText().trim()) || documentHasText(props.draft);
+  const visibleDraftAvailable = currentDraftAvailable;
   const canRunConsistencyCheck = reviewingManuscript
     ? currentDraftAvailable
     : Boolean(props.chapterPlan.trim() || currentDraftAvailable);
@@ -458,13 +464,14 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     </> : null}
 
     {isCreationMode ? <>
-      <div className="section-heading ai-stage-heading"><div><h2><Sparkles size={15} />AI 创作</h2><p>填写本章补充意见，生成正文，并在候选写入草稿前完成确认。</p></div><div className="proposal-heading-actions"><span>云端模型 · 候选审核</span>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
+      <div className="section-heading ai-stage-heading"><div><h2><Sparkles size={15} />AI 创作</h2><p>填写本章补充意见，生成正文，并在候选写入草稿前完成确认。</p></div><div className="proposal-heading-actions"><span>云端模型 · 候选确认</span>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
       <AiModelNote taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
       {consistencyNotice ? <p className="consistency-admission creation-admission" data-state={consistencyNotice.state}>{consistencyNotice.text}</p> : null}
       <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>
       <p className="ai-request-hint">系统会把这段意见与章节执行卡、写作规则和正文上下文一起编译成模型消息。</p>
-      <div className="ai-draft-action"><div><strong>按章节执行卡创作整章</strong><span>AI 会参考章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿，确认后替换到正文。</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked("DRAFT")} title={consistencyBlocked ? "先处理创作准入中的阻断问题并关闭报告" : undefined}><Sparkles size={14} />生成整章初稿</button></div>
-      <div className="ai-action-grid">{editingActions.map((action) => <button type="button" className="secondary-action" key={action} onClick={() => void runAction(action)} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked(action)}><Play size={14} />{actionLabels[action]}</button>)}</div>
+      <div className="ai-creation-options">
+        <div className="ai-draft-action"><div><strong>{visibleDraftAvailable ? "重新生成整章草稿" : "按章节执行卡生成整章"}</strong><span>{visibleDraftAvailable ? "适合整体推翻当前草稿。采用候选时会明确提示整章替换。" : "根据章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿。"}</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked("DRAFT")} title={consistencyBlocked ? "先处理创作准入中的阻断问题并关闭报告" : undefined}><Sparkles size={14} />{visibleDraftAvailable ? "生成新版整章" : "生成整章草稿"}</button></div>
+      </div>
     </> : null}
 
     {isReviewMode ? <>
@@ -484,43 +491,30 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     {!isReadinessMode && preview ? <pre className="ai-preview">{preview}</pre> : null}
     {!isReadinessMode && error ? <p className="project-error" role="alert">{error}</p> : null}
 
-    {isCreationMode ? <div className="proposal-list" aria-label="候选审核">
-      <div className="section-heading"><h3><ShieldCheck size={14} />候选审核</h3><span>{proposals.isPending ? "正在加载" : `${pendingCandidates.length} 条待审${needsInputCandidates.length ? ` · ${needsInputCandidates.length} 条需补资料` : ""} · 已选 ${compareIds.length}/2 对比`}</span></div>
+    {isCreationMode ? <div className="proposal-list" aria-label="候选确认">
+      <div className="section-heading"><h3><ShieldCheck size={14} />候选确认</h3><span>{proposals.isPending ? "正在加载" : `${pendingCandidates.length} 条待确认${needsInputCandidates.length ? ` · ${needsInputCandidates.length} 条需补资料` : ""}${pendingCandidates.length >= 2 ? ` · 已选 ${compareIds.length}/2 对比` : ""}`}</span></div>
       {proposals.isPending ? <div className="proposal-empty"><LoaderCircle size={18} className="spin" /><div><strong>正在读取待审核候选</strong><span>生成结果会保留在这里，确认前不会写入正文。</span></div></div> : proposals.isError ? <p className="project-error" role="alert">候选审核加载失败：{errorMessage(proposals.error)}</p> : actionablePending.length ? <>
       {actionablePending.map(({ proposal, validation, feedback }) => {
         const needsInput = validation.status === "NEEDS_INPUT";
         const text = partialTexts[proposal.id] ?? proposal.outputText;
         const needsInputTargets = needsInput ? findWritingGapTargets(text) : [];
-        const segments = candidateSegments(text);
-        const selectedSegments = segmentSelections[proposal.id] ?? segments.map((_, index) => index);
         const original = proposalAnchors[proposal.id]?.selection
           ?? ((proposal.action === "REWRITE" || proposal.action === "POLISH") && props.editor && !props.editor.state.selection.empty
             ? props.editor.state.doc.textBetween(props.editor.state.selection.from, props.editor.state.selection.to, "\n").trim()
             : "");
         const diffRows = original ? buildLineDiff(original, text) : [];
         return <article className="proposal" data-state={needsInput ? "needs-input" : undefined} id={`ai-proposal-${proposal.id}`} key={proposal.id}>
-        <div className="proposal-meta"><strong>{actionLabels[proposal.action]}</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{needsInput ? "需补资料" : validation.status === "VALID" ? "校验通过" : validation.status === "WARNING" ? "需要检查" : "无效输出"} · {validation.characterCount} 字</span><code>{proposal.promptVersion}</code>{!needsInput ? <button type="button" data-active={compareIds.includes(proposal.id) || undefined} onClick={() => toggleCompare(proposal.id)}><Columns2 size={12} />对比</button> : null}</div>
+        <div className="proposal-meta"><strong>{actionLabels[proposal.action]}</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{needsInput ? "需补资料" : validation.status === "VALID" ? "校验通过" : validation.status === "WARNING" ? "需要检查" : "无效输出"} · {validation.characterCount} 字</span>{!needsInput && pendingCandidates.length >= 2 ? <button type="button" data-active={compareIds.includes(proposal.id) || undefined} onClick={() => toggleCompare(proposal.id)}><Columns2 size={12} />加入对比</button> : null}</div>
         {validation.messages.length ? <div className="proposal-validation-messages">{validation.messages.map((message) => <span key={message}>{message}</span>)}</div> : null}
         {needsInput ? <div className="proposal-needs-input"><strong>模型没有生成正文</strong><span>它要求先补齐可能影响本章人物、能力、世界规则或失败后果的正式设定。</span><pre>{text}</pre></div> : null}
         {!needsInput && original ? <details className="proposal-diff" open><summary>原文与候选差异<span>{proposalAnchors[proposal.id] ? "已绑定生成时选区" : "使用当前选区"}</span></summary><div>{diffRows.map((row, index) => <p data-kind={row.kind} key={`${row.kind}-${index}`}><span>{row.kind === "removed" ? "-" : row.kind === "added" ? "+" : " "}</span>{row.text || " "}</p>)}</div></details> : null}
-        {!needsInput ? <textarea value={text} onChange={(event) => {
-          setPartialTexts((value) => ({ ...value, [proposal.id]: event.target.value }));
-          setSegmentSelections((value) => {
-            const next = { ...value };
-            delete next[proposal.id];
-            return next;
-          });
-        }} aria-label={`${actionLabels[proposal.action]}候选文本`} /> : null}
-        {!needsInput && segments.length > 1 && proposal.action !== "SUMMARIZE" ? <details className="proposal-segments"><summary>按段选择<span>已选 {selectedSegments.length}/{segments.length} 段</span></summary><div>{segments.map((segment, index) => <label key={`${index}-${segment.slice(0, 16)}`}><input type="checkbox" checked={selectedSegments.includes(index)} onChange={() => setSegmentSelections((value) => {
-          const current = value[proposal.id] ?? segments.map((_, segmentIndex) => segmentIndex);
-          return { ...value, [proposal.id]: current.includes(index) ? current.filter((item) => item !== index) : [...current, index].sort((left, right) => left - right) };
-        })} /><span>{segment}</span></label>)}</div></details> : null}
-        {!needsInput ? <div className="proposal-feedback">
-          <input value={feedbackNotes[proposal.id] ?? feedback?.note ?? ""} onChange={(event) => setFeedbackNotes((value) => ({ ...value, [proposal.id]: event.target.value }))} placeholder="可选：记录这条候选的优点或问题" maxLength={2000} aria-label="候选质量反馈" />
+        {!needsInput ? <textarea value={text} onChange={(event) => setPartialTexts((value) => ({ ...value, [proposal.id]: event.target.value }))} aria-label={`${actionLabels[proposal.action]}候选文本`} /> : null}
+        {!needsInput ? <details className="proposal-feedback-details"><summary>评价本次结果（可选）</summary><div className="proposal-feedback">
+          <input value={feedbackNotes[proposal.id] ?? feedback?.note ?? ""} onChange={(event) => setFeedbackNotes((value) => ({ ...value, [proposal.id]: event.target.value }))} placeholder="记录这条候选的优点或问题" maxLength={2000} aria-label="候选质量反馈" />
           <button type="button" data-active={feedback?.rating === "HELPFUL" || undefined} onClick={() => void submitFeedback(proposal, "HELPFUL")} title="标记为有帮助"><ThumbsUp size={13} />有帮助</button>
           <button type="button" data-active={feedback?.rating === "NOT_HELPFUL" || undefined} onClick={() => void submitFeedback(proposal, "NOT_HELPFUL")} title="标记为需改进"><ThumbsDown size={13} />需改进</button>
-        </div> : null}
-        <div className="ai-actions">{needsInput ? <>{needsInputTargets.length ? needsInputTargets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : <a className="primary-action" href="/planning">打开作品规划</a>}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭</button></> : <><button type="button" className="primary-action" onClick={() => void decide(proposal, "ACCEPTED")} disabled={decidingProposalId !== null}><Check size={14} />{decidingProposalId === proposal.id ? "处理中…" : proposal.action === "SUMMARIZE" ? "保留摘要" : proposal.action === "DRAFT" ? "应用到正文（整章替换）" : "全部应用到草稿"}</button>{proposal.action !== "SUMMARIZE" ? <button type="button" className="secondary-action" onClick={() => void decide(proposal, "PARTIALLY_ACCEPTED", selectedCandidateText(proposal))} disabled={decidingProposalId !== null || !selectedCandidateText(proposal).trim()}><Check size={14} />应用所选段落</button> : null}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />拒绝</button></>}</div>
+        </div></details> : null}
+        <div className="ai-actions">{needsInput ? <>{needsInputTargets.length ? needsInputTargets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : <a className="primary-action" href="/planning">打开作品规划</a>}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭</button></> : <><button type="button" className="primary-action" onClick={() => void decide(proposal, "ACCEPTED")} disabled={decidingProposalId !== null} title={proposal.action === "DRAFT" && visibleDraftAvailable ? "采用后将替换当前正文草稿" : undefined}><Check size={14} />{decidingProposalId === proposal.id ? "处理中…" : proposal.action === "SUMMARIZE" ? "保留摘要" : proposal.action === "DRAFT" ? "采用到正文草稿" : proposal.action === "CONTINUE" ? "追加到正文草稿" : "应用到正文草稿"}</button><button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />放弃候选</button></>}</div>
       </article>;
       })}
       {compareReviews.length === 2 ? <section className="proposal-compare">
@@ -533,7 +527,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
           </div>)}
         </div>
       </section> : null}
-      </> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>当前没有正文候选待审核</strong><span>{pendingReviews.length ? "检查报告已移到“创作准入”页签，这里只保留可以写入正文的候选。" : "生成结果会先停在这里，你确认后才会写入正文。"}</span></div></div>}
+      </> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>当前没有正文候选待确认</strong><span>{pendingReviews.length ? "检查报告已移到“创作准入”页签，这里只保留可以写入正文的候选。" : "生成结果会先停在这里，你确认后才会写入正文。"}</span></div></div>}
     </div> : null}
     {isReviewMode ? pendingReviews.length ? <section className="consistency-review-list" id="consistency-review-list" aria-label={reviewingManuscript ? "正文审核结果" : "创作准入结果"}>
       <div className="section-heading"><h3><ShieldCheck size={14} />{reviewingManuscript ? "正文审核结果" : "创作准入结果"}</h3><span>{pendingReviews.length} 条 · 只读报告</span></div>
@@ -543,7 +537,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
         const text = partialTexts[proposal.id] ?? proposal.outputText;
         const targets = needsInput ? findWritingGapTargets(text) : [];
         return <article className="proposal consistency-review" data-state={stale ? "stale" : needsInput ? "needs-input" : undefined} data-verdict={consistency?.verdict.toLowerCase()} key={proposal.id}>
-          <div className="proposal-meta"><strong>{reviewingManuscript ? "正文审核" : "创作准入"}</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{stale ? `审核已过期 · 原判断：${consistency ? consistencyVerdictLabels[consistency.verdict] : "需补资料"}` : consistency ? consistencyVerdictLabels[consistency.verdict] : needsInput ? "需补资料" : validation.status === "VALID" ? "审核完成" : validation.status === "WARNING" ? "需要检查" : "无效结果"} · {validation.characterCount} 字</span><code>{proposal.promptVersion}</code></div>
+          <div className="proposal-meta"><strong>{reviewingManuscript ? "正文审核" : "创作准入"}</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{stale ? `审核已过期 · 原判断：${consistency ? consistencyVerdictLabels[consistency.verdict] : "需补资料"}` : consistency ? consistencyVerdictLabels[consistency.verdict] : needsInput ? "需补资料" : validation.status === "VALID" ? "审核完成" : validation.status === "WARNING" ? "需要检查" : "无效结果"} · {validation.characterCount} 字</span></div>
           {validation.messages.length ? <div className="proposal-validation-messages">{validation.messages.map((message) => <span key={message}>{message}</span>)}</div> : null}
           {stale ? <div className="consistency-stale-notice"><strong>审核依据已经变化</strong><span>{reviewPolicy === "REQUIRED" ? "严格准入会暂停正文生成，直到按当前内容重新审核。" : "正文修订、章节执行卡、正式设定或审核模型配置已与生成报告时不同。这是一份历史报告，不再阻止当前生成。"}</span></div> : needsInput ? <div className="proposal-needs-input"><strong>当前资料不足以判断准入</strong><span>请先补齐审核报告列出的正式设定，再重新运行审核。</span></div> : null}
           {consistency ? <>
