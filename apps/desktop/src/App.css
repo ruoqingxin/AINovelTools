@@ -976,6 +976,8 @@ textarea:focus-visible,
   font-size: 10px;
 }
 
+.tab-count-info { color:#285dcb; background:#dfeaff; }
+
 .chapter-tabs button[data-active] {
   border-bottom-color: var(--accent);
   color: var(--accent-strong);
@@ -3367,6 +3369,14 @@ textarea:focus-visible,
 .focused-writing-panel { min-height:620px !important; }
 .focused-writing-panel .editor-toolbar { position:sticky; top:0; z-index:6; margin-top:0; }
 .focused-writing-panel .tiptap-editor { min-height:520px; }
+.focused-manuscript-panel { min-height:620px !important; }
+.manuscript-reader-body { min-height:520px; padding:24px 28px; border:1px solid #d7e0ef; border-radius:7px; background:#fff; cursor:text; }
+.candidate-sync-bar { position:sticky; bottom:0; z-index:7; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; margin-top:12px; padding:11px 12px; border:1px solid #d5e0ee; border-radius:7px; background:rgba(248,251,255,.98); box-shadow:0 -5px 18px rgba(45,73,112,.08); backdrop-filter:blur(8px); }
+.candidate-sync-bar > div { display:grid; min-width:0; gap:3px; }
+.candidate-sync-bar strong { color:#526985; font-size:11px; }
+.candidate-sync-bar span { color:#8797b0; font-size:9px; }
+.candidate-sync-bar[data-dirty] { border-color:#a9c2ef; background:rgba(243,247,255,.98); }
+.candidate-sync-bar[data-dirty] strong { color:#2f68d1; }
 .inspector-node-settings { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; margin-top:14px; padding:0 0 2px; border:0; background:transparent; }
 .inspector-name-field { min-width:0; }
 .inspector-node-settings label, .inspector-move-row label { display:grid; gap:6px; color:#64799b; font-size:11px; }
@@ -3586,6 +3596,8 @@ textarea:focus-visible,
   .chapter-focus-inspector .chapter-tab-panel { padding:14px 10px 6px; }
   .chapter-ai-savebar { grid-template-columns:1fr; }
   .chapter-ai-savebar > button { width:100%; }
+  .candidate-sync-bar { grid-template-columns:1fr; }
+  .candidate-sync-bar > button { width:100%; }
   .recovery-banner, .manuscript-version-tools { align-items:stretch; flex-direction:column; }
   .recovery-actions { width:100%; }
   .recovery-actions button { flex:1 1 0; }

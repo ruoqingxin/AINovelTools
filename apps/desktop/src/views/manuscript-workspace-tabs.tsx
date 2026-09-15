@@ -1,16 +1,17 @@
-import { FileClock, FilePlus2, PenLine, ShieldCheck } from "lucide-react";
+import { BookOpenText, FileClock, FilePlus2, PenLine, ShieldCheck } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
-export type ManuscriptWorkspaceTab = "editor" | "review" | "versions" | "extraction";
+export type ManuscriptWorkspaceTab = "manuscript" | "candidate" | "review" | "versions" | "extraction";
 
 const tabs = [
-  { value: "editor", label: "正文编辑", icon: PenLine },
+  { value: "manuscript", label: "正文浏览", icon: BookOpenText },
+  { value: "candidate", label: "候选区", icon: PenLine },
   { value: "review", label: "正文审核", icon: ShieldCheck },
   { value: "versions", label: "草稿与版本", icon: FileClock },
   { value: "extraction", label: "知识提取", icon: FilePlus2 },
 ] as const;
 
-export function ManuscriptWorkspaceTabs(props: { value: ManuscriptWorkspaceTab; onChange: (value: ManuscriptWorkspaceTab) => void; recoveryCount: number }) {
+export function ManuscriptWorkspaceTabs(props: { value: ManuscriptWorkspaceTab; onChange: (value: ManuscriptWorkspaceTab) => void; recoveryCount: number; candidateDirty: boolean }) {
   function moveFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     let nextIndex: number | null = null;
     if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
@@ -40,6 +41,7 @@ export function ManuscriptWorkspaceTabs(props: { value: ManuscriptWorkspaceTab; 
     >
       <Icon size={14} strokeWidth={1.8} />
       <span>{label}</span>
+      {value === "candidate" && props.candidateDirty ? <span className="tab-count tab-count-info">待同步</span> : null}
       {value === "versions" && props.recoveryCount > 0 ? <span className="tab-count" aria-label={`${props.recoveryCount} 次自动保护待处理`}>待处理</span> : null}
     </button>)}
   </div>;
