@@ -6,7 +6,7 @@ export type ChapterWorkspaceTab = "plan" | "readiness" | "review" | "ai";
 const tabs = [
   { value: "plan", label: "章节执行卡", icon: ClipboardList },
   { value: "readiness", label: "创作准备", icon: ClipboardCheck },
-  { value: "review", label: "一致性审核", icon: ShieldCheck },
+  { value: "review", label: "创作准入", icon: ShieldCheck },
   { value: "ai", label: "AI 创作", icon: Sparkles },
 ] as const;
 

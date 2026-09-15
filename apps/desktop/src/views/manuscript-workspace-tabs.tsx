@@ -1,10 +1,11 @@
-import { FileClock, FilePlus2, PenLine } from "lucide-react";
+import { FileClock, FilePlus2, PenLine, ShieldCheck } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
-export type ManuscriptWorkspaceTab = "editor" | "versions" | "extraction";
+export type ManuscriptWorkspaceTab = "editor" | "review" | "versions" | "extraction";
 
 const tabs = [
   { value: "editor", label: "正文编辑", icon: PenLine },
+  { value: "review", label: "正文审核", icon: ShieldCheck },
   { value: "versions", label: "版本与恢复", icon: FileClock },
   { value: "extraction", label: "知识提取", icon: FilePlus2 },
 ] as const;

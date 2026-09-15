@@ -154,7 +154,7 @@ describe("AiWritingPanel consistency review", () => {
       </QueryClientProvider>,
     );
 
-    const reviewButton = screen.getByRole("button", { name: "开始审核" });
+    const reviewButton = screen.getByRole("button", { name: "检查创作条件" });
     await waitFor(() => expect(reviewButton).toBeEnabled());
     fireEvent.click(reviewButton);
 
