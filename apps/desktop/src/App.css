@@ -1549,6 +1549,12 @@ textarea:focus-visible,
   border-top: 1px solid rgba(116, 139, 171, .2);
 }
 
+.manuscript-extraction-panel .chapter-extraction-panel {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .chapter-extraction-guidance {
   display: grid;
   gap: 5px;
@@ -2322,6 +2328,109 @@ textarea:focus-visible,
 
 .revision-history {
   margin-top: 22px;
+}
+
+.manuscript-stage-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.manuscript-stage-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.manuscript-stage-heading h2,
+.manuscript-stage-heading p {
+  margin: 0;
+}
+
+.manuscript-stage-heading h2 {
+  color: #2d456c;
+  font-size: 14px;
+}
+
+.manuscript-stage-heading p,
+.manuscript-stage-heading > span {
+  color: #7b8da9;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.manuscript-stage-heading > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.recovery-banner,
+.manuscript-version-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 13px;
+  border: 1px solid #d6e1f0;
+  border-radius: 7px;
+  background: #f8fbff;
+}
+
+.recovery-banner > div,
+.manuscript-version-tools > div,
+.manuscript-stage-gate {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.recovery-banner strong,
+.manuscript-version-tools strong,
+.manuscript-stage-gate strong {
+  color: #405a7d;
+  font-size: 11px;
+}
+
+.recovery-banner span,
+.manuscript-version-tools span,
+.manuscript-stage-gate span,
+.recovery-explanation {
+  color: #7d8ea7;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.recovery-banner button,
+.manuscript-version-tools button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.recovery-explanation {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border-left: 2px solid #a9b8ca;
+  background: #f8f9fb;
+}
+
+.manuscript-version-tools {
+  margin-top: 10px;
+}
+
+.manuscript-stage-gate {
+  justify-items: start;
+  padding: 18px;
+  border: 1px dashed #cbd9eb;
+  border-radius: 7px;
+  background: #f8fbff;
+}
+
+.manuscript-stage-gate button {
+  margin-top: 6px;
 }
 
 .revision-row {

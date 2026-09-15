@@ -97,7 +97,7 @@ export function AppShell() {
         </aside>
 
         <main className="workspace">
-          {recovery.data?.length ? <div className="global-recovery-banner" role="status">发现 {recovery.data.length} 条可恢复草稿，请进入对应章节处理。</div> : null}
+          {recovery.data?.length ? <div className="global-recovery-banner" role="status">发现 {recovery.data.length} 条异常草稿，请到正文页的“版本与恢复”中处理。</div> : null}
           <Outlet />
         </main>
 

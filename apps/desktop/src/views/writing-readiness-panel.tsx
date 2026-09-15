@@ -17,7 +17,6 @@ import {
   type WritingReadiness,
   type WritingReadinessItem,
 } from "../lib/writing-readiness";
-import { ChapterExtractionPanel } from "./chapter-extraction-panel";
 import { planningSectionGroups } from "./story-planning-workbench";
 
 const planningItems = planningSectionGroups.flatMap((group) => group.children);
@@ -250,6 +249,5 @@ export function WritingReadinessPanel(props: {
       {notice ? <p className="writing-readiness-notice" role="status">{notice}</p> : null}
       {error ? <p className="project-error writing-readiness-notice" role="alert">{error}</p> : null}
     </div> : null}
-    {!props.loading ? <ChapterExtractionPanel chapterId={props.chapterId} /> : null}
   </section>;
 }

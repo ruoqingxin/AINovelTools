@@ -1,16 +1,15 @@
-import { ClipboardCheck, ClipboardList, ShieldCheck, Sparkles } from "lucide-react";
+import { FileClock, FilePlus2, PenLine } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
-export type ChapterWorkspaceTab = "plan" | "readiness" | "review" | "ai";
+export type ManuscriptWorkspaceTab = "editor" | "versions" | "extraction";
 
 const tabs = [
-  { value: "plan", label: "章节执行卡", icon: ClipboardList },
-  { value: "readiness", label: "创作准备", icon: ClipboardCheck },
-  { value: "review", label: "一致性审核", icon: ShieldCheck },
-  { value: "ai", label: "AI 创作", icon: Sparkles },
+  { value: "editor", label: "正文编辑", icon: PenLine },
+  { value: "versions", label: "版本与恢复", icon: FileClock },
+  { value: "extraction", label: "知识提取", icon: FilePlus2 },
 ] as const;
 
-export function ChapterWorkspaceTabs(props: { value: ChapterWorkspaceTab; onChange: (value: ChapterWorkspaceTab) => void }) {
+export function ManuscriptWorkspaceTabs(props: { value: ManuscriptWorkspaceTab; onChange: (value: ManuscriptWorkspaceTab) => void; recoveryCount: number }) {
   function moveFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     let nextIndex: number | null = null;
     if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
@@ -21,15 +20,16 @@ export function ChapterWorkspaceTabs(props: { value: ChapterWorkspaceTab; onChan
     event.preventDefault();
     const next = tabs[nextIndex]!;
     props.onChange(next.value);
-    requestAnimationFrame(() => document.getElementById(`chapter-tab-${next.value}`)?.focus());
+    requestAnimationFrame(() => document.getElementById(`manuscript-tab-${next.value}`)?.focus());
   }
 
-  return <div className="chapter-tabs" role="tablist" aria-label="章节工作区页签">
+  return <div className="chapter-tabs" role="tablist" aria-label="正文工作区页签">
     {tabs.map(({ value, label, icon: Icon }, index) => <button
       type="button"
       role="tab"
-      id={`chapter-tab-${value}`}
-      aria-controls={`chapter-panel-${value}`}
+      aria-label={label}
+      id={`manuscript-tab-${value}`}
+      aria-controls={`manuscript-panel-${value}`}
       aria-selected={props.value === value}
       tabIndex={props.value === value ? 0 : -1}
       data-active={props.value === value || undefined}
@@ -39,6 +39,7 @@ export function ChapterWorkspaceTabs(props: { value: ChapterWorkspaceTab; onChan
     >
       <Icon size={14} strokeWidth={1.8} />
       <span>{label}</span>
+      {value === "versions" && props.recoveryCount > 0 ? <span className="tab-count" aria-label={`${props.recoveryCount} 条可找回草稿`}>{props.recoveryCount}</span> : null}
     </button>)}
   </div>;
 }
