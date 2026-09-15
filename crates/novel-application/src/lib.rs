@@ -295,7 +295,11 @@ mod tests {
         assert!(admission.user_prompt.contains("创作准入"));
         assert!(manuscript.user_prompt.contains("正文审核"));
         assert!(admission.user_prompt.contains("不得把正文审核结论"));
-        assert!(manuscript.user_prompt.contains("不得让本次结论参与写作准入"));
+        assert!(
+            manuscript
+                .user_prompt
+                .contains("不得让本次结论参与写作准入")
+        );
     }
 
     #[test]

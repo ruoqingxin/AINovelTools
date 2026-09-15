@@ -58,10 +58,8 @@ impl ReviewScopeBuilder {
         input: &ReviewClaimExtractionInput,
     ) -> Result<ContextPackage, ReviewContextError> {
         let (labels, scope) = purpose_labels(input.review_purpose);
-        let blocks_json =
-            serde_json::to_string(&input.blocks).map_err(|error| {
-                ReviewContextError::Serialization(error.to_string())
-            })?;
+        let blocks_json = serde_json::to_string(&input.blocks)
+            .map_err(|error| ReviewContextError::Serialization(error.to_string()))?;
         let task_contract = AiTaskContract {
             role: AiTaskRole::ReviewClaimExtractor,
             goal: format!("从{labels}中提取可逐字定位的待核对事实声明，不判断冲突。"),
@@ -146,8 +144,7 @@ impl ReviewScopeBuilder {
                 "只输出固定 JSON 对象。".to_owned(),
             ],
             uncertainty_policy:
-                "证据不足、证据与声明缺乏直接语义关系或无法形成互斥结论时返回 UNKNOWN。"
-                    .to_owned(),
+                "证据不足、证据与声明缺乏直接语义关系或无法形成互斥结论时返回 UNKNOWN。".to_owned(),
             output_contract: semantic_review_output_contract(),
         };
         let system_prompt = format!(
@@ -171,8 +168,7 @@ impl ReviewScopeBuilder {
                     kind: ContextSectionKind::AuthoritativeFacts,
                     priority: 0,
                     source_count: u16::try_from(input.claims.len()).unwrap_or(u16::MAX),
-                    included_chars: u32::try_from(claims_json.chars().count())
-                        .unwrap_or(u32::MAX),
+                    included_chars: u32::try_from(claims_json.chars().count()).unwrap_or(u32::MAX),
                     truncated: false,
                 },
                 ContextSectionAudit {
@@ -221,13 +217,16 @@ fn build_review_context(
     };
     let context_version = format!(
         "{:x}",
-        Sha256::digest(serde_json::to_string(&identity).unwrap_or_default().as_bytes())
+        Sha256::digest(
+            serde_json::to_string(&identity)
+                .unwrap_or_default()
+                .as_bytes()
+        )
     );
-    let estimated_input_tokens = u32::try_from(
-        (system_prompt.chars().count() + user_prompt.chars().count()).div_ceil(4),
-    )
-    .unwrap_or(u32::MAX)
-    .min(input_token_budget);
+    let estimated_input_tokens =
+        u32::try_from((system_prompt.chars().count() + user_prompt.chars().count()).div_ceil(4))
+            .unwrap_or(u32::MAX)
+            .min(input_token_budget);
     ContextPackage {
         chapter_id,
         target_revision_id,
@@ -247,14 +246,10 @@ fn build_review_context(
 
 fn purpose_labels(purpose: novel_domain::ReviewPurpose) -> (&'static str, &'static str) {
     match purpose {
-        novel_domain::ReviewPurpose::Admission => (
-            "创作准入",
-            "只提取执行卡和阶段约束中的准入声明。",
-        ),
-        novel_domain::ReviewPurpose::Manuscript => (
-            "正文审核",
-            "只提取正文明确写出的事实声明。",
-        ),
+        novel_domain::ReviewPurpose::Admission => {
+            ("创作准入", "只提取执行卡和阶段约束中的准入声明。")
+        }
+        novel_domain::ReviewPurpose::Manuscript => ("正文审核", "只提取正文明确写出的事实声明。"),
     }
 }
 
@@ -308,7 +303,11 @@ mod tests {
         })
         .expect("claim context");
         assert!(extraction.user_prompt.contains("林澈抵达城门"));
-        assert!(extraction.user_prompt.contains("人物死亡后不得再次正常出场"));
+        assert!(
+            extraction
+                .user_prompt
+                .contains("人物死亡后不得再次正常出场")
+        );
         assert!(!extraction.user_prompt.contains("无关作品全量摘要"));
 
         let semantic = ReviewScopeBuilder::semantic_review(&ReviewSemanticInput {

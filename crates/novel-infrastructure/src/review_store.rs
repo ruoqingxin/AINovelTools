@@ -28,9 +28,7 @@ impl ProjectManager {
         proposal_id: Uuid,
     ) -> Result<ReviewTrace, ReviewStoreError> {
         let session = self.current.as_ref().ok_or(ReviewStoreError::NoProject)?;
-        session
-            .database
-            .get_consistency_review_trace(proposal_id)
+        session.database.get_consistency_review_trace(proposal_id)
     }
 
     pub fn resolve_review_evidence(
@@ -91,11 +89,18 @@ impl ProjectManager {
         for claim in claims {
             let mut claim_evidence = Vec::new();
 
-            for (entity_id, revision) in &entity_revisions {
+            for entity in &entities {
+                let Some(revision) = entity_revisions.get(&entity.id) else {
+                    continue;
+                };
                 let content = format!(
-                    "{}：{}\n别名：{}\n固定属性：{}",
+                    "{}：{}\n状态：{}\n别名：{}\n固定属性：{}",
                     revision.name,
                     revision.description.trim(),
+                    match entity.lifecycle_status {
+                        EntityLifecycleStatus::Active => "ACTIVE",
+                        EntityLifecycleStatus::Archived => "ARCHIVED",
+                    },
                     if revision.aliases.is_empty() {
                         "无".to_owned()
                     } else {
@@ -113,7 +118,7 @@ impl ProjectManager {
                     claim_evidence.push(make_evidence(
                         claim,
                         "ENTITY",
-                        *entity_id,
+                        entity.id,
                         EvidenceAuthority::ConfirmedFact,
                         content,
                         format!("entity-revision:{}", revision.id),
@@ -123,12 +128,8 @@ impl ProjectManager {
             }
 
             for fact in &facts {
-                let relevance = record_match_score(
-                    claim,
-                    &fact.subject,
-                    &fact.predicate,
-                    &fact.object,
-                );
+                let relevance =
+                    record_match_score(claim, &fact.subject, &fact.predicate, &fact.object);
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
@@ -143,12 +144,8 @@ impl ProjectManager {
             }
 
             for entry in &world_state {
-                let relevance = record_match_score(
-                    claim,
-                    &entry.subject,
-                    &entry.predicate,
-                    &entry.object,
-                );
+                let relevance =
+                    record_match_score(claim, &entry.subject, &entry.predicate, &entry.object);
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
@@ -173,12 +170,7 @@ impl ProjectManager {
                     .get(&relation.to_knowledge_id)
                     .map_or("未知对象", String::as_str);
                 let content = format!("正式关系：{from} -> {} -> {to}", relation.relation_type);
-                let relevance = record_match_score(
-                    claim,
-                    from,
-                    &relation.relation_type,
-                    to,
-                );
+                let relevance = record_match_score(claim, from, &relation.relation_type, to);
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
@@ -196,8 +188,7 @@ impl ProjectManager {
                 let holder = fact_labels
                     .get(&belief.holder_knowledge_id)
                     .map_or("未识别角色", String::as_str);
-                let relevance =
-                    record_match_score(claim, holder, "认知/已知", &belief.proposition);
+                let relevance = record_match_score(claim, holder, "认知/已知", &belief.proposition);
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
@@ -219,12 +210,8 @@ impl ProjectManager {
                     .cloned()
                     .collect::<Vec<_>>()
                     .join("、");
-                let relevance = record_match_score(
-                    claim,
-                    &event.name,
-                    &participants,
-                    &event.occurred_at,
-                );
+                let relevance =
+                    record_match_score(claim, &event.name, &participants, &event.occurred_at);
                 if relevance > 0 {
                     claim_evidence.push(make_evidence(
                         claim,
@@ -248,12 +235,8 @@ impl ProjectManager {
             }
 
             for foreshadowing in &foreshadowings {
-                let relevance = record_match_score(
-                    claim,
-                    &foreshadowing.title,
-                    &foreshadowing.status,
-                    "",
-                );
+                let relevance =
+                    record_match_score(claim, &foreshadowing.title, &foreshadowing.status, "");
                 if relevance > 0
                     || foreshadowing.target_chapter_id == Some(chapter_id)
                         && claim.claim_type == ReviewClaimType::ForeshadowingWindow
@@ -431,20 +414,17 @@ fn parse_trace_json<T: serde::de::DeserializeOwned>(
     row: &rusqlite::Row<'_>,
     column: usize,
 ) -> rusqlite::Result<T> {
-    serde_json::from_str(&row.get::<_, String>(column)?)
-        .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
+    serde_json::from_str(&row.get::<_, String>(column)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
             column,
             rusqlite::types::Type::Text,
             Box::new(error),
-        ))
+        )
+    })
 }
 
 fn parse_text_error(column: usize, error: uuid::Error) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        column,
-        rusqlite::types::Type::Text,
-        Box::new(error),
-    )
+    rusqlite::Error::FromSqlConversionFailure(column, rusqlite::types::Type::Text, Box::new(error))
 }
 
 fn parse_uuid(value: String, column: usize) -> rusqlite::Result<Uuid> {
@@ -544,10 +524,8 @@ mod tests {
 
     #[test]
     fn resolves_entity_aliases_and_roundtrips_review_trace() {
-        let root = std::path::PathBuf::from("target").join(format!(
-            "ainovel-review-trace-{}",
-            Uuid::new_v4()
-        ));
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-review-trace-{}", Uuid::new_v4()));
         let mut manager = ProjectManager::new();
         manager.create(&root, "审核轨迹测试").expect("create");
         let chapter = manager
@@ -583,9 +561,11 @@ mod tests {
         let (evidence, _) = manager
             .resolve_review_evidence(chapter.id, std::slice::from_ref(&claim), "")
             .expect("evidence");
-        assert!(evidence.iter().any(|item| {
-            item.source_kind == "ENTITY" && item.excerpt.contains("林澈")
-        }));
+        assert!(
+            evidence
+                .iter()
+                .any(|item| { item.source_kind == "ENTITY" && item.excerpt.contains("林澈") })
+        );
 
         let profile = manager
             .upsert_model_profile(ModelProfileInput {

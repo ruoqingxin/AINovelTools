@@ -32,6 +32,7 @@ mod entity_store;
 mod extraction_store;
 mod knowledge_store;
 mod materials_store;
+mod review_rules;
 mod review_store;
 mod search_store;
 pub use ai::{
@@ -56,7 +57,6 @@ pub use extraction_store::{
 };
 pub use knowledge_store::KnowledgeStoreError;
 pub use materials_store::MaterialsStoreError;
-pub use review_store::ReviewStoreError;
 pub use novel_domain::{
     AiAction, AiProposal, AiProposalStatus, AiTaskStatus, Belief, CandidateStatus, ChangeSet,
     ChangeSetStatus, ContextAuthority, Entity, EntityError, EntityInput, EntityLifecycleStatus,
@@ -69,6 +69,10 @@ pub use novel_domain::{
     ReviewStageRequest, ReviewStatus, ReviewTrace, SummaryKind, SummaryMaterial, SummaryPrecision,
     WorldState, WorldStateEntry, WritingCard, WritingReviewPolicy,
 };
+pub use review_rules::{
+    DeterministicReviewEvaluator, DeterministicReviewInput, FIXED_RULE_VERSION,
+};
+pub use review_store::ReviewStoreError;
 pub use search_store::{SearchResult, SearchStoreError};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -3735,10 +3739,9 @@ mod tests {
             review.consistency.expect("consistency report").verdict,
             super::AiConsistencyVerdict::Blocked
         );
-        let manuscript_context =
-            context
-                .clone()
-                .with_review_purpose(super::ReviewPurpose::Manuscript);
+        let manuscript_context = context
+            .clone()
+            .with_review_purpose(super::ReviewPurpose::Manuscript);
         let manuscript_task = manager
             .create_ai_task(
                 profile.id,
@@ -3759,20 +3762,14 @@ mod tests {
         );
         assert_eq!(
             manager
-                .list_ai_proposal_reviews(
-                    chapter.id,
-                    Some(super::ReviewPurpose::Admission),
-                )
+                .list_ai_proposal_reviews(chapter.id, Some(super::ReviewPurpose::Admission),)
                 .expect("admission reviews")
                 .len(),
             1
         );
         assert_eq!(
             manager
-                .list_ai_proposal_reviews(
-                    chapter.id,
-                    Some(super::ReviewPurpose::Manuscript),
-                )
+                .list_ai_proposal_reviews(chapter.id, Some(super::ReviewPurpose::Manuscript),)
                 .expect("manuscript reviews")
                 .len(),
             1
@@ -3878,10 +3875,7 @@ mod tests {
         );
         assert_eq!(
             manager
-                .list_ai_proposal_reviews(
-                    chapter.id,
-                    Some(super::ReviewPurpose::Manuscript),
-                )
+                .list_ai_proposal_reviews(chapter.id, Some(super::ReviewPurpose::Manuscript),)
                 .expect("manuscript review remains open")
                 .first()
                 .and_then(|item| item.consistency.as_ref())

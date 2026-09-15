@@ -399,9 +399,7 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
 
     let mut output = String::new();
     if formal_by_id.is_empty() && !has_character_card {
-        output.push_str(
-            "正式知识召回：未检索到相关正式知识。当前作品尚未建立正式设定或人物卡。\n",
-        );
+        output.push_str("正式知识召回：未检索到相关正式知识。当前作品尚未建立正式设定或人物卡。\n");
     } else {
         output.push_str(
             "正式知识召回：以下内容来自当前作品已记录的正式设定或实体；未列出的内容按未知处理。\n",
@@ -411,7 +409,8 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
         "未决内容规则：未记录、明确未知、暂不决定、作者保留和 AI 建议都是有效状态。不得把未列出的信息补成已确认事实；可以提出候选，但必须明确标注为建议。\n",
     );
     if !has_character_card {
-        output.push_str("人物卡状态：尚未建立人物实体卡，可继续写作，并在正文保存后提取候选角色。\n");
+        output
+            .push_str("人物卡状态：尚未建立人物实体卡，可继续写作，并在正文保存后提取候选角色。\n");
     }
     if formal_by_id.contains_key("frame-narrative") && narrative_person.is_none() {
         output.push_str(

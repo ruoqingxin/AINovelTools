@@ -1927,7 +1927,9 @@ impl ProjectManager {
                     i64::try_from(output_price).unwrap_or(i64::MAX),
                     price_currency,
                     context.prompt_version,
-                    review_purpose.unwrap_or(ReviewPurpose::Admission).storage_key()
+                    review_purpose
+                        .unwrap_or(ReviewPurpose::Admission)
+                        .storage_key()
                 ],
             )
             .map_err(DatabaseError::from)?;

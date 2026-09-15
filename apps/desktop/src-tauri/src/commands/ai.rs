@@ -336,8 +336,7 @@ fn current_consistency_review_context_version(
         preference.prompt.context.include_project_knowledge,
         novel_infrastructure::AiTaskKind::ConsistencyReview.default_include_project_knowledge(),
     );
-    let reviewing_manuscript =
-        review_purpose == novel_infrastructure::ReviewPurpose::Manuscript;
+    let reviewing_manuscript = review_purpose == novel_infrastructure::ReviewPurpose::Manuscript;
     let input = novel_application::AssembleContextInput {
         chapter_id,
         target_revision_id,
@@ -363,9 +362,7 @@ fn current_consistency_review_context_version(
         return Ok(None);
     };
     Ok(Some(
-        context
-            .with_review_purpose(review_purpose)
-            .context_version,
+        context.with_review_purpose(review_purpose).context_version,
     ))
 }
 
@@ -3448,7 +3445,8 @@ pub(crate) fn list_ai_proposals(
             && review.proposal.status == novel_infrastructure::AiProposalStatus::Pending
     });
     if needs_freshness {
-        let freshness_purpose = review_purpose.unwrap_or(novel_infrastructure::ReviewPurpose::Admission);
+        let freshness_purpose =
+            review_purpose.unwrap_or(novel_infrastructure::ReviewPurpose::Admission);
         let current_context_version = current_consistency_review_context_version(
             &state,
             freshness_purpose,
@@ -3743,7 +3741,8 @@ fn review_stage_request(
             "SYSTEM:\n{}\n\nUSER:\n{}",
             context.system_prompt, context.user_prompt
         )),
-        response_preview: output.map(|value| truncate_text_to_char_budget(value, 2_000, "\n[已截断]")),
+        response_preview: output
+            .map(|value| truncate_text_to_char_budget(value, 2_000, "\n[已截断]")),
         parse_result: parse_result.into(),
         fallback_reason: fallback_reason.map(ToOwned::to_owned),
     }
@@ -4000,7 +3999,9 @@ fn review_finding_to_report(
     }
 }
 
-fn review_verdict(findings: &[novel_infrastructure::ReviewFinding]) -> novel_infrastructure::AiConsistencyVerdict {
+fn review_verdict(
+    findings: &[novel_infrastructure::ReviewFinding],
+) -> novel_infrastructure::AiConsistencyVerdict {
     if findings
         .iter()
         .any(|finding| finding.status == novel_infrastructure::ReviewStatus::Block)
@@ -4020,6 +4021,62 @@ fn review_verdict(findings: &[novel_infrastructure::ReviewFinding]) -> novel_inf
         return novel_infrastructure::AiConsistencyVerdict::NeedsInput;
     }
     novel_infrastructure::AiConsistencyVerdict::Pass
+}
+
+fn review_status_rank(status: novel_infrastructure::ReviewStatus) -> u8 {
+    match status {
+        novel_infrastructure::ReviewStatus::Pass => 0,
+        novel_infrastructure::ReviewStatus::Notice => 1,
+        novel_infrastructure::ReviewStatus::Unknown => 2,
+        novel_infrastructure::ReviewStatus::Warning => 3,
+        novel_infrastructure::ReviewStatus::Block => 4,
+    }
+}
+
+fn merge_review_findings(
+    deterministic_findings: &[novel_infrastructure::ReviewFinding],
+    model_findings: &[novel_infrastructure::ReviewFinding],
+) -> Vec<novel_infrastructure::ReviewFinding> {
+    let mut merged = deterministic_findings.to_vec();
+    let mut seen = deterministic_findings
+        .iter()
+        .map(|finding| {
+            (
+                finding.claim_id,
+                finding.rule_id.clone().unwrap_or_default(),
+                finding.problem.trim().to_owned(),
+            )
+        })
+        .collect::<HashSet<_>>();
+    for finding in model_findings {
+        let overridden_by_rule = deterministic_findings.iter().any(|rule_finding| {
+            rule_finding.claim_id == finding.claim_id
+                && review_status_rank(rule_finding.status) > review_status_rank(finding.status)
+        });
+        if overridden_by_rule {
+            continue;
+        }
+        let key = (
+            finding.claim_id,
+            finding.rule_id.clone().unwrap_or_default(),
+            finding.problem.trim().to_owned(),
+        );
+        if seen.insert(key) {
+            merged.push(finding.clone());
+        }
+    }
+    merged.sort_by(|left, right| {
+        review_status_rank(right.status)
+            .cmp(&review_status_rank(left.status))
+            .then_with(|| right.priority.cmp(&left.priority))
+            .then_with(|| {
+                u8::from(left.source_kind != novel_infrastructure::FindingSource::Rule).cmp(
+                    &u8::from(right.source_kind != novel_infrastructure::FindingSource::Rule),
+                )
+            })
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    merged
 }
 
 fn review_report_json(
@@ -4149,11 +4206,7 @@ async fn generate_consistency_review_proposal(
             .map_err(|_| ApiError::internal("project mutex poisoned"))?;
         sync_model_profile(&mut manager, &profile)?;
         manager
-            .create_ai_task(
-                profile_id,
-                &extraction_context,
-                Some(review_purpose),
-            )
+            .create_ai_task(profile_id, &extraction_context, Some(review_purpose))
             .map_err(ApiError::from)?
     };
     if let Err(error) = persist_ai_run_request(
@@ -4212,10 +4265,7 @@ async fn generate_consistency_review_proposal(
     let mut fallback_recorded = false;
     let mut stage_requests = vec![review_stage_request(
         novel_infrastructure::ReviewStage::ClaimExtraction,
-        claim_outcome
-            .fallback_profile
-            .as_ref()
-            .unwrap_or(&profile),
+        claim_outcome.fallback_profile.as_ref().unwrap_or(&profile),
         &extraction_context,
         Some(&claim_outcome.output),
         "PENDING",
@@ -4231,7 +4281,10 @@ async fn generate_consistency_review_proposal(
             let _ = manager.record_ai_task_fallback(
                 task_id,
                 active_profile.id,
-                claim_outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+                claim_outcome
+                    .fallback_reason
+                    .as_deref()
+                    .unwrap_or("UNKNOWN"),
             );
             fallback_recorded = true;
         }
@@ -4263,7 +4316,10 @@ async fn generate_consistency_review_proposal(
         omitted_items.push(novel_infrastructure::ReviewOmittedItem {
             item_type: "CLAIM".to_owned(),
             label: "声明总量".to_owned(),
-            reason: format!("为保证单次审核可控，仅复核前 80 条高优先声明，另有 {} 条未复核。", claims.len() - 80),
+            reason: format!(
+                "为保证单次审核可控，仅复核前 80 条高优先声明，另有 {} 条未复核。",
+                claims.len() - 80
+            ),
             claim_id: None,
         });
         claims.sort_by(|left, right| {
@@ -4284,6 +4340,30 @@ async fn generate_consistency_review_proposal(
             .map_err(ApiError::from)?
     };
     omitted_items.extend(evidence_omitted);
+    let target_text = blocks
+        .iter()
+        .map(|block| block.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let deterministic_findings = novel_infrastructure::DeterministicReviewEvaluator::evaluate(
+        &novel_infrastructure::DeterministicReviewInput {
+            review_purpose,
+            claims: &claims,
+            evidence: &evidence,
+            locked_rules: &locked_rules,
+            target_text: &target_text,
+        },
+    );
+    stage_requests.push(novel_infrastructure::ReviewStageRequest {
+        stage: novel_infrastructure::ReviewStage::DeterministicRules,
+        profile_id: None,
+        model_id: None,
+        request_context_version: extraction_context.context_version.clone(),
+        request_snapshot: None,
+        response_preview: None,
+        parse_result: format!("MATCHED_{}", deterministic_findings.len()),
+        fallback_reason: None,
+    });
     let mut model_findings = Vec::new();
     let mut summaries = Vec::new();
     for batch in claims.chunks(8) {
@@ -4350,10 +4430,7 @@ async fn generate_consistency_review_proposal(
                         rule_version: None,
                         priority: claim.importance,
                         problem: "语义复核批次调用失败，保留为待确认。".to_owned(),
-                        evidence_ids: batch_evidence
-                            .iter()
-                            .map(|item| item.id)
-                            .collect(),
+                        evidence_ids: batch_evidence.iter().map(|item| item.id).collect(),
                         suggestion: "检查模型连接后重新审核。".to_owned(),
                         confidence: 0,
                     });
@@ -4373,9 +4450,7 @@ async fn generate_consistency_review_proposal(
                 active_secret =
                     novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?;
             }
-            if !fallback_recorded
-                && let Ok(mut manager) = state.manager.lock()
-            {
+            if !fallback_recorded && let Ok(mut manager) = state.manager.lock() {
                 let _ = manager.record_ai_task_fallback(
                     task_id,
                     active_profile.id,
@@ -4393,8 +4468,7 @@ async fn generate_consistency_review_proposal(
                 },
             );
         }
-        let parsed =
-            parse_semantic_review(&outcome.output, batch, &batch_evidence);
+        let parsed = parse_semantic_review(&outcome.output, batch, &batch_evidence);
         let Ok((summary, findings, semantic_omitted)) = parsed else {
             stage_requests.push(review_stage_request(
                 novel_infrastructure::ReviewStage::SemanticReview,
@@ -4415,10 +4489,7 @@ async fn generate_consistency_review_proposal(
                     rule_version: None,
                     priority: claim.importance,
                     problem: "语义复核没有返回可解析的固定 JSON，保留为待确认。".to_owned(),
-                    evidence_ids: batch_evidence
-                        .iter()
-                        .map(|item| item.id)
-                        .collect(),
+                    evidence_ids: batch_evidence.iter().map(|item| item.id).collect(),
                     suggestion: "重试审核；若持续失败，请减少单次审核内容。".to_owned(),
                     confidence: 0,
                 });
@@ -4443,10 +4514,11 @@ async fn generate_consistency_review_proposal(
             outcome.fallback_reason.as_deref(),
         ));
     }
+    let merged_findings = merge_review_findings(&deterministic_findings, &model_findings);
     let verdict = if claims.is_empty() {
         novel_infrastructure::AiConsistencyVerdict::NeedsInput
     } else {
-        review_verdict(&model_findings)
+        review_verdict(&merged_findings)
     };
     let summary = if claims.is_empty() {
         "没有提取到可逐字定位的事实声明，当前无法完成一致性裁决。".to_owned()
@@ -4460,7 +4532,7 @@ async fn generate_consistency_review_proposal(
     let report_json = review_report_json(
         &summary,
         verdict,
-        &model_findings,
+        &merged_findings,
         &evidence,
         &omitted_items,
     )?;
@@ -4472,7 +4544,7 @@ async fn generate_consistency_review_proposal(
         context_version: extraction_context.context_version.clone(),
         claims,
         evidence,
-        deterministic_findings: Vec::new(),
+        deterministic_findings,
         model_findings,
         omitted_items,
         stage_requests,
@@ -4839,9 +4911,12 @@ mod review_pipeline_tests {
                 }
             ]
         }"#;
-        let (claims, omitted) =
-            parse_review_claims(novel_infrastructure::ReviewPurpose::Manuscript, output, &blocks)
-                .expect("claims");
+        let (claims, omitted) = parse_review_claims(
+            novel_infrastructure::ReviewPurpose::Manuscript,
+            output,
+            &blocks,
+        )
+        .expect("claims");
         assert_eq!(claims.len(), 1);
         assert_eq!(claims[0].start_offset, 0);
         assert_eq!(claims[0].end_offset, 6);
@@ -4875,5 +4950,44 @@ mod review_pipeline_tests {
             novel_infrastructure::ReviewStatus::Unknown
         );
         assert!(findings[0].problem.contains("没有正式证据"));
+    }
+
+    #[test]
+    fn deterministic_block_survives_a_model_pass() {
+        let claim_id = uuid::Uuid::new_v4();
+        let rule_finding = novel_infrastructure::ReviewFinding {
+            id: uuid::Uuid::new_v4(),
+            claim_id,
+            status: novel_infrastructure::ReviewStatus::Block,
+            severity: "BLOCKER".to_owned(),
+            source_kind: novel_infrastructure::FindingSource::Rule,
+            rule_id: Some("FACT_OBJECT_CONFLICT".to_owned()),
+            rule_version: Some("1".to_owned()),
+            priority: 5,
+            problem: "与正式事实冲突。".to_owned(),
+            evidence_ids: vec![uuid::Uuid::new_v4()],
+            suggestion: "按正式事实修改。".to_owned(),
+            confidence: 100,
+        };
+        let model_finding = novel_infrastructure::ReviewFinding {
+            id: uuid::Uuid::new_v4(),
+            claim_id,
+            status: novel_infrastructure::ReviewStatus::Pass,
+            severity: "INFO".to_owned(),
+            source_kind: novel_infrastructure::FindingSource::Llm,
+            rule_id: None,
+            rule_version: None,
+            priority: 5,
+            problem: "模型认为没有冲突。".to_owned(),
+            evidence_ids: Vec::new(),
+            suggestion: String::new(),
+            confidence: 80,
+        };
+
+        let merged = merge_review_findings(std::slice::from_ref(&rule_finding), &[model_finding]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].id, rule_finding.id);
+        assert_eq!(merged[0].status, novel_infrastructure::ReviewStatus::Block);
     }
 }

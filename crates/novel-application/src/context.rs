@@ -317,10 +317,7 @@ impl ContextPackage {
                 "本次只检查当前已成稿正文是否违反已确认事实或正式约束。不得让本次结论参与写作准入。",
             ),
         };
-        self.user_prompt = format!(
-            "[P0 审核用途：{label}]\n{scope}\n\n{}",
-            self.user_prompt
-        );
+        self.user_prompt = format!("[P0 审核用途：{label}]\n{scope}\n\n{}", self.user_prompt);
         "r5.2-review-purpose-v1".clone_into(&mut self.prompt_version);
         let canonical = serde_json::json!({
             "previousContextVersion": self.context_version,
@@ -542,7 +539,10 @@ impl ContextAssembler {
                 format!(
                     "{}\n{}",
                     non_empty_or(input.scope_label.trim().to_owned(), "当前作品"),
-                    non_empty_or(input.scope_content.trim().to_owned(), "未提供额外范围材料。")
+                    non_empty_or(
+                        input.scope_content.trim().to_owned(),
+                        "未提供额外范围材料。"
+                    )
                 ),
                 u16::from(!input.scope_content.trim().is_empty()),
             ),
@@ -584,10 +584,7 @@ impl ContextAssembler {
                 ContextSectionKind::References,
                 6,
                 "其他参考",
-                non_empty_or(
-                    retrieval.references.clone(),
-                    "本次没有其他参考资料。",
-                ),
+                non_empty_or(retrieval.references.clone(), "本次没有其他参考资料。"),
                 retrieval.reference_count,
             ),
         ];
