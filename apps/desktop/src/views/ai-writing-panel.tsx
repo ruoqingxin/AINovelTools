@@ -8,6 +8,7 @@ import {
   decideAiProposal,
   errorMessage,
   generateAiProposal,
+  getConsistencyReviewTrace,
   getWritingReviewPolicy,
   listAiRuns,
   listAiProposals,
@@ -23,6 +24,7 @@ import {
   type AiProposalReview,
   type ConsistencyReviewFreshness,
   type ReviewPurpose,
+  type ReviewTrace,
   type WritingReviewPolicy,
 } from "../lib/tauri-client";
 import { classifyAiFailure } from "../lib/ai-failure";
@@ -51,6 +53,13 @@ const consistencySeverityLabels: Record<AiConsistencySeverity, string> = {
   MAJOR: "严重",
   MINOR: "一般",
   INFO: "提示",
+};
+const reviewStatusLabels: Record<ReviewTrace["modelFindings"][number]["status"], string> = {
+  PASS: "通过",
+  NOTICE: "提示",
+  WARNING: "警告",
+  BLOCK: "阻断",
+  UNKNOWN: "无法确认",
 };
 
 function consistencyAdmission(
@@ -198,6 +207,40 @@ type ProposalAnchor = {
 };
 
 export type AiWritingPanelMode = "readiness" | "create" | "review";
+
+function ReviewTraceDetails(props: { proposalId: string }) {
+  const trace = useQuery({
+    queryKey: ["review-trace", props.proposalId],
+    queryFn: () => getConsistencyReviewTrace(props.proposalId),
+  });
+  if (trace.isPending) return <p className="consistency-trace-loading">正在读取声明与证据…</p>;
+  if (trace.isError) return <p className="project-error" role="alert">审核依据加载失败：{errorMessage(trace.error)}</p>;
+  const data = trace.data;
+  const evidenceByClaim = new Map<string, ReviewTrace["evidence"]>();
+  for (const item of data.evidence) {
+    const current = evidenceByClaim.get(item.claimId) ?? [];
+    current.push(item);
+    evidenceByClaim.set(item.claimId, current);
+  }
+  const findings = [...data.deterministicFindings, ...data.modelFindings];
+  return <details className="consistency-trace">
+    <summary>查看声明与依据<span>{data.claims.length} 条声明 · {data.evidence.length} 条证据{data.omittedItems.length ? ` · ${data.omittedItems.length} 项未检查` : ""}</span></summary>
+    {data.claims.length ? <div className="consistency-claims">
+      {data.claims.map((claim) => {
+        const claimFindings = findings.filter((finding) => finding.claimId === claim.id);
+        const claimEvidence = evidenceByClaim.get(claim.id) ?? [];
+        return <article key={claim.id}>
+          <div className="proposal-meta"><strong>{claim.claimType}</strong><span>重要性 {claim.importance} · 置信度 {claim.confidence}</span></div>
+          <blockquote>{claim.quote}</blockquote>
+          <p>{claim.subject} · {claim.predicate} · {claim.object}</p>
+          {claimFindings.length ? <div className="consistency-claim-findings">{claimFindings.map((finding) => <span data-status={finding.status.toLowerCase()} key={finding.id}>{reviewStatusLabels[finding.status]} · {finding.sourceKind === "RULE" ? `规则 ${finding.ruleId ?? ""}` : finding.sourceKind === "MERGED" ? "规则与模型合并" : "模型复核"}</span>)}</div> : null}
+          {claimEvidence.length ? <ul>{claimEvidence.map((evidence) => <li key={evidence.id}><small>{evidence.sourceKind} · {evidence.authority} · {evidence.sourceRevision}</small><p>{evidence.excerpt}</p></li>)}</ul> : <p className="consistency-no-evidence">没有找到与这条声明对应的正式证据。</p>}
+        </article>;
+      })}
+    </div> : <p className="consistency-no-evidence">提取阶段没有保留可逐字定位的声明。</p>}
+    {data.omittedItems.length ? <div className="consistency-omitted"><strong>未检查项</strong>{data.omittedItems.map((item, index) => <p key={`${item.itemType}-${index}`}><span>{item.label}</span>{item.reason}</p>)}</div> : null}
+  </details>;
+}
 
 export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null; onOpenAdmissionReview?: () => void }) {
   const client = useQueryClient();
@@ -569,7 +612,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     </div> : null}
     {isReviewMode ? pendingReviews.length ? <section className="consistency-review-list" id="consistency-review-list" aria-label={reviewingManuscript ? "正文审核结果" : "创作准入结果"}>
       <div className="section-heading"><h3><ShieldCheck size={14} />{reviewingManuscript ? "正文审核结果" : "创作准入结果"}</h3><span>{pendingReviews.length} 条 · 只读报告</span></div>
-      {pendingReviews.map(({ proposal, validation, consistency, consistencyFreshness }) => {
+      {pendingReviews.map(({ proposal, validation, consistency, consistencyFreshness, hasReviewTrace }) => {
         const needsInput = validation.status === "NEEDS_INPUT";
         const stale = consistencyFreshness === "STALE";
         const text = partialTexts[proposal.id] ?? proposal.outputText;
@@ -590,6 +633,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
             </div>)}</div> : null}
             {consistency.parseWarnings.length ? <div className="consistency-parse-warnings">{consistency.parseWarnings.map((warning) => <span key={warning}>{warning}</span>)}</div> : null}
           </> : <pre>{text}</pre>}
+          {hasReviewTrace ? <ReviewTraceDetails proposalId={proposal.id} /> : null}
           <details className="consistency-raw"><summary>查看原始报告</summary><pre>{text}</pre></details>
           <div className="ai-actions">{stale ? <button type="button" className="primary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={generationLocked || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />按当前内容重新审核</button> : consistency && (consistency.verdict === "BLOCKED" || consistency.verdict === "REVIEW") ? <a className="primary-action" href={`/chapters#${props.chapterId}`}>查看设定与执行卡</a> : null}{!stale && needsInput && targets.length ? targets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : null}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭审核</button></div>
         </article>;

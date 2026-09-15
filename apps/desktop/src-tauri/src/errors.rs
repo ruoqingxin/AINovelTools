@@ -188,3 +188,20 @@ impl From<novel_infrastructure::AiError> for ApiError {
         }
     }
 }
+
+impl From<novel_infrastructure::ReviewStoreError> for ApiError {
+    fn from(error: novel_infrastructure::ReviewStoreError) -> Self {
+        let code = match error {
+            novel_infrastructure::ReviewStoreError::NoProject => "NO_PROJECT_OPEN",
+            novel_infrastructure::ReviewStoreError::MissingTrace(_) => "NOT_FOUND",
+            novel_infrastructure::ReviewStoreError::Serialization(_)
+            | novel_infrastructure::ReviewStoreError::Evidence(_) => "INVALID_INPUT",
+            novel_infrastructure::ReviewStoreError::Sqlite(_)
+            | novel_infrastructure::ReviewStoreError::Database(_) => "DATABASE_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}

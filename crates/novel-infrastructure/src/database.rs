@@ -932,6 +932,29 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (42, 'review_purpose_split');",
             )?;
         }
+        if applied.unwrap_or(0) < 43 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS ai_review_traces (
+                    run_id TEXT PRIMARY KEY NOT NULL,
+                    review_purpose TEXT NOT NULL
+                        CHECK(review_purpose IN ('ADMISSION','MANUSCRIPT')),
+                    chapter_id TEXT NOT NULL,
+                    target_revision_id TEXT,
+                    context_version TEXT NOT NULL,
+                    claims_json TEXT NOT NULL CHECK(json_valid(claims_json)),
+                    evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
+                    deterministic_findings_json TEXT NOT NULL
+                        CHECK(json_valid(deterministic_findings_json)),
+                    model_findings_json TEXT NOT NULL CHECK(json_valid(model_findings_json)),
+                    omitted_items_json TEXT NOT NULL CHECK(json_valid(omitted_items_json)),
+                    stage_requests_json TEXT NOT NULL CHECK(json_valid(stage_requests_json)),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_ai_review_traces_chapter_purpose
+                    ON ai_review_traces(chapter_id, review_purpose, created_at DESC);
+                INSERT INTO schema_migrations (version, name) VALUES (43, 'ai_review_traces');",
+            )?;
+        }
         Ok(())
     }
 

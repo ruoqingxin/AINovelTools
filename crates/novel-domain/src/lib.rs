@@ -8,10 +8,15 @@ use thiserror::Error;
 use uuid::Uuid;
 mod entity;
 mod materials;
+mod review;
 pub use entity::{
     Entity, EntityError, EntityInput, EntityLifecycleStatus, EntityRevision, EntityType,
 };
 pub use materials::{SummaryKind, SummaryMaterial, SummaryPrecision, WritingCard};
+pub use review::{
+    EvidenceAuthority, FindingSource, ReviewClaim, ReviewClaimType, ReviewEvidence, ReviewFinding,
+    ReviewOmittedItem, ReviewStage, ReviewStageRequest, ReviewStatus, ReviewTrace,
+};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

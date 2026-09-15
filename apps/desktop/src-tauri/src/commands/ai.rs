@@ -92,6 +92,70 @@ struct ChapterExtractionAiItem {
     status: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewClaimExtractionResponse {
+    #[serde(default)]
+    claims: Vec<ExtractedReviewClaim>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExtractedReviewClaim {
+    #[serde(rename = "type")]
+    claim_type: String,
+    subject: String,
+    predicate: String,
+    object: String,
+    quote: String,
+    block_id: String,
+    #[serde(default = "default_claim_importance")]
+    importance: u8,
+    #[serde(default)]
+    confidence: u8,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SemanticReviewResponse {
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    findings: Vec<SemanticReviewFinding>,
+    #[serde(default)]
+    omitted: Vec<SemanticReviewOmitted>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SemanticReviewFinding {
+    claim_id: String,
+    status: String,
+    #[serde(default)]
+    severity: String,
+    #[serde(default)]
+    problem: String,
+    #[serde(default)]
+    evidence_ids: Vec<String>,
+    #[serde(default)]
+    suggestion: String,
+    #[serde(default)]
+    confidence: u8,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SemanticReviewOmitted {
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    reason: String,
+}
+
+fn default_claim_importance() -> u8 {
+    3
+}
+
 const PLANNING_CONTEXT_RESERVE_TOKENS: u32 = 2_048;
 const EXTRACTION_PROMPT_VERSION: &str = "r5.1-chapter-extraction-v2";
 
@@ -3407,6 +3471,20 @@ pub(crate) fn list_ai_proposals(
 }
 
 #[tauri::command]
+pub(crate) fn get_consistency_review_trace(
+    state: tauri::State<'_, ProjectState>,
+    proposal_id: uuid::Uuid,
+) -> Result<novel_infrastructure::ReviewTrace, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .get_consistency_review_trace(proposal_id)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn rate_ai_proposal(
     state: tauri::State<'_, ProjectState>,
     id: uuid::Uuid,
@@ -3509,6 +3587,914 @@ pub(crate) fn cancel_ai_task(
     Ok(())
 }
 
+fn parse_json_object<T: serde::de::DeserializeOwned>(output: &str) -> Result<T, ()> {
+    let cleaned = output
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    let json = cleaned
+        .find('{')
+        .and_then(|start| cleaned.rfind('}').map(|end| &cleaned[start..=end]))
+        .unwrap_or(cleaned);
+    serde_json::from_str(json).map_err(|_| ())
+}
+
+fn review_claim_type_allowed(
+    purpose: novel_infrastructure::ReviewPurpose,
+    claim_type: novel_infrastructure::ReviewClaimType,
+) -> bool {
+    match purpose {
+        novel_infrastructure::ReviewPurpose::Admission => matches!(
+            claim_type,
+            novel_infrastructure::ReviewClaimType::RequiredEvent
+                | novel_infrastructure::ReviewClaimType::ForbiddenEvent
+                | novel_infrastructure::ReviewClaimType::AllowedCharacter
+                | novel_infrastructure::ReviewClaimType::StageBoundary
+                | novel_infrastructure::ReviewClaimType::ForeshadowingWindow
+                | novel_infrastructure::ReviewClaimType::PlanDependency
+        ),
+        novel_infrastructure::ReviewPurpose::Manuscript => matches!(
+            claim_type,
+            novel_infrastructure::ReviewClaimType::CharacterStatus
+                | novel_infrastructure::ReviewClaimType::CharacterLocation
+                | novel_infrastructure::ReviewClaimType::AbilityOrRealm
+                | novel_infrastructure::ReviewClaimType::ItemPossession
+                | novel_infrastructure::ReviewClaimType::Relation
+                | novel_infrastructure::ReviewClaimType::KnowledgeBoundary
+        ),
+    }
+}
+
+fn parse_review_claims(
+    purpose: novel_infrastructure::ReviewPurpose,
+    output: &str,
+    blocks: &[novel_application::ReviewSourceBlock],
+) -> Result<
+    (
+        Vec<novel_infrastructure::ReviewClaim>,
+        Vec<novel_infrastructure::ReviewOmittedItem>,
+    ),
+    (),
+> {
+    let response: ReviewClaimExtractionResponse = parse_json_object(output)?;
+    let mut claims = Vec::new();
+    let mut omitted = Vec::new();
+    let mut seen = HashSet::new();
+    for candidate in response.claims {
+        let claim_type = novel_infrastructure::ReviewClaimType::parse(&candidate.claim_type);
+        let Some(claim_type) = claim_type else {
+            omitted.push(novel_infrastructure::ReviewOmittedItem {
+                item_type: "CLAIM".to_owned(),
+                label: candidate.quote.clone(),
+                reason: "声明类型不在当前审核用途允许的第一版范围内。".to_owned(),
+                claim_id: None,
+            });
+            continue;
+        };
+        if !review_claim_type_allowed(purpose, claim_type) {
+            omitted.push(novel_infrastructure::ReviewOmittedItem {
+                item_type: "CLAIM".to_owned(),
+                label: candidate.quote.clone(),
+                reason: "声明类型不属于当前审核用途。".to_owned(),
+                claim_id: None,
+            });
+            continue;
+        }
+        let Some(block) = blocks
+            .iter()
+            .find(|block| block.block_id == candidate.block_id)
+        else {
+            omitted.push(novel_infrastructure::ReviewOmittedItem {
+                item_type: "CLAIM".to_owned(),
+                label: candidate.quote.clone(),
+                reason: format!("找不到对应正文块：{}。", candidate.block_id),
+                claim_id: None,
+            });
+            continue;
+        };
+        let Some((start_offset, end_offset)) = locate_quote(&block.text, &candidate.quote) else {
+            omitted.push(novel_infrastructure::ReviewOmittedItem {
+                item_type: "CLAIM".to_owned(),
+                label: candidate.quote.clone(),
+                reason: "quote 无法在对应正文块中逐字定位。".to_owned(),
+                claim_id: None,
+            });
+            continue;
+        };
+        let subject = candidate.subject.trim();
+        let predicate = candidate.predicate.trim();
+        let object = candidate.object.trim();
+        if subject.is_empty() || predicate.is_empty() || object.is_empty() {
+            omitted.push(novel_infrastructure::ReviewOmittedItem {
+                item_type: "CLAIM".to_owned(),
+                label: candidate.quote.clone(),
+                reason: "主体、谓词或结论为空。".to_owned(),
+                claim_id: None,
+            });
+            continue;
+        }
+        let dedupe_key = format!(
+            "{}:{}:{}:{}:{}",
+            claim_type as u8,
+            subject.to_lowercase(),
+            predicate.to_lowercase(),
+            object.to_lowercase(),
+            candidate.block_id
+        );
+        if !seen.insert(dedupe_key) {
+            continue;
+        }
+        claims.push(novel_infrastructure::ReviewClaim {
+            id: uuid::Uuid::new_v4(),
+            claim_type,
+            subject: subject.to_owned(),
+            predicate: predicate.to_owned(),
+            object: object.to_owned(),
+            quote: candidate.quote.trim().to_owned(),
+            block_id: candidate.block_id,
+            start_offset,
+            end_offset,
+            importance: candidate.importance.clamp(1, 5),
+            confidence: candidate.confidence.min(100),
+        });
+        if claims.len() >= 120 {
+            break;
+        }
+    }
+    Ok((claims, omitted))
+}
+
+fn review_stage_request(
+    stage: novel_infrastructure::ReviewStage,
+    profile: &novel_infrastructure::ModelProfile,
+    context: &novel_application::ContextPackage,
+    output: Option<&str>,
+    parse_result: impl Into<String>,
+    fallback_reason: Option<&str>,
+) -> novel_infrastructure::ReviewStageRequest {
+    novel_infrastructure::ReviewStageRequest {
+        stage,
+        profile_id: Some(profile.id),
+        model_id: Some(profile.model_id.clone()),
+        request_context_version: context.context_version.clone(),
+        request_snapshot: Some(format!(
+            "SYSTEM:\n{}\n\nUSER:\n{}",
+            context.system_prompt, context.user_prompt
+        )),
+        response_preview: output.map(|value| truncate_text_to_char_budget(value, 2_000, "\n[已截断]")),
+        parse_result: parse_result.into(),
+        fallback_reason: fallback_reason.map(ToOwned::to_owned),
+    }
+}
+
+fn parse_semantic_review(
+    output: &str,
+    claims: &[novel_infrastructure::ReviewClaim],
+    evidence: &[novel_infrastructure::ReviewEvidence],
+) -> Result<
+    (
+        String,
+        Vec<novel_infrastructure::ReviewFinding>,
+        Vec<novel_infrastructure::ReviewOmittedItem>,
+    ),
+    (),
+> {
+    let response: SemanticReviewResponse = parse_json_object(output)?;
+    let claim_ids = claims.iter().map(|claim| claim.id).collect::<HashSet<_>>();
+    let evidence_by_id = evidence
+        .iter()
+        .map(|item| (item.id, item))
+        .collect::<HashMap<_, _>>();
+    let evidence_by_claim = evidence.iter().fold(
+        HashMap::<uuid::Uuid, HashSet<uuid::Uuid>>::new(),
+        |mut map, item| {
+            map.entry(item.claim_id).or_default().insert(item.id);
+            map
+        },
+    );
+    let mut findings = Vec::new();
+    let mut omitted = response
+        .omitted
+        .into_iter()
+        .map(|item| novel_infrastructure::ReviewOmittedItem {
+            item_type: "MODEL_OMISSION".to_owned(),
+            label: if item.label.trim().is_empty() {
+                "模型未说明".to_owned()
+            } else {
+                item.label
+            },
+            reason: if item.reason.trim().is_empty() {
+                "模型未提供原因。".to_owned()
+            } else {
+                item.reason
+            },
+            claim_id: None,
+        })
+        .collect::<Vec<_>>();
+    let mut seen_claim_ids = HashSet::new();
+    for candidate in response.findings {
+        let Ok(claim_id) = uuid::Uuid::parse_str(&candidate.claim_id) else {
+            omitted.push(novel_infrastructure::ReviewOmittedItem {
+                item_type: "FINDING".to_owned(),
+                label: candidate.problem,
+                reason: "finding.claimId 不是有效 UUID。".to_owned(),
+                claim_id: None,
+            });
+            continue;
+        };
+        if !claim_ids.contains(&claim_id) || !seen_claim_ids.insert(claim_id) {
+            omitted.push(novel_infrastructure::ReviewOmittedItem {
+                item_type: "FINDING".to_owned(),
+                label: candidate.problem,
+                reason: "finding.claimId 不属于当前批次或重复。".to_owned(),
+                claim_id: Some(claim_id),
+            });
+            continue;
+        }
+        let allowed_evidence = evidence_by_claim.get(&claim_id);
+        let evidence_ids = candidate
+            .evidence_ids
+            .iter()
+            .filter_map(|value| uuid::Uuid::parse_str(value).ok())
+            .filter(|id| {
+                allowed_evidence.is_some_and(|allowed| allowed.contains(id))
+                    && evidence_by_id.contains_key(id)
+            })
+            .collect::<Vec<_>>();
+        let mut status = parse_review_status(&candidate.status);
+        let mut problem = candidate.problem.trim().to_owned();
+        if evidence_ids.is_empty() {
+            status = novel_infrastructure::ReviewStatus::Unknown;
+            if !problem.is_empty() {
+                problem.push(' ');
+            }
+            problem.push_str("（没有正式证据，已按 UNKNOWN 处理。）");
+        }
+        findings.push(novel_infrastructure::ReviewFinding {
+            id: uuid::Uuid::new_v4(),
+            claim_id,
+            status,
+            severity: normalize_review_severity(&candidate.severity).to_owned(),
+            source_kind: novel_infrastructure::FindingSource::Llm,
+            rule_id: None,
+            rule_version: None,
+            priority: claim_priority(claim_id, claims),
+            problem: if problem.is_empty() {
+                "模型未提供问题说明。".to_owned()
+            } else {
+                problem
+            },
+            evidence_ids,
+            suggestion: candidate.suggestion.trim().to_owned(),
+            confidence: candidate.confidence.min(100),
+        });
+    }
+    for claim in claims {
+        if !seen_claim_ids.contains(&claim.id) {
+            findings.push(novel_infrastructure::ReviewFinding {
+                id: uuid::Uuid::new_v4(),
+                claim_id: claim.id,
+                status: novel_infrastructure::ReviewStatus::Unknown,
+                severity: "INFO".to_owned(),
+                source_kind: novel_infrastructure::FindingSource::Llm,
+                rule_id: None,
+                rule_version: None,
+                priority: claim.importance,
+                problem: "语义复核没有返回这条声明的结论，保留为待确认。".to_owned(),
+                evidence_ids: evidence
+                    .iter()
+                    .filter(|item| item.claim_id == claim.id)
+                    .map(|item| item.id)
+                    .collect(),
+                suggestion: "补充正式依据后重新审核。".to_owned(),
+                confidence: 0,
+            });
+        }
+    }
+    Ok((response.summary.trim().to_owned(), findings, omitted))
+}
+
+fn claim_priority(claim_id: uuid::Uuid, claims: &[novel_infrastructure::ReviewClaim]) -> u8 {
+    claims
+        .iter()
+        .find(|claim| claim.id == claim_id)
+        .map_or(3, |claim| claim.importance)
+}
+
+fn parse_review_status(value: &str) -> novel_infrastructure::ReviewStatus {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "PASS" => novel_infrastructure::ReviewStatus::Pass,
+        "NOTICE" => novel_infrastructure::ReviewStatus::Notice,
+        "WARNING" => novel_infrastructure::ReviewStatus::Warning,
+        "BLOCK" => novel_infrastructure::ReviewStatus::Block,
+        _ => novel_infrastructure::ReviewStatus::Unknown,
+    }
+}
+
+fn normalize_review_severity(value: &str) -> &'static str {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "BLOCKER" => "BLOCKER",
+        "MAJOR" => "MAJOR",
+        "MINOR" => "MINOR",
+        _ => "INFO",
+    }
+}
+
+fn review_target_blocks(
+    purpose: novel_infrastructure::ReviewPurpose,
+    chapter_plan: &str,
+    volume_plan: &str,
+    document_json: &str,
+) -> Result<Vec<novel_application::ReviewSourceBlock>, ApiError> {
+    if purpose == novel_infrastructure::ReviewPurpose::Manuscript {
+        let blocks = manuscript_blocks(document_json)?
+            .into_iter()
+            .map(|(block_id, text)| novel_application::ReviewSourceBlock { block_id, text })
+            .collect::<Vec<_>>();
+        if blocks.is_empty() {
+            return Err(ApiError {
+                code: "INVALID_INPUT",
+                message: "当前正文没有可审核的文字块。".to_owned(),
+            });
+        }
+        return Ok(blocks);
+    }
+    let mut blocks = Vec::new();
+    if !chapter_plan.trim().is_empty() {
+        blocks.push(novel_application::ReviewSourceBlock {
+            block_id: "chapter-plan".to_owned(),
+            text: chapter_plan.trim().to_owned(),
+        });
+    }
+    if !volume_plan.trim().is_empty() {
+        blocks.push(novel_application::ReviewSourceBlock {
+            block_id: "volume-plan".to_owned(),
+            text: volume_plan.trim().to_owned(),
+        });
+    }
+    if blocks.is_empty() {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "请先填写章节执行卡或分卷阶段约束。".to_owned(),
+        });
+    }
+    Ok(blocks)
+}
+
+fn review_locked_rules(manager: &novel_infrastructure::ProjectManager) -> String {
+    let sections = manager.list_planning_sections().unwrap_or_default();
+    let mut output = sections
+        .into_iter()
+        .filter(|section| {
+            matches!(
+                section.story_state,
+                novel_infrastructure::PlanningStoryState::Confirmed
+                    | novel_infrastructure::PlanningStoryState::Locked
+            ) && !section.content.trim().is_empty()
+        })
+        .map(|section| format!("[{}] {}", section.id, section.content.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if output.chars().count() > 12_000 {
+        output = truncate_text_to_char_budget(&output, 12_000, "\n[锁定规则已按预算截断]");
+    }
+    output
+}
+
+fn review_finding_to_report(
+    finding: &novel_infrastructure::ReviewFinding,
+    evidence: &HashMap<uuid::Uuid, &novel_infrastructure::ReviewEvidence>,
+) -> novel_infrastructure::AiConsistencyFinding {
+    let evidence_text = finding
+        .evidence_ids
+        .iter()
+        .filter_map(|id| evidence.get(id))
+        .map(|item| {
+            format!(
+                "[{} · {:?}] {}",
+                item.source_kind, item.authority, item.excerpt
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    novel_infrastructure::AiConsistencyFinding {
+        severity: match finding.severity.as_str() {
+            "BLOCKER" => novel_infrastructure::AiConsistencySeverity::Blocker,
+            "MAJOR" => novel_infrastructure::AiConsistencySeverity::Major,
+            "MINOR" => novel_infrastructure::AiConsistencySeverity::Minor,
+            _ => novel_infrastructure::AiConsistencySeverity::Info,
+        },
+        problem: finding.problem.clone(),
+        evidence: if evidence_text.is_empty() {
+            "没有找到可引用的正式证据。".to_owned()
+        } else {
+            evidence_text
+        },
+        suggestion: if finding.suggestion.trim().is_empty() {
+            "补充对应正式依据后重新审核。".to_owned()
+        } else {
+            finding.suggestion.clone()
+        },
+    }
+}
+
+fn review_verdict(findings: &[novel_infrastructure::ReviewFinding]) -> novel_infrastructure::AiConsistencyVerdict {
+    if findings
+        .iter()
+        .any(|finding| finding.status == novel_infrastructure::ReviewStatus::Block)
+    {
+        return novel_infrastructure::AiConsistencyVerdict::Blocked;
+    }
+    if findings
+        .iter()
+        .any(|finding| finding.status == novel_infrastructure::ReviewStatus::Warning)
+    {
+        return novel_infrastructure::AiConsistencyVerdict::Review;
+    }
+    if findings
+        .iter()
+        .any(|finding| finding.status == novel_infrastructure::ReviewStatus::Unknown)
+    {
+        return novel_infrastructure::AiConsistencyVerdict::NeedsInput;
+    }
+    novel_infrastructure::AiConsistencyVerdict::Pass
+}
+
+fn review_report_json(
+    summary: &str,
+    verdict: novel_infrastructure::AiConsistencyVerdict,
+    findings: &[novel_infrastructure::ReviewFinding],
+    evidence: &[novel_infrastructure::ReviewEvidence],
+    omitted: &[novel_infrastructure::ReviewOmittedItem],
+) -> Result<String, ApiError> {
+    let evidence_by_id = evidence.iter().map(|item| (item.id, item)).collect();
+    let report_findings = findings
+        .iter()
+        .map(|finding| review_finding_to_report(finding, &evidence_by_id))
+        .collect::<Vec<_>>();
+    let warnings = omitted
+        .iter()
+        .map(|item| format!("{}：{}", item.label, item.reason))
+        .collect::<Vec<_>>();
+    serde_json::to_string(&novel_infrastructure::AiConsistencyReport {
+        verdict,
+        summary: if summary.trim().is_empty() {
+            format!("本次审核提取 {} 条声明。", findings.len())
+        } else {
+            summary.trim().to_owned()
+        },
+        findings: report_findings,
+        parse_warnings: warnings,
+    })
+    .map_err(|error| ApiError::internal(format!("无法生成审核报告：{error}")))
+}
+
+fn clear_review_cancellation(state: &ProjectState, task_id: uuid::Uuid) {
+    if let Ok(mut cancellations) = state.ai_cancellations.lock() {
+        cancellations.remove(&task_id);
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+async fn generate_consistency_review_proposal(
+    app: tauri::AppHandle,
+    state: &ProjectState,
+    profile_id: uuid::Uuid,
+    chapter_id: uuid::Uuid,
+    review_purpose: novel_infrastructure::ReviewPurpose,
+    chapter_title: String,
+    chapter_plan: String,
+    volume_plan: String,
+    document_json: String,
+    stream: bool,
+    temperature: Option<f64>,
+    max_output_tokens: Option<u32>,
+) -> Result<novel_infrastructure::AiProposal, ApiError> {
+    let profile = {
+        let store = state
+            .model_profiles
+            .lock()
+            .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+        store.get(profile_id).map_err(ApiError::from)?
+    };
+    if profile.capability != novel_infrastructure::ModelCapability::Chat {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "请选择聊天模型配置。".to_owned(),
+        });
+    }
+    if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
+        return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
+    }
+    let target_revision_id = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        manager
+            .current_manuscript(chapter_id)
+            .map_err(ApiError::from)?
+            .map(|value| value.id)
+    };
+    let task_kind = novel_infrastructure::AiTaskKind::ConsistencyReview;
+    let task_preference = load_ai_task_preference(state, task_kind)?;
+    let generation_options =
+        task_generation_options(Some(task_kind), temperature, max_output_tokens)?;
+    let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
+    let input_token_budget =
+        effective_task_input_budget(&profile, max_output_tokens, &task_preference);
+    let normalized_document_json = normalized_document_json(document_json);
+    let blocks = review_target_blocks(
+        review_purpose,
+        &chapter_plan,
+        &volume_plan,
+        &normalized_document_json,
+    )?;
+    let locked_rules = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        review_locked_rules(&manager)
+    };
+    let extraction_input = novel_application::ReviewClaimExtractionInput {
+        review_purpose,
+        chapter_id,
+        target_revision_id,
+        chapter_title: chapter_title.clone(),
+        blocks: blocks.clone(),
+        locked_rules: locked_rules.clone(),
+        input_token_budget,
+    };
+    let extraction_context = novel_application::ReviewScopeBuilder::claim_extraction(
+        &extraction_input,
+    )
+    .map_err(|error| ApiError {
+        code: "INVALID_INPUT",
+        message: error.to_string(),
+    })?;
+    let secret_ref = profile
+        .secret_ref
+        .as_deref()
+        .ok_or(novel_infrastructure::AiError::MissingSecret)
+        .map_err(ApiError::from)?;
+    let mut active_secret =
+        novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?;
+    let task_id = {
+        let mut manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        sync_model_profile(&mut manager, &profile)?;
+        manager
+            .create_ai_task(
+                profile_id,
+                &extraction_context,
+                Some(review_purpose),
+            )
+            .map_err(ApiError::from)?
+    };
+    if let Err(error) = persist_ai_run_request(
+        state,
+        task_id,
+        &profile,
+        &extraction_context,
+        stream,
+        true,
+        generation_options,
+    ) {
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.fail_ai_task(task_id, &novel_infrastructure::AiError::InvalidResponse);
+        }
+        return Err(error);
+    }
+    let _ = app.emit("ai-task-started", AiTaskStarted { task_id });
+    let cancelled = Arc::new(AtomicBool::new(false));
+    state
+        .ai_cancellations
+        .lock()
+        .map_err(|_| ApiError::internal("AI cancellation mutex poisoned"))?
+        .insert(task_id, Arc::clone(&cancelled));
+    let claim_outcome = generate_with_task_fallback(
+        state,
+        &task_preference,
+        &profile,
+        Some(&active_secret),
+        &extraction_context,
+        generation_options,
+        stream,
+        true,
+        Arc::clone(&cancelled),
+        |chunk| {
+            let _ = app.emit(
+                "ai-task-chunk",
+                AiStreamChunk {
+                    task_id,
+                    chunk: chunk.to_owned(),
+                },
+            );
+        },
+    )
+    .await;
+    let claim_outcome = match claim_outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if let Ok(mut manager) = state.manager.lock() {
+                let _ = manager.fail_ai_task(task_id, &error);
+            }
+            clear_review_cancellation(state, task_id);
+            return Err(ApiError::from(error));
+        }
+    };
+    let mut active_profile = profile.clone();
+    let mut fallback_recorded = false;
+    let mut stage_requests = vec![review_stage_request(
+        novel_infrastructure::ReviewStage::ClaimExtraction,
+        claim_outcome
+            .fallback_profile
+            .as_ref()
+            .unwrap_or(&profile),
+        &extraction_context,
+        Some(&claim_outcome.output),
+        "PENDING",
+        claim_outcome.fallback_reason.as_deref(),
+    )];
+    if let Some(fallback) = claim_outcome.fallback_profile.clone() {
+        active_profile = fallback.clone();
+        if let Some(secret_ref) = active_profile.secret_ref.as_deref() {
+            active_secret =
+                novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?;
+        }
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.record_ai_task_fallback(
+                task_id,
+                active_profile.id,
+                claim_outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+            );
+            fallback_recorded = true;
+        }
+        let _ = app.emit(
+            "ai-task-attempt",
+            AiTaskAttempt {
+                task_id,
+                attempt: 2,
+                profile_name: active_profile.name.clone(),
+                fallback_reason: claim_outcome.fallback_reason.clone(),
+            },
+        );
+    }
+    let Ok((mut claims, mut omitted_items)) =
+        parse_review_claims(review_purpose, &claim_outcome.output, &blocks)
+    else {
+        "INVALID_JSON".clone_into(&mut stage_requests[0].parse_result);
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.fail_ai_task(task_id, &novel_infrastructure::AiError::InvalidResponse);
+        }
+        clear_review_cancellation(state, task_id);
+        return Err(ApiError {
+            code: "INVALID_RESPONSE",
+            message: "声明提取阶段没有返回有效的固定 JSON。".to_owned(),
+        });
+    };
+    stage_requests[0].parse_result = format!("EXTRACTED_{}", claims.len());
+    if claims.len() > 80 {
+        omitted_items.push(novel_infrastructure::ReviewOmittedItem {
+            item_type: "CLAIM".to_owned(),
+            label: "声明总量".to_owned(),
+            reason: format!("为保证单次审核可控，仅复核前 80 条高优先声明，另有 {} 条未复核。", claims.len() - 80),
+            claim_id: None,
+        });
+        claims.sort_by(|left, right| {
+            right
+                .importance
+                .cmp(&left.importance)
+                .then_with(|| right.confidence.cmp(&left.confidence))
+        });
+        claims.truncate(80);
+    }
+    let (evidence, evidence_omitted) = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        manager
+            .resolve_review_evidence(chapter_id, &claims, &locked_rules)
+            .map_err(ApiError::from)?
+    };
+    omitted_items.extend(evidence_omitted);
+    let mut model_findings = Vec::new();
+    let mut summaries = Vec::new();
+    for batch in claims.chunks(8) {
+        let batch_ids = batch.iter().map(|claim| claim.id).collect::<HashSet<_>>();
+        let batch_evidence = evidence
+            .iter()
+            .filter(|item| batch_ids.contains(&item.claim_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let semantic_input = novel_application::ReviewSemanticInput {
+            review_purpose,
+            chapter_id,
+            target_revision_id,
+            claims: batch.to_vec(),
+            evidence: batch_evidence.clone(),
+            input_token_budget,
+        };
+        let semantic_context = novel_application::ReviewScopeBuilder::semantic_review(
+            &semantic_input,
+        )
+        .map_err(|error| ApiError {
+            code: "INVALID_INPUT",
+            message: error.to_string(),
+        })?;
+        let outcome = generate_with_task_fallback(
+            state,
+            &task_preference,
+            &active_profile,
+            Some(&active_secret),
+            &semantic_context,
+            generation_options,
+            false,
+            true,
+            Arc::clone(&cancelled),
+            |_| {},
+        )
+        .await;
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                stage_requests.push(review_stage_request(
+                    novel_infrastructure::ReviewStage::SemanticReview,
+                    &active_profile,
+                    &semantic_context,
+                    None,
+                    format!("FAILED:{}", error.code()),
+                    Some(error.code()),
+                ));
+                if matches!(error, novel_infrastructure::AiError::Cancelled) {
+                    if let Ok(mut manager) = state.manager.lock() {
+                        let _ = manager.fail_ai_task(task_id, &error);
+                    }
+                    clear_review_cancellation(state, task_id);
+                    return Err(ApiError::from(error));
+                }
+                for claim in batch {
+                    model_findings.push(novel_infrastructure::ReviewFinding {
+                        id: uuid::Uuid::new_v4(),
+                        claim_id: claim.id,
+                        status: novel_infrastructure::ReviewStatus::Unknown,
+                        severity: "INFO".to_owned(),
+                        source_kind: novel_infrastructure::FindingSource::Llm,
+                        rule_id: None,
+                        rule_version: None,
+                        priority: claim.importance,
+                        problem: "语义复核批次调用失败，保留为待确认。".to_owned(),
+                        evidence_ids: batch_evidence
+                            .iter()
+                            .map(|item| item.id)
+                            .collect(),
+                        suggestion: "检查模型连接后重新审核。".to_owned(),
+                        confidence: 0,
+                    });
+                }
+                omitted_items.push(novel_infrastructure::ReviewOmittedItem {
+                    item_type: "BATCH".to_owned(),
+                    label: format!("{} 条声明", batch.len()),
+                    reason: format!("语义复核调用失败：{}。", error.code()),
+                    claim_id: None,
+                });
+                continue;
+            }
+        };
+        if let Some(fallback) = outcome.fallback_profile.clone() {
+            active_profile = fallback.clone();
+            if let Some(secret_ref) = active_profile.secret_ref.as_deref() {
+                active_secret =
+                    novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?;
+            }
+            if !fallback_recorded
+                && let Ok(mut manager) = state.manager.lock()
+            {
+                let _ = manager.record_ai_task_fallback(
+                    task_id,
+                    active_profile.id,
+                    outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+                );
+                fallback_recorded = true;
+            }
+            let _ = app.emit(
+                "ai-task-attempt",
+                AiTaskAttempt {
+                    task_id,
+                    attempt: 2,
+                    profile_name: active_profile.name.clone(),
+                    fallback_reason: outcome.fallback_reason.clone(),
+                },
+            );
+        }
+        let parsed =
+            parse_semantic_review(&outcome.output, batch, &batch_evidence);
+        let Ok((summary, findings, semantic_omitted)) = parsed else {
+            stage_requests.push(review_stage_request(
+                novel_infrastructure::ReviewStage::SemanticReview,
+                &active_profile,
+                &semantic_context,
+                Some(&outcome.output),
+                "INVALID_JSON",
+                outcome.fallback_reason.as_deref(),
+            ));
+            for claim in batch {
+                model_findings.push(novel_infrastructure::ReviewFinding {
+                    id: uuid::Uuid::new_v4(),
+                    claim_id: claim.id,
+                    status: novel_infrastructure::ReviewStatus::Unknown,
+                    severity: "INFO".to_owned(),
+                    source_kind: novel_infrastructure::FindingSource::Llm,
+                    rule_id: None,
+                    rule_version: None,
+                    priority: claim.importance,
+                    problem: "语义复核没有返回可解析的固定 JSON，保留为待确认。".to_owned(),
+                    evidence_ids: batch_evidence
+                        .iter()
+                        .map(|item| item.id)
+                        .collect(),
+                    suggestion: "重试审核；若持续失败，请减少单次审核内容。".to_owned(),
+                    confidence: 0,
+                });
+            }
+            omitted_items.push(novel_infrastructure::ReviewOmittedItem {
+                item_type: "BATCH".to_owned(),
+                label: format!("{} 条声明", batch.len()),
+                reason: "语义复核返回的固定 JSON 无法解析。".to_owned(),
+                claim_id: None,
+            });
+            continue;
+        };
+        summaries.push(summary);
+        model_findings.extend(findings);
+        omitted_items.extend(semantic_omitted);
+        stage_requests.push(review_stage_request(
+            novel_infrastructure::ReviewStage::SemanticReview,
+            &active_profile,
+            &semantic_context,
+            Some(&outcome.output),
+            format!("PARSED_{}", batch.len()),
+            outcome.fallback_reason.as_deref(),
+        ));
+    }
+    let verdict = if claims.is_empty() {
+        novel_infrastructure::AiConsistencyVerdict::NeedsInput
+    } else {
+        review_verdict(&model_findings)
+    };
+    let summary = if claims.is_empty() {
+        "没有提取到可逐字定位的事实声明，当前无法完成一致性裁决。".to_owned()
+    } else {
+        summaries
+            .into_iter()
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let report_json = review_report_json(
+        &summary,
+        verdict,
+        &model_findings,
+        &evidence,
+        &omitted_items,
+    )?;
+    let trace = novel_infrastructure::ReviewTrace {
+        run_id: task_id,
+        review_purpose,
+        chapter_id,
+        target_revision_id,
+        context_version: extraction_context.context_version.clone(),
+        claims,
+        evidence,
+        deterministic_findings: Vec::new(),
+        model_findings,
+        omitted_items,
+        stage_requests,
+    };
+    let proposal = {
+        let mut manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        if let Err(error) = manager.save_ai_review_trace(&trace) {
+            let _ = manager.fail_ai_task(task_id, &novel_infrastructure::AiError::InvalidResponse);
+            clear_review_cancellation(state, task_id);
+            return Err(ApiError::from(error));
+        }
+        manager
+            .complete_ai_task(task_id, &extraction_context, report_json)
+            .map_err(ApiError::from)?
+    };
+    clear_review_cancellation(state, task_id);
+    Ok(proposal)
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
@@ -3529,6 +4515,23 @@ pub(crate) async fn generate_ai_proposal(
     temperature: Option<f64>,
     max_output_tokens: Option<u32>,
 ) -> Result<novel_infrastructure::AiProposal, ApiError> {
+    if action == novel_infrastructure::AiAction::ConsistencyCheck {
+        return generate_consistency_review_proposal(
+            app,
+            &state,
+            profile_id,
+            chapter_id,
+            review_purpose.unwrap_or(novel_infrastructure::ReviewPurpose::Admission),
+            chapter_title,
+            chapter_plan,
+            volume_plan,
+            document_json,
+            stream,
+            temperature,
+            max_output_tokens,
+        )
+        .await;
+    }
     let profile = {
         let store = state
             .model_profiles
@@ -3799,5 +4802,78 @@ pub(crate) async fn generate_ai_proposal(
             let _ = manager.fail_ai_task(task_id, &error);
             Err(ApiError::from(error))
         }
+    }
+}
+
+#[cfg(test)]
+mod review_pipeline_tests {
+    use super::*;
+
+    #[test]
+    fn claim_extraction_locates_quotes_and_drops_unlocatable_claims() {
+        let blocks = vec![novel_application::ReviewSourceBlock {
+            block_id: "block-1".to_owned(),
+            text: "林澈在城门外停下。".to_owned(),
+        }];
+        let output = r#"{
+            "claims": [
+                {
+                    "type": "CHARACTER_LOCATION",
+                    "subject": "林澈",
+                    "predicate": "位于",
+                    "object": "城门外",
+                    "quote": "林澈在城门外",
+                    "blockId": "block-1",
+                    "importance": 4,
+                    "confidence": 91
+                },
+                {
+                    "type": "CHARACTER_LOCATION",
+                    "subject": "林澈",
+                    "predicate": "位于",
+                    "object": "城内",
+                    "quote": "林澈在城内",
+                    "blockId": "block-1",
+                    "importance": 4,
+                    "confidence": 90
+                }
+            ]
+        }"#;
+        let (claims, omitted) =
+            parse_review_claims(novel_infrastructure::ReviewPurpose::Manuscript, output, &blocks)
+                .expect("claims");
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].start_offset, 0);
+        assert_eq!(claims[0].end_offset, 6);
+        assert_eq!(omitted.len(), 1);
+        assert!(omitted[0].reason.contains("逐字定位"));
+    }
+
+    #[test]
+    fn semantic_review_downgrades_hard_findings_without_evidence() {
+        let claim = novel_infrastructure::ReviewClaim {
+            id: uuid::Uuid::new_v4(),
+            claim_type: novel_infrastructure::ReviewClaimType::CharacterStatus,
+            subject: "林澈".to_owned(),
+            predicate: "状态".to_owned(),
+            object: "已经死亡".to_owned(),
+            quote: "林澈已经死亡".to_owned(),
+            block_id: "block-1".to_owned(),
+            start_offset: 0,
+            end_offset: 6,
+            importance: 5,
+            confidence: 90,
+        };
+        let output = format!(
+            r#"{{"summary":"存在冲突","findings":[{{"claimId":"{}","status":"BLOCK","severity":"BLOCKER","problem":"与正式状态冲突","evidenceIds":[],"suggestion":"修改正文","confidence":95}}],"omitted":[]}}"#,
+            claim.id
+        );
+        let (_, findings, _) = parse_semantic_review(&output, &[claim], &[]).expect("semantic");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].status,
+            novel_infrastructure::ReviewStatus::Unknown
+        );
+        assert!(findings[0].problem.contains("没有正式证据"));
     }
 }

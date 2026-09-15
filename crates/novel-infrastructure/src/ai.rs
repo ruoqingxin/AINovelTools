@@ -466,6 +466,7 @@ pub struct AiProposalReview {
     pub feedback: Option<AiProposalFeedback>,
     pub consistency: Option<AiConsistencyReport>,
     pub consistency_freshness: Option<ConsistencyReviewFreshness>,
+    pub has_review_trace: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2570,11 +2571,23 @@ impl ProjectManager {
             .map(|proposal| {
                 let consistency = (proposal.action == AiAction::ConsistencyCheck)
                     .then(|| parse_consistency_report(&proposal.output_text));
+                let has_review_trace = session
+                    .database
+                    .connection
+                    .query_row(
+                        "SELECT EXISTS(
+                            SELECT 1 FROM ai_review_traces WHERE run_id=?1
+                         )",
+                        [proposal.task_id.to_string()],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .is_ok_and(|value| value == 1);
                 AiProposalReview {
                     validation: validate_ai_output(proposal.action, &proposal.output_text),
                     feedback: feedback.remove(&proposal.id),
                     consistency,
                     consistency_freshness: None,
+                    has_review_trace,
                     proposal,
                 }
             })
@@ -3067,6 +3080,9 @@ fn validate_ai_task_preference(
 }
 fn parse_consistency_report(output_text: &str) -> AiConsistencyReport {
     let trimmed = output_text.trim();
+    if let Ok(report) = serde_json::from_str::<AiConsistencyReport>(trimmed) {
+        return report;
+    }
     if trimmed.contains("[上下文不足]") {
         return AiConsistencyReport {
             verdict: AiConsistencyVerdict::NeedsInput,

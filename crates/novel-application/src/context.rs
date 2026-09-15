@@ -230,6 +230,8 @@ pub enum AiTaskRole {
     SelectionReviser,
     ChapterSummarizer,
     ContinuityAuditor,
+    ReviewClaimExtractor,
+    ReviewSemanticAdjudicator,
     DiscussionFacilitator,
     ApiConnectionTester,
 }
@@ -904,12 +906,14 @@ fn role_label(role: AiTaskRole) -> &'static str {
         AiTaskRole::SelectionReviser => "小说选区修订执行器",
         AiTaskRole::ChapterSummarizer => "小说章节摘要执行器",
         AiTaskRole::ContinuityAuditor => "小说连续性与生成准入审核器",
+        AiTaskRole::ReviewClaimExtractor => "小说审核声明提取器",
+        AiTaskRole::ReviewSemanticAdjudicator => "小说审核语义复核器",
         AiTaskRole::DiscussionFacilitator => "作品共创讨论协作者",
         AiTaskRole::ApiConnectionTester => "API 连接测试器",
     }
 }
 
-fn format_task_contract(contract: &AiTaskContract, chapter_title: &str) -> String {
+pub(crate) fn format_task_contract(contract: &AiTaskContract, chapter_title: &str) -> String {
     format!(
         "角色：{}\n目标：{}\n当前对象：章节“{}”，类型 {}，ID {}，目标修订 {}\n权限：{}\n禁区：{}\n不确定性处理：{}\n验收标准：{}\n输出合同：{}",
         role_label(contract.role),

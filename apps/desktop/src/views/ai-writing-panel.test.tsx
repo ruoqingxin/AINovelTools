@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyAiTaskPreferences } from "../lib/ai-task-preferences";
-import type { AiProposal, AiProposalReview, AiRun, ModelProfile } from "../lib/tauri-client";
+import type { AiProposal, AiProposalReview, AiRun, ModelProfile, ReviewTrace } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
 
 const mocks = vi.hoisted(() => ({
@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   decideAiProposal: vi.fn(),
   enqueuePlanningAiJob: vi.fn(),
   generateAiProposal: vi.fn(),
+  getConsistencyReviewTrace: vi.fn(),
   getAiBudgetSettings: vi.fn(),
   getAiTaskPreferences: vi.fn(),
   getAiUsageSummary: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("../lib/tauri-client", async () => {
     decideAiProposal: mocks.decideAiProposal,
     enqueuePlanningAiJob: mocks.enqueuePlanningAiJob,
     generateAiProposal: mocks.generateAiProposal,
+    getConsistencyReviewTrace: mocks.getConsistencyReviewTrace,
     getAiBudgetSettings: mocks.getAiBudgetSettings,
     getAiTaskPreferences: mocks.getAiTaskPreferences,
     getAiUsageSummary: mocks.getAiUsageSummary,
@@ -98,6 +100,7 @@ const review: AiProposalReview = {
     estimatedOutputTokens: 9,
   },
   feedback: null,
+  hasReviewTrace: false,
   consistencyFreshness: "FRESH",
   consistency: {
     verdict: "BLOCKED",
@@ -140,6 +143,19 @@ describe("AiWritingPanel consistency review", () => {
     mocks.listModelProfiles.mockResolvedValue([profile]);
     mocks.listPlanningSections.mockResolvedValue([]);
     mocks.generateAiProposal.mockResolvedValue(reviewProposal);
+    mocks.getConsistencyReviewTrace.mockResolvedValue({
+      runId: "task-review",
+      reviewPurpose: "ADMISSION",
+      chapterId: "chapter-1",
+      targetRevisionId: null,
+      contextVersion: "context-1",
+      claims: [],
+      evidence: [],
+      deterministicFindings: [],
+      modelFindings: [],
+      omittedItems: [],
+      stageRequests: [],
+    } satisfies ReviewTrace);
   });
 
   it("runs a read-only review with the dedicated task settings", async () => {
@@ -248,6 +264,86 @@ describe("AiWritingPanel consistency review", () => {
     expect(mocks.listAiRuns).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     await waitFor(() => expect(mocks.cancelAiTask).toHaveBeenCalledWith("task-review"));
+  });
+
+  it("shows declaration evidence when a review trace is available", async () => {
+    const claimId = "claim-1";
+    const evidenceId = "evidence-1";
+    const trace: ReviewTrace = {
+      runId: "task-review",
+      reviewPurpose: "ADMISSION",
+      chapterId: "chapter-1",
+      targetRevisionId: null,
+      contextVersion: "context-1",
+      claims: [
+        {
+          id: claimId,
+          claimType: "REQUIRED_EVENT",
+          subject: "主角",
+          predicate: "必须经历",
+          object: "守门冲突",
+          quote: "主角必须经历守门冲突。",
+          blockId: "chapter-plan",
+          startOffset: 0,
+          endOffset: 12,
+          importance: 5,
+          confidence: 95,
+        },
+      ],
+      evidence: [
+        {
+          id: evidenceId,
+          claimId,
+          sourceKind: "LOCKED_RULE",
+          sourceRecordId: "00000000-0000-0000-0000-000000000000",
+          authority: "LOCKED_RULE",
+          excerpt: "本章必须安排守门冲突。",
+          sourceRevision: "author-confirmed-rule",
+          relevance: 9000,
+        },
+      ],
+      deterministicFindings: [],
+      modelFindings: [
+        {
+          id: "finding-1",
+          claimId,
+          status: "PASS",
+          severity: "INFO",
+          sourceKind: "LLM",
+          ruleId: null,
+          ruleVersion: null,
+          priority: 5,
+          problem: "事件满足合同要求。",
+          evidenceIds: [evidenceId],
+          suggestion: "",
+          confidence: 90,
+        },
+      ],
+      omittedItems: [],
+      stageRequests: [],
+    };
+    mocks.listAiProposals.mockReset();
+    mocks.listAiProposals.mockResolvedValue([{ ...review, hasReviewTrace: true }]);
+    mocks.getConsistencyReviewTrace.mockResolvedValue(trace);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AiWritingPanel
+          mode="review"
+          chapterId="chapter-1"
+          chapterTitle="第1章·入城"
+          chapterPlan="主角必须经历守门冲突。"
+          volumeId="volume-1"
+          volumePlan="第一卷规划"
+          draft=""
+          editor={null}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByText("查看声明与依据"));
+    expect(await screen.findByText("REQUIRED_EVENT")).toBeVisible();
+    expect(screen.getByText("本章必须安排守门冲突。")).toBeVisible();
+    expect(screen.getByText(/LOCKED_RULE · LOCKED_RULE/)).toBeVisible();
   });
 
   it("marks an outdated review as stale without blocking writing", async () => {

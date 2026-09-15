@@ -346,6 +346,96 @@ export type AiConsistencyReport = {
   findings: AiConsistencyFinding[];
   parseWarnings: string[];
 };
+export type ReviewClaimType =
+  | "CHARACTER_STATUS"
+  | "CHARACTER_LOCATION"
+  | "ABILITY_OR_REALM"
+  | "ITEM_POSSESSION"
+  | "RELATION"
+  | "KNOWLEDGE_BOUNDARY"
+  | "REQUIRED_EVENT"
+  | "FORBIDDEN_EVENT"
+  | "ALLOWED_CHARACTER"
+  | "STAGE_BOUNDARY"
+  | "FORESHADOWING_WINDOW"
+  | "PLAN_DEPENDENCY";
+export type ReviewStatus = "PASS" | "NOTICE" | "WARNING" | "BLOCK" | "UNKNOWN";
+export type FindingSource = "RULE" | "LLM" | "MERGED";
+export type EvidenceAuthority =
+  | "LOCKED_RULE"
+  | "CONFIRMED_FACT"
+  | "CURRENT_STATE"
+  | "CHAPTER_CONTRACT"
+  | "APPROVED_EVENT"
+  | "PLAN_REFERENCE"
+  | "SUMMARY_REFERENCE"
+  | "UNCONFIRMED";
+export type ReviewClaim = {
+  id: string;
+  claimType: ReviewClaimType;
+  subject: string;
+  predicate: string;
+  object: string;
+  quote: string;
+  blockId: string;
+  startOffset: number;
+  endOffset: number;
+  importance: number;
+  confidence: number;
+};
+export type ReviewEvidence = {
+  id: string;
+  claimId: string;
+  sourceKind: string;
+  sourceRecordId: string;
+  authority: EvidenceAuthority;
+  excerpt: string;
+  sourceRevision: string;
+  relevance: number;
+};
+export type ReviewFinding = {
+  id: string;
+  claimId: string;
+  status: ReviewStatus;
+  severity: string;
+  sourceKind: FindingSource;
+  ruleId: string | null;
+  ruleVersion: string | null;
+  priority: number;
+  problem: string;
+  evidenceIds: string[];
+  suggestion: string;
+  confidence: number;
+};
+export type ReviewOmittedItem = {
+  itemType: string;
+  label: string;
+  reason: string;
+  claimId: string | null;
+};
+export type ReviewStageRequest = {
+  stage: "CLAIM_EXTRACTION" | "DETERMINISTIC_RULES" | "SEMANTIC_REVIEW" | "MERGE";
+  profileId: string | null;
+  modelId: string | null;
+  requestContextVersion: string;
+  requestSnapshot: string | null;
+  responsePreview: string | null;
+  parseResult: string;
+  fallbackReason: string | null;
+};
+export type ReviewTrace = {
+  runId: string;
+  reviewPurpose: ReviewPurpose;
+  chapterId: string;
+  targetRevisionId: string | null;
+  contextVersion: string;
+  claims: ReviewClaim[];
+  evidence: ReviewEvidence[];
+  deterministicFindings: ReviewFinding[];
+  modelFindings: ReviewFinding[];
+  omittedItems: ReviewOmittedItem[];
+  stageRequests: ReviewStageRequest[];
+};
 export type ConsistencyReviewFreshness = "MISSING" | "FRESH" | "STALE" | "UNVERIFIED";
 export type AiProposalReview = {
   proposal: AiProposal;
@@ -356,6 +446,7 @@ export type AiProposalReview = {
   feedback: AiProposalFeedback | null;
   consistency: AiConsistencyReport | null;
   consistencyFreshness: ConsistencyReviewFreshness | null;
+  hasReviewTrace: boolean;
 };
 export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX" | "AI_PLANNING_GENERATE" | "AI_PLANNING_EXTRACT";
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
@@ -690,6 +781,9 @@ export function listAiProposals(input: {
   instruction?: string;
 }) {
   return invoke<AiProposalReview[]>("list_ai_proposals", input);
+}
+export function getConsistencyReviewTrace(proposalId: string) {
+  return invoke<ReviewTrace>("get_consistency_review_trace", { proposalId });
 }
 export function listAiRuns(limit = 20) {
   return invoke<AiRun[]>("list_ai_runs", { limit });

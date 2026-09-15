@@ -3,9 +3,11 @@
 mod ai_evaluation;
 mod context;
 mod planning_context;
+mod review;
 pub use ai_evaluation::*;
 pub use context::*;
 pub use planning_context::*;
+pub use review::*;
 
 /// Returns the ordered layers currently linked into the application core.
 #[must_use]

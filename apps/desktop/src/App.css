@@ -2296,6 +2296,146 @@ textarea:focus-visible,
   line-height: 1.45;
 }
 
+.consistency-trace-loading {
+  margin: 8px 0 0;
+  color: #7b8ca3;
+  font-size: 10px;
+}
+
+.consistency-trace {
+  margin-top: 9px;
+  border: 1px solid #dce6f3;
+  border-radius: 6px;
+  background: #fbfdff;
+}
+
+.consistency-trace > summary {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  color: #4e6687;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.consistency-trace > summary span {
+  color: #7d8ea7;
+  font-weight: 500;
+}
+
+.consistency-claims {
+  display: grid;
+  gap: 8px;
+  padding: 0 9px 9px;
+}
+
+.consistency-claims > article {
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid #e2eaf4;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.consistency-claims blockquote {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid #9db3d0;
+  color: #405a7d;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.consistency-claims > article > p,
+.consistency-claims li p {
+  margin: 0;
+  color: #667b98;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.consistency-claim-findings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.consistency-claim-findings span {
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: #687b95;
+  background: #f0f4f8;
+  font-size: 9px;
+}
+
+.consistency-claim-findings span[data-status="block"] {
+  color: #9d402e;
+  background: #fdebe6;
+}
+
+.consistency-claim-findings span[data-status="warning"] {
+  color: #a25d28;
+  background: #fff1df;
+}
+
+.consistency-claims ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.consistency-claims li {
+  display: grid;
+  gap: 2px;
+  padding: 6px 7px;
+  border-radius: 4px;
+  background: #f7faff;
+}
+
+.consistency-claims li small,
+.consistency-claims li span {
+  color: #7a8ca5;
+  font-size: 9px;
+}
+
+.consistency-no-evidence {
+  margin: 0;
+  color: #a06a32;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.consistency-omitted {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  border-top: 1px solid #e3eaf3;
+  color: #8a6530;
+  font-size: 9px;
+}
+
+.consistency-omitted strong {
+  font-size: 10px;
+}
+
+.consistency-omitted p {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+}
+
+.consistency-omitted p span {
+  font-weight: 700;
+}
+
 .consistency-raw {
   margin-top: 9px;
   border: 1px solid #dce6f3;
