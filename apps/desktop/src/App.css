@@ -3111,7 +3111,14 @@ textarea:focus-visible,
 .plan-create-copy { padding-right:6px; }
 .plan-create-copy span { white-space:nowrap; }
 .plan-layout { grid-template-columns: 310px minmax(0,1fr); gap:14px; align-items:start; margin-top:16px; }
+.chapter-mode-layout { grid-template-columns:280px minmax(0,1fr); transition:grid-template-columns .18s ease; }
+.chapter-mode-layout.chapter-list-collapsed { grid-template-columns:52px minmax(0,1fr); }
 .plan-layout .plan-tree { padding:14px; box-shadow:none; }
+.plan-tree-heading-actions { display:flex; align-items:center; gap:5px; }
+.plan-tree-heading-actions .icon-command { width:30px; height:30px; border:1px solid var(--line); background:#fff; }
+.chapter-list-collapsed .plan-tree { display:grid; min-height:76px; padding:8px; place-items:start center; overflow:visible; }
+.chapter-list-expand { display:grid; width:34px; height:34px; place-items:center; margin:0 auto; border:1px solid #c9d7ea; border-radius:6px; color:#426a9f; background:#fff; cursor:pointer; }
+.chapter-list-expand:hover { border-color:#8facdc; background:#f2f6fd; }
 .plan-tree { position:sticky; top:16px; max-height:calc(100vh - 72px); overflow:auto; }
 .plan-overview-row, .plan-preset-row { display:grid; width:100%; align-items:center; border:1px solid transparent; color:#526b91; background:transparent; text-align:left; }
 .plan-overview-row { grid-template-columns:auto minmax(0,1fr); gap:8px; min-height:40px; margin-top:10px; padding:0 10px; border-radius:6px; font-size:12px; font-weight:700; }
@@ -3172,6 +3179,40 @@ textarea:focus-visible,
 .plan-inspector-heading h2 { margin:0; color:#233b63; font-size:18px; }
 .plan-inspector-heading p { margin:5px 0 0; color:#8294b1; font-size:11px; }
 .inspector-node-id { max-width:45%; overflow:hidden; color:#526b91; font-size:12px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+.chapter-focus-inspector { padding:0 0 20px; overflow:visible; }
+.chapter-focus-header { display:flex; min-height:84px; align-items:center; justify-content:space-between; gap:18px; padding:13px 16px; border-bottom:1px solid var(--line); background:#fff; }
+.chapter-focus-copy { display:grid; min-width:0; gap:5px; }
+.chapter-focus-copy > span { color:#7186a5; font-size:10px; font-weight:650; }
+.chapter-focus-copy > div { display:flex; min-width:0; align-items:center; gap:10px; }
+.chapter-focus-copy h2 { min-width:0; margin:0; overflow:hidden; color:#233b63; font-size:20px; text-overflow:ellipsis; white-space:nowrap; }
+.chapter-focus-actions { display:flex; flex:0 0 auto; align-items:center; gap:6px; }
+.chapter-focus-actions > .icon-command { width:34px; height:34px; border:1px solid var(--line); color:#526b91; background:#fff; }
+.chapter-focus-actions > a, .chapter-focus-actions > button { display:inline-flex; min-height:34px; align-items:center; gap:6px; padding:0 10px; text-decoration:none; white-space:nowrap; }
+.chapter-settings-menu { position:relative; }
+.chapter-settings-menu > summary { display:inline-flex; min-height:34px; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--line-strong); border-radius:7px; color:#526b91; background:#fff; cursor:pointer; font-size:11px; font-weight:650; list-style:none; white-space:nowrap; }
+.chapter-settings-menu > summary::-webkit-details-marker { display:none; }
+.chapter-settings-menu[open] > summary { border-color:#8facdc; color:#2f68d1; background:#f3f7ff; }
+.chapter-settings-panel { position:absolute; top:42px; right:0; z-index:20; display:grid; width:min(440px,calc(100vw - 190px)); gap:12px; padding:14px; border:1px solid #cbd9eb; border-radius:8px; background:#fff; box-shadow:0 12px 32px rgba(35,59,99,.18); }
+.chapter-settings-panel label { display:grid; gap:5px; color:#64799b; font-size:10px; font-weight:650; }
+.chapter-settings-panel input, .chapter-settings-panel select { width:100%; min-height:36px; padding:0 9px; border:1px solid #c6d5eb; border-radius:6px; color:#405675; background:#fbfdff; font:inherit; font-size:11px; }
+.chapter-settings-panel > div { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; padding-top:2px; }
+.chapter-settings-panel button { display:inline-flex; min-height:32px; align-items:center; gap:5px; padding:0 9px; font-size:10px; }
+.chapter-workspace-navigation { position:sticky; top:0; z-index:10; padding:0 16px; border-bottom:1px solid var(--line); background:rgba(255,255,255,.97); backdrop-filter:blur(8px); }
+.chapter-workspace-navigation .chapter-tabs { margin-top:0; border-bottom:0; }
+.chapter-workspace-navigation .chapter-tabs button { min-height:44px; }
+.chapter-plan-panel { margin:18px 16px 0; }
+.chapter-focus-inspector .chapter-editor { margin-top:0; }
+.chapter-focus-inspector .chapter-tab-panel { min-height:420px; padding:18px 16px 8px; }
+.chapter-ai-savebar { position:sticky; bottom:0; z-index:9; display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:10px; margin:18px -4px 0; padding:11px 12px; border:1px solid #d5e0ee; border-radius:7px; background:rgba(248,251,255,.97); box-shadow:0 -5px 18px rgba(45,73,112,.08); backdrop-filter:blur(8px); }
+.chapter-ai-savebar > div { display:grid; min-width:0; gap:3px; }
+.chapter-ai-savebar strong { color:#526985; font-size:11px; }
+.chapter-ai-savebar span { color:#8797b0; font-size:9px; }
+.chapter-ai-savebar > button, .chapter-ai-savebar > a { display:inline-flex; min-height:34px; align-items:center; justify-content:center; padding:0 10px; text-decoration:none; white-space:nowrap; }
+.chapter-ai-savebar[data-dirty] { border-color:#a9c2ef; background:rgba(243,247,255,.98); }
+.chapter-ai-savebar[data-dirty] strong { color:#2f68d1; }
+.focused-writing-panel { min-height:620px !important; }
+.focused-writing-panel .editor-toolbar { position:sticky; top:0; z-index:6; margin-top:0; }
+.focused-writing-panel .tiptap-editor { min-height:520px; }
 .inspector-node-settings { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; margin-top:14px; padding:0 0 2px; border:0; background:transparent; }
 .inspector-name-field { min-width:0; }
 .inspector-node-settings label, .inspector-move-row label { display:grid; gap:6px; color:#64799b; font-size:11px; }
@@ -3359,6 +3400,11 @@ textarea:focus-visible,
   .plan-create-copy { grid-column: 1 / -1; padding-bottom: 2px; }
   .plan-create-row input { grid-column: 1 / -1; }
   .plan-layout { grid-template-columns: 260px minmax(0,1fr); gap:12px; }
+  .chapter-mode-layout { grid-template-columns:230px minmax(0,1fr); }
+  .chapter-mode-layout.chapter-list-collapsed { grid-template-columns:52px minmax(0,1fr); }
+  .chapter-focus-header { align-items:flex-start; flex-direction:column; }
+  .chapter-focus-actions { width:100%; flex-wrap:wrap; }
+  .chapter-settings-menu { margin-left:auto; }
   .story-planning-layout { grid-template-columns:1fr; gap:16px; }
   .story-planning-action-choices, .story-planning-reference-content { grid-template-columns:1fr; }
   .story-planning-reference-content { padding-left:0; }
@@ -3374,6 +3420,17 @@ textarea:focus-visible,
   .planning-overview-heading button, .planning-overview-heading > a { width:100%; }
   .planning-stage-grid { grid-template-columns:1fr; }
   .project-workspace { width: calc(100% - 28px); padding-top: 26px; }
+  .chapter-mode-layout, .chapter-mode-layout.chapter-list-collapsed { grid-template-columns:1fr; }
+  .chapter-mode-layout.chapter-list-collapsed .plan-tree { min-height:52px; }
+  .chapter-focus-copy > div { align-items:flex-start; flex-direction:column; gap:6px; }
+  .chapter-focus-actions > a, .chapter-focus-actions > button, .chapter-settings-menu, .chapter-settings-menu > summary { flex:1 1 auto; justify-content:center; }
+  .chapter-settings-panel { position:fixed; inset:auto 14px 42px; width:auto; max-height:calc(100vh - 90px); overflow:auto; }
+  .chapter-workspace-navigation { padding:0 10px; overflow-x:auto; }
+  .chapter-workspace-navigation .chapter-tabs { width:max-content; }
+  .chapter-plan-panel { margin:14px 10px 0; }
+  .chapter-focus-inspector .chapter-tab-panel { padding:14px 10px 6px; }
+  .chapter-ai-savebar { grid-template-columns:1fr 1fr; }
+  .chapter-ai-savebar > div { grid-column:1 / -1; }
   .plan-create-row { grid-template-columns: 1fr; }
   .plan-create-copy, .plan-create-row input { grid-column: auto; }
   .plan-inspector { padding:16px; }

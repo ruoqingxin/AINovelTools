@@ -52,6 +52,12 @@ function WritingEntryView() {
   return project.data ? <ProjectWorkspaceView mode="writing" /> : <EmptyProjectView />;
 }
 
+function ChaptersEntryView() {
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
+  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
+  return project.data ? <ProjectWorkspaceView mode="chapters" /> : <EmptyProjectView />;
+}
+
 function DiscussionEntryView() {
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
@@ -82,6 +88,12 @@ const writingRoute = createRoute({
   component: WritingEntryView,
 });
 
+const chaptersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/chapters",
+  component: ChaptersEntryView,
+});
+
 const discussionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/discussion",
@@ -100,7 +112,7 @@ const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/searc
 const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: JobsView });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsView });
 
-const routeTree = rootRoute.addChildren([indexRoute, planningRoute, writingRoute, discussionRoute, knowledgeRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, planningRoute, chaptersRoute, writingRoute, discussionRoute, knowledgeRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
 
 export const router = createRouter({ routeTree });
 

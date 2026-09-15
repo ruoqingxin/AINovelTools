@@ -176,7 +176,7 @@ describe("AiWritingPanel consistency review", () => {
     expect(screen.getByText("建议：先建立主角卡并确认姓名。")).toBeVisible();
     expect(screen.getByRole("link", { name: "查看设定与执行卡" })).toHaveAttribute(
       "href",
-      "/planning#chapter-1",
+      "/chapters#chapter-1",
     );
     expect(screen.getByText("当前没有正文候选待审核")).toBeVisible();
     expect(screen.getByRole("button", { name: "关闭审核" })).toBeVisible();

@@ -1,10 +1,10 @@
-import { BookOpenText, History, RotateCcw, Sparkles } from "lucide-react";
+import { ClipboardList, History, RotateCcw, Sparkles } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
-export type ChapterWorkspaceTab = "editor" | "ai" | "revisions" | "recovery";
+export type ChapterWorkspaceTab = "plan" | "editor" | "ai" | "revisions" | "recovery";
 
 const tabs = [
-  { value: "editor", label: "正文编辑", icon: BookOpenText },
+  { value: "plan", label: "章节执行卡", icon: ClipboardList },
   { value: "ai", label: "AI 创作", icon: Sparkles },
   { value: "revisions", label: "修订与冲突", icon: History },
   { value: "recovery", label: "恢复草稿", icon: RotateCcw },

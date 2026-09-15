@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import {
   BookOpenText,
+  BookOpenCheck,
   Clock3,
   FileSearch,
   LibraryBig,
@@ -18,6 +19,7 @@ import { UnsavedChangesProvider } from "./unsaved-changes-provider";
 const navigation = [
   { label: "项目", icon: LibraryBig, path: "/" as const },
   { label: "规划", icon: ListTree, path: "/planning" as const },
+  { label: "章节", icon: BookOpenCheck, path: "/chapters" as const },
   { label: "正文", icon: BookOpenText, path: "/writing" as const },
   { label: "讨论", icon: MessageSquareText, path: "/discussion" as const },
   { label: "知识", icon: FileSearch, path: "/knowledge" as const },
