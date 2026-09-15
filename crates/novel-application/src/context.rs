@@ -304,6 +304,33 @@ pub struct ContextEvidenceRef {
 
 impl ContextPackage {
     #[must_use]
+    pub fn with_review_purpose(mut self, purpose: novel_domain::ReviewPurpose) -> Self {
+        let (label, scope) = match purpose {
+            novel_domain::ReviewPurpose::Admission => (
+                "创作准入",
+                "本次只判断当前章节执行卡是否允许进入正文创作。不得把正文审核结论用于放行或阻断写作。",
+            ),
+            novel_domain::ReviewPurpose::Manuscript => (
+                "正文审核",
+                "本次只检查当前已成稿正文是否违反已确认事实或正式约束。不得让本次结论参与写作准入。",
+            ),
+        };
+        self.user_prompt = format!(
+            "[P0 审核用途：{label}]\n{scope}\n\n{}",
+            self.user_prompt
+        );
+        "r5.2-review-purpose-v1".clone_into(&mut self.prompt_version);
+        let canonical = serde_json::json!({
+            "previousContextVersion": self.context_version,
+            "reviewPurpose": purpose,
+            "promptVersion": self.prompt_version,
+            "userPrompt": self.user_prompt,
+        });
+        self.context_version = format!("{:x}", Sha256::digest(canonical.to_string().as_bytes()));
+        self
+    }
+
+    #[must_use]
     pub fn connection_test() -> Self {
         let task_contract = AiTaskContract {
             role: AiTaskRole::ApiConnectionTester,
@@ -447,6 +474,7 @@ impl ContextAssembler {
     /// # Errors
     ///
     /// Returns [`ContextError`] when the budget or retrieval evidence is invalid.
+    #[allow(clippy::too_many_lines)]
     pub fn assemble_discussion(
         input: &DiscussionContextInput,
         evidence: &[RetrievalEvidence],

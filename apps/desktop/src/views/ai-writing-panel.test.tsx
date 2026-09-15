@@ -77,6 +77,7 @@ const reviewProposal: AiProposal = {
   taskId: "task-review",
   chapterId: "chapter-1",
   action: "CONSISTENCY_CHECK",
+  reviewPurpose: "ADMISSION",
   targetRevisionId: null,
   contextVersion: "context-1",
   promptVersion: "r3-writing-v6",
@@ -159,12 +160,18 @@ describe("AiWritingPanel consistency review", () => {
 
     const reviewButton = screen.getByRole("button", { name: "检查创作条件" });
     await waitFor(() => expect(reviewButton).toBeEnabled());
+    await waitFor(() =>
+      expect(mocks.listAiProposals).toHaveBeenCalledWith(
+        expect.objectContaining({ reviewPurpose: "ADMISSION" }),
+      ),
+    );
     fireEvent.click(reviewButton);
 
     await waitFor(() =>
       expect(mocks.generateAiProposal).toHaveBeenCalledWith(
         expect.objectContaining({
           action: "CONSISTENCY_CHECK",
+          reviewPurpose: "ADMISSION",
           profileId: profile.id,
           temperature: 0.2,
           maxOutputTokens: 8192,
@@ -195,6 +202,7 @@ describe("AiWritingPanel consistency review", () => {
       action: "CONSISTENCY_CHECK",
       status: "RUNNING",
       chapterId: "chapter-1",
+      reviewPurpose: "ADMISSION",
       chapterTitle: "第1章·入城",
       profileName: "审核模型",
       attemptCount: 1,
@@ -299,7 +307,17 @@ describe("AiWritingPanel consistency review", () => {
 
     const reviewButton = screen.getByRole("button", { name: "审核当前正文" });
     await waitFor(() => expect(reviewButton).toBeEnabled());
+    await waitFor(() =>
+      expect(mocks.listAiProposals).toHaveBeenCalledWith(
+        expect.objectContaining({ reviewPurpose: "MANUSCRIPT" }),
+      ),
+    );
     fireEvent.click(reviewButton);
+    await waitFor(() =>
+      expect(mocks.generateAiProposal).toHaveBeenCalledWith(
+        expect.objectContaining({ reviewPurpose: "MANUSCRIPT" }),
+      ),
+    );
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("输出预算不足");
@@ -309,6 +327,7 @@ describe("AiWritingPanel consistency review", () => {
   });
 
   it("requires a fresh review when the project uses strict admission", async () => {
+    const openAdmissionReview = vi.fn();
     mocks.getWritingReviewPolicy.mockResolvedValue("REQUIRED");
     mocks.listAiProposals.mockReset();
     mocks.listAiProposals.mockResolvedValue([]);
@@ -331,11 +350,14 @@ describe("AiWritingPanel consistency review", () => {
           volumePlan="第一卷规划"
           draft="主角抵达城门。"
           editor={null}
+          onOpenAdmissionReview={openAdmissionReview}
         />
       </QueryClientProvider>,
     );
 
     expect(await screen.findByText(/严格准入/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "前往创作准入处理" }));
+    expect(openAdmissionReview).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.getByRole("button", { name: "生成新版整章" })).toBeDisabled());
     expect(screen.queryByRole("button", { name: "生成续写候选" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "重写选区" })).not.toBeInTheDocument();

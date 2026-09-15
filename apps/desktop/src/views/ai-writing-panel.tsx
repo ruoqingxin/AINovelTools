@@ -22,6 +22,7 @@ import {
   type AiProposal,
   type AiProposalReview,
   type ConsistencyReviewFreshness,
+  type ReviewPurpose,
   type WritingReviewPolicy,
 } from "../lib/tauri-client";
 import { classifyAiFailure } from "../lib/ai-failure";
@@ -198,12 +199,14 @@ type ProposalAnchor = {
 
 export type AiWritingPanelMode = "readiness" | "create" | "review";
 
-export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null }) {
+export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null; onOpenAdmissionReview?: () => void }) {
   const client = useQueryClient();
   const mode = props.mode ?? "create";
   const isReadinessMode = mode === "readiness";
   const isCreationMode = mode === "create";
   const isReviewMode = mode === "review";
+  const reviewPurpose: ReviewPurpose = (props.reviewPurpose ?? "admission") === "manuscript" ? "MANUSCRIPT" : "ADMISSION";
+  const reviewingManuscript = reviewPurpose === "MANUSCRIPT";
   const panelTaskKey = isReviewMode ? "consistencyReview" : "writing";
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
@@ -215,8 +218,9 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   const currentDocumentJson = props.draft || (props.editor ? JSON.stringify(props.editor.getJSON()) : "");
   const deferredDocumentJson = useDeferredValue(currentDocumentJson);
   const proposals = useQuery({
-    queryKey: ["ai-proposals", props.chapterId, props.chapterPlan, props.volumePlan, deferredDocumentJson, deferredInstruction],
+    queryKey: ["ai-proposals", props.chapterId, reviewPurpose, props.chapterPlan, props.volumePlan, deferredDocumentJson, deferredInstruction],
     queryFn: () => listAiProposals({
+      ...(isReviewMode ? { reviewPurpose } : {}),
       chapterId: props.chapterId,
       chapterTitle: props.chapterTitle,
       chapterPlan: props.chapterPlan,
@@ -245,6 +249,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
       run.status === "RUNNING"
       && run.chapterId === props.chapterId
       && run.taskKey === panelTaskKey
+      && (!isReviewMode || run.reviewPurpose === reviewPurpose)
     ) ? 1_000 : false,
   });
   const persistedRunning = isReadinessMode
@@ -326,6 +331,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
         profileId: chatProfile.id,
         chapterId: props.chapterId,
         action,
+        ...(consistencyCheck ? { reviewPurpose } : {}),
         chapterTitle: props.chapterTitle,
         chapterPlan: props.chapterPlan,
         volumePlan: props.volumePlan,
@@ -481,8 +487,6 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     hasCharacterCard: (entities.data ?? []).some((entity) => entity.entityType === "CHARACTER"),
     hasChapterPlan: Boolean(props.chapterPlan.trim()),
   });
-  const reviewPurpose = props.reviewPurpose ?? "admission";
-  const reviewingManuscript = reviewPurpose === "manuscript";
   const currentDraftAvailable = Boolean(props.editor?.getText().trim()) || documentHasText(props.draft);
   const visibleDraftAvailable = currentDraftAvailable;
   const canRunConsistencyCheck = reviewingManuscript
@@ -499,7 +503,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     {isCreationMode ? <>
       <div className="section-heading ai-stage-heading"><div><h2><Sparkles size={15} />AI 创作</h2><p>填写本章补充意见，生成正文，并在候选写入草稿前完成确认。</p></div><div className="proposal-heading-actions"><span>云端模型 · 候选确认</span>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
       <AiModelNote taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
-      {consistencyNotice ? <p className="consistency-admission creation-admission" data-state={consistencyNotice.state}>{consistencyNotice.text}</p> : null}
+      {consistencyNotice ? <div className="consistency-admission creation-admission" data-state={consistencyNotice.state}><span>{consistencyNotice.text}</span>{consistencyBlocked && props.onOpenAdmissionReview ? <button type="button" className="secondary-action" onClick={props.onOpenAdmissionReview}>前往创作准入处理</button> : null}</div> : null}
       <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>
       <p className="ai-request-hint">系统会把这段意见与章节执行卡、写作规则和正文上下文一起编译成模型消息。</p>
       <div className="ai-creation-options">
@@ -573,7 +577,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
         return <article className="proposal consistency-review" data-state={stale ? "stale" : needsInput ? "needs-input" : undefined} data-verdict={consistency?.verdict.toLowerCase()} key={proposal.id}>
           <div className="proposal-meta"><strong>{reviewingManuscript ? "正文审核" : "创作准入"}</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{stale ? `审核已过期 · 原判断：${consistency ? consistencyVerdictLabels[consistency.verdict] : "需补资料"}` : consistency ? consistencyVerdictLabels[consistency.verdict] : needsInput ? "需补资料" : validation.status === "VALID" ? "审核完成" : validation.status === "WARNING" ? "需要检查" : "无效结果"} · {validation.characterCount} 字</span></div>
           {validation.messages.length ? <div className="proposal-validation-messages">{validation.messages.map((message) => <span key={message}>{message}</span>)}</div> : null}
-          {stale ? <div className="consistency-stale-notice"><strong>审核依据已经变化</strong><span>{reviewPolicy === "REQUIRED" ? "严格准入会暂停正文生成，直到按当前内容重新审核。" : "正文修订、章节执行卡、正式设定或审核模型配置已与生成报告时不同。这是一份历史报告，不再阻止当前生成。"}</span></div> : needsInput ? <div className="proposal-needs-input"><strong>当前资料不足以判断准入</strong><span>请先补齐审核报告列出的正式设定，再重新运行审核。</span></div> : null}
+          {stale ? <div className="consistency-stale-notice"><strong>审核依据已经变化</strong><span>{reviewingManuscript ? "正文、章节执行卡、正式依据或审核模型配置已与生成报告时不同。这份正文审核报告仅作历史参考。" : reviewPolicy === "REQUIRED" ? "严格准入会暂停正文生成，直到按当前内容重新审核。" : "章节执行卡、正式依据或审核模型配置已与生成报告时不同。这份准入报告不再参与写作准入。"}</span></div> : needsInput ? <div className="proposal-needs-input"><strong>{reviewingManuscript ? "当前资料不足以完成正文审核" : "当前资料不足以判断准入"}</strong><span>请先补齐审核报告列出的正式设定，再重新运行审核。</span></div> : null}
           {consistency ? <>
             <p className="consistency-summary">{consistency.summary}</p>
             {consistency.findings.length ? <div className="consistency-findings">{consistency.findings.map((finding, index) => <div className="consistency-finding" data-severity={finding.severity.toLowerCase()} key={`${proposal.id}-${index}`}>

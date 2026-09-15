@@ -11,7 +11,8 @@ use keyring::Entry;
 use novel_application::ContextPackage;
 use novel_domain::{
     AiAction, AiContractError, AiProposal, AiProposalStatus, AiTaskStatus, ModelCapability,
-    ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel, WritingReviewPolicy,
+    ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel, ReviewPurpose,
+    WritingReviewPolicy,
 };
 use reqwest::StatusCode;
 use rusqlite::OptionalExtension;
@@ -256,6 +257,7 @@ pub struct AiRun {
     pub action: String,
     pub status: String,
     pub chapter_id: Option<String>,
+    pub review_purpose: ReviewPurpose,
     pub chapter_title: String,
     pub profile_name: String,
     pub attempt_count: u32,
@@ -1849,6 +1851,7 @@ impl ProjectManager {
         &mut self,
         profile_id: Uuid,
         context: &ContextPackage,
+        review_purpose: Option<ReviewPurpose>,
     ) -> Result<Uuid, AiError> {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
         let profile_snapshot: Option<(String, String, u64, u64, String)> = session
@@ -1899,16 +1902,16 @@ impl ProjectManager {
             .transaction()
             .map_err(DatabaseError::from)?;
         transaction.execute(
-            "INSERT INTO ai_tasks (id, profile_id, chapter_id, action, target_revision_id, context_version, prompt_version, task_contract_json, context_section_audit_json, status, estimated_input_tokens) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            rusqlite::params![task_id.to_string(), profile_id.to_string(), context.chapter_id.to_string(), action_str(context.action), context.target_revision_id.map(|id| id.to_string()), context.context_version, context.prompt_version, task_contract_json, context_section_audit_json, task_status_str(AiTaskStatus::Running), context.estimated_input_tokens],
+            "INSERT INTO ai_tasks (id, profile_id, chapter_id, action, target_revision_id, context_version, prompt_version, task_contract_json, context_section_audit_json, status, estimated_input_tokens, review_purpose) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![task_id.to_string(), profile_id.to_string(), context.chapter_id.to_string(), action_str(context.action), context.target_revision_id.map(|id| id.to_string()), context.context_version, context.prompt_version, task_contract_json, context_section_audit_json, task_status_str(AiTaskStatus::Running), context.estimated_input_tokens, review_purpose.unwrap_or(ReviewPurpose::Admission).storage_key()],
         ).map_err(DatabaseError::from)?;
         transaction
             .execute(
                 "INSERT INTO ai_run_records (
                 id, task_key, source, chapter_id, display_title, profile_id, action, status,
                 estimated_input_tokens, input_price_micros_per_million,
-                output_price_micros_per_million, price_currency, prompt_version
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                output_price_micros_per_million, price_currency, prompt_version, review_purpose
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 rusqlite::params![
                     task_id.to_string(),
                     task_kind.storage_key(),
@@ -1922,7 +1925,8 @@ impl ProjectManager {
                     i64::try_from(input_price).unwrap_or(i64::MAX),
                     i64::try_from(output_price).unwrap_or(i64::MAX),
                     price_currency,
-                    context.prompt_version
+                    context.prompt_version,
+                    review_purpose.unwrap_or(ReviewPurpose::Admission).storage_key()
                 ],
             )
             .map_err(DatabaseError::from)?;
@@ -2048,6 +2052,13 @@ impl ProjectManager {
             .connection
             .transaction()
             .map_err(DatabaseError::from)?;
+        let review_purpose: String = transaction
+            .query_row(
+                "SELECT review_purpose FROM ai_tasks WHERE id=?1",
+                [task_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(DatabaseError::from)?;
         transaction.execute("UPDATE ai_tasks SET status='COMPLETED', estimated_output_tokens=?2, finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1 AND status='RUNNING'", rusqlite::params![task_id.to_string(), estimated_output_tokens]).map_err(DatabaseError::from)?;
         transaction.execute(
             "UPDATE ai_run_records SET status='COMPLETED', estimated_output_tokens=?2,
@@ -2057,8 +2068,8 @@ impl ProjectManager {
         .map_err(DatabaseError::from)?;
         let proposal_id = Uuid::new_v4();
         transaction.execute(
-            "INSERT INTO ai_proposals (id, task_id, chapter_id, action, target_revision_id, context_version, prompt_version, output_text, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'PENDING')",
-            rusqlite::params![proposal_id.to_string(), task_id.to_string(), context.chapter_id.to_string(), action_str(context.action), context.target_revision_id.map(|id| id.to_string()), context.context_version, context.prompt_version, output_text],
+            "INSERT INTO ai_proposals (id, task_id, chapter_id, action, review_purpose, target_revision_id, context_version, prompt_version, output_text, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'PENDING')",
+            rusqlite::params![proposal_id.to_string(), task_id.to_string(), context.chapter_id.to_string(), action_str(context.action), review_purpose, context.target_revision_id.map(|id| id.to_string()), context.context_version, context.prompt_version, output_text],
         ).map_err(DatabaseError::from)?;
         transaction.commit().map_err(DatabaseError::from)?;
         self.get_ai_proposal(proposal_id)
@@ -2230,7 +2241,8 @@ impl ProjectManager {
                         t.attempt_count, t.retry_reason, t.error_code, t.estimated_input_tokens,
                         t.estimated_output_tokens, t.prompt_version, t.created_at, t.finished_at,
                         t.task_key, t.source, t.input_price_micros_per_million,
-                        t.output_price_micros_per_million, t.price_currency, t.chapter_id
+                        t.output_price_micros_per_million, t.price_currency, t.chapter_id,
+                        t.review_purpose
                  FROM ai_run_records t
                  LEFT JOIN model_profiles p ON p.id = t.profile_id
                  ORDER BY t.created_at DESC, t.rowid DESC
@@ -2253,6 +2265,10 @@ impl ProjectManager {
                     action: row.get(1)?,
                     status: row.get(2)?,
                     chapter_id: row.get(18)?,
+                    review_purpose: match row.get::<_, String>(19)?.as_str() {
+                        "MANUSCRIPT" => ReviewPurpose::Manuscript,
+                        _ => ReviewPurpose::Admission,
+                    },
                     chapter_title: row.get(3)?,
                     profile_name: row.get(4)?,
                     attempt_count: row.get(5)?,
@@ -2498,13 +2514,26 @@ impl ProjectManager {
         Ok(summary)
     }
 
-    pub fn list_ai_proposals(&self, chapter_id: Uuid) -> Result<Vec<AiProposal>, AiError> {
+    pub fn list_ai_proposals(
+        &self,
+        chapter_id: Uuid,
+        review_purpose: Option<ReviewPurpose>,
+    ) -> Result<Vec<AiProposal>, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
         let mut statement = session.database.connection.prepare(
-            "SELECT id, task_id, chapter_id, action, target_revision_id, context_version, prompt_version, output_text, accepted_text, status, created_at, decided_at FROM ai_proposals WHERE chapter_id=?1 ORDER BY created_at DESC"
+            "SELECT id, task_id, chapter_id, action, review_purpose, target_revision_id, context_version, prompt_version, output_text, accepted_text, status, created_at, decided_at
+             FROM ai_proposals
+             WHERE chapter_id=?1 AND (?2 IS NULL OR review_purpose=?2)
+             ORDER BY created_at DESC"
         ).map_err(DatabaseError::from)?;
         let rows = statement
-            .query_map([chapter_id.to_string()], read_proposal)
+            .query_map(
+                rusqlite::params![
+                    chapter_id.to_string(),
+                    review_purpose.map(ReviewPurpose::storage_key)
+                ],
+                read_proposal,
+            )
             .map_err(DatabaseError::from)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(DatabaseError::from)
@@ -2514,8 +2543,9 @@ impl ProjectManager {
     pub fn list_ai_proposal_reviews(
         &self,
         chapter_id: Uuid,
+        review_purpose: Option<ReviewPurpose>,
     ) -> Result<Vec<AiProposalReview>, AiError> {
-        let proposals = self.list_ai_proposals(chapter_id)?;
+        let proposals = self.list_ai_proposals(chapter_id, review_purpose)?;
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
         let mut feedback = HashMap::new();
         let mut statement = session
@@ -2579,7 +2609,7 @@ impl ProjectManager {
         policy: WritingReviewPolicy,
     ) -> Result<WritingAdmission, AiError> {
         let Some(review) = self
-            .list_ai_proposal_reviews(chapter_id)?
+            .list_ai_proposal_reviews(chapter_id, Some(ReviewPurpose::Admission))?
             .into_iter()
             .find(|item| {
                 item.proposal.action == AiAction::ConsistencyCheck
@@ -2786,7 +2816,7 @@ impl ProjectManager {
     fn get_ai_proposal(&self, id: Uuid) -> Result<AiProposal, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
         session.database.connection.query_row(
-            "SELECT id, task_id, chapter_id, action, target_revision_id, context_version, prompt_version, output_text, accepted_text, status, created_at, decided_at FROM ai_proposals WHERE id=?1",
+            "SELECT id, task_id, chapter_id, action, review_purpose, target_revision_id, context_version, prompt_version, output_text, accepted_text, status, created_at, decided_at FROM ai_proposals WHERE id=?1",
             [id.to_string()], read_proposal,
         ).optional().map_err(DatabaseError::from)?.ok_or(AiError::MissingProposal(id))
     }
@@ -2889,22 +2919,27 @@ fn estimate_run_cost_micros(
 }
 
 fn read_proposal(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiProposal> {
+    let review_purpose = match row.get::<_, String>(4)?.as_str() {
+        "MANUSCRIPT" => ReviewPurpose::Manuscript,
+        _ => ReviewPurpose::Admission,
+    };
     Ok(AiProposal {
         id: parse_uuid(row.get::<_, String>(0)?, 0)?,
         task_id: parse_uuid(row.get::<_, String>(1)?, 1)?,
         chapter_id: parse_uuid(row.get::<_, String>(2)?, 2)?,
         action: parse_action(&row.get::<_, String>(3)?),
+        review_purpose,
         target_revision_id: row
-            .get::<_, Option<String>>(4)?
-            .map(|value| parse_uuid(value, 4))
+            .get::<_, Option<String>>(5)?
+            .map(|value| parse_uuid(value, 5))
             .transpose()?,
-        context_version: row.get(5)?,
-        prompt_version: row.get(6)?,
-        output_text: row.get(7)?,
-        accepted_text: row.get(8)?,
-        status: parse_proposal_status(&row.get::<_, String>(9)?),
-        created_at: row.get(10)?,
-        decided_at: row.get(11)?,
+        context_version: row.get(6)?,
+        prompt_version: row.get(7)?,
+        output_text: row.get(8)?,
+        accepted_text: row.get(9)?,
+        status: parse_proposal_status(&row.get::<_, String>(10)?),
+        created_at: row.get(11)?,
+        decided_at: row.get(12)?,
     })
 }
 

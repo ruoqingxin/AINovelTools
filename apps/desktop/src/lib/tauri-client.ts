@@ -217,6 +217,7 @@ export type ModelCapability = "CHAT" | "EMBEDDING";
 export type PrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
 export type WritingReviewPolicy = "ADVISORY" | "BALANCED" | "REQUIRED";
 export type AiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE" | "CONSISTENCY_CHECK";
+export type ReviewPurpose = "ADMISSION" | "MANUSCRIPT";
 export type AiProposalStatus = "PENDING" | "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED";
 export type ModelProfile = {
   id: string; name: string; provider: ModelProvider; capability: ModelCapability; baseUrl: string; modelId: string;
@@ -269,13 +270,13 @@ export type ProjectAiTaskOverrides = {
   knowledgeExtraction: AiTaskPreference | null;
 };
 export type AiProposal = {
-  id: string; taskId: string; chapterId: string; action: AiAction; targetRevisionId: string | null;
+  id: string; taskId: string; chapterId: string; action: AiAction; reviewPurpose: ReviewPurpose; targetRevisionId: string | null;
   contextVersion: string; promptVersion: string; outputText: string; acceptedText: string | null;
   status: AiProposalStatus; createdAt: string; decidedAt: string | null;
 };
 export type AiRun = {
   id: string; taskKey: string; source: string; action: AiAction | string; status: string;
-  chapterId: string | null; chapterTitle: string; profileName: string;
+  chapterId: string | null; reviewPurpose: ReviewPurpose; chapterTitle: string; profileName: string;
   attemptCount: number; retryReason: string | null; errorCode: string | null;
   estimatedInputTokens: number; estimatedOutputTokens: number;
   estimatedCostMicros: number | null; priceCurrency: string;
@@ -680,6 +681,7 @@ export function extractEntitiesFromText(profileId: string, entityType: EntityTyp
 }
 
 export function listAiProposals(input: {
+  reviewPurpose?: ReviewPurpose;
   chapterId: string;
   chapterTitle: string;
   chapterPlan: string;
@@ -707,7 +709,7 @@ export function rateAiProposal(id: string, rating: "HELPFUL" | "NOT_HELPFUL", no
 
 export function generateAiProposal(input: {
   profileId: string; chapterId: string; action: AiAction; chapterTitle: string; chapterPlan: string; volumePlan: string;
-  documentJson: string; selection?: string; instruction?: string; stream: boolean;
+  documentJson: string; reviewPurpose?: ReviewPurpose; selection?: string; instruction?: string; stream: boolean;
   temperature?: number; maxOutputTokens?: number;
 }) {
   return invoke<AiProposal>("generate_ai_proposal", input);

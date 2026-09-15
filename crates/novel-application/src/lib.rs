@@ -285,6 +285,15 @@ mod tests {
                 .iter()
                 .any(|item| item.contains("正式正文"))
         );
+        let admission = review
+            .clone()
+            .with_review_purpose(novel_domain::ReviewPurpose::Admission);
+        let manuscript = review.with_review_purpose(novel_domain::ReviewPurpose::Manuscript);
+        assert_ne!(admission.context_version, manuscript.context_version);
+        assert!(admission.user_prompt.contains("创作准入"));
+        assert!(manuscript.user_prompt.contains("正文审核"));
+        assert!(admission.user_prompt.contains("不得把正文审核结论"));
+        assert!(manuscript.user_prompt.contains("不得让本次结论参与写作准入"));
     }
 
     #[test]

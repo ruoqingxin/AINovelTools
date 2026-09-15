@@ -405,9 +405,8 @@ impl Database {
                 map_extraction_item,
             )
             .optional()?;
-        let item = match item {
-            Some(item) => item,
-            None => return Err(ExtractionStoreError::MissingItem(id)),
+        let Some(item) = item else {
+            return Err(ExtractionStoreError::MissingItem(id));
         };
         if item.status != expected_status {
             return Err(ExtractionStoreError::Conflict);

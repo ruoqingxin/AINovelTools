@@ -919,6 +919,19 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (41, 'ai_run_request_snapshots');",
             )?;
         }
+        if applied.unwrap_or(0) < 42 {
+            self.connection.execute_batch(
+                "ALTER TABLE ai_tasks ADD COLUMN review_purpose TEXT NOT NULL DEFAULT 'ADMISSION'
+                    CHECK(review_purpose IN ('ADMISSION','MANUSCRIPT'));
+                ALTER TABLE ai_proposals ADD COLUMN review_purpose TEXT NOT NULL DEFAULT 'ADMISSION'
+                    CHECK(review_purpose IN ('ADMISSION','MANUSCRIPT'));
+                ALTER TABLE ai_run_records ADD COLUMN review_purpose TEXT NOT NULL DEFAULT 'ADMISSION'
+                    CHECK(review_purpose IN ('ADMISSION','MANUSCRIPT'));
+                CREATE INDEX IF NOT EXISTS idx_ai_proposals_chapter_purpose_created
+                    ON ai_proposals(chapter_id, review_purpose, created_at DESC);
+                INSERT INTO schema_migrations (version, name) VALUES (42, 'review_purpose_split');",
+            )?;
+        }
         Ok(())
     }
 
@@ -1823,6 +1836,10 @@ mod tests {
                     ON discussion_sessions(project_id, updated_at DESC);
                 ALTER TABLE ai_run_records DROP COLUMN request_body;
                 ALTER TABLE ai_run_records DROP COLUMN request_endpoint;
+                DROP INDEX IF EXISTS idx_ai_proposals_chapter_purpose_created;
+                ALTER TABLE ai_tasks DROP COLUMN review_purpose;
+                ALTER TABLE ai_proposals DROP COLUMN review_purpose;
+                ALTER TABLE ai_run_records DROP COLUMN review_purpose;
                 DELETE FROM schema_migrations WHERE version >= 40;
                 COMMIT;
                 PRAGMA foreign_keys=ON;",
@@ -1876,7 +1893,7 @@ mod tests {
                     0
                 ))
                 .expect("schema version"),
-            41
+            super::CURRENT_SCHEMA_VERSION
         );
     }
 }

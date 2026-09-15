@@ -62,8 +62,8 @@ pub use novel_domain::{
     KnowledgeChunk, KnowledgeConflict, KnowledgeConflictKind, KnowledgeContractError,
     KnowledgeExpansionError, KnowledgeLifecycleStatus, KnowledgeVersion, ModelCapability,
     ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel, Relation, RetrievalEvidence,
-    RetrievalMethod, ReviewDecision, SummaryKind, SummaryMaterial, SummaryPrecision, WorldState,
-    WorldStateEntry, WritingCard, WritingReviewPolicy,
+    RetrievalMethod, ReviewDecision, ReviewPurpose, SummaryKind, SummaryMaterial,
+    SummaryPrecision, WorldState, WorldStateEntry, WritingCard, WritingReviewPolicy,
 };
 pub use search_store::{SearchResult, SearchStoreError};
 
@@ -190,7 +190,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 41;
+pub const CURRENT_SCHEMA_VERSION: i64 = 42;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -3511,7 +3511,9 @@ mod tests {
             },
         )
         .expect("context");
-        let task_id = manager.create_ai_task(profile.id, &context).expect("task");
+        let task_id = manager
+            .create_ai_task(profile.id, &context, None)
+            .expect("task");
         manager
             .record_ai_task_fallback(task_id, fallback.id, "PROVIDER_TIMEOUT")
             .expect("record fallback");
@@ -3567,7 +3569,7 @@ mod tests {
             .expect("feedback");
         assert_eq!(feedback.rating, super::AiProposalFeedbackRating::Helpful);
         let reviews = manager
-            .list_ai_proposal_reviews(chapter.id)
+            .list_ai_proposal_reviews(chapter.id, None)
             .expect("proposal reviews");
         assert_eq!(reviews.len(), 1);
         assert_eq!(reviews[0].validation.status, "WARNING");
@@ -3589,7 +3591,9 @@ mod tests {
         assert_eq!(quality.groups.len(), 1);
         assert_eq!(quality.groups[0].accepted_count, 1);
         assert_eq!(quality.groups[0].warning_count, 1);
-        let needs_input_task = manager.create_ai_task(profile.id, &context).expect("task");
+        let needs_input_task = manager
+            .create_ai_task(profile.id, &context, None)
+            .expect("task");
         let needs_input_proposal = manager
             .complete_ai_task(
                 needs_input_task,
@@ -3598,7 +3602,7 @@ mod tests {
             )
             .expect("needs-input proposal");
         let needs_input_review = manager
-            .list_ai_proposal_reviews(chapter.id)
+            .list_ai_proposal_reviews(chapter.id, None)
             .expect("needs-input review")
             .into_iter()
             .find(|item| item.proposal.id == needs_input_proposal.id)
@@ -3704,7 +3708,9 @@ mod tests {
         )
         .expect("context");
         let review_context_version = context.context_version.clone();
-        let task_id = manager.create_ai_task(profile.id, &context).expect("task");
+        let task_id = manager
+            .create_ai_task(profile.id, &context, Some(super::ReviewPurpose::Admission))
+            .expect("task");
         let proposal = manager
             .complete_ai_task(
                 task_id,
@@ -3716,7 +3722,7 @@ mod tests {
 
         assert_eq!(proposal.action, super::AiAction::ConsistencyCheck);
         let review = manager
-            .list_ai_proposal_reviews(chapter.id)
+            .list_ai_proposal_reviews(chapter.id, Some(super::ReviewPurpose::Admission))
             .expect("review")
             .into_iter()
             .find(|item| item.proposal.id == proposal.id)
@@ -3725,8 +3731,50 @@ mod tests {
             review.consistency.expect("consistency report").verdict,
             super::AiConsistencyVerdict::Blocked
         );
+        let manuscript_context =
+            context
+                .clone()
+                .with_review_purpose(super::ReviewPurpose::Manuscript);
+        let manuscript_task = manager
+            .create_ai_task(
+                profile.id,
+                &manuscript_context,
+                Some(super::ReviewPurpose::Manuscript),
+            )
+            .expect("manuscript task");
+        let manuscript_proposal = manager
+            .complete_ai_task(
+                manuscript_task,
+                &manuscript_context,
+                "审核结论：阻断\n[阻断] 正文位置冲突｜当前状态位于城外｜修改正文位置。".into(),
+            )
+            .expect("manuscript proposal");
+        assert_eq!(
+            manuscript_proposal.review_purpose,
+            super::ReviewPurpose::Manuscript
+        );
+        assert_eq!(
+            manager
+                .list_ai_proposal_reviews(
+                    chapter.id,
+                    Some(super::ReviewPurpose::Admission),
+                )
+                .expect("admission reviews")
+                .len(),
+            1
+        );
+        assert_eq!(
+            manager
+                .list_ai_proposal_reviews(
+                    chapter.id,
+                    Some(super::ReviewPurpose::Manuscript),
+                )
+                .expect("manuscript reviews")
+                .len(),
+            1
+        );
         let mut fresh_reviews = manager
-            .list_ai_proposal_reviews(chapter.id)
+            .list_ai_proposal_reviews(chapter.id, Some(super::ReviewPurpose::Admission))
             .expect("fresh reviews");
         super::ProjectManager::mark_consistency_review_freshness(
             &mut fresh_reviews,
@@ -3737,7 +3785,7 @@ mod tests {
             Some(super::ConsistencyReviewFreshness::Fresh)
         );
         let mut stale_reviews = manager
-            .list_ai_proposal_reviews(chapter.id)
+            .list_ai_proposal_reviews(chapter.id, Some(super::ReviewPurpose::Admission))
             .expect("stale reviews");
         super::ProjectManager::mark_consistency_review_freshness(
             &mut stale_reviews,
@@ -3823,6 +3871,18 @@ mod tests {
                 )
                 .expect("admission after close")
                 .allowed
+        );
+        assert_eq!(
+            manager
+                .list_ai_proposal_reviews(
+                    chapter.id,
+                    Some(super::ReviewPurpose::Manuscript),
+                )
+                .expect("manuscript review remains open")
+                .first()
+                .and_then(|item| item.consistency.as_ref())
+                .map(|report| report.verdict),
+            Some(super::AiConsistencyVerdict::Blocked)
         );
         assert!(
             !manager
@@ -3943,13 +4003,15 @@ mod tests {
             },
         )
         .expect("context");
-        let task_id = manager.create_ai_task(profile.id, &context).expect("task");
+        let task_id = manager
+            .create_ai_task(profile.id, &context, None)
+            .expect("task");
         manager
             .fail_ai_task(task_id, &super::AiError::Timeout)
             .expect("fail");
         assert!(
             manager
-                .list_ai_proposals(chapter.id)
+                .list_ai_proposals(chapter.id, None)
                 .expect("proposals")
                 .is_empty()
         );
@@ -4086,7 +4148,7 @@ mod tests {
         )
         .expect("context");
         assert!(matches!(
-            manager.create_ai_task(profile.id, &context),
+            manager.create_ai_task(profile.id, &context, None),
             Err(super::AiError::Contract(
                 novel_domain::AiContractError::InvalidProviderCapability
             ))

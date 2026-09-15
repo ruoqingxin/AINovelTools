@@ -242,8 +242,10 @@ fn assemble_task_context(
     Ok(context)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn current_consistency_review_context_version(
     state: &ProjectState,
+    review_purpose: novel_infrastructure::ReviewPurpose,
     chapter_id: uuid::Uuid,
     target_revision_id: Option<uuid::Uuid>,
     chapter_title: String,
@@ -270,30 +272,20 @@ fn current_consistency_review_context_version(
         preference.prompt.context.include_project_knowledge,
         novel_infrastructure::AiTaskKind::ConsistencyReview.default_include_project_knowledge(),
     );
-    let include_current_draft = context_option(
-        preference.prompt.context.include_current_draft,
-        novel_infrastructure::AiTaskKind::ConsistencyReview.default_include_current_draft(),
-    );
-    let include_chapter_plan = context_option(
-        preference.prompt.context.include_chapter_plan,
-        novel_infrastructure::AiTaskKind::ConsistencyReview.default_include_chapter_plan(),
-    );
+    let reviewing_manuscript =
+        review_purpose == novel_infrastructure::ReviewPurpose::Manuscript;
     let input = novel_application::AssembleContextInput {
         chapter_id,
         target_revision_id,
         action: novel_infrastructure::AiAction::ConsistencyCheck,
         chapter_title,
-        chapter_plan: if include_chapter_plan {
-            chapter_plan
-        } else {
+        chapter_plan,
+        volume_plan: if reviewing_manuscript {
             String::new()
-        },
-        volume_plan: if include_chapter_plan {
+        } else {
             volume_plan
-        } else {
-            String::new()
         },
-        document_json: if include_current_draft {
+        document_json: if reviewing_manuscript {
             normalized_document_json(document_json)
         } else {
             r#"{"type":"doc","content":[]}"#.to_owned()
@@ -306,7 +298,11 @@ fn current_consistency_review_context_version(
     else {
         return Ok(None);
     };
-    Ok(Some(context.context_version))
+    Ok(Some(
+        context
+            .with_review_purpose(review_purpose)
+            .context_version,
+    ))
 }
 
 pub(crate) struct AiGenerationOutcome {
@@ -2360,7 +2356,7 @@ pub(crate) async fn extract_chapter_candidates(
             ("sourceText", source_text.as_str()),
         ],
     );
-    context.prompt_version = EXTRACTION_PROMPT_VERSION.to_owned();
+    EXTRACTION_PROMPT_VERSION.clone_into(&mut context.prompt_version);
     context.estimated_input_tokens = u32::try_from(
         (context.system_prompt.chars().count() + context.user_prompt.chars().count()).div_ceil(4),
     )
@@ -2441,7 +2437,7 @@ pub(crate) async fn extract_chapter_candidates(
     }
 
     let parsed =
-        parse_json_array::<ChapterExtractionAiItem>(&outcome.output).map_err(|_| ApiError {
+        parse_json_array::<ChapterExtractionAiItem>(&outcome.output).map_err(|()| ApiError {
             code: "INVALID_RESPONSE",
             message: "AI 返回的正文候选不是有效 JSON，请重试".to_owned(),
         })?;
@@ -2951,8 +2947,7 @@ fn manuscript_blocks(document_json: &str) -> Result<Vec<(String, String)>, ApiEr
             .get("attrs")
             .and_then(|attrs| attrs.get("blockId"))
             .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| format!("block-{index}"));
+            .map_or_else(|| format!("block-{index}"), ToOwned::to_owned);
         let mut text = String::new();
         collect_node_text(node, &mut text);
         if !text.trim().is_empty() {
@@ -3359,8 +3354,10 @@ pub(crate) async fn test_model_profile(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn list_ai_proposals(
     state: tauri::State<'_, ProjectState>,
+    review_purpose: Option<novel_infrastructure::ReviewPurpose>,
     chapter_id: uuid::Uuid,
     chapter_title: String,
     chapter_plan: String,
@@ -3374,7 +3371,7 @@ pub(crate) fn list_ai_proposals(
             .lock()
             .map_err(|_| ApiError::internal("project mutex poisoned"))?;
         let reviews = manager
-            .list_ai_proposal_reviews(chapter_id)
+            .list_ai_proposal_reviews(chapter_id, review_purpose)
             .map_err(ApiError::from)?;
         let target_revision_id = manager
             .current_manuscript(chapter_id)
@@ -3387,8 +3384,10 @@ pub(crate) fn list_ai_proposals(
             && review.proposal.status == novel_infrastructure::AiProposalStatus::Pending
     });
     if needs_freshness {
+        let freshness_purpose = review_purpose.unwrap_or(novel_infrastructure::ReviewPurpose::Admission);
         let current_context_version = current_consistency_review_context_version(
             &state,
+            freshness_purpose,
             chapter_id,
             target_revision_id,
             chapter_title,
@@ -3519,6 +3518,7 @@ pub(crate) async fn generate_ai_proposal(
     profile_id: uuid::Uuid,
     chapter_id: uuid::Uuid,
     action: novel_infrastructure::AiAction,
+    review_purpose: Option<novel_infrastructure::ReviewPurpose>,
     chapter_title: String,
     chapter_plan: String,
     volume_plan: String,
@@ -3554,6 +3554,10 @@ pub(crate) async fn generate_ai_proposal(
     } else {
         novel_infrastructure::AiTaskKind::Writing
     };
+    let effective_review_purpose =
+        review_purpose.unwrap_or(novel_infrastructure::ReviewPurpose::Admission);
+    let task_review_purpose = (action == novel_infrastructure::AiAction::ConsistencyCheck)
+        .then_some(effective_review_purpose);
     let task_preference = load_ai_task_preference(&state, task_kind)?;
     let include_project_knowledge = context_option(
         task_preference.prompt.context.include_project_knowledge,
@@ -3572,12 +3576,22 @@ pub(crate) async fn generate_ai_proposal(
     let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
     let input_token_budget =
         effective_task_input_budget(&profile, max_output_tokens, &task_preference);
-    let effective_document_json =
-        if !include_current_draft && action == novel_infrastructure::AiAction::Draft {
-            r#"{"type":"doc","content":[]}"#.to_owned()
+    let effective_include_current_draft =
+        if action == novel_infrastructure::AiAction::ConsistencyCheck {
+            effective_review_purpose == novel_infrastructure::ReviewPurpose::Manuscript
         } else {
-            normalized_document_json(document_json.clone())
+            include_current_draft
         };
+    let effective_document_json = if !effective_include_current_draft
+        && matches!(
+            action,
+            novel_infrastructure::AiAction::Draft
+                | novel_infrastructure::AiAction::ConsistencyCheck
+        ) {
+        r#"{"type":"doc","content":[]}"#.to_owned()
+    } else {
+        normalized_document_json(document_json.clone())
+    };
     let context_input = novel_application::AssembleContextInput {
         chapter_id,
         target_revision_id,
@@ -3588,7 +3602,11 @@ pub(crate) async fn generate_ai_proposal(
         } else {
             String::new()
         },
-        volume_plan: if include_chapter_plan {
+        volume_plan: if action == novel_infrastructure::AiAction::ConsistencyCheck
+            && effective_review_purpose == novel_infrastructure::ReviewPurpose::Manuscript
+        {
+            String::new()
+        } else if include_chapter_plan {
             volume_plan.clone()
         } else {
             String::new()
@@ -3608,6 +3626,9 @@ pub(crate) async fn generate_ai_proposal(
         include_project_knowledge,
         &task_preference,
     )?;
+    if action == novel_infrastructure::AiAction::ConsistencyCheck {
+        context = context.with_review_purpose(effective_review_purpose);
+    }
     context.estimated_input_tokens = u32::try_from(
         (context.system_prompt.chars().count() + context.user_prompt.chars().count()).div_ceil(4),
     )
@@ -3619,6 +3640,7 @@ pub(crate) async fn generate_ai_proposal(
     ) {
         let current_review_context_version = current_consistency_review_context_version(
             &state,
+            novel_infrastructure::ReviewPurpose::Admission,
             chapter_id,
             target_revision_id,
             chapter_title,
@@ -3667,7 +3689,7 @@ pub(crate) async fn generate_ai_proposal(
             .map_err(|_| ApiError::internal("project mutex poisoned"))?;
         sync_model_profile(&mut manager, &profile)?;
         manager
-            .create_ai_task(profile_id, &context)
+            .create_ai_task(profile_id, &context, task_review_purpose)
             .map_err(ApiError::from)?
     };
     if let Err(error) = persist_ai_run_request(

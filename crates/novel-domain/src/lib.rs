@@ -89,6 +89,23 @@ pub enum AiAction {
     ConsistencyCheck,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ReviewPurpose {
+    Admission,
+    Manuscript,
+}
+
+impl ReviewPurpose {
+    #[must_use]
+    pub const fn storage_key(self) -> &'static str {
+        match self {
+            Self::Admission => "ADMISSION",
+            Self::Manuscript => "MANUSCRIPT",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WritingReviewPolicy {
@@ -201,6 +218,7 @@ pub struct AiProposal {
     pub task_id: Uuid,
     pub chapter_id: Uuid,
     pub action: AiAction,
+    pub review_purpose: ReviewPurpose,
     pub target_revision_id: Option<Uuid>,
     pub context_version: String,
     pub prompt_version: String,
