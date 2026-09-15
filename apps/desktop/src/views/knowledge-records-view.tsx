@@ -209,7 +209,7 @@ export function KnowledgeRecordsView() {
   return (
     <section className="story-bible-view knowledge-records-view">
       <div className="workspace-heading">
-        <p className="eyebrow">知识工作区</p>
+        <p className="eyebrow">知识资料</p>
         <h1>知识记录</h1>
         <p className="workspace-lede">创建并查看关系、事件、信念和伏笔；每条记录保留独立版本与证据锚点。</p>
       </div>
@@ -257,7 +257,7 @@ export function KnowledgeRecordsView() {
               <option value="ARCHIVED">归档</option>
             </select></label>
           </div>
-          <fieldset className="knowledge-select-list"><legend>证据锚点</legend>{anchors.isPending ? <span>正在加载证据…</span> : null}{!anchors.isPending && !(anchors.data ?? []).length ? <span>尚无证据锚点，请先在章节审核流程中建立证据。</span> : null}{(anchors.data ?? []).map((item) => <label key={item.id}><input type="checkbox" checked={evidenceIds.includes(item.id)} onChange={() => toggle(evidenceIds, item.id, setEvidenceIds)} />章节 {item.chapterId.slice(0, 8)} · 区块 {item.blockId}</label>)}</fieldset>
+          <fieldset className="knowledge-select-list"><legend>证据锚点</legend>{anchors.isPending ? <span>正在加载证据…</span> : null}{!anchors.isPending && !(anchors.data ?? []).length ? <span>尚无证据锚点，请先在正文事实审核流程中建立证据。</span> : null}{(anchors.data ?? []).map((item) => <label key={item.id}><input type="checkbox" checked={evidenceIds.includes(item.id)} onChange={() => toggle(evidenceIds, item.id, setEvidenceIds)} />章节 {item.chapterId.slice(0, 8)} · 区块 {item.blockId}</label>)}</fieldset>
           <div className="inspector-actions"><button type="submit" className="primary-action" disabled={!canSave()}><Save size={15} />{busy ? "保存中…" : activeRecord ? `保存为 v${activeVersion + 1}` : `创建${tabs.find((item) => item.id === tab)?.label}`}</button>{activeRecord ? <button type="button" className="secondary-action" onClick={startNew} disabled={busy}><Plus size={15} />新建记录</button> : null}</div>
         </form>
 

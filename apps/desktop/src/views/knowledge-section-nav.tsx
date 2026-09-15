@@ -1,8 +1,7 @@
-import { BookMarked, Files, ShieldCheck, UsersRound } from "lucide-react";
+import { BookMarked, Files, UsersRound } from "lucide-react";
 
 const sections = [
   { label: "实体库", href: "/knowledge", icon: UsersRound, exact: true },
-  { label: "章节审核", href: "/knowledge/review", icon: ShieldCheck },
   { label: "知识记录", href: "/knowledge/records", icon: BookMarked },
   { label: "摘要与卡片", href: "/knowledge/materials", icon: Files },
 ];
@@ -10,7 +9,7 @@ const sections = [
 export function KnowledgeSectionNav() {
   const currentPath = window.location.pathname.replace(/\/+$/, "") || "/";
 
-  return <nav className="knowledge-section-nav" aria-label="知识工作区分类">
+  return <nav className="knowledge-section-nav" aria-label="知识资料分类">
     {sections.map(({ label, href, icon: Icon, exact }) => {
       const active = exact ? currentPath === href : currentPath === href || currentPath.startsWith(`${href}/`);
 

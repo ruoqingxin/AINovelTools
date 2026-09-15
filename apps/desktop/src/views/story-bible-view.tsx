@@ -272,9 +272,9 @@ export function StoryBibleView() {
   return (
     <section className="story-bible-view">
       <div className="workspace-heading">
-        <p className="eyebrow">知识工作区</p>
-        <h1>Story Bible</h1>
-        <p className="workspace-lede">管理人物、地点、阵营、物品和概念。每次保存都会留下可追溯的实体修订。</p>
+        <p className="eyebrow">知识资料</p>
+        <h1>设定资料</h1>
+        <p className="workspace-lede">维护人物、地点、阵营、物品和概念等稳定资料。这里负责资料整理，不处理正文候选事实的批准与定稿。</p>
       </div>
       <KnowledgeSectionNav />
 

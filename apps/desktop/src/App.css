@@ -3047,6 +3047,9 @@ textarea:focus-visible,
 .workspace-heading { padding:0 0 20px; border-bottom:1px solid var(--line); }
 .workspace-heading .eyebrow { margin-bottom:8px; color:#4f7fe0; }
 .workspace-heading h1 { color:#203250; font-size:28px; }
+.workspace-heading-with-action { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; }
+.workspace-heading-with-action > div { min-width:0; }
+.workspace-heading-with-action > .secondary-action { flex:0 0 auto; margin-bottom:2px; }
 .planning-overview { margin-top:22px; padding:18px 20px 14px; border:1px solid #dbe5f3; border-radius:10px; background:#fff; box-shadow:0 4px 14px rgba(55,88,132,.035); }
 .planning-overview-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding-bottom:16px; border-bottom:1px solid #e4eaf3; }
 .planning-overview-heading h2 { margin:4px 0 0; color:#253c62; font-size:18px; }
@@ -3892,14 +3895,16 @@ textarea:focus-visible,
 }
 
 .discussion-workspace {
-  width: min(1440px, 100%);
+  width: min(1240px, calc(100% - 48px));
   margin: 0 auto;
+  padding: 38px 0 64px;
 }
 
 .discussion-layout {
   display: grid;
   grid-template-columns: 310px minmax(0, 1fr);
   gap: 18px;
+  margin-top: 18px;
   align-items: start;
 }
 
@@ -4204,6 +4209,20 @@ textarea:focus-visible,
 }
 
 @media (max-width: 700px) {
+  .discussion-workspace {
+    width: calc(100% - 28px);
+    padding-top: 28px;
+  }
+
+  .workspace-heading-with-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workspace-heading-with-action > .secondary-action {
+    width: 100%;
+  }
+
   .discussion-message {
     max-width: 100%;
   }

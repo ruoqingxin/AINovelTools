@@ -44,7 +44,8 @@ describe("StoryBibleView", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByRole("heading", { name: "Story Bible" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "设定资料" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "章节审核" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "搜索实体" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "实体类型筛选" })).toBeVisible();
     expect(await screen.findByText("没有符合条件的实体。")).toBeVisible();

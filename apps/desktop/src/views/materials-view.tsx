@@ -71,7 +71,7 @@ export function MaterialsView() {
     } catch (cause) { setError(errorMessage(cause)); }
   }
   return <section className="materials-view">
-    <div className="workspace-heading"><p className="eyebrow">知识工作区</p><h1>摘要与写作卡片</h1><p className="workspace-lede">维护多精度摘要、风格规则和写作技巧。内容保留来源与生命周期信息，供后续上下文组装使用。</p></div>
+    <div className="workspace-heading"><p className="eyebrow">知识资料</p><h1>摘要与写作卡片</h1><p className="workspace-lede">维护多精度摘要、风格规则和写作技巧。内容保留来源与生命周期信息，供后续上下文组装使用。</p></div>
     <KnowledgeSectionNav />
     {notice ? <p className="project-notice" role="status">{notice}</p> : null}{error ? <p className="project-error" role="alert">{error}</p> : null}
     <div className="materials-layout">

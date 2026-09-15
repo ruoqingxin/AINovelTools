@@ -210,7 +210,7 @@ export function ChapterExtractionPanel(props: { chapterId: string }) {
         client.invalidateQueries({ queryKey: ["events"] }),
       ]);
       setNotice(item.kind === "FACT"
-        ? "已转入章节审核候选，仍需批准并在知识审核页定稿。"
+        ? "已转入正文事实审核，仍需批准并在审核页定稿。"
         : item.kind === "ENTITY"
           ? "已创建实体修订，可在实体库继续调整。"
           : item.kind === "RELATION"

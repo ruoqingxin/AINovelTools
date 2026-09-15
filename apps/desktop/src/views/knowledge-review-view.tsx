@@ -12,7 +12,6 @@ import {
   reviewKnowledgeCandidate,
   type CandidateStatus,
 } from "../lib/tauri-client";
-import { KnowledgeSectionNav } from "./knowledge-section-nav";
 
 const candidateStatusLabels: Record<CandidateStatus, string> = {
   PENDING: "待审核",
@@ -96,11 +95,10 @@ export function KnowledgeReviewView() {
   return (
     <section className="story-bible-view knowledge-review-view">
       <div className="workspace-heading">
-        <p className="eyebrow">知识工作区</p>
-        <h1>章节审核</h1>
-        <p className="workspace-lede">逐条确认候选事实、查看冲突，并将已批准内容原子定稿。</p>
+        <p className="eyebrow">内容审核</p>
+        <h1>正文事实审核</h1>
+        <p className="workspace-lede">只处理从正文提取的候选事实：核对原文证据、解决冲突，并将已批准内容正式定稿。</p>
       </div>
-      <KnowledgeSectionNav />
       <div className="story-bible-toolbar">
         <label>章节<select value={selectedChapterId} onChange={(event) => setChapterId(event.target.value)} disabled={!chapterList.length}>
           {!chapterList.length ? <option value="">暂无章节</option> : null}
