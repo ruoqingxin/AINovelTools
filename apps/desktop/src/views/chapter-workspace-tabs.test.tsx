@@ -10,6 +10,8 @@ describe("ChapterWorkspaceTabs", () => {
 
     expect(screen.getByRole("tab", { name: "章节执行卡" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "章节执行卡" })).toHaveAttribute("aria-controls", "chapter-panel-plan");
+    expect(screen.getByRole("tab", { name: "创作准备" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "一致性审核" })).toBeVisible();
     expect(screen.getByLabelText("2 条恢复草稿")).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "AI 创作" }));
     expect(onChange).toHaveBeenCalledWith("ai");

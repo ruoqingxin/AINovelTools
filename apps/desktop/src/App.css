@@ -1064,6 +1064,24 @@ textarea:focus-visible,
   font-size: 13px;
 }
 
+.ai-stage-heading {
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.ai-stage-heading > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.ai-stage-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
 .model-settings {
   margin-top: 12px;
 }
@@ -1861,7 +1879,7 @@ textarea:focus-visible,
 }
 
 .ai-consistency-action {
-  margin-top: 18px;
+  margin-top: 0;
   padding: 12px 13px;
   border: 1px solid #d6e1f0;
   border-radius: 7px;
@@ -1871,6 +1889,10 @@ textarea:focus-visible,
 .ai-consistency-action .section-heading {
   margin: 0;
   padding: 0 0 8px;
+}
+
+.review-empty {
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
 .ai-consistency-action .section-heading h3 {
@@ -1932,6 +1954,10 @@ textarea:focus-visible,
   background: #f5f8fc;
   font-size: 10px;
   line-height: 1.5;
+}
+
+.creation-admission {
+  margin-bottom: 10px;
 }
 
 .consistency-admission[data-state="blocked"],

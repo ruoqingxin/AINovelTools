@@ -142,6 +142,7 @@ describe("AiWritingPanel consistency review", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <AiWritingPanel
+          mode="review"
           chapterId="chapter-1"
           chapterTitle="第1章·入城"
           chapterPlan="主角进入城市并寻找失踪的师父。"
@@ -178,9 +179,8 @@ describe("AiWritingPanel consistency review", () => {
       "href",
       "/chapters#chapter-1",
     );
-    expect(screen.getByText("当前没有正文候选待审核")).toBeVisible();
     expect(screen.getByRole("button", { name: "关闭审核" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "生成整章初稿" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "生成整章初稿" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /应用到正文/ })).not.toBeInTheDocument();
   });
 
@@ -198,6 +198,7 @@ describe("AiWritingPanel consistency review", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <AiWritingPanel
+          mode="review"
           chapterId="chapter-1"
           chapterTitle="第1章·入城"
           chapterPlan="主角进入城市并寻找失踪的师父。"
@@ -212,7 +213,6 @@ describe("AiWritingPanel consistency review", () => {
     expect(await screen.findByText("审核依据已经变化")).toBeVisible();
     expect(screen.getByText(/审核已过期 · 原判断：审核阻断/)).toBeVisible();
     expect(screen.getByText(/这份报告已过期，不再阻止正文生成/)).toBeVisible();
-    await waitFor(() => expect(screen.getByRole("button", { name: "生成整章初稿" })).toBeEnabled());
     expect(screen.getByRole("button", { name: "按当前内容重新审核" })).toBeEnabled();
     expect(screen.queryByText(/整章创作与续写已暂停/)).not.toBeInTheDocument();
   });
@@ -232,6 +232,7 @@ describe("AiWritingPanel consistency review", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <AiWritingPanel
+          mode="create"
           chapterId="chapter-1"
           chapterTitle="第1章·入城"
           chapterPlan="主角进入城市并寻找失踪的师父。"

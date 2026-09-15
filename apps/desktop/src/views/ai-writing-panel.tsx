@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import type { Editor } from "@tiptap/react";
-import { Ban, Check, Columns2, LoaderCircle, Play, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { Ban, Check, ClipboardCheck, Columns2, LoaderCircle, Play, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useDeferredValue, useEffect, useState } from "react";
 import {
   cancelAiTask,
@@ -175,7 +175,9 @@ type ProposalAnchor = {
   selection: string;
 };
 
-export function AiWritingPanel(props: { chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null }) {
+export type AiWritingPanelMode = "readiness" | "create" | "review";
+
+export function AiWritingPanel(props: { mode?: AiWritingPanelMode; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null }) {
   const client = useQueryClient();
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
@@ -441,30 +443,44 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
   );
   const writingActionBlocked = (action: AiAction) =>
     consistencyBlocked && (action === "DRAFT" || action === "CONTINUE");
+  const mode = props.mode ?? "create";
+  const isReadinessMode = mode === "readiness";
+  const isCreationMode = mode === "create";
+  const isReviewMode = mode === "review";
 
-  return <section className="ai-panel" aria-label="AI 创作">
-    <div className="section-heading"><h2><Sparkles size={15} />AI 创作</h2><div className="proposal-heading-actions"><span>云端模型 · 候选审核</span>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
-    <AiModelNote taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
-    <WritingReadinessPanel chapterId={props.chapterId} chapterTitle={props.chapterTitle} volumeId={props.volumeId} volumePlan={props.volumePlan} readiness={readiness} loading={readinessLoading} sections={planningSections.data ?? []} />
-    <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>
-    <p className="ai-request-hint">系统会把这段意见与章节执行卡、写作规则和正文上下文一起编译成模型消息。</p>
-    <div className="ai-draft-action"><div><strong>按章节执行卡创作整章</strong><span>AI 会参考章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿，确认后替换到正文。</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked("DRAFT")} title={consistencyBlocked ? "先处理一致性审核中的阻断问题并关闭审核" : undefined}><Sparkles size={14} />生成整章初稿</button></div>
-    <div className="ai-action-grid">{editingActions.map((action) => <button type="button" className="secondary-action" key={action} onClick={() => void runAction(action)} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked(action)}><Play size={14} />{actionLabels[action]}</button>)}</div>
-    <section className="ai-consistency-action" aria-label="一致性审核">
-      <div className="section-heading"><h3><ShieldCheck size={14} />一致性审核</h3><span>只检查冲突和准入，不改写正文</span></div>
+  return <section className="ai-panel" aria-label={isReadinessMode ? "创作准备" : isReviewMode ? "一致性审核" : "AI 创作"}>
+    {isReadinessMode ? <>
+      <div className="section-heading ai-stage-heading"><div><h2><ClipboardCheck size={15} />创作准备</h2><p>集中检查正式设定、人物卡和章节执行卡，缺少的内容可在这里补齐。</p></div><span>生成正文前</span></div>
+      <WritingReadinessPanel chapterId={props.chapterId} chapterTitle={props.chapterTitle} volumeId={props.volumeId} volumePlan={props.volumePlan} readiness={readiness} loading={readinessLoading} sections={planningSections.data ?? []} />
+    </> : null}
+
+    {isCreationMode ? <>
+      <div className="section-heading ai-stage-heading"><div><h2><Sparkles size={15} />AI 创作</h2><p>填写本章补充意见，生成正文，并在候选写入草稿前完成确认。</p></div><div className="proposal-heading-actions"><span>云端模型 · 候选审核</span>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
+      <AiModelNote taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
+      {consistencyNotice ? <p className="consistency-admission creation-admission" data-state={consistencyNotice.state}>{consistencyNotice.text}</p> : null}
+      <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>
+      <p className="ai-request-hint">系统会把这段意见与章节执行卡、写作规则和正文上下文一起编译成模型消息。</p>
+      <div className="ai-draft-action"><div><strong>按章节执行卡创作整章</strong><span>AI 会参考章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿，确认后替换到正文。</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked("DRAFT")} title={consistencyBlocked ? "先处理一致性审核中的阻断问题并关闭审核" : undefined}><Sparkles size={14} />生成整章初稿</button></div>
+      <div className="ai-action-grid">{editingActions.map((action) => <button type="button" className="secondary-action" key={action} onClick={() => void runAction(action)} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked(action)}><Play size={14} />{actionLabels[action]}</button>)}</div>
+    </> : null}
+
+    {isReviewMode ? <>
+      <div className="section-heading ai-stage-heading"><div><h2><ShieldCheck size={15} />一致性审核</h2><p>只检查设定冲突和创作准入，不会改写或覆盖当前正文。</p></div><span>独立审核</span></div>
+      <section className="ai-consistency-action" aria-label="发起一致性审核">
       <AiModelNote taskLabel="一致性审核" taskKey="consistencyReview" profile={reviewProfile} preference={reviewPreference} />
       <div className="ai-consistency-action-bar">
         <div><strong>审核执行卡与当前草稿</strong><span>核对人物身份、能力边界、世界规则、时间线、既定事实和叙述人称，问题会保留在独立审核区。</span></div>
         <button type="button" className="secondary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={busy || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />开始审核</button>
       </div>
       {consistencyNotice ? <p className="consistency-admission" data-state={consistencyNotice.state}>{consistencyNotice.text}</p> : null}
-    </section>
-    {busy ? <div className="ai-running"><LoaderCircle size={15} className="spin" /><span>模型正在生成结果…</span><button type="button" className="secondary-action" onClick={() => void cancel()} disabled={!activeTaskId}><Ban size={14} />取消</button></div> : null}
-    {fallbackNotice ? <p className="project-notice" role="status">{fallbackNotice}</p> : null}
-    {preview ? <pre className="ai-preview">{preview}</pre> : null}
-    {error ? <p className="project-error" role="alert">{error}</p> : null}
+      </section>
+    </> : null}
+    {(isCreationMode || isReviewMode) && busy ? <div className="ai-running"><LoaderCircle size={15} className="spin" /><span>模型正在生成结果…</span><button type="button" className="secondary-action" onClick={() => void cancel()} disabled={!activeTaskId}><Ban size={14} />取消</button></div> : null}
+    {!isReadinessMode && fallbackNotice ? <p className="project-notice" role="status">{fallbackNotice}</p> : null}
+    {!isReadinessMode && preview ? <pre className="ai-preview">{preview}</pre> : null}
+    {!isReadinessMode && error ? <p className="project-error" role="alert">{error}</p> : null}
 
-    <div className="proposal-list" aria-label="候选审核">
+    {isCreationMode ? <div className="proposal-list" aria-label="候选审核">
       <div className="section-heading"><h3><ShieldCheck size={14} />候选审核</h3><span>{proposals.isPending ? "正在加载" : `${pendingCandidates.length} 条待审${needsInputCandidates.length ? ` · ${needsInputCandidates.length} 条需补资料` : ""} · 已选 ${compareIds.length}/2 对比`}</span></div>
       {proposals.isPending ? <div className="proposal-empty"><LoaderCircle size={18} className="spin" /><div><strong>正在读取待审核候选</strong><span>生成结果会保留在这里，确认前不会写入正文。</span></div></div> : proposals.isError ? <p className="project-error" role="alert">候选审核加载失败：{errorMessage(proposals.error)}</p> : actionablePending.length ? <>
       {actionablePending.map(({ proposal, validation, feedback }) => {
@@ -513,9 +529,9 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
           </div>)}
         </div>
       </section> : null}
-      </> : <div className="proposal-empty"><ShieldCheck size={20} /><div><strong>{pendingReviews.length ? "当前没有正文候选待审核" : "当前没有待审核候选"}</strong><span>{pendingReviews.length ? "一致性审核报告单独保留在下方，不会与应用正文的操作混在一起。" : "AI 生成结果会先停在这里，你确认后才会写入正文。"}</span></div>{pendingReviews.length ? null : <a href="/knowledge/review">进入审核中心</a>}</div>}
-    </div>
-    {pendingReviews.length ? <section className="consistency-review-list" id="consistency-review-list" aria-label="一致性审核结果">
+      </> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>当前没有正文候选待审核</strong><span>{pendingReviews.length ? "一致性报告已移到“一致性审核”页签，这里只保留可以写入正文的候选。" : "生成结果会先停在这里，你确认后才会写入正文。"}</span></div></div>}
+    </div> : null}
+    {isReviewMode ? pendingReviews.length ? <section className="consistency-review-list" id="consistency-review-list" aria-label="一致性审核结果">
       <div className="section-heading"><h3><ShieldCheck size={14} />一致性审核结果</h3><span>{pendingReviews.length} 条 · 只读报告</span></div>
       {pendingReviews.map(({ proposal, validation, consistency, consistencyFreshness }) => {
         const needsInput = validation.status === "NEEDS_INPUT";
@@ -542,6 +558,6 @@ export function AiWritingPanel(props: { chapterId: string; chapterTitle: string;
           <div className="ai-actions">{stale ? <button type="button" className="primary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={busy || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />按当前内容重新审核</button> : consistency && (consistency.verdict === "BLOCKED" || consistency.verdict === "REVIEW") ? <a className="primary-action" href={`/chapters#${props.chapterId}`}>查看设定与执行卡</a> : null}{!stale && needsInput && targets.length ? targets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : null}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭审核</button></div>
         </article>;
       })}
-    </section> : null}
+    </section> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>当前没有一致性审核报告</strong><span>运行审核后，人物、规则、时间线和叙述方式的问题会集中显示在这里。</span></div></div> : null}
   </section>;
 }

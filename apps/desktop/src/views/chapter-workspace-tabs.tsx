@@ -1,11 +1,13 @@
-import { ClipboardList, History, RotateCcw, Sparkles } from "lucide-react";
+import { ClipboardCheck, ClipboardList, History, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
-export type ChapterWorkspaceTab = "plan" | "editor" | "ai" | "revisions" | "recovery";
+export type ChapterWorkspaceTab = "plan" | "editor" | "readiness" | "ai" | "review" | "revisions" | "recovery";
 
 const tabs = [
   { value: "plan", label: "章节执行卡", icon: ClipboardList },
+  { value: "readiness", label: "创作准备", icon: ClipboardCheck },
   { value: "ai", label: "AI 创作", icon: Sparkles },
+  { value: "review", label: "一致性审核", icon: ShieldCheck },
   { value: "revisions", label: "修订与冲突", icon: History },
   { value: "recovery", label: "恢复草稿", icon: RotateCcw },
 ] as const;
