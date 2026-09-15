@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildVolumePlanTargetGuidance, parseChapterPlanCandidates, parseVolumePlanCandidates } from "./project-workspace-view";
+import { buildVolumePlanTargetGuidance, parseChapterPlanCandidates, parseVolumePlanCandidates, resolveDefaultWritingChapter } from "./project-workspace-view";
 
 describe("parseVolumePlanCandidates", () => {
   it("parses numbered, Chinese-numbered, and duplicate volume candidates", () => {
@@ -65,6 +65,23 @@ describe("buildVolumePlanTargetGuidance", () => {
 
   it("omits empty targets", () => {
     expect(buildVolumePlanTargetGuidance({ wordCount: "", volumeCount: " 3 ", chapterCount: "" })).toBe("计划分卷数：3 卷");
+  });
+});
+
+describe("resolveDefaultWritingChapter", () => {
+  const chapters = [{ id: "chapter-1" }, { id: "chapter-2" }, { id: "chapter-3" }];
+
+  it("prefers the chapter requested by the current link", () => {
+    expect(resolveDefaultWritingChapter(chapters, "chapter-3", "chapter-2")?.id).toBe("chapter-3");
+  });
+
+  it("restores the last writing chapter when the link has no chapter", () => {
+    expect(resolveDefaultWritingChapter(chapters, "", "chapter-2")?.id).toBe("chapter-2");
+  });
+
+  it("falls back to the first chapter when history is missing or invalid", () => {
+    expect(resolveDefaultWritingChapter(chapters, "", "deleted-chapter")?.id).toBe("chapter-1");
+    expect(resolveDefaultWritingChapter([], "", "")).toBeNull();
   });
 });
 

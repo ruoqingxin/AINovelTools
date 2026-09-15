@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, Outlet } from "@tanstack/react-router";
+import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   BookOpenText,
   BookOpenCheck,
@@ -29,6 +29,7 @@ const navigation = [
 ];
 
 export function AppShell() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
   useQuery({
     queryKey: ["bootstrap-status"],
     queryFn: getBootstrapStatus,
@@ -97,7 +98,7 @@ export function AppShell() {
         </aside>
 
         <main className="workspace">
-          {recovery.data?.length ? <div className="global-recovery-banner" role="status">发现 {recovery.data.length} 条异常草稿，请到正文页的“版本与恢复”中处理。</div> : null}
+          {recovery.data?.length && pathname !== "/writing" ? <div className="global-recovery-banner" role="status"><span>有 {recovery.data.length} 份异常退出草稿尚未确认</span><Link to="/writing">前往正文处理</Link></div> : null}
           <Outlet />
         </main>
 

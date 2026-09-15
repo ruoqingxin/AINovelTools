@@ -1,11 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, ArrowRight, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, FileCheck2, PanelLeftClose, PanelLeftOpen, Plus, Settings2, Sparkles, Trash2, UsersRound } from "lucide-react";
+import { ArchiveRestore, ArrowRight, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, FileCheck2, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Sparkles, Trash2, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
-import { cancelJob, clearRecoveryLogs, createPlanNode, currentManuscript, enqueuePlanningAiJob, errorMessage, listJobs, listManuscriptRevisions, listModelProfiles, listPlanningSections, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, savePlanningSection, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
+import { cancelJob, clearRecoveryLogs, createPlanNode, currentManuscript, enqueuePlanningAiJob, errorMessage, getCurrentProject, listJobs, listManuscriptRevisions, listModelProfiles, listPlanningSections, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, savePlanningSection, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
 import { AiModelNote } from "./ai-model-note";
 import { ChapterExtractionPanel } from "./chapter-extraction-panel";
@@ -85,6 +85,17 @@ export function buildVolumePlanTargetGuidance(targets: { wordCount: string; volu
   ].filter(Boolean).join("\n");
 }
 
+export function resolveDefaultWritingChapter<T extends { id: string }>(chapters: T[], requestedId: string, rememberedId: string) {
+  return chapters.find((chapter) => chapter.id === requestedId)
+    ?? chapters.find((chapter) => chapter.id === rememberedId)
+    ?? chapters[0]
+    ?? null;
+}
+
+function lastWritingChapterKey(projectId: string) {
+  return `ainoveltools:last-writing-chapter:${projectId}`;
+}
+
 function rootSectionLabel(kind: PlanNodeKind) {
   if (kind === "WORK_DESIGN") return "作品设定";
   if (kind === "VOLUME_MANAGER") return "分卷规划";
@@ -124,6 +135,20 @@ function documentToText(value: string) {
   }
 }
 
+function documentCharacterCount(value: string) {
+  return documentToText(value).replace(/\s/g, "").length;
+}
+
+function formatSavedAt(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "保存时间未知";
+  return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function revisionReasonLabel(reason: string) {
+  return reason === "RESTORE_REVISION" ? "由历史版本恢复" : "手动保存";
+}
+
 function diffLines(left: string, right: string) {
   try {
     const parse = (value: string) => {
@@ -158,6 +183,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const isChapterMode = workspaceMode === "chapters" || workspaceMode === "writing";
   const client = useQueryClient();
   const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes });
+  const currentProject = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
@@ -187,6 +213,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const [generatingNodePlan, setGeneratingNodePlan] = useState(false);
   const [generatingChapterSplit, setGeneratingChapterSplit] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [clearingRecovery, setClearingRecovery] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [compareLeftId, setCompareLeftId] = useState<string | null>(null);
   const [compareRightId, setCompareRightId] = useState<string | null>(null);
@@ -195,6 +222,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const [manuscriptTab, setManuscriptTab] = useState<ManuscriptWorkspaceTab>("editor");
   const [showArchived, setShowArchived] = useState(false);
   const [chapterListCollapsed, setChapterListCollapsed] = useState(false);
+  const [chapterSearch, setChapterSearch] = useState("");
   const editor = useEditor({
     extensions: [StarterKit],
     content: documentToJson(""),
@@ -349,6 +377,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const selectedChapterIndex = selected?.kind === "CHAPTER" ? chapterNodes.findIndex((node) => node.id === selected.id) : -1;
   const previousChapter = selectedChapterIndex > 0 ? chapterNodes[selectedChapterIndex - 1] : null;
   const nextChapter = selectedChapterIndex >= 0 && selectedChapterIndex < chapterNodes.length - 1 ? chapterNodes[selectedChapterIndex + 1] : null;
+  const chapterJumpOptions = chapterNodes.filter((node) => node.title.toLocaleLowerCase().includes(chapterSearch.trim().toLocaleLowerCase()));
   const planningHeadline = !workDesignNode
     ? "从作品定位开始"
     : !workDesignReady
@@ -430,9 +459,30 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   useEffect(() => {
     if (!isChapterMode || selectedId || !chapterNodes.length) return;
     const requestedId = window.location.hash.slice(1);
-    const requestedChapter = chapterNodes.find((node) => node.id === requestedId);
-    if (requestedChapter) selectNode(requestedChapter);
-  }, [chapterNodes, isChapterMode, selectedId]);
+    if (workspaceMode === "chapters") {
+      const requestedChapter = chapterNodes.find((node) => node.id === requestedId);
+      if (requestedChapter) selectNode(requestedChapter);
+      return;
+    }
+    if (currentProject.isPending) return;
+    let rememberedId = "";
+    try {
+      rememberedId = window.localStorage.getItem(lastWritingChapterKey(currentProject.data?.projectId ?? "current")) ?? "";
+    } catch {
+      // Storage may be unavailable in restricted webviews; the first chapter remains a safe fallback.
+    }
+    const defaultChapter = resolveDefaultWritingChapter(chapterNodes, requestedId, rememberedId);
+    if (defaultChapter) selectNode(defaultChapter);
+  }, [chapterNodes, currentProject.data?.projectId, currentProject.isPending, isChapterMode, selectedId, workspaceMode]);
+
+  useEffect(() => {
+    if (workspaceMode !== "writing" || selected?.kind !== "CHAPTER" || currentProject.isPending) return;
+    try {
+      window.localStorage.setItem(lastWritingChapterKey(currentProject.data?.projectId ?? "current"), selected.id);
+    } catch {
+      // Remembering the chapter is a convenience and must not block editing.
+    }
+  }, [currentProject.data?.projectId, currentProject.isPending, selected?.id, selected?.kind, workspaceMode]);
 
   useEffect(() => {
     if (workspaceMode !== "planning" || selectedId) return;
@@ -722,12 +772,31 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     }
   }
 
-  async function recoverLatest() {
+  function recoverLatest() {
     const latest = recovery.data?.[0];
     if (!latest || !selected) return;
+    if (chapterDirty && !window.confirm("当前编辑器有未保存修改。载入异常草稿会替换这些修改，确定继续吗？")) return;
     setDraft(latest.documentJson);
     if (editor) editor.commands.setContent(documentToJson(latest.documentJson), { emitUpdate: false });
     setManuscriptTab("editor");
+  }
+
+  async function discardRecoveryLogs() {
+    if (!selected || selected.kind !== "CHAPTER" || !recovery.data?.length) return;
+    if (!window.confirm(`确认不需要恢复这 ${recovery.data.length} 次自动保护记录吗？删除记录不会修改当前正文或已保存版本。`)) return;
+    setClearingRecovery(true);
+    setError(null);
+    try {
+      await clearRecoveryLogs(selected.id);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["recovery-logs", selected.id] }),
+        client.invalidateQueries({ queryKey: ["recovery-all"] }),
+      ]);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setClearingRecovery(false);
+    }
   }
 
   async function mergeDraft() {
@@ -738,18 +807,13 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     catch (cause) { setError(errorMessage(cause)); }
   }
 
-  async function restoreRevision(revision: ManuscriptRevision) {
+  function restoreRevision(revision: ManuscriptRevision) {
     if (!selected || selected.kind !== "CHAPTER") return;
+    if (chapterDirty && !window.confirm("当前编辑器有未保存修改。载入历史版本会替换这些修改，确定继续吗？")) return;
     setDraft(revision.documentJson);
+    if (editor) editor.commands.setContent(documentToJson(revision.documentJson), { emitUpdate: false });
     setError(null);
-    try {
-      await saveManuscriptChecked({ chapterId: selected.id, baseRevisionId: manuscript.data?.id, documentJson: revision.documentJson, creationReason: "RESTORE_REVISION" });
-      await clearRecoveryLogs(selected.id);
-      await client.invalidateQueries({ queryKey: ["manuscript", selected.id] });
-      await client.invalidateQueries({ queryKey: ["manuscript-history", selected.id] });
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
+    setManuscriptTab("editor");
   }
 
   function selectNode(node: PlanNode) {
@@ -834,12 +898,16 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     </div>
     <div className="chapter-focus-actions">
       <button type="button" className="icon-command" onClick={() => previousChapter && selectNode(previousChapter)} disabled={!previousChapter} aria-label="上一章" title="上一章"><ChevronLeft size={16} /></button>
+      {workspaceMode === "writing" ? <details className="chapter-jump-menu"><summary><Search size={14} />查找章节</summary><div className="chapter-jump-panel">
+        <label><Search size={14} /><input value={chapterSearch} onChange={(event) => setChapterSearch(event.target.value)} placeholder="输入章节名称" aria-label="搜索章节" /></label>
+        <div>{chapterJumpOptions.length ? chapterJumpOptions.map((chapter) => <button type="button" data-selected={chapter.id === selected.id || undefined} key={chapter.id} onClick={(event) => { if (selectNode(chapter)) { setChapterSearch(""); event.currentTarget.closest("details")?.removeAttribute("open"); } }}><span>第 {chapterNodes.findIndex((item) => item.id === chapter.id) + 1} 章</span><strong>{chapter.title}</strong></button>) : <p>没有找到匹配章节</p>}</div>
+      </div></details> : null}
       <button type="button" className="icon-command" onClick={() => nextChapter && selectNode(nextChapter)} disabled={!nextChapter} aria-label="下一章" title="下一章"><ChevronRight size={16} /></button>
       {workspaceMode === "chapters" ? <><a className="secondary-action" href={`/writing#${selected.id}`}><BookOpen size={14} />写正文</a><button type="button" className="secondary-action" onClick={() => void createSceneForChapter(selected.id)}><Plus size={14} />拆分场景</button><details className="chapter-settings-menu"><summary><Settings2 size={15} />章节设置</summary><div className="chapter-settings-panel">
         <label>章节名称<input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} aria-label="编辑节点标题" /></label>
         <label>所属分卷<select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="" disabled={!canMoveToRoot}>{canMoveToRoot ? "顶层" : "选择父节点"}</option>{moveCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select></label>
         <div><button type="button" className="primary-action" onClick={() => void saveSelected()} disabled={!editTitle.trim()}><Check size={14} />保存名称</button><button type="button" className="secondary-action" onClick={() => void moveSelected()} disabled={!canMoveToRoot && !moveParentId}>移动章节</button>{selected.archived ? <button type="button" className="secondary-action" onClick={() => void toggleArchived(selected)}><ArchiveRestore size={14} />恢复</button> : <button type="button" className="secondary-action destructive-action" onClick={() => void deleteSelected()}><Trash2 size={14} />删除</button>}</div>
-      </div></details></> : <a className="secondary-action" href={`/chapters#${selected.id}`}><Settings2 size={14} />章节工作台</a>}
+      </div></details></> : null}
     </div>
   </div> : null;
 
@@ -855,10 +923,10 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
       {nodes.isError ? <p className="project-error" role="alert">无法加载规划：{errorMessage(nodes.error)}</p> : null}
       {error ? <p className="project-error" role="alert">{error}</p> : null}
 
-      {!nodes.isPending && !nodes.isError ? <div className={`plan-layout${isChapterMode ? " chapter-mode-layout" : ""}${chapterListCollapsed && isChapterMode ? " chapter-list-collapsed" : ""}`}>
-      <div className="plan-tree" aria-label="规划树">
+      {!nodes.isPending && !nodes.isError ? <div className={`plan-layout${isChapterMode ? " chapter-mode-layout" : ""}${workspaceMode === "writing" ? " writing-focus-layout" : ""}${chapterListCollapsed && workspaceMode === "chapters" ? " chapter-list-collapsed" : ""}`}>
+      {workspaceMode !== "writing" ? <div className="plan-tree" aria-label="规划树">
         {isChapterMode && chapterListCollapsed ? <button type="button" className="chapter-list-expand" onClick={() => setChapterListCollapsed(false)} aria-label="展开章节列表" title="展开章节列表"><PanelLeftOpen size={18} /></button> : <>
-        <div className="section-heading"><div><h2>{isChapterMode ? "章节列表" : "规划树"}</h2><p className="section-subtitle">{workspaceMode === "chapters" ? "选择章节处理执行卡与创作任务" : workspaceMode === "writing" ? "选择章节进入正文编辑" : "作品设定与故事结构分开管理"}</p></div><div className="plan-tree-heading-actions">{isChapterMode ? <button type="button" className="icon-command" onClick={() => setChapterListCollapsed(true)} aria-label="收起章节列表" title="收起章节列表"><PanelLeftClose size={15} /></button> : null}<button type="button" className="icon-command plan-archive-toggle" onClick={() => setShowArchived((value) => !value)} aria-label={showArchived ? "隐藏已删除节点" : "显示已删除节点"} title={showArchived ? "隐藏已删除节点" : "显示已删除节点"}>{showArchived ? <EyeOff size={15} /> : <Eye size={15} />}</button></div></div>
+        <div className="section-heading"><div><h2>{isChapterMode ? "章节列表" : "规划树"}</h2><p className="section-subtitle">{workspaceMode === "chapters" ? "选择章节处理执行卡与创作任务" : "作品设定与故事结构分开管理"}</p></div><div className="plan-tree-heading-actions">{isChapterMode ? <button type="button" className="icon-command" onClick={() => setChapterListCollapsed(true)} aria-label="收起章节列表" title="收起章节列表"><PanelLeftClose size={15} /></button> : null}<button type="button" className="icon-command plan-archive-toggle" onClick={() => setShowArchived((value) => !value)} aria-label={showArchived ? "隐藏已删除节点" : "显示已删除节点"} title={showArchived ? "隐藏已删除节点" : "显示已删除节点"}>{showArchived ? <EyeOff size={15} /> : <Eye size={15} />}</button></div></div>
         <button type="button" className="plan-overview-row" data-selected={!selected || undefined} onClick={() => setSelectedId(null)}><BookOpen size={15} /><span>{isChapterMode ? "章节总览" : "项目总览"}</span></button>
         {isChapterMode ? <div className="plan-root-list writing-tree-list">{visibleNodes.filter((node) => node.parentId === null && node.kind === "VOLUME_MANAGER").map((node) => renderWritingNode(node))}{!chapterNodes.length ? <p className="plan-empty">暂无章节，请先在规划页建立章节结构。</p> : null}</div> : <div className="plan-root-list">
           {rootDefinitions.map(({ kind: rootKind, label }) => {
@@ -877,7 +945,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
             </section>
           ) : null}
         </div>}</>}
-      </div>
+      </div> : null}
 
       {!selected ? <main className={`planning-dashboard${isChapterMode ? " writing-mode" : ""}`} aria-label={workspaceMode === "chapters" ? "章节工作台总览" : workspaceMode === "writing" ? "正文工作区总览" : "项目规划总览"}>
           <div className="planning-overview">
@@ -922,19 +990,22 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
           {workspaceMode === "writing" && manuscriptTab === "review" ? <div className="chapter-tab-panel" id="manuscript-panel-review" role="tabpanel" aria-labelledby="manuscript-tab-review"><AiWritingPanel mode="review" reviewPurpose="manuscript" chapterId={selected.id} chapterTitle={selected.title} chapterPlan={nodePlanDraft} volumeId={selectedVolume?.id ?? ""} volumePlan={selectedVolumePlan?.content ?? ""} draft={draft} editor={editor} /></div> : null}
           {workspaceMode === "chapters" && (chapterTab === "readiness" || chapterTab === "ai" || chapterTab === "review") ? <div className="chapter-tab-panel" id={`chapter-panel-${chapterTab}`} role="tabpanel" aria-labelledby={`chapter-tab-${chapterTab}`}><AiWritingPanel mode={chapterTab === "readiness" ? "readiness" : chapterTab === "review" ? "review" : "create"} chapterId={selected.id} chapterTitle={selected.title} chapterPlan={nodePlanDraft} volumeId={selectedVolume?.id ?? ""} volumePlan={selectedVolumePlan?.content ?? ""} draft={draft} editor={editor} />{chapterTab === "ai" && chapterDirty ? <div className="chapter-ai-savebar"><div><strong>候选已采用到正文草稿</strong><span>保存后，可从左侧“正文”继续编辑和审核。</span></div><button type="button" className="primary-action" onClick={() => void saveDraft()} disabled={savingDraft}>{savingDraft ? "保存中…" : "保存正文"}</button></div> : null}</div> : null}
           {workspaceMode === "writing" && manuscriptTab === "versions" ? <div className="chapter-tab-panel manuscript-versions-panel" id="manuscript-panel-versions" role="tabpanel" aria-labelledby="manuscript-tab-versions">
-            <div className="manuscript-stage-heading"><div><h2>版本与恢复</h2><p>这里管理已保存的正文版本；异常退出留下的未保存内容也会集中到这里。</p></div><span>{history.data?.length ?? 0} 个正文版本</span></div>
-            {recovery.data?.length ? <div className="recovery-banner"><div><strong>发现 {recovery.data.length} 条可找回草稿</strong><span>这些内容来自异常退出前的自动保护，不会覆盖已保存正文，确认后才会恢复到编辑器。</span></div><button type="button" className="secondary-action" onClick={() => void recoverLatest()}>找回最近草稿</button></div> : <p className="recovery-explanation">当前没有异常草稿。正常保存的正文请从下方修订历史恢复。</p>}
-            <div className="manuscript-version-tools"><div><strong>正文冲突检查</strong><span>当编辑中的草稿与已保存正文出现不同修改时，先检查冲突，再决定是否应用合并结果。</span></div><button type="button" className="secondary-action" onClick={() => void mergeDraft()} disabled={!manuscript.data || !draft.trim()}>检查当前草稿</button></div>
+            <div className="manuscript-stage-heading"><div><h2>草稿与版本</h2><p>异常草稿和历史版本都先载入编辑器，由你确认内容后再保存正文。</p></div><span>{history.data?.length ?? 0} 个已保存版本</span></div>
+            <section className="recovery-section" data-empty={!recovery.data?.length || undefined}>
+              <div className="recovery-section-heading"><div><strong>异常退出草稿</strong><span>程序异常退出前连续生成的自动保护快照</span></div><small>{recovery.data?.length ? `${recovery.data.length} 次自动保护` : "无需处理"}</small></div>
+              {recovery.data?.length ? <div className="recovery-banner"><div><strong>最近保护：{formatSavedAt(recovery.data[0]!.createdAt)} · 约 {documentCharacterCount(recovery.data[0]!.documentJson)} 字</strong><span>需要保留内容时，先载入编辑器检查并保存正文；确认当前正文正确时，可以直接清除这些保护记录。</span></div><div className="recovery-actions"><button type="button" className="primary-action" onClick={recoverLatest}>载入并检查</button><button type="button" className="secondary-action" onClick={() => void discardRecoveryLogs()} disabled={clearingRecovery}>{clearingRecovery ? "处理中…" : "确认无需恢复"}</button></div></div> : <p className="recovery-explanation">当前没有需要处理的异常草稿。</p>}
+            </section>
+            {chapterDirty && manuscript.data ? <div className="manuscript-version-tools"><div><strong>保存前冲突检查</strong><span>当前正文有未保存修改。如担心已保存版本也发生变化，可在保存前检查冲突。</span></div><button type="button" className="secondary-action" onClick={() => void mergeDraft()}>检查保存冲突</button></div> : null}
             {mergeResult ? <div className="merge-panel"><div className="section-heading"><h3>{mergeResult.conflicts.length ? `发现 ${mergeResult.conflicts.length} 个冲突块` : "没有发现冲突"}</h3>{!mergeResult.conflicts.length ? <button type="button" className="secondary-action" onClick={() => { setDraft(mergeResult.documentJson); if (editor) editor.commands.setContent(documentToJson(mergeResult.documentJson), { emitUpdate: false }); }}>应用合并结果</button> : null}</div>{mergeResult.conflicts.map((conflict) => <div className="merge-conflict" key={conflict.blockId}><code>{conflict.blockId}</code><span>当前版本与草稿都修改了该段，请在编辑器中手工选择后再保存。</span></div>)}</div> : null}
             <div className="revision-history">
-              <div className="section-heading"><h2>修订历史</h2><span>{history.data?.length ?? 0} 条</span></div>
-              {history.data?.map((revision, index) => <div className="revision-row" key={revision.id}><span>修订 {history.data!.length - index}</span><code>{revision.contentHash}</code><button type="button" className="secondary-action" onClick={() => void restoreRevision(revision)}>恢复为新正文</button></div>)}
+              <div className="section-heading"><div><h2>已保存版本</h2><span className="section-subtitle">载入旧版本不会立即保存，可以先在编辑器中检查。</span></div><span>{history.data?.length ?? 0} 个</span></div>
+              {history.data?.map((revision, index) => <div className="revision-row" key={revision.id}><div className="revision-row-copy"><strong>版本 {history.data!.length - index}{index === 0 ? <small>当前</small> : null}</strong><span>{formatSavedAt(revision.createdAt)} · 约 {documentCharacterCount(revision.documentJson)} 字 · {revisionReasonLabel(revision.creationReason)}</span></div>{index === 0 ? <span className="revision-current">正在使用</span> : <button type="button" className="secondary-action" onClick={() => restoreRevision(revision)}>载入此版本</button>}</div>)}
               {(history.data?.length ?? 0) < 2 ? <p className="revision-hint">保存两次正文后，可以在这里选择两个版本进行差异对比。</p> : (
                 <div className="revision-compare">
                   <div className="compare-selects">
-                    <select value={compareLeftId ?? ""} onChange={(event) => setCompareLeftId(event.target.value)} aria-label="较早修订"><option value="">选择较早修订</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data!.length - index}</option>)}</select>
+                    <select value={compareLeftId ?? ""} onChange={(event) => setCompareLeftId(event.target.value)} aria-label="较早版本"><option value="">选择较早版本</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>版本 {history.data!.length - index}</option>)}</select>
                     <span>对比</span>
-                    <select value={compareRightId ?? ""} onChange={(event) => setCompareRightId(event.target.value)} aria-label="较新修订"><option value="">选择较新修订</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>修订 {history.data!.length - index}</option>)}</select>
+                    <select value={compareRightId ?? ""} onChange={(event) => setCompareRightId(event.target.value)} aria-label="较新版本"><option value="">选择较新版本</option>{history.data?.map((revision, index) => <option key={revision.id} value={revision.id}>版本 {history.data!.length - index}</option>)}</select>
                   </div>
                   {compareLeftId && compareRightId ? <div className="diff-view">{diffLines(documentToText(history.data!.find((revision) => revision.id === compareLeftId)?.documentJson ?? ""), documentToText(history.data!.find((revision) => revision.id === compareRightId)?.documentJson ?? "")).map((row, index) => <div className={`diff-line diff-${row.kind}`} key={`${index}-${row.kind}`}><span>{row.kind === "added" ? "+" : row.kind === "removed" ? "−" : " "}</span><code>{row.text || " "}</code></div>)}</div> : null}
                 </div>

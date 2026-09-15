@@ -10,9 +10,9 @@ describe("ManuscriptWorkspaceTabs", () => {
 
     expect(screen.getByRole("tab", { name: "正文编辑" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "正文审核" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "版本与恢复" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "草稿与版本" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "知识提取" })).toBeVisible();
-    expect(screen.getByLabelText("2 条可找回草稿")).toBeVisible();
+    expect(screen.getByLabelText("2 次自动保护待处理")).toHaveTextContent("待处理");
     fireEvent.click(screen.getByRole("tab", { name: "知识提取" }));
     expect(onChange).toHaveBeenCalledWith("extraction");
   });

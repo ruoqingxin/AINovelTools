@@ -6,7 +6,7 @@ export type ManuscriptWorkspaceTab = "editor" | "review" | "versions" | "extract
 const tabs = [
   { value: "editor", label: "正文编辑", icon: PenLine },
   { value: "review", label: "正文审核", icon: ShieldCheck },
-  { value: "versions", label: "版本与恢复", icon: FileClock },
+  { value: "versions", label: "草稿与版本", icon: FileClock },
   { value: "extraction", label: "知识提取", icon: FilePlus2 },
 ] as const;
 
@@ -40,7 +40,7 @@ export function ManuscriptWorkspaceTabs(props: { value: ManuscriptWorkspaceTab; 
     >
       <Icon size={14} strokeWidth={1.8} />
       <span>{label}</span>
-      {value === "versions" && props.recoveryCount > 0 ? <span className="tab-count" aria-label={`${props.recoveryCount} 条可找回草稿`}>{props.recoveryCount}</span> : null}
+      {value === "versions" && props.recoveryCount > 0 ? <span className="tab-count" aria-label={`${props.recoveryCount} 次自动保护待处理`}>待处理</span> : null}
     </button>)}
   </div>;
 }
