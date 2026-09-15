@@ -13,6 +13,7 @@ pub enum ReviewClaimType {
     RequiredEvent,
     ForbiddenEvent,
     AllowedCharacter,
+    TimeWindow,
     StageBoundary,
     ForeshadowingWindow,
     PlanDependency,
@@ -31,6 +32,7 @@ impl ReviewClaimType {
             "REQUIRED_EVENT" => Some(Self::RequiredEvent),
             "FORBIDDEN_EVENT" => Some(Self::ForbiddenEvent),
             "ALLOWED_CHARACTER" => Some(Self::AllowedCharacter),
+            "TIME_WINDOW" => Some(Self::TimeWindow),
             "STAGE_BOUNDARY" => Some(Self::StageBoundary),
             "FORESHADOWING_WINDOW" => Some(Self::ForeshadowingWindow),
             "PLAN_DEPENDENCY" => Some(Self::PlanDependency),
@@ -161,6 +163,31 @@ pub struct ReviewTrace {
     pub model_findings: Vec<ReviewFinding>,
     pub omitted_items: Vec<ReviewOmittedItem>,
     pub stage_requests: Vec<ReviewStageRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterContract {
+    pub chapter_id: Uuid,
+    pub source_section_id: String,
+    pub source_revision: String,
+    pub confirmed: bool,
+    pub required_events: Vec<String>,
+    pub forbidden_events: Vec<String>,
+    pub allowed_characters: Vec<String>,
+    pub time_windows: Vec<String>,
+    pub stage_boundaries: Vec<String>,
+}
+
+impl ChapterContract {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.required_events.is_empty()
+            && self.forbidden_events.is_empty()
+            && self.allowed_characters.is_empty()
+            && self.time_windows.is_empty()
+            && self.stage_boundaries.is_empty()
+    }
 }
 
 impl ReviewTrace {

@@ -3609,6 +3609,7 @@ fn review_claim_type_allowed(
             novel_infrastructure::ReviewClaimType::RequiredEvent
                 | novel_infrastructure::ReviewClaimType::ForbiddenEvent
                 | novel_infrastructure::ReviewClaimType::AllowedCharacter
+                | novel_infrastructure::ReviewClaimType::TimeWindow
                 | novel_infrastructure::ReviewClaimType::StageBoundary
                 | novel_infrastructure::ReviewClaimType::ForeshadowingWindow
                 | novel_infrastructure::ReviewClaimType::PlanDependency
@@ -3942,6 +3943,78 @@ fn review_target_blocks(
     Ok(blocks)
 }
 
+fn chapter_contract_review_items(
+    contract: &novel_infrastructure::ChapterContract,
+) -> (
+    Vec<novel_infrastructure::ReviewClaim>,
+    Vec<novel_infrastructure::ReviewEvidence>,
+) {
+    let mut claims = Vec::new();
+    let mut evidence = Vec::new();
+    let mut append = |claim_type, predicate: &str, value: &str| {
+        let claim = novel_infrastructure::ReviewClaim {
+            id: uuid::Uuid::new_v4(),
+            claim_type,
+            subject: "章节合同".to_owned(),
+            predicate: predicate.to_owned(),
+            object: value.to_owned(),
+            quote: value.to_owned(),
+            block_id: "chapter-contract".to_owned(),
+            start_offset: 0,
+            end_offset: u32::try_from(value.chars().count()).unwrap_or(u32::MAX),
+            importance: 5,
+            confidence: 100,
+        };
+        evidence.push(novel_infrastructure::ReviewEvidence {
+            id: uuid::Uuid::new_v4(),
+            claim_id: claim.id,
+            source_kind: "CHAPTER_CONTRACT".to_owned(),
+            source_record_id: uuid::Uuid::nil(),
+            authority: novel_infrastructure::EvidenceAuthority::ChapterContract,
+            excerpt: format!("{predicate}：{value}"),
+            source_revision: contract.source_revision.clone(),
+            relevance: 10_000,
+        });
+        claims.push(claim);
+    };
+    for value in &contract.required_events {
+        append(
+            novel_infrastructure::ReviewClaimType::RequiredEvent,
+            "必须事件",
+            value,
+        );
+    }
+    for value in &contract.forbidden_events {
+        append(
+            novel_infrastructure::ReviewClaimType::ForbiddenEvent,
+            "禁止事件",
+            value,
+        );
+    }
+    for value in &contract.allowed_characters {
+        append(
+            novel_infrastructure::ReviewClaimType::AllowedCharacter,
+            "允许人物",
+            value,
+        );
+    }
+    for value in &contract.time_windows {
+        append(
+            novel_infrastructure::ReviewClaimType::TimeWindow,
+            "时间窗口",
+            value,
+        );
+    }
+    for value in &contract.stage_boundaries {
+        append(
+            novel_infrastructure::ReviewClaimType::StageBoundary,
+            "阶段边界",
+            value,
+        );
+    }
+    (claims, evidence)
+}
+
 fn review_locked_rules(manager: &novel_infrastructure::ProjectManager) -> String {
     let sections = manager.list_planning_sections().unwrap_or_default();
     let mut output = sections
@@ -4169,12 +4242,15 @@ async fn generate_consistency_review_proposal(
         &volume_plan,
         &normalized_document_json,
     )?;
-    let locked_rules = {
-        let manager = state
+    let (locked_rules, chapter_contract) = {
+        let mut manager = state
             .manager
             .lock()
             .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-        review_locked_rules(&manager)
+        let chapter_contract = manager
+            .chapter_contract(chapter_id)
+            .map_err(ApiError::from)?;
+        (review_locked_rules(&manager), chapter_contract)
     };
     let extraction_input = novel_application::ReviewClaimExtractionInput {
         review_purpose,
@@ -4330,7 +4406,7 @@ async fn generate_consistency_review_proposal(
         });
         claims.truncate(80);
     }
-    let (evidence, evidence_omitted) = {
+    let (mut evidence, evidence_omitted) = {
         let manager = state
             .manager
             .lock()
@@ -4340,6 +4416,14 @@ async fn generate_consistency_review_proposal(
             .map_err(ApiError::from)?
     };
     omitted_items.extend(evidence_omitted);
+    if let Some(contract) = chapter_contract
+        .as_ref()
+        .filter(|contract| contract.confirmed)
+    {
+        let (contract_claims, contract_evidence) = chapter_contract_review_items(contract);
+        claims.extend(contract_claims);
+        evidence.extend(contract_evidence);
+    }
     let target_text = blocks
         .iter()
         .map(|block| block.text.as_str())
@@ -4352,6 +4436,7 @@ async fn generate_consistency_review_proposal(
             evidence: &evidence,
             locked_rules: &locked_rules,
             target_text: &target_text,
+            chapter_contract: chapter_contract.as_ref(),
         },
     );
     stage_requests.push(novel_infrastructure::ReviewStageRequest {

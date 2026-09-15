@@ -14,8 +14,9 @@ pub use entity::{
 };
 pub use materials::{SummaryKind, SummaryMaterial, SummaryPrecision, WritingCard};
 pub use review::{
-    EvidenceAuthority, FindingSource, ReviewClaim, ReviewClaimType, ReviewEvidence, ReviewFinding,
-    ReviewOmittedItem, ReviewStage, ReviewStageRequest, ReviewStatus, ReviewTrace,
+    ChapterContract, EvidenceAuthority, FindingSource, ReviewClaim, ReviewClaimType,
+    ReviewEvidence, ReviewFinding, ReviewOmittedItem, ReviewStage, ReviewStageRequest,
+    ReviewStatus, ReviewTrace,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

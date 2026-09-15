@@ -8,6 +8,7 @@ pub struct DeterministicReviewInput<'a> {
     pub evidence: &'a [ReviewEvidence],
     pub locked_rules: &'a str,
     pub target_text: &'a str,
+    pub chapter_contract: Option<&'a ChapterContract>,
 }
 
 pub struct DeterministicReviewEvaluator;
@@ -61,7 +62,9 @@ impl DeterministicReviewEvaluator {
                 }
             }
         }
-        if input.review_purpose == ReviewPurpose::Manuscript {
+        if let Some(contract) = input.chapter_contract.filter(|contract| contract.confirmed) {
+            evaluate_chapter_contract(input, contract, &mut findings);
+        } else if input.review_purpose == ReviewPurpose::Manuscript {
             evaluate_locked_event_rules(input, &mut findings);
         }
         deduplicate_findings(findings)
@@ -386,6 +389,119 @@ fn evaluate_locked_event_rules(
     }
 }
 
+fn evaluate_chapter_contract(
+    input: &DeterministicReviewInput<'_>,
+    contract: &ChapterContract,
+    findings: &mut Vec<ReviewFinding>,
+) {
+    if contract.is_empty() || input.claims.is_empty() {
+        return;
+    }
+    let target = normalize(input.target_text);
+    for event in &contract.required_events {
+        let Some(claim) = find_contract_claim(input.claims, ReviewClaimType::RequiredEvent, event)
+        else {
+            continue;
+        };
+        if !text_contains_fragment(&target, event) {
+            findings.push(rule_finding(
+                claim,
+                "CHAPTER_REQUIRED_EVENT_MISSING",
+                ReviewStatus::Block,
+                "BLOCKER",
+                "没有在目标文本中确认章节合同要求的事件。",
+                contract_evidence_ids(input, claim),
+                "补齐必须事件；若计划已经变化，请先由作者更新章节合同。",
+                95,
+            ));
+        }
+    }
+    for event in &contract.forbidden_events {
+        let Some(claim) = find_contract_claim(input.claims, ReviewClaimType::ForbiddenEvent, event)
+        else {
+            continue;
+        };
+        if text_contains_fragment(&target, event) {
+            findings.push(rule_finding(
+                claim,
+                "CHAPTER_FORBIDDEN_EVENT",
+                ReviewStatus::Block,
+                "BLOCKER",
+                "目标文本出现了章节合同明确禁止的事件。",
+                contract_evidence_ids(input, claim),
+                "删除该事件，或先由作者解除对应章节合同。",
+                100,
+            ));
+        }
+    }
+    if !contract.time_windows.is_empty()
+        && !contract
+            .time_windows
+            .iter()
+            .any(|window| text_contains_fragment(&target, window))
+        && let Some(claim) = input
+            .claims
+            .iter()
+            .find(|claim| claim.claim_type == ReviewClaimType::TimeWindow)
+    {
+        findings.push(rule_finding(
+            claim,
+            "CHAPTER_TIME_WINDOW_MISSING",
+            ReviewStatus::Block,
+            "BLOCKER",
+            "目标文本没有体现章节合同规定的时间窗口。",
+            contract_evidence_ids(input, claim),
+            "补齐章节时间窗口，或先由作者调整章节合同。",
+            90,
+        ));
+    }
+    for boundary in &contract.stage_boundaries {
+        let Some(claim) =
+            find_contract_claim(input.claims, ReviewClaimType::StageBoundary, boundary)
+        else {
+            continue;
+        };
+        let Some(fragment) = event_fragment(boundary, &["不得", "禁止", "严禁", "不能", "不允许"])
+        else {
+            continue;
+        };
+        if text_contains_fragment(&target, &fragment) {
+            findings.push(rule_finding(
+                claim,
+                "STAGE_BOUNDARY_VIOLATION",
+                ReviewStatus::Block,
+                "BLOCKER",
+                "目标文本触及章节合同规定的阶段边界。",
+                contract_evidence_ids(input, claim),
+                "调整阶段推进，或先由作者更新章节合同。",
+                95,
+            ));
+        }
+    }
+}
+
+fn find_contract_claim<'a>(
+    claims: &'a [ReviewClaim],
+    claim_type: ReviewClaimType,
+    value: &str,
+) -> Option<&'a ReviewClaim> {
+    claims.iter().find(|claim| {
+        claim.claim_type == claim_type
+            && (text_matches(&claim.object, value) || text_matches(&claim.quote, value))
+    })
+}
+
+fn contract_evidence_ids(input: &DeterministicReviewInput<'_>, claim: &ReviewClaim) -> Vec<Uuid> {
+    input
+        .evidence
+        .iter()
+        .filter(|evidence| {
+            evidence.claim_id == claim.id && evidence.source_kind == "CHAPTER_CONTRACT"
+        })
+        .map(|evidence| evidence.id)
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn rule_finding(
     claim: &ReviewClaim,
@@ -561,6 +677,33 @@ fn deduplicate_findings(findings: Vec<ReviewFinding>) -> Vec<ReviewFinding> {
 mod tests {
     use super::*;
 
+    fn contract_claim(claim_type: ReviewClaimType, object: &str) -> (ReviewClaim, ReviewEvidence) {
+        let claim = ReviewClaim {
+            id: Uuid::new_v4(),
+            claim_type,
+            subject: "章节合同".to_owned(),
+            predicate: "合同字段".to_owned(),
+            object: object.to_owned(),
+            quote: object.to_owned(),
+            block_id: "chapter-contract".to_owned(),
+            start_offset: 0,
+            end_offset: u32::try_from(object.chars().count()).unwrap_or(u32::MAX),
+            importance: 5,
+            confidence: 100,
+        };
+        let evidence = ReviewEvidence {
+            id: Uuid::new_v4(),
+            claim_id: claim.id,
+            source_kind: "CHAPTER_CONTRACT".to_owned(),
+            source_record_id: Uuid::nil(),
+            authority: EvidenceAuthority::ChapterContract,
+            excerpt: object.to_owned(),
+            source_revision: "sha256:test".to_owned(),
+            relevance: 10_000,
+        };
+        (claim, evidence)
+    }
+
     #[test]
     fn flags_conflicting_fact_and_location_with_rule_evidence() {
         let claim = ReviewClaim {
@@ -592,6 +735,7 @@ mod tests {
             evidence: std::slice::from_ref(&evidence),
             locked_rules: "",
             target_text: &claim.quote,
+            chapter_contract: None,
         });
         assert!(findings.iter().any(|finding| {
             finding.rule_id.as_deref() == Some("FACT_OBJECT_CONFLICT")
@@ -621,6 +765,7 @@ mod tests {
             evidence: &[],
             locked_rules: "",
             target_text: &claim.quote,
+            chapter_contract: None,
         });
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].status, ReviewStatus::Unknown);
@@ -658,6 +803,7 @@ mod tests {
             evidence: std::slice::from_ref(&evidence),
             locked_rules: "",
             target_text: &claim.quote,
+            chapter_contract: None,
         });
         assert!(
             findings
@@ -673,5 +819,86 @@ mod tests {
             "林澈在城门外与守卫发生守门冲突。",
             "守门冲突"
         ));
+    }
+
+    #[test]
+    fn confirmed_chapter_contract_blocks_rule_violations() {
+        let (required, required_evidence) =
+            contract_claim(ReviewClaimType::RequiredEvent, "守门冲突");
+        let (forbidden, forbidden_evidence) =
+            contract_claim(ReviewClaimType::ForbiddenEvent, "揭露师兄真实叛变原因");
+        let (time_window, time_evidence) = contract_claim(ReviewClaimType::TimeWindow, "当夜");
+        let (stage, stage_evidence) =
+            contract_claim(ReviewClaimType::StageBoundary, "不得突破筑基");
+        let claims = vec![required, forbidden, time_window, stage];
+        let evidence = vec![
+            required_evidence,
+            forbidden_evidence,
+            time_evidence,
+            stage_evidence,
+        ];
+        let contract = ChapterContract {
+            chapter_id: Uuid::new_v4(),
+            source_section_id: "plan-node:test".to_owned(),
+            source_revision: "sha256:test".to_owned(),
+            confirmed: true,
+            required_events: vec!["守门冲突".to_owned()],
+            forbidden_events: vec!["揭露师兄真实叛变原因".to_owned()],
+            allowed_characters: Vec::new(),
+            time_windows: vec!["当夜".to_owned()],
+            stage_boundaries: vec!["不得突破筑基".to_owned()],
+        };
+        let findings = DeterministicReviewEvaluator::evaluate(&DeterministicReviewInput {
+            review_purpose: ReviewPurpose::Manuscript,
+            claims: &claims,
+            evidence: &evidence,
+            locked_rules: "",
+            target_text: "林澈当夜揭露师兄真实叛变真相，并突破筑基。",
+            chapter_contract: Some(&contract),
+        });
+        assert!(findings.iter().any(|finding| {
+            finding.rule_id.as_deref() == Some("CHAPTER_REQUIRED_EVENT_MISSING")
+        }));
+        assert!(
+            findings
+                .iter()
+                .any(|finding| { finding.rule_id.as_deref() == Some("CHAPTER_FORBIDDEN_EVENT") })
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.rule_id.as_deref() == Some("STAGE_BOUNDARY_VIOLATION"))
+        );
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.rule_id.as_deref() != Some("CHAPTER_TIME_WINDOW_MISSING"))
+        );
+    }
+
+    #[test]
+    fn unconfirmed_chapter_contract_does_not_block() {
+        let (required, required_evidence) =
+            contract_claim(ReviewClaimType::RequiredEvent, "守门冲突");
+        let contract = ChapterContract {
+            chapter_id: Uuid::new_v4(),
+            source_section_id: "plan-node:test".to_owned(),
+            source_revision: "sha256:test".to_owned(),
+            confirmed: false,
+            required_events: vec!["守门冲突".to_owned()],
+            forbidden_events: Vec::new(),
+            allowed_characters: Vec::new(),
+            time_windows: Vec::new(),
+            stage_boundaries: Vec::new(),
+        };
+        let findings = DeterministicReviewEvaluator::evaluate(&DeterministicReviewInput {
+            review_purpose: ReviewPurpose::Admission,
+            claims: std::slice::from_ref(&required),
+            evidence: std::slice::from_ref(&required_evidence),
+            locked_rules: "",
+            target_text: "本章只发生城门对峙。",
+            chapter_contract: Some(&contract),
+        });
+        assert!(findings.is_empty());
     }
 }

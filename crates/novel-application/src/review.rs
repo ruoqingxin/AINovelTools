@@ -256,7 +256,7 @@ fn purpose_labels(purpose: novel_domain::ReviewPurpose) -> (&'static str, &'stat
 fn claim_extraction_output_contract(purpose: novel_domain::ReviewPurpose) -> String {
     let types = match purpose {
         novel_domain::ReviewPurpose::Admission => {
-            "REQUIRED_EVENT|FORBIDDEN_EVENT|ALLOWED_CHARACTER|STAGE_BOUNDARY|FORESHADOWING_WINDOW|PLAN_DEPENDENCY"
+            "REQUIRED_EVENT|FORBIDDEN_EVENT|ALLOWED_CHARACTER|TIME_WINDOW|STAGE_BOUNDARY|FORESHADOWING_WINDOW|PLAN_DEPENDENCY"
         }
         novel_domain::ReviewPurpose::Manuscript => {
             "CHARACTER_STATUS|CHARACTER_LOCATION|ABILITY_OR_REALM|ITEM_POSSESSION|RELATION|KNOWLEDGE_BOUNDARY"

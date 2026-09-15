@@ -268,6 +268,7 @@ impl ProjectManager {
                 ReviewClaimType::RequiredEvent
                     | ReviewClaimType::ForbiddenEvent
                     | ReviewClaimType::AllowedCharacter
+                    | ReviewClaimType::TimeWindow
                     | ReviewClaimType::StageBoundary
                     | ReviewClaimType::ForeshadowingWindow
                     | ReviewClaimType::PlanDependency
@@ -654,7 +655,10 @@ mod tests {
             .get_consistency_review_trace(proposal.id)
             .expect("stored trace");
         assert_eq!(stored, trace);
-        assert_eq!(manager.health().expect("health").schema_version, 43);
+        assert_eq!(
+            manager.health().expect("health").schema_version,
+            CURRENT_SCHEMA_VERSION
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

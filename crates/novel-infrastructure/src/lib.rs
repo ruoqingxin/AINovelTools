@@ -32,6 +32,7 @@ mod entity_store;
 mod extraction_store;
 mod knowledge_store;
 mod materials_store;
+mod review_contract;
 mod review_rules;
 mod review_store;
 mod search_store;
@@ -59,15 +60,16 @@ pub use knowledge_store::KnowledgeStoreError;
 pub use materials_store::MaterialsStoreError;
 pub use novel_domain::{
     AiAction, AiProposal, AiProposalStatus, AiTaskStatus, Belief, CandidateStatus, ChangeSet,
-    ChangeSetStatus, ContextAuthority, Entity, EntityError, EntityInput, EntityLifecycleStatus,
-    EntityRevision, EntityType, Event, EvidenceAnchor, EvidenceAuthority, Fact, FindingSource,
-    Foreshadowing, KnowledgeCandidate, KnowledgeChunk, KnowledgeConflict, KnowledgeConflictKind,
-    KnowledgeContractError, KnowledgeExpansionError, KnowledgeLifecycleStatus, KnowledgeVersion,
-    ModelCapability, ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel, Relation,
-    RetrievalEvidence, RetrievalMethod, ReviewClaim, ReviewClaimType, ReviewDecision,
-    ReviewEvidence, ReviewFinding, ReviewOmittedItem, ReviewPurpose, ReviewStage,
-    ReviewStageRequest, ReviewStatus, ReviewTrace, SummaryKind, SummaryMaterial, SummaryPrecision,
-    WorldState, WorldStateEntry, WritingCard, WritingReviewPolicy,
+    ChangeSetStatus, ChapterContract, ContextAuthority, Entity, EntityError, EntityInput,
+    EntityLifecycleStatus, EntityRevision, EntityType, Event, EvidenceAnchor, EvidenceAuthority,
+    Fact, FindingSource, Foreshadowing, KnowledgeCandidate, KnowledgeChunk, KnowledgeConflict,
+    KnowledgeConflictKind, KnowledgeContractError, KnowledgeExpansionError,
+    KnowledgeLifecycleStatus, KnowledgeVersion, ModelCapability, ModelProfile, ModelProfileInput,
+    ModelProvider, PrivacyLevel, Relation, RetrievalEvidence, RetrievalMethod, ReviewClaim,
+    ReviewClaimType, ReviewDecision, ReviewEvidence, ReviewFinding, ReviewOmittedItem,
+    ReviewPurpose, ReviewStage, ReviewStageRequest, ReviewStatus, ReviewTrace, SummaryKind,
+    SummaryMaterial, SummaryPrecision, WorldState, WorldStateEntry, WritingCard,
+    WritingReviewPolicy,
 };
 pub use review_rules::{
     DeterministicReviewEvaluator, DeterministicReviewInput, FIXED_RULE_VERSION,
@@ -198,7 +200,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 43;
+pub const CURRENT_SCHEMA_VERSION: i64 = 44;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

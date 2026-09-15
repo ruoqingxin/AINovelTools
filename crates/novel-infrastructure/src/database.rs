@@ -955,6 +955,16 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (43, 'ai_review_traces');",
             )?;
         }
+        if applied.unwrap_or(0) < 44 {
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS chapter_contract_cache (
+                    chapter_id TEXT PRIMARY KEY NOT NULL,
+                    contract_json TEXT NOT NULL CHECK(json_valid(contract_json)),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT INTO schema_migrations (version, name) VALUES (44, 'chapter_contract_cache');",
+            )?;
+        }
         Ok(())
     }
 
@@ -1139,6 +1149,49 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok(saved)
+    }
+
+    pub(super) fn chapter_contract_cache(
+        &self,
+        chapter_id: Uuid,
+    ) -> Result<Option<ChapterContract>, DatabaseError> {
+        let contract_json = self
+            .connection
+            .query_row(
+                "SELECT contract_json FROM chapter_contract_cache WHERE chapter_id = ?1",
+                [chapter_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        contract_json
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|error| {
+                    DatabaseError::Sqlite(rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    ))
+                })
+            })
+            .transpose()
+    }
+
+    pub(super) fn save_chapter_contract_cache(
+        &mut self,
+        contract: &ChapterContract,
+    ) -> Result<(), DatabaseError> {
+        let contract_json = serde_json::to_string(contract).map_err(|error| {
+            DatabaseError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+        })?;
+        self.connection.execute(
+            "INSERT INTO chapter_contract_cache (chapter_id, contract_json, updated_at)
+             VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+             ON CONFLICT(chapter_id) DO UPDATE SET
+               contract_json = excluded.contract_json,
+               updated_at = excluded.updated_at",
+            rusqlite::params![contract.chapter_id.to_string(), contract_json],
+        )?;
+        Ok(())
     }
 
     pub(super) fn list_planning_embeddings(&self) -> Result<Vec<PlanningEmbedding>, DatabaseError> {
