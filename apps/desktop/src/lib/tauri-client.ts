@@ -275,11 +275,15 @@ export type AiProposal = {
 };
 export type AiRun = {
   id: string; taskKey: string; source: string; action: AiAction | string; status: string;
-  chapterTitle: string; profileName: string;
+  chapterId: string | null; chapterTitle: string; profileName: string;
   attemptCount: number; retryReason: string | null; errorCode: string | null;
   estimatedInputTokens: number; estimatedOutputTokens: number;
   estimatedCostMicros: number | null; priceCurrency: string;
   promptVersion: string; createdAt: string; finishedAt: string | null;
+};
+export type AiRunRequest = {
+  endpoint: string | null;
+  requestBody: string | null;
 };
 export type AiUsageCurrencySummary = {
   currency: string;
@@ -687,6 +691,9 @@ export function listAiProposals(input: {
 }
 export function listAiRuns(limit = 20) {
   return invoke<AiRun[]>("list_ai_runs", { limit });
+}
+export function getAiRunRequest(runId: string) {
+  return invoke<AiRunRequest>("get_ai_run_request", { runId });
 }
 export function getAiUsageSummary(days = 30) {
   return invoke<AiUsageSummary>("get_ai_usage_summary", { days });

@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyAiTaskPreferences } from "../lib/ai-task-preferences";
-import type { AiProposal, AiProposalReview, ModelProfile } from "../lib/tauri-client";
+import type { AiProposal, AiProposalReview, AiRun, ModelProfile } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
 
 const mocks = vi.hoisted(() => ({
@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   getAiUsageSummary: vi.fn(),
   getWritingReviewPolicy: vi.fn(),
   listen: vi.fn(),
+  listAiRuns: vi.fn(),
   listAiProposals: vi.fn(),
   listEntities: vi.fn(),
   listJobs: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("../lib/tauri-client", async () => {
     getAiTaskPreferences: mocks.getAiTaskPreferences,
     getAiUsageSummary: mocks.getAiUsageSummary,
     getWritingReviewPolicy: mocks.getWritingReviewPolicy,
+    listAiRuns: mocks.listAiRuns,
     listAiProposals: mocks.listAiProposals,
     listEntities: mocks.listEntities,
     listJobs: mocks.listJobs,
@@ -130,6 +132,7 @@ describe("AiWritingPanel consistency review", () => {
       byTask: [],
     });
     mocks.getWritingReviewPolicy.mockResolvedValue("BALANCED");
+    mocks.listAiRuns.mockResolvedValue([]);
     mocks.listAiProposals.mockResolvedValueOnce([]).mockResolvedValue([review]);
     mocks.listEntities.mockResolvedValue([]);
     mocks.listJobs.mockResolvedValue([]);
@@ -182,6 +185,61 @@ describe("AiWritingPanel consistency review", () => {
     expect(screen.getByRole("button", { name: "关闭审核" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "生成整章初稿" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /应用到正文/ })).not.toBeInTheDocument();
+  });
+
+  it("restores a persisted running review after the panel remounts", async () => {
+    const runningRun: AiRun = {
+      id: "task-review",
+      taskKey: "consistencyReview",
+      source: "WRITING",
+      action: "CONSISTENCY_CHECK",
+      status: "RUNNING",
+      chapterId: "chapter-1",
+      chapterTitle: "第1章·入城",
+      profileName: "审核模型",
+      attemptCount: 1,
+      retryReason: null,
+      errorCode: null,
+      estimatedInputTokens: 1200,
+      estimatedOutputTokens: 0,
+      estimatedCostMicros: null,
+      priceCurrency: "USD",
+      promptVersion: "r3-writing-v6",
+      createdAt: "0",
+      finishedAt: null,
+    };
+    mocks.listAiRuns.mockReset();
+    mocks.listAiRuns.mockResolvedValueOnce([]).mockResolvedValue([runningRun]);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { staleTime: 30_000 } },
+    });
+    const panel = (
+      <QueryClientProvider client={queryClient}>
+        <AiWritingPanel
+          mode="review"
+          chapterId="chapter-1"
+          chapterTitle="第1章·入城"
+          chapterPlan="主角进入城市并寻找失踪的师父。"
+          volumeId="volume-1"
+          volumePlan="第一卷规划"
+          draft=""
+          editor={null}
+        />
+      </QueryClientProvider>
+    );
+
+    const firstRender = render(panel);
+    await waitFor(() => expect(screen.getByRole("button", { name: "检查创作条件" })).toBeEnabled());
+    await waitFor(() => expect(mocks.listAiRuns).toHaveBeenCalledTimes(1));
+    firstRender.unmount();
+
+    render(panel);
+    const reviewButton = screen.getByRole("button", { name: "检查创作条件" });
+    expect(await screen.findByText("模型正在生成结果…")).toBeVisible();
+    await waitFor(() => expect(reviewButton).toBeDisabled());
+    expect(mocks.listAiRuns).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(mocks.cancelAiTask).toHaveBeenCalledWith("task-review"));
   });
 
   it("marks an outdated review as stale without blocking writing", async () => {

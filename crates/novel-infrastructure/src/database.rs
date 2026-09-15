@@ -912,6 +912,13 @@ impl Database {
                 PRAGMA foreign_keys=ON;",
             )?;
         }
+        if applied.unwrap_or(0) < 41 {
+            self.connection.execute_batch(
+                "ALTER TABLE ai_run_records ADD COLUMN request_endpoint TEXT;
+                ALTER TABLE ai_run_records ADD COLUMN request_body TEXT;
+                INSERT INTO schema_migrations (version, name) VALUES (41, 'ai_run_request_snapshots');",
+            )?;
+        }
         Ok(())
     }
 
@@ -987,9 +994,7 @@ impl Database {
                 id: row.get(0)?,
                 content: row.get(1)?,
                 pending_content: row.get(2)?,
-                story_state: PlanningStoryState::parse(
-                    &row.get::<_, String>(3)?,
-                ),
+                story_state: PlanningStoryState::parse(&row.get::<_, String>(3)?),
                 rationale: row.get(4)?,
                 consequence: row.get(5)?,
                 references,
@@ -1816,7 +1821,9 @@ mod tests {
                 ALTER TABLE discussion_sessions_v39 RENAME TO discussion_sessions;
                 CREATE INDEX idx_discussion_sessions_project
                     ON discussion_sessions(project_id, updated_at DESC);
-                DELETE FROM schema_migrations WHERE version = 40;
+                ALTER TABLE ai_run_records DROP COLUMN request_body;
+                ALTER TABLE ai_run_records DROP COLUMN request_endpoint;
+                DELETE FROM schema_migrations WHERE version >= 40;
                 COMMIT;
                 PRAGMA foreign_keys=ON;",
             )
@@ -1864,13 +1871,12 @@ mod tests {
         assert_eq!(
             database
                 .connection
-                .query_row(
-                    "SELECT MAX(version) FROM schema_migrations",
-                    [],
-                    |row| row.get::<_, i64>(0)
-                )
+                .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| row
+                    .get::<_, i64>(
+                    0
+                ))
                 .expect("schema version"),
-            40
+            41
         );
     }
 }

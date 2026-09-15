@@ -475,6 +475,7 @@ describe("SettingsView", () => {
         source: "PLANNING",
         action: "outline",
         status: "COMPLETED",
+        chapterId: null,
         chapterTitle: "故事大纲",
         profileName: "规划模型",
         attemptCount: 1,

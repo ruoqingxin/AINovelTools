@@ -9,6 +9,7 @@ import {
   errorMessage,
   generateAiProposal,
   getWritingReviewPolicy,
+  listAiRuns,
   listAiProposals,
   listEntities,
   listModelProfiles,
@@ -199,6 +200,11 @@ export type AiWritingPanelMode = "readiness" | "create" | "review";
 
 export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null }) {
   const client = useQueryClient();
+  const mode = props.mode ?? "create";
+  const isReadinessMode = mode === "readiness";
+  const isCreationMode = mode === "create";
+  const isReviewMode = mode === "review";
+  const panelTaskKey = isReviewMode ? "consistencyReview" : "writing";
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
   const reviewPolicyQuery = useQuery({ queryKey: ["writing-review-policy"], queryFn: getWritingReviewPolicy });
@@ -219,7 +225,6 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
       ...(deferredInstruction.trim() ? { instruction: deferredInstruction.trim() } : {}),
     }),
   });
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState("");
   const [partialTexts, setPartialTexts] = useState<Record<string, string>>({});
@@ -230,26 +235,51 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [proposalAnchors, setProposalAnchors] = useState<Record<string, ProposalAnchor>>({});
   const [lastApplied, setLastApplied] = useState<{ documentJson: string; label: string } | null>(null);
+  const runningRuns = useQuery({
+    queryKey: ["ai-runs", 80],
+    queryFn: () => listAiRuns(80),
+    enabled: !isReadinessMode,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: (query) => query.state.data?.some((run) =>
+      run.status === "RUNNING"
+      && run.chapterId === props.chapterId
+      && run.taskKey === panelTaskKey
+    ) ? 1_000 : false,
+  });
+  const persistedRunning = isReadinessMode
+    ? null
+    : runningRuns.data?.find((run) =>
+        run.status === "RUNNING"
+        && run.chapterId === props.chapterId
+        && run.taskKey === panelTaskKey
+      ) ?? null;
+  const generationBusy = busy || Boolean(persistedRunning);
+  const generationLocked = generationBusy
+    || (!isReadinessMode && (runningRuns.isPending || runningRuns.isFetching));
+  const effectiveTaskId = persistedRunning?.id ?? null;
 
   useEffect(() => {
     let disposed = false;
     const subscriptions = Promise.all([
-      listen<{ taskId: string }>("ai-task-started", ({ payload }) => {
-        if (!disposed) { setActiveTaskId(payload.taskId); setPreview(""); }
+      listen<{ taskId: string }>("ai-task-started", () => {
+        if (!disposed) {
+          setPreview("");
+          void client.invalidateQueries({ queryKey: ["ai-runs"] });
+        }
       }),
       listen<{ taskId: string; chunk: string }>("ai-task-chunk", ({ payload }) => {
-        if (!disposed) { setActiveTaskId(payload.taskId); setPreview((value) => value + payload.chunk); }
+        if (!disposed) setPreview((value) => value + payload.chunk);
       }),
       listen<{ taskId: string; attempt: number; profileName: string; fallbackReason?: string }>("ai-task-attempt", ({ payload }) => {
         if (!disposed && payload.attempt > 1) {
-          setActiveTaskId(payload.taskId);
           setPreview("");
           setFallbackNotice(`主模型调用失败（${payload.fallbackReason ?? "未知原因"}），已切换到“${payload.profileName}”继续生成。`);
         }
       }),
     ]);
     return () => { disposed = true; void subscriptions.then((items) => items.forEach((unlisten) => unlisten())); };
-  }, []);
+  }, [client]);
 
   useEffect(() => {
     setPreview("");
@@ -318,13 +348,12 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     finally {
       void client.invalidateQueries({ queryKey: ["ai-runs"] });
       setBusy(false);
-      setActiveTaskId(null);
     }
   }
 
   async function cancel() {
-    if (!activeTaskId) return;
-    try { await cancelAiTask(activeTaskId); }
+    if (!effectiveTaskId) return;
+    try { await cancelAiTask(effectiveTaskId); }
     catch (cause) { setError(errorMessage(cause)); }
   }
 
@@ -461,11 +490,6 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     : Boolean(props.chapterPlan.trim() || currentDraftAvailable);
   const writingActionBlocked = (action: AiAction) =>
     consistencyBlocked && (action === "DRAFT" || action === "CONTINUE");
-  const mode = props.mode ?? "create";
-  const isReadinessMode = mode === "readiness";
-  const isCreationMode = mode === "create";
-  const isReviewMode = mode === "review";
-
   return <section className="ai-panel" aria-label={isReadinessMode ? "创作准备" : isReviewMode ? reviewingManuscript ? "正文审核" : "创作准入" : "AI 创作"}>
     {isReadinessMode ? <>
       <div className="section-heading ai-stage-heading"><div><h2><ClipboardCheck size={15} />创作准备</h2><p>集中检查正式设定、人物卡和章节执行卡，缺少的内容可在这里补齐。</p></div><span>生成正文前</span></div>
@@ -479,7 +503,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
       <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>
       <p className="ai-request-hint">系统会把这段意见与章节执行卡、写作规则和正文上下文一起编译成模型消息。</p>
       <div className="ai-creation-options">
-        <div className="ai-draft-action"><div><strong>{visibleDraftAvailable ? "重新生成整章草稿" : "按章节执行卡生成整章"}</strong><span>{visibleDraftAvailable ? "适合整体推翻当前草稿。采用候选时会明确提示整章替换。" : "根据章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿。"}</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={busy || !selectedChatProfile?.hasSecret || writingActionBlocked("DRAFT")} title={consistencyBlocked ? "先处理创作准入中的阻断问题并关闭报告" : undefined}><Sparkles size={14} />{visibleDraftAvailable ? "生成新版整章" : "生成整章草稿"}</button></div>
+        <div className="ai-draft-action"><div><strong>{visibleDraftAvailable ? "重新生成整章草稿" : "按章节执行卡生成整章"}</strong><span>{visibleDraftAvailable ? "适合整体推翻当前草稿。采用候选时会明确提示整章替换。" : "根据章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿。"}</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={generationLocked || !selectedChatProfile?.hasSecret || writingActionBlocked("DRAFT")} title={consistencyBlocked ? "先处理创作准入中的阻断问题并关闭报告" : undefined}><Sparkles size={14} />{visibleDraftAvailable ? "生成新版整章" : "生成整章草稿"}</button></div>
       </div>
     </> : null}
 
@@ -489,14 +513,14 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
       <AiModelNote taskLabel={reviewingManuscript ? "正文审核" : "创作准入"} taskKey="consistencyReview" profile={reviewProfile} preference={reviewPreference} />
       <div className="ai-consistency-action-bar">
         <div><strong>{reviewingManuscript ? "审核当前正文" : "检查本次创作条件"}</strong><span>{reviewingManuscript ? "以当前正文为主体，对照章节执行卡和正式知识，审核结果不会自动修改正文。" : "对照分卷规划和正式知识检查执行卡；已有正文时也会纳入，结果用于生成准入。"}</span></div>
-        <button type="button" className="secondary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={busy || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />{reviewingManuscript ? "审核当前正文" : "检查创作条件"}</button>
+        <button type="button" className="secondary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={generationLocked || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />{reviewingManuscript ? "审核当前正文" : "检查创作条件"}</button>
       </div>
       {error ? <p className="project-error ai-review-error" role="alert" aria-live="assertive">{error}</p> : null}
       {reviewingManuscript && !currentDraftAvailable ? <p className="consistency-admission" data-state="needs_input">请先完成正文内容，再运行正文审核。</p> : null}
       {consistencyNotice ? <p className="consistency-admission" data-state={consistencyNotice.state}>{consistencyNotice.text}</p> : null}
       </section>
     </> : null}
-    {(isCreationMode || isReviewMode) && busy ? <div className="ai-running"><LoaderCircle size={15} className="spin" /><span>模型正在生成结果…</span><button type="button" className="secondary-action" onClick={() => void cancel()} disabled={!activeTaskId}><Ban size={14} />取消</button></div> : null}
+    {(isCreationMode || isReviewMode) && generationBusy ? <div className="ai-running"><LoaderCircle size={15} className="spin" /><span>模型正在生成结果…</span><button type="button" className="secondary-action" onClick={() => void cancel()} disabled={!effectiveTaskId}><Ban size={14} />取消</button></div> : null}
     {!isReadinessMode && fallbackNotice ? <p className="project-notice" role="status">{fallbackNotice}</p> : null}
     {!isReadinessMode && preview ? <pre className="ai-preview">{preview}</pre> : null}
     {!isReadinessMode && !isReviewMode && error ? <p className="project-error" role="alert">{error}</p> : null}
@@ -563,7 +587,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
             {consistency.parseWarnings.length ? <div className="consistency-parse-warnings">{consistency.parseWarnings.map((warning) => <span key={warning}>{warning}</span>)}</div> : null}
           </> : <pre>{text}</pre>}
           <details className="consistency-raw"><summary>查看原始报告</summary><pre>{text}</pre></details>
-          <div className="ai-actions">{stale ? <button type="button" className="primary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={busy || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />按当前内容重新审核</button> : consistency && (consistency.verdict === "BLOCKED" || consistency.verdict === "REVIEW") ? <a className="primary-action" href={`/chapters#${props.chapterId}`}>查看设定与执行卡</a> : null}{!stale && needsInput && targets.length ? targets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : null}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭审核</button></div>
+          <div className="ai-actions">{stale ? <button type="button" className="primary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={generationLocked || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />按当前内容重新审核</button> : consistency && (consistency.verdict === "BLOCKED" || consistency.verdict === "REVIEW") ? <a className="primary-action" href={`/chapters#${props.chapterId}`}>查看设定与执行卡</a> : null}{!stale && needsInput && targets.length ? targets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : null}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭审核</button></div>
         </article>;
       })}
     </section> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>{reviewingManuscript ? "当前没有正文审核报告" : "当前没有创作准入报告"}</strong><span>{reviewingManuscript ? "完成正文后运行审核，人物状态、规则、时间线和叙述问题会集中显示在这里。" : "检查后会明确当前是否可以生成正文，以及还需要补齐哪些设定。"}</span></div></div> : null}

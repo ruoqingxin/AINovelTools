@@ -37,7 +37,7 @@ pub use ai::{
     AiBudgetSettings, AiConsistencyFinding, AiConsistencyReport, AiConsistencySeverity,
     AiConsistencyVerdict, AiError, AiOutputValidation, AiProposalFeedback,
     AiProposalFeedbackRating, AiProposalReview, AiQualityGroup, AiQualitySummary, AiRun,
-    AiRunSource, AiRunStart, AiTaskContextPreference, AiTaskKind, AiTaskPreference,
+    AiRunRequest, AiRunSource, AiRunStart, AiTaskContextPreference, AiTaskKind, AiTaskPreference,
     AiTaskPreferences, AiTaskPromptPreference, AiUsageCurrencySummary, AiUsageDailySummary,
     AiUsageSummary, AiUsageTaskSummary, ConsistencyReviewFreshness, EmbeddingGateway,
     GenerationCompletion, GenerationOptions, GenerationOutput, ModelGateway, ModelProfileStore,
@@ -190,7 +190,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 40;
+pub const CURRENT_SCHEMA_VERSION: i64 = 41;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -3537,6 +3537,8 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].task_key, "writing");
         assert_eq!(runs[0].source, "WRITING");
+        let chapter_id = chapter.id.to_string();
+        assert_eq!(runs[0].chapter_id.as_deref(), Some(chapter_id.as_str()));
         assert_eq!(runs[0].attempt_count, 2);
         assert_eq!(runs[0].profile_name, "备用模型");
         assert_eq!(runs[0].retry_reason.as_deref(), Some("PROVIDER_TIMEOUT"));
@@ -4009,6 +4011,13 @@ mod tests {
             })
             .expect("run");
         manager
+            .record_ai_run_request(
+                run_id,
+                "https://api.deepseek.com/chat/completions",
+                r#"{"model":"deepseek-v4-flash","messages":[]}"#,
+            )
+            .expect("request snapshot");
+        manager
             .record_ai_run_fallback(run_id, fallback.id, "PROVIDER_TIMEOUT")
             .expect("fallback");
         manager.complete_ai_run(run_id, 500).expect("complete");
@@ -4016,11 +4025,21 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].task_key, "workDesign");
         assert_eq!(runs[0].source, "PLANNING");
+        assert_eq!(runs[0].chapter_id, None);
         assert_eq!(runs[0].chapter_title, "核心前提");
         assert_eq!(runs[0].profile_name, "备用规划模型");
         assert_eq!(runs[0].attempt_count, 2);
         assert_eq!(runs[0].price_currency, "CNY");
         assert_eq!(runs[0].estimated_cost_micros, Some(3_000));
+        let request = manager.get_ai_run_request(run_id).expect("request");
+        assert_eq!(
+            request.endpoint.as_deref(),
+            Some("https://api.deepseek.com/chat/completions")
+        );
+        assert_eq!(
+            request.request_body.as_deref(),
+            Some(r#"{"model":"deepseek-v4-flash","messages":[]}"#)
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

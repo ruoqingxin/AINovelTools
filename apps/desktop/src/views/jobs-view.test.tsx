@@ -7,13 +7,14 @@ import { JobsView } from "./jobs-view";
 const mocks = vi.hoisted(() => ({
   acknowledgeFailedJobs: vi.fn(),
   enqueueJob: vi.fn(),
+  getAiRunRequest: vi.fn(),
   listAiRuns: vi.fn(),
   listJobs: vi.fn(),
 }));
 
 vi.mock("../lib/tauri-client", async () => {
   const actual = await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client");
-  return { ...actual, acknowledgeFailedJobs: mocks.acknowledgeFailedJobs, enqueueJob: mocks.enqueueJob, listAiRuns: mocks.listAiRuns, listJobs: mocks.listJobs };
+  return { ...actual, acknowledgeFailedJobs: mocks.acknowledgeFailedJobs, enqueueJob: mocks.enqueueJob, getAiRunRequest: mocks.getAiRunRequest, listAiRuns: mocks.listAiRuns, listJobs: mocks.listJobs };
 });
 
 describe("JobsView", () => {
@@ -22,6 +23,7 @@ describe("JobsView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.acknowledgeFailedJobs.mockResolvedValue(1);
+    mocks.getAiRunRequest.mockResolvedValue({ endpoint: null, requestBody: null });
     mocks.listAiRuns.mockResolvedValue([]);
     mocks.listJobs.mockResolvedValue([]);
     mocks.enqueueJob.mockResolvedValue({});
@@ -63,6 +65,7 @@ describe("JobsView", () => {
       source: "WRITING",
       action: "DRAFT",
       status: "COMPLETED",
+      chapterId: "chapter-1",
       chapterTitle: "第1章",
       profileName: "写作模型",
       attemptCount: 1,
@@ -82,5 +85,15 @@ describe("JobsView", () => {
 
     expect(await screen.findByText("整章创作 · 第1章")).toBeVisible();
     expect(screen.getByText(/写作模型 · 正文创作/)).toBeVisible();
+
+    mocks.getAiRunRequest.mockResolvedValue({
+      endpoint: "https://api.deepseek.com/chat/completions",
+      requestBody: "{\n  \"model\": \"deepseek-v4-flash\",\n  \"messages\": []\n}",
+    });
+    fireEvent.click(screen.getByRole("button", { name: /整章创作，已完成/ }));
+    fireEvent.click(screen.getByRole("button", { name: /查看完整请求/ }));
+
+    expect(await screen.findByText(/api\.deepseek\.com\/chat\/completions/)).toBeVisible();
+    expect(screen.getByText(/deepseek-v4-flash/)).toBeVisible();
   });
 });

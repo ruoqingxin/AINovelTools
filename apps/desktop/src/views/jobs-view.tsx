@@ -3,7 +3,7 @@ import { BellOff, ClipboardList, History, Play, RefreshCw, RotateCcw, Square } f
 import { useEffect, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { formatCost } from "../lib/ai-cost-estimate";
-import { acknowledgeFailedJobs, cancelJob, enqueueJob, errorMessage, getPlanningAiJobRequest, listAiRuns, listJobEvents, listJobs, retryJob, runNextJob, type AiRun, type Job, type JobType, type PlanningAiJobInput } from "../lib/tauri-client";
+import { acknowledgeFailedJobs, cancelJob, enqueueJob, errorMessage, getAiRunRequest, getPlanningAiJobRequest, listAiRuns, listJobEvents, listJobs, retryJob, runNextJob, type AiRun, type Job, type JobType, type PlanningAiJobInput } from "../lib/tauri-client";
 
 const systemTypes: JobType[] = ["BACKUP", "RESTORE_VERIFY", "HEALTH_SCAN", "REBUILD_SEARCH_INDEX"];
 const typeLabels: Record<JobType, string> = {
@@ -97,12 +97,27 @@ function runStatusClass(run: AiRun) {
 
 function AiRunsHistory() {
   const [source, setSource] = useState<RunSourceFilter>("ALL");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showRequest, setShowRequest] = useState(false);
   const runs = useQuery({
     queryKey: ["ai-runs", 80],
     queryFn: () => listAiRuns(80),
     refetchInterval: 3_000,
   });
   const filteredRuns = (runs.data ?? []).filter((run) => source === "ALL" || run.source === source);
+  const selected = filteredRuns.find((run) => run.id === selectedId) ?? filteredRuns[0] ?? null;
+  const requestPreview = useQuery({
+    queryKey: ["ai-run-request", selected?.id],
+    queryFn: () => getAiRunRequest(selected!.id),
+    enabled: Boolean(selected && showRequest),
+    refetchInterval: selected?.status === "RUNNING" ? 1_000 : false,
+  });
+
+  useEffect(() => {
+    if (selectedId && !(runs.data ?? []).some((run) => run.id === selectedId)) setSelectedId(null);
+  }, [runs.data, selectedId]);
+
+  useEffect(() => setShowRequest(false), [selected?.id]);
 
   return <section className="ai-run-records" aria-label="AI 运行记录">
     <div className="jobs-toolbar">
@@ -111,20 +126,48 @@ function AiRunsHistory() {
       </div>
       <button className="icon-command" type="button" onClick={() => void runs.refetch()} disabled={runs.isFetching} aria-label="刷新 AI 运行记录" title="刷新 AI 运行记录"><RefreshCw size={14} /></button>
     </div>
-    {runs.isPending ? <p className="plan-empty">正在加载 AI 运行记录…</p> : runs.isError ? <p className="project-error" role="alert">AI 运行记录加载失败：{errorMessage(runs.error)}</p> : filteredRuns.length ? <div className="ai-run-list">
-      {filteredRuns.map((run) => {
-        const duration = formatRunDuration(run.createdAt, run.finishedAt);
-        const estimatedTokens = run.estimatedInputTokens + run.estimatedOutputTokens;
-        const failure = run.errorCode ? classifyAiFailure(run.errorCode) : null;
-        return <article className="ai-run-row" key={run.id}>
-          <div>
-            <strong>{runActionLabels[run.action] ?? run.taskKey} · {run.chapterTitle}</strong>
-            <small>{new Date(run.createdAt).toLocaleString()} · {run.profileName} · {runSourceLabels[run.source] ?? run.source}</small>
+    {runs.isPending ? <p className="plan-empty">正在加载 AI 运行记录…</p> : runs.isError ? <p className="project-error" role="alert">AI 运行记录加载失败：{errorMessage(runs.error)}</p> : filteredRuns.length ? <div className="jobs-workspace ai-runs-workspace">
+      <div className="ai-run-list jobs-list">
+        {filteredRuns.map((run) => {
+          const duration = formatRunDuration(run.createdAt, run.finishedAt);
+          const estimatedTokens = run.estimatedInputTokens + run.estimatedOutputTokens;
+          const failure = run.errorCode ? classifyAiFailure(run.errorCode) : null;
+          return <article className="job-row ai-run-detail-row" data-selected={selected?.id === run.id || undefined} key={run.id} role="button" tabIndex={0} aria-pressed={selected?.id === run.id} aria-label={`${runActionLabels[run.action] ?? run.taskKey}，${runStatusLabels[run.status] ?? run.status}`} onClick={() => setSelectedId(run.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(run.id); } }}>
+            <div className="job-main">
+              <strong>{runActionLabels[run.action] ?? run.taskKey} · {run.chapterTitle}</strong>
+              <small>{new Date(run.createdAt).toLocaleString()} · {run.profileName} · {runSourceLabels[run.source] ?? run.source}</small>
+              <code>{run.id.slice(0, 8)}</code>
+            </div>
+            <span className={`job-status job-${runStatusClass(run)}`}>{runStatusLabels[run.status] ?? run.status}</span>
+            <small>尝试 {run.attemptCount}{duration ? ` · 耗时 ${duration}` : ""} · 约 {estimatedTokens.toLocaleString()} tokens · {formatCost(run.estimatedCostMicros, run.priceCurrency)}{run.retryReason ? ` · 回退原因 ${run.retryReason}` : ""}{run.errorCode ? ` · ${failure?.kind === "UNKNOWN" ? run.errorCode : `${failure?.label}（${run.errorCode}）`}` : ""}</small>
+          </article>;
+        })}
+      </div>
+      <aside className="job-detail ai-run-detail" aria-label="AI 运行详情">
+        {selected ? <>
+          <div className="job-detail-heading">
+            <div><span>{runActionLabels[selected.action] ?? selected.taskKey}</span><h2>{selected.chapterTitle}</h2></div>
+            <span className={`job-status job-${runStatusClass(selected)}`}>{runStatusLabels[selected.status] ?? selected.status}</span>
           </div>
-          <span className={`job-status job-${runStatusClass(run)}`}>{runStatusLabels[run.status] ?? run.status}</span>
-          <small>尝试 {run.attemptCount}{duration ? ` · 耗时 ${duration}` : ""} · 约 {estimatedTokens.toLocaleString()} tokens · {formatCost(run.estimatedCostMicros, run.priceCurrency)}{run.retryReason ? ` · 回退原因 ${run.retryReason}` : ""}{run.errorCode ? ` · ${failure?.kind === "UNKNOWN" ? run.errorCode : `${failure?.label}（${run.errorCode}）`}` : ""}</small>
-        </article>;
-      })}
+          <dl>
+            <div><dt>运行编号</dt><dd>{selected.id}</dd></div>
+            <div><dt>创建时间</dt><dd>{new Date(selected.createdAt).toLocaleString()}</dd></div>
+            <div><dt>完成时间</dt><dd>{selected.finishedAt ? new Date(selected.finishedAt).toLocaleString() : "尚未完成"}</dd></div>
+            <div><dt>模型</dt><dd>{selected.profileName}</dd></div>
+            <div><dt>任务类型</dt><dd>{runSourceLabels[selected.source] ?? selected.source}</dd></div>
+            <div><dt>尝试次数</dt><dd>{selected.attemptCount}</dd></div>
+            <div><dt>输入预算</dt><dd>约 {selected.estimatedInputTokens.toLocaleString()} tokens</dd></div>
+            <div><dt>输出用量</dt><dd>约 {selected.estimatedOutputTokens.toLocaleString()} tokens</dd></div>
+            <div><dt>提示词版本</dt><dd>{selected.promptVersion}</dd></div>
+            {selected.retryReason ? <div><dt>回退原因</dt><dd>{selected.retryReason}</dd></div> : null}
+            {selected.errorCode ? <div><dt>错误类型</dt><dd>{selected.errorCode}</dd></div> : null}
+          </dl>
+          <section className="job-request-preview">
+            <button type="button" className="job-request-toggle" aria-expanded={showRequest} onClick={() => setShowRequest((value) => !value)}><span>AI 最终收到的请求</span><small>{showRequest ? "收起" : "查看完整请求"}</small></button>
+            {showRequest ? requestPreview.isPending ? <p>正在读取最终请求…</p> : requestPreview.isError ? <p className="project-error">读取失败：{errorMessage(requestPreview.error)}</p> : requestPreview.data?.requestBody ? <div className="job-request-content"><div className="job-request-meta"><span><b>POST</b>{requestPreview.data.endpoint}</span><small>估算输入 {selected.estimatedInputTokens.toLocaleString()} tokens</small></div><pre>{requestPreview.data.requestBody}</pre><p>请求体来自实际执行快照；Authorization 与 API Key 不会记录。</p></div> : <div className="job-request-empty"><strong>{selected.status === "RUNNING" ? "请求准备中" : "未记录请求快照"}</strong><span>{selected.status === "RUNNING" ? "请求发出前后，这里会显示 AI 实际收到的完整 JSON。" : "该运行早于请求快照功能，或请求模型前已经失败。"}</span></div> : null}
+          </section>
+        </> : <div className="jobs-empty"><History size={22} /><span>选择一条运行记录查看详情</span></div>}
+      </aside>
     </div> : <div className="jobs-empty"><History size={22} /><span>当前分类还没有 AI 运行记录</span></div>}
   </section>;
 }

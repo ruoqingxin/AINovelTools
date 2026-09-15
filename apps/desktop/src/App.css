@@ -3853,6 +3853,8 @@ textarea:focus-visible,
 .ai-run-row strong { overflow:hidden; color:#405a7f; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
 .ai-run-row small { color:#8798b2; font-size:9px; line-height:1.45; }
 .ai-run-row > small { grid-column:1 / -1; }
+.ai-runs-workspace .ai-run-list { align-content:start; }
+.ai-run-detail-row > small { grid-column:1 / -1; }
 .ai-task-empty { display:grid; gap:5px; margin-top:20px; padding:16px; border:1px dashed #cbd9eb; border-radius:8px; color:#7183a0; background:#fbfdff; }
 .ai-task-empty strong { color:#405a84; font-size:12px; }
 .ai-task-empty span { font-size:11px; line-height:1.5; }

@@ -1433,6 +1433,33 @@ fn incomplete_generation_failure(
     }
 }
 
+fn persist_ai_run_request(
+    state: &ProjectState,
+    run_id: uuid::Uuid,
+    profile: &novel_infrastructure::ModelProfile,
+    context: &novel_application::ContextPackage,
+    stream: bool,
+    disable_thinking: bool,
+    options: novel_infrastructure::GenerationOptions,
+) -> Result<(), ApiError> {
+    let (endpoint, request_body) = state.gateway.request_preview_with_options(
+        profile,
+        context,
+        stream,
+        disable_thinking,
+        options,
+    );
+    let request_body = serde_json::to_string_pretty(&request_body)
+        .map_err(|error| ApiError::internal(format!("无法记录 AI 请求：{error}")))?;
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .record_ai_run_request(run_id, &endpoint, &request_body)
+        .map_err(ApiError::from)
+}
+
 fn planning_output_looks_truncated(output: &str) -> bool {
     let trimmed = output.trim();
     let Some(last) = trimmed.chars().last() else {
@@ -1802,7 +1829,18 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             prompt_version: &context.prompt_version,
             estimated_input_tokens: context.estimated_input_tokens,
         }) {
-            Ok(run_id) => run_id,
+            Ok(run_id) => {
+                if let Err(error) = manager.record_ai_run_request(
+                    run_id,
+                    input.final_request_endpoint.as_deref().unwrap_or_default(),
+                    input.final_request_body.as_deref().unwrap_or_default(),
+                ) {
+                    drop(manager);
+                    fail_planning_job(&state, job.id, format!("无法保存 AI 请求快照：{error}"));
+                    return true;
+                }
+                run_id
+            }
             Err(error) => {
                 drop(manager);
                 fail_planning_job(&state, job.id, format!("无法创建 AI 运行记录：{error}"));
@@ -1879,6 +1917,11 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                     if let Ok(payload) = serde_json::to_string(&input) {
                         let _ = manager.update_job_payload(job.id, payload);
                     }
+                    let _ = manager.record_ai_run_request(
+                        run_id,
+                        input.final_request_endpoint.as_deref().unwrap_or_default(),
+                        input.final_request_body.as_deref().unwrap_or_default(),
+                    );
                 }
                 append_planning_job_event(
                     &state,
@@ -2120,6 +2163,20 @@ pub(crate) async fn extract_entities_from_text(
             })
             .map_err(ApiError::from)?
     };
+    if let Err(error) = persist_ai_run_request(
+        &state,
+        run_id,
+        &profile,
+        &context,
+        false,
+        false,
+        generation_options,
+    ) {
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.fail_ai_run(run_id, &novel_infrastructure::AiError::InvalidResponse);
+        }
+        return Err(error);
+    }
     let outcome = generate_with_task_fallback(
         &state,
         &task_preference,
@@ -2142,13 +2199,22 @@ pub(crate) async fn extract_entities_from_text(
             return Err(ApiError::from(error));
         }
     };
-    if let Some(fallback) = outcome.fallback_profile.as_ref()
-        && let Ok(mut manager) = state.manager.lock()
-    {
-        let _ = manager.record_ai_run_fallback(
+    if let Some(fallback) = outcome.fallback_profile.as_ref() {
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.record_ai_run_fallback(
+                run_id,
+                fallback.id,
+                outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+            );
+        }
+        let _ = persist_ai_run_request(
+            &state,
             run_id,
-            fallback.id,
-            outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+            fallback,
+            &context,
+            false,
+            false,
+            generation_options,
         );
     }
     let output = outcome.output;
@@ -2319,6 +2385,20 @@ pub(crate) async fn extract_chapter_candidates(
             })
             .map_err(ApiError::from)?
     };
+    if let Err(error) = persist_ai_run_request(
+        &state,
+        run_id,
+        &profile,
+        &context,
+        false,
+        false,
+        generation_options,
+    ) {
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.fail_ai_run(run_id, &novel_infrastructure::AiError::InvalidResponse);
+        }
+        return Err(error);
+    }
     let outcome = generate_with_task_fallback(
         &state,
         &task_preference,
@@ -2341,13 +2421,22 @@ pub(crate) async fn extract_chapter_candidates(
             return Err(ApiError::from(error));
         }
     };
-    if let Some(fallback) = outcome.fallback_profile.as_ref()
-        && let Ok(mut manager) = state.manager.lock()
-    {
-        let _ = manager.record_ai_run_fallback(
+    if let Some(fallback) = outcome.fallback_profile.as_ref() {
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.record_ai_run_fallback(
+                run_id,
+                fallback.id,
+                outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+            );
+        }
+        let _ = persist_ai_run_request(
+            &state,
             run_id,
-            fallback.id,
-            outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+            fallback,
+            &context,
+            false,
+            false,
+            generation_options,
         );
     }
 
@@ -3349,6 +3438,18 @@ pub(crate) fn list_ai_runs(
 }
 
 #[tauri::command]
+pub(crate) fn get_ai_run_request(
+    state: tauri::State<'_, ProjectState>,
+    run_id: uuid::Uuid,
+) -> Result<novel_infrastructure::AiRunRequest, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.get_ai_run_request(run_id).map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn get_ai_usage_summary(
     state: tauri::State<'_, ProjectState>,
     days: Option<u32>,
@@ -3569,6 +3670,20 @@ pub(crate) async fn generate_ai_proposal(
             .create_ai_task(profile_id, &context)
             .map_err(ApiError::from)?
     };
+    if let Err(error) = persist_ai_run_request(
+        &state,
+        task_id,
+        &profile,
+        &context,
+        stream,
+        false,
+        generation_options,
+    ) {
+        if let Ok(mut manager) = state.manager.lock() {
+            let _ = manager.fail_ai_task(task_id, &novel_infrastructure::AiError::InvalidResponse);
+        }
+        return Err(error);
+    }
     let _ = app.emit("ai-task-started", AiTaskStarted { task_id });
     let cancelled = Arc::new(AtomicBool::new(false));
     state
@@ -3634,6 +3749,16 @@ pub(crate) async fn generate_ai_proposal(
                 let reason = outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN");
                 sync_model_profile(&mut manager, fallback)?;
                 let _ = manager.record_ai_task_fallback(task_id, fallback.id, reason);
+                let (endpoint, request_body) = state.gateway.request_preview_with_options(
+                    fallback,
+                    &context,
+                    stream,
+                    false,
+                    generation_options,
+                );
+                if let Ok(request_body) = serde_json::to_string_pretty(&request_body) {
+                    let _ = manager.record_ai_run_request(task_id, &endpoint, &request_body);
+                }
                 let _ = app.emit(
                     "ai-task-attempt",
                     AiTaskAttempt {

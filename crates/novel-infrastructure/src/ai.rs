@@ -37,6 +37,8 @@ pub enum AiError {
     MissingProfile(Uuid),
     #[error("AI proposal does not exist: {0}")]
     MissingProposal(Uuid),
+    #[error("AI run does not exist: {0}")]
+    MissingRun(Uuid),
     #[error("OS secret store operation failed")]
     SecretStore,
     #[error("model profile requires an API key")]
@@ -77,7 +79,7 @@ impl AiError {
         match self {
             Self::NoProject => "NO_PROJECT_OPEN",
             Self::Contract(_) => "INVALID_INPUT",
-            Self::MissingProfile(_) | Self::MissingProposal(_) => "NOT_FOUND",
+            Self::MissingProfile(_) | Self::MissingProposal(_) | Self::MissingRun(_) => "NOT_FOUND",
             Self::SecretStore => "SECRET_STORE_ERROR",
             Self::MissingSecret => "MODEL_SECRET_MISSING",
             Self::PrivacyPolicy => "PRIVACY_POLICY_BLOCKED",
@@ -253,6 +255,7 @@ pub struct AiRun {
     pub source: String,
     pub action: String,
     pub status: String,
+    pub chapter_id: Option<String>,
     pub chapter_title: String,
     pub profile_name: String,
     pub attempt_count: u32,
@@ -265,6 +268,13 @@ pub struct AiRun {
     pub prompt_version: String,
     pub created_at: String,
     pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRunRequest {
+    pub endpoint: Option<String>,
+    pub request_body: Option<String>,
 }
 
 pub struct AiRunStart<'a> {
@@ -1977,6 +1987,50 @@ impl ProjectManager {
         Ok(run_id)
     }
 
+    pub fn record_ai_run_request(
+        &mut self,
+        run_id: Uuid,
+        endpoint: &str,
+        request_body: &str,
+    ) -> Result<(), AiError> {
+        let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        let changed = session
+            .database
+            .connection
+            .execute(
+                "UPDATE ai_run_records
+                 SET request_endpoint=?2, request_body=?3
+                 WHERE id=?1",
+                rusqlite::params![run_id.to_string(), endpoint, request_body],
+            )
+            .map_err(DatabaseError::from)?;
+        if changed == 0 {
+            return Err(AiError::MissingRun(run_id));
+        }
+        Ok(())
+    }
+
+    pub fn get_ai_run_request(&self, run_id: Uuid) -> Result<AiRunRequest, AiError> {
+        let session = self.current.as_ref().ok_or(AiError::NoProject)?;
+        session
+            .database
+            .connection
+            .query_row(
+                "SELECT request_endpoint, request_body
+                 FROM ai_run_records WHERE id=?1",
+                [run_id.to_string()],
+                |row| {
+                    Ok(AiRunRequest {
+                        endpoint: row.get(0)?,
+                        request_body: row.get(1)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(DatabaseError::from)?
+            .ok_or(AiError::MissingRun(run_id))
+    }
+
     pub fn complete_ai_task(
         &mut self,
         task_id: Uuid,
@@ -2176,7 +2230,7 @@ impl ProjectManager {
                         t.attempt_count, t.retry_reason, t.error_code, t.estimated_input_tokens,
                         t.estimated_output_tokens, t.prompt_version, t.created_at, t.finished_at,
                         t.task_key, t.source, t.input_price_micros_per_million,
-                        t.output_price_micros_per_million, t.price_currency
+                        t.output_price_micros_per_million, t.price_currency, t.chapter_id
                  FROM ai_run_records t
                  LEFT JOIN model_profiles p ON p.id = t.profile_id
                  ORDER BY t.created_at DESC, t.rowid DESC
@@ -2198,6 +2252,7 @@ impl ProjectManager {
                     source: row.get(14)?,
                     action: row.get(1)?,
                     status: row.get(2)?,
+                    chapter_id: row.get(18)?,
                     chapter_title: row.get(3)?,
                     profile_name: row.get(4)?,
                     attempt_count: row.get(5)?,
