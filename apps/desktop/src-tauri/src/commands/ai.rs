@@ -370,6 +370,7 @@ pub(crate) struct AiGenerationOutcome {
     pub(crate) output: String,
     pub(crate) completion: novel_infrastructure::GenerationCompletion,
     pub(crate) finish_reason: Option<String>,
+    pub(crate) usage: Option<novel_infrastructure::GenerationUsage>,
     pub(crate) fallback_profile: Option<novel_infrastructure::ModelProfile>,
     pub(crate) fallback_reason: Option<String>,
 }
@@ -419,6 +420,7 @@ where
             output: generation.output,
             completion: generation.completion,
             finish_reason: generation.finish_reason,
+            usage: generation.usage,
             fallback_profile: None,
             fallback_reason: None,
         }),
@@ -468,6 +470,7 @@ where
                 output: generation.output,
                 completion: generation.completion,
                 finish_reason: generation.finish_reason,
+                usage: generation.usage,
                 fallback_profile: Some(fallback),
                 fallback_reason: Some(fallback_reason),
             })
@@ -1950,6 +1953,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                 output,
                 completion,
                 finish_reason,
+                usage,
                 fallback_profile,
                 fallback_reason,
             } = outcome;
@@ -2052,7 +2056,11 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                 completion
             };
             if completion.is_complete() {
-                let _ = manager.complete_ai_run(run_id, output_tokens);
+                let _ = manager.complete_ai_run(
+                    run_id,
+                    usage.as_ref(),
+                    output_tokens,
+                );
                 let _ = manager.append_job_event(job.id, "COMPLETED", "结果已保存到待定区", 100);
                 let _ = manager.update_job_status(
                     job.id,
@@ -2289,7 +2297,11 @@ pub(crate) async fn extract_entities_from_text(
         if let Ok(mut manager) = state.manager.lock() {
             let output_tokens =
                 u32::try_from(output.chars().count().div_ceil(4)).unwrap_or(u32::MAX);
-            let _ = manager.complete_ai_run(run_id, output_tokens);
+            let _ = manager.complete_ai_run(
+                run_id,
+                outcome.usage.as_ref(),
+                output_tokens,
+            );
         }
         Ok(entities)
     } else {
@@ -2685,7 +2697,11 @@ pub(crate) async fn extract_chapter_candidates(
     if let Ok(mut manager) = state.manager.lock() {
         let output_tokens =
             u32::try_from(outcome.output.chars().count().div_ceil(4)).unwrap_or(u32::MAX);
-        let _ = manager.complete_ai_run(run_id, output_tokens);
+        let _ = manager.complete_ai_run(
+            run_id,
+            outcome.usage.as_ref(),
+            output_tokens,
+        );
     }
     Ok(proposal)
 }
@@ -4653,7 +4669,7 @@ async fn generate_consistency_review_proposal(
             return Err(ApiError::from(error));
         }
         manager
-            .complete_ai_task(task_id, &extraction_context, report_json)
+            .complete_ai_task(task_id, &extraction_context, report_json, None)
             .map_err(ApiError::from)?
     };
     clear_review_cancellation(state, task_id);
@@ -4973,7 +4989,7 @@ pub(crate) async fn generate_ai_proposal(
                 );
             }
             manager
-                .complete_ai_task(task_id, &context, outcome.output)
+                .complete_ai_task(task_id, &context, outcome.output, outcome.usage.as_ref())
                 .map_err(ApiError::from)
         }
         Err(error) => {

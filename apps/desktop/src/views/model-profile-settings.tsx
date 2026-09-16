@@ -10,6 +10,7 @@ import {
   upsertModelProfile,
   type ModelProfileInput,
 } from "../lib/tauri-client";
+import { deepSeekFlashPricing, isDeepSeekFlash } from "../lib/deepseek-pricing";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 type ModelPreset = {
@@ -26,7 +27,7 @@ type ModelPreset = {
 
 const modelPresets: Record<ModelProfileInput["provider"], ModelPreset[]> = {
   DEEP_SEEK: [
-    { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash（写作推荐）", contextWindow: 128_000, maxOutputTokens: 8_192, timeoutSeconds: 120, retryLimit: 1 },
+    { id: "deepseek-flash", label: "DeepSeek Flash（写作推荐）", contextWindow: 1_000_000, maxOutputTokens: 384_000, timeoutSeconds: 120, retryLimit: 1 },
     { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro（高质量）", contextWindow: 128_000, maxOutputTokens: 8_192, timeoutSeconds: 180, retryLimit: 1 },
   ],
   OPEN_AI: [
@@ -124,6 +125,7 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
   const selectedProfile = profiles.data?.find((item) => item.id === editingProfileId);
   const availablePresets = modelPresets[form.provider];
   const selectedPreset = availablePresets.find((preset) => preset.id === form.modelId);
+  const officialFlashPricing = isDeepSeekFlash(form) ? deepSeekFlashPricing() : null;
   const profileDirty = modelProfileSignature(form) !== savedSignature || Boolean(secret.trim());
   useUnsavedChangesGuard(profileDirty, "当前模型 API 配置有未保存修改。");
 
@@ -227,13 +229,16 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
   }
 
   async function persistProfile() {
-    const saved = await upsertModelProfile(form);
+    const profileToSave = officialFlashPricing
+      ? { ...form, inputPriceMicrosPerMillion: officialFlashPricing.inputCacheMissMicrosPerMillion, outputPriceMicrosPerMillion: officialFlashPricing.outputMicrosPerMillion, priceCurrency: officialFlashPricing.currency }
+      : form;
+    const saved = await upsertModelProfile(profileToSave);
     if (secret.trim()) {
       await saveModelSecret(saved.id, secret.trim());
       setSecret("");
     }
     setEditingProfileId(saved.id);
-    const nextForm = { ...form, id: saved.id };
+    const nextForm = { ...profileToSave, id: saved.id };
     setForm(nextForm);
     setSavedSignature(modelProfileSignature(nextForm));
     await client.invalidateQueries({ queryKey: ["model-profiles"] });
@@ -322,8 +327,7 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
           <label>最大输出<input type="number" min={1} value={form.maxOutputTokens} onChange={(event) => setForm({ ...form, maxOutputTokens: Number(event.target.value) })} /></label>
           <label>超时秒数<input type="number" min={1} max={600} value={form.timeoutSeconds} onChange={(event) => setForm({ ...form, timeoutSeconds: Number(event.target.value) })} /></label>
           <label>重试次数<input type="number" min={0} max={3} value={form.retryLimit} onChange={(event) => setForm({ ...form, retryLimit: Number(event.target.value) })} /></label>
-          <label>输入单价<span className="model-price-input"><input type="number" min={0} step="0.01" inputMode="decimal" value={displayPrice(form.inputPriceMicrosPerMillion)} onChange={(event) => setForm({ ...form, inputPriceMicrosPerMillion: parsePrice(event.target.value) })} placeholder="例如 2.50" /><select value={form.priceCurrency} onChange={(event) => setForm({ ...form, priceCurrency: event.target.value })}><option value="USD">USD</option><option value="CNY">CNY</option></select></span><small>每 100 万输入 tokens；留空表示不计算费用。</small></label>
-          <label>输出单价<span className="model-price-input"><input type="number" min={0} step="0.01" inputMode="decimal" value={displayPrice(form.outputPriceMicrosPerMillion)} onChange={(event) => setForm({ ...form, outputPriceMicrosPerMillion: parsePrice(event.target.value) })} placeholder="例如 10.00" /><select value={form.priceCurrency} onChange={(event) => setForm({ ...form, priceCurrency: event.target.value })}><option value="USD">USD</option><option value="CNY">CNY</option></select></span><small>每 100 万输出 tokens；与输入单价使用同一币种。</small></label>
+          {officialFlashPricing ? <div className="model-wide model-pricing-rule"><strong>官方计费规则 · {officialFlashPricing.period === "peak" ? "高峰时段" : "空闲时段"}</strong><span>输入：缓存命中 {displayPrice(officialFlashPricing.inputCacheHitMicrosPerMillion)} CNY · 未命中 {displayPrice(officialFlashPricing.inputCacheMissMicrosPerMillion)} CNY；输出：{displayPrice(officialFlashPricing.outputMicrosPerMillion)} CNY / 百万 tokens</span><small>工作日 09:00-12:00、14:00-18:00 为高峰时段。未返回缓存用量时，费用按未命中缓存估算。</small></div> : <><label>输入单价<span className="model-price-input"><input type="number" min={0} step="0.01" inputMode="decimal" value={displayPrice(form.inputPriceMicrosPerMillion)} onChange={(event) => setForm({ ...form, inputPriceMicrosPerMillion: parsePrice(event.target.value) })} placeholder="例如 2.50" /><select value={form.priceCurrency} onChange={(event) => setForm({ ...form, priceCurrency: event.target.value })}><option value="USD">USD</option><option value="CNY">CNY</option></select></span><small>每 100 万输入 tokens；留空表示不计算费用。</small></label><label>输出单价<span className="model-price-input"><input type="number" min={0} step="0.01" inputMode="decimal" value={displayPrice(form.outputPriceMicrosPerMillion)} onChange={(event) => setForm({ ...form, outputPriceMicrosPerMillion: parsePrice(event.target.value) })} placeholder="例如 10.00" /><select value={form.priceCurrency} onChange={(event) => setForm({ ...form, priceCurrency: event.target.value })}><option value="USD">USD</option><option value="CNY">CNY</option></select></span><small>每 100 万输出 tokens；与输入单价使用同一币种。</small></label></>}
           <label className="model-wide">API Key<input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder={selectedProfile?.hasSecret ? "已保存在系统凭据库，留空则不修改" : "仅写入系统凭据库"} autoComplete="off" /></label>
         </div>
         <div className="ai-actions"><button type="button" className="primary-action" onClick={() => void saveProfile()} disabled={busy !== null || !form.name.trim() || !form.modelId.trim()}><Save size={14} />{busy === "save" ? "保存中…" : "保存配置"}</button><button type="button" className="secondary-action" onClick={() => void testConnection()} disabled={busy !== null || !form.name.trim() || !form.modelId.trim() || (!selectedProfile?.hasSecret && !secret.trim())} title={!selectedProfile?.hasSecret && !secret.trim() ? "请先输入 API Key" : undefined}><PlugZap size={14} />{busy === "test" ? "测试中…" : "测试连接"}</button>{selectedProfile?.hasSecret ? <button type="button" className="secondary-action" onClick={() => void removeSecret()} disabled={busy !== null}><Trash2 size={14} />删除 Key</button> : null}<span className="secret-state"><KeyRound size={13} />{secret.trim() ? "将保存新的 Key" : selectedProfile?.hasSecret ? "Key 已就绪" : "尚未设置 Key"}</span></div>

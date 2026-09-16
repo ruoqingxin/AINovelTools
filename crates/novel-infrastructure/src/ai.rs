@@ -4,7 +4,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use keyring::Entry;
@@ -27,6 +27,49 @@ use crate::{DatabaseError, ProjectManager};
 const SECRET_SERVICE: &str = "AINovelTools";
 const AI_TASK_PREFERENCES_KEY: &str = "ai_task_model_preferences";
 const AI_BUDGET_SETTINGS_KEY: &str = "ai_budget_settings";
+
+fn snapshot_run_prices(
+    provider: &str,
+    model_id: &str,
+    input_price: u64,
+    output_price: u64,
+    currency: String,
+) -> (u64, u64, u64, String) {
+    if provider != "DEEP_SEEK" || !matches!(model_id, "deepseek-flash" | "deepseek-v4-flash") {
+        return (0, input_price, output_price, currency);
+    }
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .saturating_add(8 * 60 * 60);
+    let day = seconds / 86_400;
+    let hour = (seconds % 86_400) / 3_600;
+    let weekday = (day + 4) % 7;
+    let peak = (1..=5).contains(&weekday) && ((9..12).contains(&hour) || (14..18).contains(&hour));
+    if peak {
+        (40_000, 2_000_000, 8_000_000, "CNY".to_owned())
+    } else {
+        (20_000, 1_000_000, 4_000_000, "CNY".to_owned())
+    }
+}
+
+fn actual_run_cost_micros(
+    usage: &GenerationUsage,
+    cache_hit_price: u64,
+    cache_miss_price: u64,
+    output_price: u64,
+) -> Option<u64> {
+    let cache_hit_tokens = usage.input_cache_hit_tokens?;
+    let cache_miss_tokens = usage.input_cache_miss_tokens?;
+    if cache_hit_price == 0 && cache_hit_tokens > 0 {
+        return None;
+    }
+    let cost = u128::from(cache_hit_tokens) * u128::from(cache_hit_price)
+        + u128::from(cache_miss_tokens) * u128::from(cache_miss_price)
+        + u128::from(usage.output_tokens) * u128::from(output_price);
+    u64::try_from(cost / 1_000_000).ok()
+}
 
 #[derive(Debug, Error)]
 pub enum AiError {
@@ -949,10 +992,19 @@ impl GenerationCompletion {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenerationUsage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub input_cache_hit_tokens: Option<u32>,
+    pub input_cache_miss_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationOutput {
     pub output: String,
     pub completion: GenerationCompletion,
     pub finish_reason: Option<String>,
+    pub usage: Option<GenerationUsage>,
 }
 
 impl ModelGateway {
@@ -1011,6 +1063,9 @@ impl ModelGateway {
             body["thinking"] = serde_json::json!({
                 "type": if disable_thinking { "disabled" } else { "enabled" }
             });
+            if stream {
+                body["stream_options"] = serde_json::json!({ "include_usage": true });
+            }
         }
         (endpoint, body)
     }
@@ -1396,6 +1451,20 @@ fn stream_delta_content(value: &serde_json::Value) -> Option<String> {
     content_text(value.pointer("/choices/0/delta/content")?)
 }
 
+fn response_usage(value: &serde_json::Value) -> Option<GenerationUsage> {
+    let input_tokens = u32::try_from(value.pointer("/usage/prompt_tokens")?.as_u64()?).ok()?;
+    let output_tokens = u32::try_from(value.pointer("/usage/completion_tokens")?.as_u64()?).ok()?;
+    let token = |name: &str| value.pointer(&format!("/usage/{name}"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
+    Some(GenerationUsage {
+        input_tokens,
+        output_tokens,
+        input_cache_hit_tokens: token("prompt_cache_hit_tokens"),
+        input_cache_miss_tokens: token("prompt_cache_miss_tokens"),
+    })
+}
+
 async fn read_non_streaming<F>(
     response: reqwest::Response,
     on_chunk: &mut F,
@@ -1416,6 +1485,7 @@ where
         output,
         completion,
         finish_reason,
+        usage: response_usage(&value),
     })
 }
 
@@ -1457,11 +1527,13 @@ where
             output,
             completion,
             finish_reason,
+            usage: response_usage(&value),
         });
     }
 
     let mut output = String::new();
     let mut finish_reason = None;
+    let mut usage = None;
     let mut saw_done = false;
     for line in body.lines() {
         let Some(data) = line.strip_prefix("data:").map(str::trim) else {
@@ -1478,6 +1550,9 @@ where
             serde_json::from_str(data).map_err(|_| AiError::InvalidResponse)?;
         if finish_reason.is_none() {
             finish_reason = response_finish_reason(&value).map(ToOwned::to_owned);
+        }
+        if usage.is_none() {
+            usage = response_usage(&value);
         }
         if let Some(text) = stream_delta_content(&value) {
             output.push_str(&text);
@@ -1498,6 +1573,7 @@ where
         output,
         completion,
         finish_reason,
+        usage,
     })
 }
 
@@ -1855,11 +1931,11 @@ impl ProjectManager {
         review_purpose: Option<ReviewPurpose>,
     ) -> Result<Uuid, AiError> {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
-        let profile_snapshot: Option<(String, String, u64, u64, String)> = session
+        let profile_snapshot: Option<(String, String, String, String, u64, u64, String)> = session
             .database
             .connection
             .query_row(
-                "SELECT p.capability, COALESCE(c.title, '未命名章节'),
+                "SELECT p.capability, COALESCE(c.title, '未命名章节'), p.provider, p.model_id,
                         p.input_price_micros_per_million, p.output_price_micros_per_million,
                         p.price_currency
                  FROM model_profiles p
@@ -1870,19 +1946,23 @@ impl ProjectManager {
                     Ok((
                         row.get(0)?,
                         row.get(1)?,
-                        u64::try_from(row.get::<_, i64>(2)?.max(0)).unwrap_or(0),
-                        u64::try_from(row.get::<_, i64>(3)?.max(0)).unwrap_or(0),
-                        row.get(4)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        u64::try_from(row.get::<_, i64>(4)?.max(0)).unwrap_or(0),
+                        u64::try_from(row.get::<_, i64>(5)?.max(0)).unwrap_or(0),
+                        row.get(6)?,
                     ))
                 },
             )
             .optional()
             .map_err(DatabaseError::from)?;
-        let Some((capability, chapter_title, input_price, output_price, price_currency)) =
+        let Some((capability, chapter_title, provider, model_id, input_price, output_price, price_currency)) =
             profile_snapshot
         else {
             return Err(AiError::MissingProfile(profile_id));
         };
+        let (cache_hit_price, input_price, output_price, price_currency) =
+            snapshot_run_prices(&provider, &model_id, input_price, output_price, price_currency);
         match capability.as_str() {
             "CHAT" => {}
             _ => return Err(AiContractError::InvalidProviderCapability.into()),
@@ -1911,8 +1991,9 @@ impl ProjectManager {
                 "INSERT INTO ai_run_records (
                 id, task_key, source, chapter_id, display_title, profile_id, action, status,
                 estimated_input_tokens, input_price_micros_per_million,
-                output_price_micros_per_million, price_currency, prompt_version, review_purpose
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                input_cache_hit_price_micros_per_million, output_price_micros_per_million,
+                price_currency, prompt_version, review_purpose
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 rusqlite::params![
                     task_id.to_string(),
                     task_kind.storage_key(),
@@ -1924,6 +2005,7 @@ impl ProjectManager {
                     task_status_str(AiTaskStatus::Running),
                     context.estimated_input_tokens,
                     i64::try_from(input_price).unwrap_or(i64::MAX),
+                    i64::try_from(cache_hit_price).unwrap_or(i64::MAX),
                     i64::try_from(output_price).unwrap_or(i64::MAX),
                     price_currency,
                     context.prompt_version,
@@ -1939,29 +2021,33 @@ impl ProjectManager {
 
     pub fn start_ai_run(&mut self, input: AiRunStart<'_>) -> Result<Uuid, AiError> {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
-        let capability_and_prices: Option<(String, u64, u64, String)> = session
+        let capability_and_prices: Option<(String, String, String, u64, u64, String)> = session
             .database
             .connection
             .query_row(
-                "SELECT capability, input_price_micros_per_million,
+                "SELECT capability, provider, model_id, input_price_micros_per_million,
                         output_price_micros_per_million, price_currency
                  FROM model_profiles WHERE id = ?1",
                 [input.profile_id.to_string()],
                 |row| {
                     Ok((
                         row.get(0)?,
-                        u64::try_from(row.get::<_, i64>(1)?.max(0)).unwrap_or(0),
-                        u64::try_from(row.get::<_, i64>(2)?.max(0)).unwrap_or(0),
-                        row.get(3)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        u64::try_from(row.get::<_, i64>(3)?.max(0)).unwrap_or(0),
+                        u64::try_from(row.get::<_, i64>(4)?.max(0)).unwrap_or(0),
+                        row.get(5)?,
                     ))
                 },
             )
             .optional()
             .map_err(DatabaseError::from)?;
-        let Some((capability, input_price, output_price, price_currency)) = capability_and_prices
+        let Some((capability, provider, model_id, input_price, output_price, price_currency)) = capability_and_prices
         else {
             return Err(AiError::MissingProfile(input.profile_id));
         };
+        let (cache_hit_price, input_price, output_price, price_currency) =
+            snapshot_run_prices(&provider, &model_id, input_price, output_price, price_currency);
         if capability != "CHAT" {
             return Err(AiContractError::InvalidProviderCapability.into());
         }
@@ -1973,8 +2059,9 @@ impl ProjectManager {
                 "INSERT INTO ai_run_records (
                 id, task_key, source, job_id, chapter_id, display_title, profile_id, action,
                 status, estimated_input_tokens, input_price_micros_per_million,
-                output_price_micros_per_million, price_currency, prompt_version
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?2, 'RUNNING', ?8, ?9, ?10, ?11, ?12)",
+                input_cache_hit_price_micros_per_million, output_price_micros_per_million,
+                price_currency, prompt_version
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?2, 'RUNNING', ?8, ?9, ?10, ?11, ?12, ?13)",
                 rusqlite::params![
                     run_id.to_string(),
                     input.task.storage_key(),
@@ -1985,6 +2072,7 @@ impl ProjectManager {
                     input.profile_id.to_string(),
                     input.estimated_input_tokens,
                     i64::try_from(input_price).unwrap_or(i64::MAX),
+                    i64::try_from(cache_hit_price).unwrap_or(i64::MAX),
                     i64::try_from(output_price).unwrap_or(i64::MAX),
                     price_currency,
                     input.prompt_version
@@ -2043,12 +2131,15 @@ impl ProjectManager {
         task_id: Uuid,
         context: &ContextPackage,
         output_text: String,
+        usage: Option<&GenerationUsage>,
     ) -> Result<AiProposal, AiError> {
         if output_text.trim().is_empty() {
             return Err(AiError::InvalidResponse);
         }
-        let estimated_output_tokens =
+        let fallback_output_tokens =
             u32::try_from(output_text.trim().chars().count().div_ceil(4)).unwrap_or(u32::MAX);
+        let input_tokens = usage.map(|value| value.input_tokens);
+        let output_tokens = usage.map_or(fallback_output_tokens, |value| value.output_tokens);
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
         let transaction = session
             .database
@@ -2062,11 +2153,28 @@ impl ProjectManager {
                 |row| row.get(0),
             )
             .map_err(DatabaseError::from)?;
-        transaction.execute("UPDATE ai_tasks SET status='COMPLETED', estimated_output_tokens=?2, finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1 AND status='RUNNING'", rusqlite::params![task_id.to_string(), estimated_output_tokens]).map_err(DatabaseError::from)?;
+        let (cache_hit_price, cache_miss_price, output_price): (i64, i64, i64) = transaction
+            .query_row(
+                "SELECT input_cache_hit_price_micros_per_million,
+                        input_price_micros_per_million, output_price_micros_per_million
+                 FROM ai_run_records WHERE id=?1",
+                [task_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(DatabaseError::from)?;
+        let actual_cost = usage.and_then(|value| actual_run_cost_micros(
+            value,
+            u64::try_from(cache_hit_price.max(0)).unwrap_or(0),
+            u64::try_from(cache_miss_price.max(0)).unwrap_or(0),
+            u64::try_from(output_price.max(0)).unwrap_or(0),
+        ));
+        transaction.execute("UPDATE ai_tasks SET status='COMPLETED', estimated_input_tokens=COALESCE(?2, estimated_input_tokens), estimated_output_tokens=?3, finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1 AND status='RUNNING'", rusqlite::params![task_id.to_string(), input_tokens, output_tokens]).map_err(DatabaseError::from)?;
         transaction.execute(
-            "UPDATE ai_run_records SET status='COMPLETED', estimated_output_tokens=?2,
+            "UPDATE ai_run_records SET status='COMPLETED',
+                estimated_input_tokens=COALESCE(?2, estimated_input_tokens), estimated_output_tokens=?3,
+                actual_cost_micros=?4,
                 finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1 AND status='RUNNING'",
-            rusqlite::params![task_id.to_string(), estimated_output_tokens],
+            rusqlite::params![task_id.to_string(), input_tokens, output_tokens, actual_cost.map(|value| i64::try_from(value).unwrap_or(i64::MAX))],
         )
         .map_err(DatabaseError::from)?;
         let proposal_id = Uuid::new_v4();
@@ -2111,17 +2219,43 @@ impl ProjectManager {
     pub fn complete_ai_run(
         &mut self,
         run_id: Uuid,
-        estimated_output_tokens: u32,
+        usage: Option<&GenerationUsage>,
+        fallback_output_tokens: u32,
     ) -> Result<(), AiError> {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        let (cache_hit_price, cache_miss_price, output_price): (i64, i64, i64) = session
+            .database
+            .connection
+            .query_row(
+                "SELECT input_cache_hit_price_micros_per_million,
+                        input_price_micros_per_million, output_price_micros_per_million
+                 FROM ai_run_records WHERE id=?1",
+                [run_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(DatabaseError::from)?
+            .ok_or(AiError::MissingRun(run_id))?;
+        let input_tokens = usage.map(|value| value.input_tokens);
+        let output_tokens = usage.map_or(fallback_output_tokens, |value| value.output_tokens);
+        let actual_cost = usage.and_then(|value| {
+            actual_run_cost_micros(
+                value,
+                u64::try_from(cache_hit_price.max(0)).unwrap_or(0),
+                u64::try_from(cache_miss_price.max(0)).unwrap_or(0),
+                u64::try_from(output_price.max(0)).unwrap_or(0),
+            )
+        });
         let changed = session
             .database
             .connection
             .execute(
-                "UPDATE ai_run_records SET status='COMPLETED', estimated_output_tokens=?2,
+                "UPDATE ai_run_records SET status='COMPLETED',
+                    estimated_input_tokens=COALESCE(?2, estimated_input_tokens), estimated_output_tokens=?3,
+                    actual_cost_micros=?4,
                     finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))
                  WHERE id=?1 AND status='RUNNING'",
-                rusqlite::params![run_id.to_string(), estimated_output_tokens],
+                rusqlite::params![run_id.to_string(), input_tokens, output_tokens, actual_cost.map(|value| i64::try_from(value).unwrap_or(i64::MAX))],
             )
             .map_err(DatabaseError::from)?;
         if changed == 0 {
@@ -2245,7 +2379,7 @@ impl ProjectManager {
                         t.estimated_output_tokens, t.prompt_version, t.created_at, t.finished_at,
                         t.task_key, t.source, t.input_price_micros_per_million,
                         t.output_price_micros_per_million, t.price_currency, t.chapter_id,
-                        t.review_purpose
+                        t.review_purpose, t.actual_cost_micros
                  FROM ai_run_records t
                  LEFT JOIN model_profiles p ON p.id = t.profile_id
                  ORDER BY t.created_at DESC, t.rowid DESC
@@ -2279,12 +2413,14 @@ impl ProjectManager {
                     error_code: row.get(7)?,
                     estimated_input_tokens: row.get(8)?,
                     estimated_output_tokens: row.get(9)?,
-                    estimated_cost_micros: estimate_run_cost_micros(
+                    estimated_cost_micros: row.get::<_, Option<i64>>(20)?
+                        .and_then(|value| u64::try_from(value.max(0)).ok())
+                        .or(estimate_run_cost_micros(
                         row.get(8)?,
                         row.get(9)?,
                         u64::try_from(row.get::<_, i64>(15)?.max(0)).unwrap_or(0),
                         u64::try_from(row.get::<_, i64>(16)?.max(0)).unwrap_or(0),
-                    ),
+                    )),
                     price_currency: row.get(17)?,
                     prompt_version: row.get(10)?,
                     created_at: row.get(11)?,
@@ -2308,7 +2444,7 @@ impl ProjectManager {
             .prepare(
                 "SELECT task_key, estimated_input_tokens, estimated_output_tokens,
                         input_price_micros_per_million, output_price_micros_per_million,
-                        price_currency
+                        price_currency, actual_cost_micros
                  FROM ai_run_records",
             )
             .map_err(DatabaseError::from)?;
@@ -2321,6 +2457,8 @@ impl ProjectManager {
                     input_price: u64::try_from(row.get::<_, i64>(3)?.max(0)).unwrap_or(0),
                     output_price: u64::try_from(row.get::<_, i64>(4)?.max(0)).unwrap_or(0),
                     currency: row.get(5)?,
+                    actual_cost_micros: row.get::<_, Option<i64>>(6)?
+                        .and_then(|value| u64::try_from(value.max(0)).ok()),
                     date: None,
                 })
             })
@@ -2345,7 +2483,7 @@ impl ProjectManager {
             .prepare(
                 "SELECT task_key, estimated_input_tokens, estimated_output_tokens,
                         input_price_micros_per_million, output_price_micros_per_million,
-                        price_currency, date(created_at, 'localtime')
+                        price_currency, date(created_at, 'localtime'), actual_cost_micros
                  FROM ai_run_records
                  WHERE date(created_at, 'localtime') >= date('now', 'localtime', ?1)",
             )
@@ -2360,6 +2498,8 @@ impl ProjectManager {
                     output_price: u64::try_from(row.get::<_, i64>(4)?.max(0)).unwrap_or(0),
                     currency: row.get(5)?,
                     date: Some(row.get(6)?),
+                    actual_cost_micros: row.get::<_, Option<i64>>(7)?
+                        .and_then(|value| u64::try_from(value.max(0)).ok()),
                 })
             })
             .map_err(DatabaseError::from)?;
@@ -2868,6 +3008,7 @@ struct UsageRunRow {
     input_price: u64,
     output_price: u64,
     currency: String,
+    actual_cost_micros: Option<u64>,
     date: Option<String>,
 }
 
@@ -2884,12 +3025,12 @@ impl UsageAggregate {
         self.run_count = self.run_count.saturating_add(1);
         self.input_tokens = self.input_tokens.saturating_add(row.input_tokens);
         self.output_tokens = self.output_tokens.saturating_add(row.output_tokens);
-        if let Some(cost) = estimate_run_cost_micros(
+        if let Some(cost) = row.actual_cost_micros.or_else(|| estimate_run_cost_micros(
             u32::try_from(row.input_tokens).unwrap_or(u32::MAX),
             u32::try_from(row.output_tokens).unwrap_or(u32::MAX),
             row.input_price,
             row.output_price,
-        ) {
+        )) {
             self.estimated_cost_micros =
                 Some(self.estimated_cost_micros.unwrap_or(0).saturating_add(cost));
         }
@@ -3369,6 +3510,39 @@ mod tests {
         ] {
             assert_eq!(super::parse_action(super::action_str(action)), action);
         }
+    }
+
+    #[test]
+    fn reads_provider_reported_token_usage() {
+        let usage = super::response_usage(&serde_json::json!({
+            "usage": {
+                "prompt_tokens": 123,
+                "completion_tokens": 45,
+                "prompt_cache_hit_tokens": 80,
+                "prompt_cache_miss_tokens": 43
+            }
+        }))
+        .expect("usage");
+        assert_eq!(usage.input_tokens, 123);
+        assert_eq!(usage.output_tokens, 45);
+        assert_eq!(usage.input_cache_hit_tokens, Some(80));
+        assert_eq!(usage.input_cache_miss_tokens, Some(43));
+    }
+
+    #[test]
+    fn calculates_exact_cost_from_cache_usage() {
+        let cost = super::actual_run_cost_micros(
+            &super::GenerationUsage {
+                input_tokens: 1_000_000,
+                output_tokens: 1_000_000,
+                input_cache_hit_tokens: Some(500_000),
+                input_cache_miss_tokens: Some(500_000),
+            },
+            20_000,
+            1_000_000,
+            4_000_000,
+        );
+        assert_eq!(cost, Some(4_510_000));
     }
 
     #[test]

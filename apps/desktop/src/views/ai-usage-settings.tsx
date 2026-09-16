@@ -193,7 +193,7 @@ export function AiUsageSettings(props: { onDirtyChange?: (dirty: boolean) => voi
         {dailyBudgetState && dailyBudgetState !== "normal" ? <span className="ai-budget-warning" data-state={dailyBudgetState}>今日估算费用已达到每日预算的 {Math.round((todayBudgetCost! / budgetDraft.dailyLimitMicros!) * 100)}%</span> : null}
         {projectBudgetState && projectBudgetState !== "normal" ? <span className="ai-budget-warning" data-state={projectBudgetState}>项目累计估算费用已达到项目预算的 {Math.round((projectBudgetCost! / budgetDraft.projectLimitMicros!) * 100)}%</span> : null}
       </div>
-      <p className="ai-usage-note">费用按模型单价和估算 token 计算，仅用于预算参考，不代表服务商最终账单。</p>
+      <p className="ai-usage-note">DeepSeek Flash 返回缓存明细时按本次 API 用量与调用时价格计算；未返回明细或其他模型仍按 token 估算，最终以服务商账单为准。</p>
       <div className="ai-quality-review">
         <div className="ai-task-routing-heading">
           <div><strong>质量回顾</strong><span>按模型和提示词版本汇总正文候选；样本不足时不据此自动切换配置。</span></div>

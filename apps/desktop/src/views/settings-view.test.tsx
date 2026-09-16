@@ -133,9 +133,9 @@ describe("SettingsView", () => {
     expect(await screen.findByRole("heading", { name: "模型 API" })).toBeVisible();
     expect(screen.getByLabelText("新建模型配置")).toBeVisible();
     expect(screen.getByRole("button", { name: "测试连接" })).toBeDisabled();
-    expect(screen.getByLabelText("模型 ID")).toHaveValue("deepseek-v4-flash");
-    expect(screen.getByDisplayValue("128000")).toBeVisible();
-    expect(screen.getByDisplayValue("8192")).toBeVisible();
+    expect(screen.getByLabelText("模型 ID")).toHaveValue("deepseek-flash");
+    expect(screen.getByDisplayValue("1000000")).toBeVisible();
+    expect(screen.getByDisplayValue("384000")).toBeVisible();
   });
 
   it("starts a visibly new model configuration draft", async () => {
@@ -523,7 +523,7 @@ describe("SettingsView", () => {
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
 
-    expect(await screen.findByText(/预估下一次约 USD 0\.03 · 基于近 30 天 2 次记录/)).toBeVisible();
+    expect(await screen.findByText(/预估下一次约 CNY .* · 基于近 30 天 2 次记录 · DeepSeek Flash .*按未命中缓存估算/)).toBeVisible();
   });
 
   it("warns when estimated spend reaches a soft budget", async () => {

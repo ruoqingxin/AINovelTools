@@ -649,7 +649,7 @@ mod tests {
         };
         manager.save_ai_review_trace(&trace).expect("save trace");
         let proposal = manager
-            .complete_ai_task(task_id, &context, "{}".to_owned())
+            .complete_ai_task(task_id, &context, "{}".to_owned(), None)
             .expect("proposal");
         let stored = manager
             .get_consistency_review_trace(proposal.id)

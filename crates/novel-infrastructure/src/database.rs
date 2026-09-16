@@ -965,6 +965,13 @@ impl Database {
                 INSERT INTO schema_migrations (version, name) VALUES (44, 'chapter_contract_cache');",
             )?;
         }
+        if applied.unwrap_or(0) < 45 {
+            self.connection.execute_batch(
+                "ALTER TABLE ai_run_records ADD COLUMN input_cache_hit_price_micros_per_million INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE ai_run_records ADD COLUMN actual_cost_micros INTEGER;
+                INSERT INTO schema_migrations (version, name) VALUES (45, 'ai_run_actual_usage_costs');",
+            )?;
+        }
         Ok(())
     }
 
@@ -1912,6 +1919,8 @@ mod tests {
                     ON discussion_sessions(project_id, updated_at DESC);
                 ALTER TABLE ai_run_records DROP COLUMN request_body;
                 ALTER TABLE ai_run_records DROP COLUMN request_endpoint;
+                ALTER TABLE ai_run_records DROP COLUMN actual_cost_micros;
+                ALTER TABLE ai_run_records DROP COLUMN input_cache_hit_price_micros_per_million;
                 DROP INDEX IF EXISTS idx_ai_proposals_chapter_purpose_created;
                 ALTER TABLE ai_tasks DROP COLUMN review_purpose;
                 ALTER TABLE ai_proposals DROP COLUMN review_purpose;

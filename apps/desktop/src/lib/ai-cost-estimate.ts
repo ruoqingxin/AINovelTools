@@ -1,4 +1,5 @@
 import type { AiUsageTaskSummary, ModelProfile } from "./tauri-client";
+import { deepSeekFlashPricing, isDeepSeekFlash } from "./deepseek-pricing";
 
 export type NextRunCostEstimate =
   | { status: "MISSING_PROFILE" }
@@ -9,6 +10,7 @@ export type NextRunCostEstimate =
     estimatedMicros: number;
     currency: string;
     runCount: number;
+    pricingNote?: string;
   };
 
 export function formatCost(micros: number | null, currency: string) {
@@ -35,8 +37,9 @@ export function estimateNextRunCost(
   profile: ModelProfile | undefined,
 ): NextRunCostEstimate {
   if (!profile) return { status: "MISSING_PROFILE" };
-  const inputPrice = profile.inputPriceMicrosPerMillion;
-  const outputPrice = profile.outputPriceMicrosPerMillion;
+  const officialPricing = isDeepSeekFlash(profile) ? deepSeekFlashPricing() : null;
+  const inputPrice = officialPricing?.inputCacheMissMicrosPerMillion ?? profile.inputPriceMicrosPerMillion;
+  const outputPrice = officialPricing?.outputMicrosPerMillion ?? profile.outputPriceMicrosPerMillion;
   if (
     !Number.isFinite(inputPrice)
     || !Number.isFinite(outputPrice)
@@ -52,8 +55,9 @@ export function estimateNextRunCost(
       average.inputTokens * inputPrice / 1_000_000
       + average.outputTokens * outputPrice / 1_000_000,
     ),
-    currency: profile.priceCurrency || "CNY",
+    currency: officialPricing?.currency ?? (profile.priceCurrency || "CNY"),
     runCount: average.runCount,
+    pricingNote: officialPricing ? `DeepSeek Flash ${officialPricing.period === "peak" ? "高峰" : "空闲"}时段，按未命中缓存估算` : undefined,
   };
 }
 
@@ -67,5 +71,5 @@ export function nextRunCostLabel(
   if (estimate.status === "INSUFFICIENT_SAMPLES") return "预估样本不足";
   const projectedMicros = estimate.estimatedMicros * Math.max(1, runMultiplier);
   const prefix = runMultiplier > 1 ? `预估本批 ${runMultiplier} 次约` : "预估下一次约";
-  return `${prefix} ${formatCost(projectedMicros, estimate.currency)} · 基于近 ${days} 天 ${estimate.runCount} 次记录`;
+  return `${prefix} ${formatCost(projectedMicros, estimate.currency)} · 基于近 ${days} 天 ${estimate.runCount} 次记录${estimate.pricingNote ? ` · ${estimate.pricingNote}` : ""}`;
 }

@@ -43,7 +43,7 @@ pub use ai::{
     AiRunRequest, AiRunSource, AiRunStart, AiTaskContextPreference, AiTaskKind, AiTaskPreference,
     AiTaskPreferences, AiTaskPromptPreference, AiUsageCurrencySummary, AiUsageDailySummary,
     AiUsageSummary, AiUsageTaskSummary, ConsistencyReviewFreshness, EmbeddingGateway,
-    GenerationCompletion, GenerationOptions, GenerationOutput, ModelGateway, ModelProfileStore,
+    GenerationCompletion, GenerationOptions, GenerationOutput, GenerationUsage, ModelGateway, ModelProfileStore,
     ProjectAiTaskOverrides, SecretStore, WritingAdmission, apply_task_prompt_preferences,
     render_prompt_template,
 };
@@ -200,7 +200,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 44;
+pub const CURRENT_SCHEMA_VERSION: i64 = 45;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -3594,7 +3594,7 @@ mod tests {
         assert!(!task_contract_json.contains("继续推进冲突"));
         assert!(!context_section_audit_json.contains("继续推进冲突"));
         let proposal = manager
-            .complete_ai_task(task_id, &context, "新的段落。".into())
+            .complete_ai_task(task_id, &context, "新的段落。".into(), None)
             .expect("proposal");
         assert_eq!(proposal.status, super::AiProposalStatus::Pending);
         let runs = manager.list_ai_runs(10).expect("runs");
@@ -3661,6 +3661,7 @@ mod tests {
                 needs_input_task,
                 &context,
                 "[上下文不足]\n- 主角卡：未建立\n- 境界规则：缺失".into(),
+                None,
             )
             .expect("needs-input proposal");
         let needs_input_review = manager
@@ -3779,6 +3780,7 @@ mod tests {
                 &context,
                 "审核结论：阻断\n[阻断] 主角姓名未确定｜主角卡未建立｜先确定主角姓名并建立主角卡。"
                     .into(),
+                None,
             )
             .expect("proposal");
 
@@ -3808,6 +3810,7 @@ mod tests {
                 manuscript_task,
                 &manuscript_context,
                 "审核结论：阻断\n[阻断] 正文位置冲突｜当前状态位于城外｜修改正文位置。".into(),
+                None,
             )
             .expect("manuscript proposal");
         assert_eq!(
@@ -4134,7 +4137,7 @@ mod tests {
         manager
             .record_ai_run_fallback(run_id, fallback.id, "PROVIDER_TIMEOUT")
             .expect("fallback");
-        manager.complete_ai_run(run_id, 500).expect("complete");
+        manager.complete_ai_run(run_id, None, 500).expect("complete");
         let runs = manager.list_ai_runs(10).expect("runs");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].task_key, "workDesign");

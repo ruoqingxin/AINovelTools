@@ -4685,3 +4685,16 @@ textarea:focus-visible,
     width: 100%;
   }
 }
+.model-pricing-rule {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-subtle);
+}
+
+.model-pricing-rule span,
+.model-pricing-rule small {
+  color: var(--muted);
+}

@@ -34,18 +34,17 @@ describe("AI next-run cost estimate", () => {
       estimatedCostMicros: 60000,
     }], "writing", profile);
 
-    expect(estimate).toEqual({
-      status: "READY",
-      estimatedMicros: 30000,
-      currency: "USD",
-      runCount: 2,
-    });
-    expect(nextRunCostLabel(estimate, 30)).toContain("USD 0.03");
-    expect(nextRunCostLabel(estimate, 30, 4)).toContain("预估本批 4 次约 USD 0.12");
+    expect(estimate).toMatchObject({ status: "READY", currency: "CNY", runCount: 2 });
+    expect(nextRunCostLabel(estimate, 30)).toContain("按未命中缓存估算");
+  });
+
+  it("keeps manually configured prices for other providers", () => {
+    const estimate = estimateNextRunCost([{ taskKey: "writing", currency: "USD", runCount: 2, inputTokens: 8000, outputTokens: 4000, estimatedCostMicros: 60000 }], "writing", { ...profile, provider: "OPEN_AI", modelId: "gpt-test" });
+    expect(estimate).toMatchObject({ status: "READY", estimatedMicros: 30000, currency: "USD" });
   });
 
   it("explains missing price and sample states without blocking submission", () => {
-    expect(estimateNextRunCost([], "writing", { ...profile, inputPriceMicrosPerMillion: 0, outputPriceMicrosPerMillion: 0 })).toEqual({ status: "MISSING_PRICE" });
+    expect(estimateNextRunCost([], "writing", { ...profile, provider: "OPEN_AI", modelId: "gpt-test", inputPriceMicrosPerMillion: 0, outputPriceMicrosPerMillion: 0 })).toEqual({ status: "MISSING_PRICE" });
     expect(estimateNextRunCost([], "writing", profile)).toEqual({ status: "INSUFFICIENT_SAMPLES" });
   });
 });

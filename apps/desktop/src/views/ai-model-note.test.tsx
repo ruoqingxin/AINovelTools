@@ -87,10 +87,10 @@ describe("AiModelNote", () => {
     );
 
     expect(screen.getByText("写作模型 · deepseek-v4-flash")).toBeVisible();
-    expect(await screen.findByText(/预估下一次约 USD 0\.03/)).toBeVisible();
+    expect(await screen.findByText(/预估下一次约 CNY .*按未命中缓存估算/)).toBeVisible();
     expect(screen.getByText(/配置差异：温度 0\.7/)).toBeVisible();
     expect(screen.getByText(/自定义系统提示词/)).toBeVisible();
-    expect(screen.getByText("本次后预计超过每日预算（160%）")).toBeVisible();
+    expect(screen.getByText(/本次后预计超过每日预算/)).toBeVisible();
   });
 });
 
