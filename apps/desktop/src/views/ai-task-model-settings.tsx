@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, RotateCcw, Save, Sparkles } from "lucide-react";
+import { Check, RotateCcw, Save, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   AI_TASK_DEFINITIONS,
@@ -246,6 +246,12 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
   const selectedDefinition = AI_TASK_DEFINITIONS.find(({ key }) => key === selectedTask)
     ?? AI_TASK_DEFINITIONS[0];
   const selectedPreference = activeDraft[selectedTask];
+  const selectedId = selectedPreference.profileId ?? "";
+  const selectedProfile = chatProfiles.find((profile) => profile.id === selectedId);
+  const effectiveProfile = selectedProfile ?? preferredProfile;
+  const selectionMissing = Boolean(selectedId && !selectedProfile);
+  const selectedMaxOutputLimit = maxOutputLimitForTask(selectedTask);
+  const selectedDefaults = recommendedTaskPreference(selectedTask);
   const hasProjectOverride = Boolean(projectOverrides.data?.[selectedTask]);
   const globalDirty = comparisonPreferences ? !samePreferences(draft, comparisonPreferences) : false;
   const projectDirty = projectOverrides.data?.available ? !samePreferences(projectDraft, projectBaseline) : false;
@@ -521,79 +527,53 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
     </div> : null}
     {!profiles.isPending && chatProfiles.length ? <div className="ai-task-routing">
       <div className="ai-task-routing-heading">
-        <div><strong>任务路由与生成参数</strong><span>模型决定使用哪项服务，温度控制发散程度，最大输出控制单次生成长度。</span></div>
-        <small>{assignedCount} / {AI_TASK_DEFINITIONS.length} 已指定 · {tunedCount} 项已调参</small>
+        <div><strong>按任务设置 AI</strong><span>先选任务，再设置模型和生成长度。未指定模型时自动使用首选模型。</span></div>
+        <small>{assignedCount} 项指定模型 · {tunedCount} 项已自定义</small>
       </div>
-      <section className="ai-task-presets">
-        <div className="ai-task-presets-heading">
-          <div><strong>题材与创作场景预设</strong><span>一次调整六类任务的生成参数和上下文预算；不会替换模型、备用模型或自定义提示词。</span></div>
-          <small>应用后仍可逐项编辑</small>
+      {projectOverrides.data?.available ? <div className="ai-task-scope-row">
+        <strong>配置范围</strong>
+        <div className="ai-task-scope-switch" role="tablist" aria-label="AI 配置编辑范围">
+          <button type="button" role="tab" aria-selected={scope === "GLOBAL"} data-active={scope === "GLOBAL" || undefined} onClick={() => switchScope("GLOBAL")}>全局配置</button>
+          <button type="button" role="tab" aria-selected={scope === "PROJECT"} data-active={scope === "PROJECT" || undefined} onClick={() => switchScope("PROJECT")}>项目覆盖</button>
         </div>
-        <div className="ai-task-preset-list">
-          {AI_TASK_PRESETS.map((preset) => <button
-            type="button"
-            key={preset.id}
-            aria-label={preset.label}
-            data-active={activePresetId === preset.id || undefined}
-            onClick={() => applyPreset(preset.id)}
-          >
-            <strong>{preset.label}</strong>
-            <small>{preset.description}</small>
-          </button>)}
+        <small>{scope === "PROJECT" ? "只影响当前打开的项目，未设置的任务沿用全局默认。" : "所有项目默认使用这组设置。"}</small>
+      </div> : null}
+      <div className="ai-task-workbench">
+        <div className="ai-task-selector" role="tablist" aria-label="选择要设置的 AI 任务">
+          {AI_TASK_DEFINITIONS.map(({ key, label, description }) => {
+            const preference = activeDraft[key];
+            const profile = preference.profileId ? chatProfiles.find((item) => item.id === preference.profileId) : null;
+            return <button type="button" role="tab" aria-selected={selectedTask === key} data-active={selectedTask === key || undefined} key={key} onClick={() => setSelectedTask(key)}>
+              <strong>{label}</strong><small>{description}</small>
+              <span>{profile?.name ?? (preferredProfile ? `自动：${preferredProfile.name}` : "未配置")}{hasCustomGeneration(preference, key, maxOutputLimitForTask(key)) || hasCustomPrompt(preference, key) ? " · 已调整" : ""}</span>
+            </button>;
+          })}
         </div>
-      </section>
-      <div className="ai-task-routing-list">
-        {AI_TASK_DEFINITIONS.map(({ key, label, description }) => {
-          const preference = activeDraft[key];
-          const defaults = recommendedTaskPreference(key);
-          const selectedId = preference.profileId ?? "";
-          const selectedProfile = chatProfiles.find((profile) => profile.id === selectedId);
-          const effectiveProfile = selectedProfile ?? preferredProfile;
-          const selectionMissing = Boolean(selectedId && !selectedProfile);
-          const maxOutputLimit = maxOutputLimitForTask(key);
-          return <div className="ai-task-routing-row" key={key}>
-            <span className="ai-task-routing-copy"><strong>{label}</strong><small>{description}</small></span>
-            <div className="ai-task-model-stack">
-              <label className="ai-task-model-field"><span>任务模型</span><select value={selectedId} onChange={(event) => selectTaskProfile(key, event.target.value)} aria-label={`${label}模型`} data-missing={selectionMissing || undefined}>
-                <option value="">自动选择可用模型</option>
-                {chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>
-                  {profile.name} · {providerLabel(profile.provider)} · {profile.modelId}{recommendedIds[key] === profile.id ? " · 推荐" : ""}{profile.hasSecret ? "" : "（未设置 Key）"}
-                </option>)}
-              </select></label>
-              <label className="ai-task-model-field"><span>故障备用模型</span><select value={preference.fallbackProfileId ?? ""} onChange={(event) => updateTask(key, { fallbackProfileId: event.target.value || null })} aria-label={`${label}备用模型`}>
+        <section className="ai-task-editor">
+          <div className="ai-task-editor-heading">
+            <div><strong>{selectedDefinition.label}</strong><span>{selectedDefinition.description}</span></div>
+            <div><span className="ai-task-routing-state" data-ready={selectedProfile?.hasSecret || (!selectedId && preferredProfile?.hasSecret) || undefined}>{selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "模型可用" : "缺少 Key" : preferredProfile ? `自动使用 ${preferredProfile.name}` : "未配置"}</span><small>{nextRunCostLabel(estimateNextRunCost(usage.data?.byTask, selectedTask, effectiveProfile), usage.data?.days)}</small></div>
+          </div>
+          <div className="ai-task-main-fields">
+            <label className="ai-task-model-field"><span>使用模型</span><select value={selectedId} onChange={(event) => selectTaskProfile(selectedTask, event.target.value)} aria-label={`${selectedDefinition.label}模型`} data-missing={selectionMissing || undefined}>
+              <option value="">自动选择可用模型</option>
+              {chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {providerLabel(profile.provider)} · {profile.modelId}{recommendedIds[selectedTask] === profile.id ? " · 推荐" : ""}{profile.hasSecret ? "" : "（未设置 Key）"}</option>)}
+            </select></label>
+            <label><span>温度</span><input type="number" min="0" max="2" step="0.1" inputMode="decimal" value={selectedPreference.temperature ?? ""} onChange={(event) => updateTask(selectedTask, { temperature: parseTemperature(event.target.value) })} aria-label={`${selectedDefinition.label}温度`} /></label>
+            <label><span>最大输出</span><input type="number" min="1" max={selectedMaxOutputLimit} step="1" inputMode="numeric" value={selectedPreference.maxOutputTokens ?? ""} onChange={(event) => updateTask(selectedTask, { maxOutputTokens: parseMaxOutputTokens(event.target.value, selectedMaxOutputLimit) })} placeholder={selectedProfile ? `最大 ${selectedMaxOutputLimit}` : "模型默认"} aria-label={`${selectedDefinition.label}最大输出`} /></label>
+          </div>
+          <div className="ai-task-editor-actions">
+            {hasCustomGeneration(selectedPreference, selectedTask, selectedMaxOutputLimit) ? <button type="button" onClick={() => clearTaskTuning(selectedTask, selectedMaxOutputLimit)} title={`恢复 ${selectedDefinition.label} 的推荐值：温度 ${selectedDefaults.temperature}，最大输出 ${Math.min(selectedDefaults.maxOutputTokens ?? selectedMaxOutputLimit, selectedMaxOutputLimit)}`}><RotateCcw size={12} />恢复推荐参数</button> : <span>正在使用推荐生成参数</span>}
+          </div>
+          <details className="ai-task-optional-settings">
+            <summary>备用模型和高级设置</summary>
+            <div className="ai-task-optional-content">
+              <label className="ai-task-model-field"><span>故障备用模型</span><select value={selectedPreference.fallbackProfileId ?? ""} onChange={(event) => updateTask(selectedTask, { fallbackProfileId: event.target.value || null })} aria-label={`${selectedDefinition.label}备用模型`}>
                 <option value="">不使用备用模型</option>
-                {chatProfiles.filter((profile) => profile.id !== selectedId).map((profile) => <option key={profile.id} value={profile.id}>
-                  {profile.name} · {profile.modelId}{profile.hasSecret ? "" : "（未设置 Key）"}
-                </option>)}
+                {chatProfiles.filter((profile) => profile.id !== selectedId).map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.modelId}{profile.hasSecret ? "" : "（未设置 Key）"}</option>)}
               </select></label>
-            </div>
-            <div className="ai-task-tuning-fields">
-              <label><span>温度</span><input type="number" min="0" max="2" step="0.1" inputMode="decimal" value={preference.temperature ?? ""} onChange={(event) => updateTask(key, { temperature: parseTemperature(event.target.value) })} placeholder="默认" aria-label={`${label}温度`} /></label>
-              <label><span>最大输出</span><input type="number" min="1" max={maxOutputLimit} step="1" inputMode="numeric" value={preference.maxOutputTokens ?? ""} onChange={(event) => updateTask(key, { maxOutputTokens: parseMaxOutputTokens(event.target.value, maxOutputLimit) })} placeholder={selectedProfile ? `最大 ${maxOutputLimit}` : "模型默认"} aria-label={`${label}最大输出`} /></label>
-            </div>
-            <div className="ai-task-routing-meta">
-              <span className="ai-task-routing-state" data-ready={selectedProfile?.hasSecret || (!selectedId && preferredProfile?.hasSecret) || undefined}>
-                {selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "可用" : "缺少 Key" : preferredProfile ? `自动：${preferredProfile.name}` : "未配置"}
-              </span>
-              <span className="ai-task-cost-estimate">{nextRunCostLabel(estimateNextRunCost(usage.data?.byTask, key, effectiveProfile), usage.data?.days)}</span>
-              {hasCustomGeneration(preference, key, maxOutputLimit) ? <button type="button" onClick={() => clearTaskTuning(key, maxOutputLimit)} title={`恢复 ${label} 的推荐值：温度 ${defaults.temperature}，最大输出 ${Math.min(defaults.maxOutputTokens ?? maxOutputLimit, maxOutputLimit)}`}><RotateCcw size={12} />恢复生成参数</button> : null}
-              <button type="button" onClick={() => setSelectedTask(key)} data-active={selectedTask === key || undefined}><ChevronDown size={12} />{hasCustomPrompt(preference, key) ? "已自定义" : "高级配置"}</button>
-            </div>
-          </div>;
-        })}
-      </div>
-      <section className="ai-task-advanced">
-        <div className="ai-task-advanced-heading">
-          <div>
-            <strong>提示词与上下文 · {selectedDefinition.label}</strong>
-            <span>系统提示词负责角色边界，任务模板追加作者要求和可变上下文；不会修改内置模板。</span>
-          </div>
-          <div className="ai-task-advanced-tabs" role="tablist" aria-label="选择要编辑的 AI 任务">
-            {AI_TASK_DEFINITIONS.map(({ key, label }) => <button type="button" role="tab" aria-selected={selectedTask === key} data-active={selectedTask === key || undefined} key={key} onClick={() => setSelectedTask(key)}>
-              {label}{hasCustomPrompt(activeDraft[key], key) ? <span aria-label="已自定义">·</span> : null}
-            </button>)}
-          </div>
-        </div>
+              <section className="ai-task-advanced">
+        <div className="ai-task-advanced-heading"><div><strong>提示词与上下文</strong><span>通常保持默认即可；只有希望改变任务边界或取材范围时再调整。</span></div></div>
         <div className="ai-task-prompt-grid">
           <label>
             <span>系统提示词覆盖</span>
@@ -625,31 +605,22 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
               <input type="number" min="256" max={maxInputBudgetForTask(selectedTask)} step="256" inputMode="numeric" value={selectedPreference.prompt.context.inputTokenBudget ?? ""} onChange={(event) => updateTaskContext(selectedTask, { inputTokenBudget: Math.min(maxInputBudgetForTask(selectedTask), Math.max(256, Number(event.target.value) || 256)) })} />
             </label>
           </div>
-          <div className="ai-task-project-override">
-            <div>
-              <strong>项目级覆盖</strong>
-              <small>{!projectOverrides.data?.available
-                ? "打开一个项目后，才能创建项目级覆盖。"
-                : scope === "PROJECT"
-                  ? hasProjectOverride
-                    ? "正在编辑项目覆盖；生成时会优先使用这里的设置。"
-                    : "正在编辑本项目专用设置；保存后才会覆盖全局配置。"
-                  : "当前编辑全局配置；项目覆盖不会影响这里的保存结果。"}</small>
-            </div>
-            {projectOverrides.data?.available ? <div>
-              <div className="ai-task-scope-switch" role="tablist" aria-label="AI 配置编辑范围">
-                <button type="button" role="tab" aria-selected={scope === "GLOBAL"} data-active={scope === "GLOBAL" || undefined} onClick={() => switchScope("GLOBAL")}>全局配置</button>
-                <button type="button" role="tab" aria-selected={scope === "PROJECT"} data-active={scope === "PROJECT" || undefined} onClick={() => switchScope("PROJECT")}>项目覆盖</button>
-              </div>
-              <button type="button" className="secondary-action" onClick={() => void saveProjectOverride()} disabled={projectSaving}><Save size={12} />{hasProjectOverride ? "更新项目覆盖" : "保存为项目覆盖"}</button>
-              {hasProjectOverride ? <button type="button" className="secondary-action" onClick={() => void removeProjectOverride()} disabled={projectSaving}><RotateCcw size={12} />移除覆盖</button> : null}
-            </div> : null}
-          </div>
+          {scope === "PROJECT" && hasProjectOverride ? <button type="button" className="ai-task-remove-override" onClick={() => void removeProjectOverride()} disabled={projectSaving}><RotateCcw size={12} />移除本任务的项目覆盖</button> : null}
           <p className="ai-task-request-note">保存后，任务中心会在实际请求发出时记录最终提示词、上下文和请求体；API Key 不会写入记录。</p>
         </div>
-      </section>
+              </section>
+            </div>
+          </details>
+        </section>
+      </div>
+      <details className="ai-task-presets">
+        <summary>按题材套用推荐参数</summary>
+        <div className="ai-task-preset-list">
+          {AI_TASK_PRESETS.map((preset) => <button type="button" key={preset.id} aria-label={preset.label} data-active={activePresetId === preset.id || undefined} onClick={() => applyPreset(preset.id)}><strong>{preset.label}</strong><small>{preset.description}</small></button>)}
+        </div>
+      </details>
       <div className="ai-task-routing-actions">
-        <button type="button" className="primary-action" onClick={() => scope === "PROJECT" ? void saveProjectOverride() : void save()} disabled={!changed || (scope === "PROJECT" ? projectSaving : saving)}><Save size={14} />{scope === "PROJECT" ? projectSaving ? "保存中…" : hasProjectOverride ? "保存项目覆盖" : "保存为项目覆盖" : saving ? "保存中…" : "保存任务配置"}</button>
+        <button type="button" className="primary-action" onClick={() => scope === "PROJECT" ? void saveProjectOverride() : void save()} disabled={scope === "PROJECT" ? projectSaving : !changed || saving}><Save size={14} />{scope === "PROJECT" ? projectSaving ? "保存中…" : hasProjectOverride ? "保存项目覆盖" : "保存为项目覆盖" : saving ? "保存中…" : "保存任务配置"}</button>
         {changed ? <button type="button" className="secondary-action" onClick={() => { if (scope === "PROJECT") setProjectDraft(projectBaseline); else if (normalizedPreferences) setDraft(normalizedPreferences); setNotice("已撤销未保存的修改"); }} disabled={scope === "PROJECT" ? projectSaving : saving}>撤销修改</button> : null}
         {!changed && notice?.includes("已保存") ? <span className="ai-task-saved"><Check size={13} />已应用</span> : null}
       </div>

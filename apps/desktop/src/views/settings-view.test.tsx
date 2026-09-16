@@ -190,6 +190,8 @@ describe("SettingsView", () => {
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
     expect(await screen.findByRole("heading", { name: "AI 任务模型" })).toBeVisible();
+    await screen.findByLabelText("作品设定温度");
+    fireEvent.click(screen.getByRole("tab", { name: /大纲主线/ }));
     fireEvent.change(await screen.findByLabelText("大纲主线模型"), { target: { value: "outline-profile" } });
     fireEvent.change(screen.getByLabelText("大纲主线备用模型"), { target: { value: "deepseek-profile" } });
     fireEvent.change(screen.getByLabelText("大纲主线温度"), { target: { value: "0.4" } });
@@ -227,18 +229,20 @@ describe("SettingsView", () => {
     await screen.findByLabelText("作品设定温度");
 
     for (const task of AI_TASK_DEFINITIONS) {
+      fireEvent.click(screen.getByRole("tab", { name: new RegExp(task.label) }));
       expect(screen.getByLabelText(`${task.label}温度`)).toHaveValue(task.defaultTemperature);
       expect(screen.getByLabelText(`${task.label}最大输出`)).toHaveValue(task.defaultMaxOutputTokens);
     }
-    expect(screen.queryByRole("button", { name: "恢复生成参数" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "恢复推荐参数" })).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("tab", { name: /大纲主线/ }));
     fireEvent.change(screen.getByLabelText("大纲主线温度"), { target: { value: "0.2" } });
     fireEvent.change(screen.getByLabelText("大纲主线最大输出"), { target: { value: "2048" } });
-    fireEvent.click(screen.getByRole("button", { name: "恢复生成参数" }));
+    fireEvent.click(screen.getByRole("button", { name: "恢复推荐参数" }));
 
     expect(screen.getByLabelText("大纲主线温度")).toHaveValue(0.6);
     expect(screen.getByLabelText("大纲主线最大输出")).toHaveValue(6144);
-    expect(screen.queryByRole("button", { name: "恢复生成参数" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "恢复推荐参数" })).not.toBeInTheDocument();
   });
 
   it("applies a genre preset without replacing the selected model or custom prompt", async () => {
@@ -266,7 +270,9 @@ describe("SettingsView", () => {
     await screen.findByLabelText("作品设定温度");
 
     fireEvent.click(screen.getByRole("button", { name: "悬疑推理" }));
+    fireEvent.click(screen.getByRole("tab", { name: /大纲主线/ }));
     expect(screen.getByLabelText("大纲主线温度")).toHaveValue(0.45);
+    fireEvent.click(screen.getByRole("tab", { name: /章节拆分/ }));
     expect(screen.getByLabelText("章节拆分温度")).toHaveValue(0.2);
     fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
 
@@ -301,6 +307,8 @@ describe("SettingsView", () => {
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
 
     expect(await screen.findByRole("heading", { name: "AI 任务模型" })).toBeVisible();
+    await screen.findByLabelText("作品设定温度");
+    fireEvent.click(screen.getByRole("tab", { name: /大纲主线/ }));
     const outlineModel = await screen.findByLabelText("大纲主线模型");
     await waitFor(() => expect(outlineModel).toHaveValue(""));
     fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
@@ -333,6 +341,7 @@ describe("SettingsView", () => {
     await screen.findByRole("heading", { name: "AI 任务模型" });
     await screen.findByLabelText("作品设定温度");
     fireEvent.click(screen.getByRole("tab", { name: /正文书写/ }));
+    fireEvent.click(screen.getByText("备用模型和高级设置"));
 
     fireEvent.change(screen.getByLabelText(/系统提示词覆盖/), { target: { value: "保持第一人称，克制表达。" } });
     fireEvent.change(screen.getByLabelText(/自定义任务模板/), { target: { value: "章节 {{chapterTitle}}" } });
@@ -380,6 +389,7 @@ describe("SettingsView", () => {
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
     await screen.findByLabelText("作品设定温度");
+    fireEvent.click(screen.getByRole("tab", { name: "项目覆盖" }));
     fireEvent.click(screen.getByRole("button", { name: "保存为项目覆盖" }));
 
     await screen.findByText("已保存“作品设定”的项目级覆盖");
