@@ -3777,6 +3777,10 @@ textarea:focus-visible,
 .review-center-context > span { color:#8294b1; }
 .review-center-panel { min-height:320px; margin-top:18px; }
 .review-center-panel .ai-panel { margin-top:0; border-top:0; }
+.candidate-review-entry { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:18px; padding:12px 14px; border:1px solid #dbe4f0; border-radius:7px; background:#f8fbff; }
+.candidate-review-entry > div { display:grid; gap:4px; }
+.candidate-review-entry strong { display:flex; align-items:center; gap:6px; color:#395d89; font-size:12px; }
+.candidate-review-entry span { color:#7486a2; font-size:11px; line-height:1.5; }
 .knowledge-section-nav { display:flex; align-items:center; flex-wrap:wrap; gap:4px; margin-top:18px; padding:4px; border:1px solid var(--line); border-radius:9px; background:#f7f9fd; }
 .knowledge-section-link { display:inline-flex; min-height:34px; align-items:center; gap:7px; padding:0 12px; border-radius:6px; color:#64799b; font-size:12px; font-weight:600; text-decoration:none; }
 .knowledge-section-link:hover { color:#285dcb; background:#eef4ff; }
@@ -4145,6 +4149,7 @@ textarea:focus-visible,
   .review-flow { grid-template-columns:repeat(2, minmax(0, 1fr)); }
   .review-flow li:nth-child(3) { border-left:0; border-top:1px solid #dbe4f0; }
   .review-flow li:nth-child(4) { border-top:1px solid #dbe4f0; }
+  .candidate-review-entry { align-items:flex-start; flex-direction:column; }
   .materials-view { width:calc(100% - 28px); padding-top:28px; }
   .search-view { width:calc(100% - 28px); padding-top:28px; }
   .settings-view { width:calc(100% - 28px); padding-top:28px; }

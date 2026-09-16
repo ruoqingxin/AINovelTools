@@ -94,13 +94,13 @@ export function WritingAdmissionSettings(props: { onDirtyChange?: (dirty: boolea
     <div className="settings-content-heading">
       <div>
         <h2><ShieldCheck size={18} />审核流程</h2>
-        <p>按创作顺序选择启用哪些审核；关闭的步骤不会在审核中心显示。</p>
+        <p>创作准入在生成前处理，候选审核在候选区处理，知识审核集中在审核中心处理。</p>
       </div>
     </div>
     {project.isPending || (projectAvailable && (policy.isPending || auditFlow.isPending)) ? <p className="settings-empty-label">正在读取当前作品策略…</p> : project.isError ? <p className="project-error" role="alert">读取作品状态失败：{errorMessage(project.error)}</p> : !projectAvailable ? <p className="settings-empty-label">请先打开或新建作品，审核流程按作品单独保存。</p> : policy.isError || auditFlow.isError ? <p className="project-error" role="alert">读取审核流程失败：{errorMessage(policy.error ?? auditFlow.error)}</p> : <>
       <div className="audit-flow-options" aria-label="审核步骤">
         <label><input type="checkbox" checked={flowDraft.admission} onChange={(event) => { setFlowDraft((value) => ({ ...value, admission: event.target.checked })); setNotice(null); }} /><span><strong>1. 创作准入</strong><small>在生成正文前检查执行卡、设定与已有草稿。</small></span></label>
-        <label><input type="checkbox" checked={flowDraft.manuscript} onChange={(event) => { setFlowDraft((value) => ({ ...value, manuscript: event.target.checked })); setNotice(null); }} /><span><strong>2. 正文审核</strong><small>正文完成后检查人物状态、规则、时间线和叙述。</small></span></label>
+        <label><input type="checkbox" checked={flowDraft.manuscript} onChange={(event) => { setFlowDraft((value) => ({ ...value, manuscript: event.target.checked })); setNotice(null); }} /><span><strong>2. 候选审核</strong><small>在同步前检查候选区内容与人物、规则、时间线和执行卡是否一致。</small></span></label>
         <label><input type="checkbox" checked={flowDraft.knowledge} onChange={(event) => { setFlowDraft((value) => ({ ...value, knowledge: event.target.checked })); setNotice(null); }} /><span><strong>3. 知识审核</strong><small>知识提取后核对事实证据、冲突与定稿内容。</small></span></label>
       </div>
       {flowDraft.admission ? <div className="writing-policy-options" role="radiogroup" aria-label="写作准入策略">

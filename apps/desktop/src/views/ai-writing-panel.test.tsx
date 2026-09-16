@@ -381,7 +381,7 @@ describe("AiWritingPanel consistency review", () => {
     expect(screen.queryByText(/整章创作与续写已暂停/)).not.toBeInTheDocument();
   });
 
-  it("shows an actionable message when manuscript review fails", async () => {
+  it("shows an actionable message when candidate review fails", async () => {
     mocks.generateAiProposal.mockRejectedValueOnce({
       code: "AI_OUTPUT_LENGTH_LIMIT",
       message: "输出预算不足：模型达到最大输出长度，返回内容未写完；模型没有返回任何可用正文（finish_reason: length）。",
@@ -403,17 +403,17 @@ describe("AiWritingPanel consistency review", () => {
       </QueryClientProvider>,
     );
 
-    const reviewButton = screen.getByRole("button", { name: "审核当前正文" });
+    const reviewButton = screen.getByRole("button", { name: "审核当前候选" });
     await waitFor(() => expect(reviewButton).toBeEnabled());
     await waitFor(() =>
       expect(mocks.listAiProposals).toHaveBeenCalledWith(
-        expect.objectContaining({ reviewPurpose: "MANUSCRIPT" }),
+        expect.objectContaining({ reviewPurpose: "MANUSCRIPT", documentJson: "主角抵达城门。" }),
       ),
     );
     fireEvent.click(reviewButton);
     await waitFor(() =>
       expect(mocks.generateAiProposal).toHaveBeenCalledWith(
-        expect.objectContaining({ reviewPurpose: "MANUSCRIPT" }),
+        expect.objectContaining({ reviewPurpose: "MANUSCRIPT", documentJson: "主角抵达城门。" }),
       ),
     );
 

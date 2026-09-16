@@ -1,11 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, ArrowRight, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, FileCheck2, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Sparkles, Trash2, UsersRound } from "lucide-react";
+import { ArchiveRestore, ArrowRight, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, FileCheck2, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, ShieldCheck, Sparkles, Trash2, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
-import { cancelJob, clearRecoveryLogs, createPlanNode, currentManuscript, enqueuePlanningAiJob, errorMessage, getCurrentProject, listJobs, listManuscriptRevisions, listModelProfiles, listPlanningSections, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, savePlanningSection, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
+import { cancelJob, clearRecoveryLogs, createPlanNode, currentManuscript, enqueuePlanningAiJob, errorMessage, getAuditFlowSettings, getCurrentProject, listJobs, listManuscriptRevisions, listModelProfiles, listPlanningSections, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, savePlanningSection, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
 import { AiModelNote } from "./ai-model-note";
 import { ChapterExtractionPanel } from "./chapter-extraction-panel";
@@ -97,6 +97,7 @@ function lastWritingChapterKey(projectId: string) {
 }
 
 const writingCandidateTransferKey = "ainoveltools:writing-candidate-transfer";
+const candidateReviewTransferKey = "ainoveltools:candidate-review-transfer";
 
 function rootSectionLabel(kind: PlanNodeKind) {
   if (kind === "WORK_DESIGN") return "作品设定";
@@ -188,6 +189,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const currentProject = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
+  const auditFlow = useQuery({ queryKey: ["audit-flow-settings"], queryFn: getAuditFlowSettings });
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
   const [kind, setKind] = useState<PlanNodeKind>("CHAPTER");
@@ -825,6 +827,36 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     window.setTimeout(() => { window.location.href = `/writing#${selected.id}`; }, 0);
   }
 
+  function openCandidateReview() {
+    if (!selected || selected.kind !== "CHAPTER" || !draft.trim()) return;
+    const documentJson = editor ? JSON.stringify(editor.getJSON()) : draft;
+    let changedSinceReview = true;
+    try {
+      const stored = window.sessionStorage.getItem(candidateReviewTransferKey);
+      const snapshot = stored ? JSON.parse(stored) as { chapterId?: string; documentJson?: string } : null;
+      changedSinceReview = snapshot?.chapterId !== selected.id || snapshot.documentJson !== documentJson;
+    } catch {
+      // A fresh snapshot is the safe fallback when storage cannot be read.
+    }
+    if (chapterDirty && changedSinceReview && !window.confirm("当前候选有未同步修改。将以当前版本作为审核快照，前往审核吗？")) return;
+    setTransferringCandidate(true);
+    try {
+      window.sessionStorage.setItem(writingCandidateTransferKey, JSON.stringify({
+        projectId: currentProject.data?.projectId ?? "current",
+        chapterId: selected.id,
+        documentJson,
+      }));
+      window.sessionStorage.setItem(candidateReviewTransferKey, JSON.stringify({
+        chapterId: selected.id,
+        documentJson,
+      }));
+      window.setTimeout(() => { window.location.href = `/review?tab=manuscript&chapterId=${encodeURIComponent(selected.id)}`; }, 0);
+    } catch {
+      setTransferringCandidate(false);
+      setError("无法暂存当前候选，暂时不能前往审核。");
+    }
+  }
+
   async function discardRecoveryLogs() {
     if (!selected || selected.kind !== "CHAPTER" || !recovery.data?.length) return;
     if (!window.confirm(`确认不需要恢复这 ${recovery.data.length} 次自动保护记录吗？删除记录不会修改当前正文或已保存版本。`)) return;
@@ -960,7 +992,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
       <div className="workspace-heading">
         <p className="eyebrow">{workspaceMode === "chapters" ? "章节工作台" : workspaceMode === "writing" ? "正文工作区" : "项目规划"}</p>
         <h1>{workspaceMode === "chapters" ? "把每一章准备到可以动笔" : workspaceMode === "writing" ? "专注完成章节正文" : "把想法推进成可写的故事"}</h1>
-        <p className="workspace-lede">{workspaceMode === "chapters" ? "按顺序完成章节执行卡和创作准备，通过创作准入后，再生成可以进入正文的候选。" : workspaceMode === "writing" ? "正式正文只供浏览；手写、修改和版本载入都先进入候选区，确认后再同步为正文。审核统一在左侧审核中心处理。" : "作品设定、故事大纲和分卷管理按顺序推进，章节和场景把计划变成可执行的写作任务，正文区负责完成文学表达。"}</p>
+        <p className="workspace-lede">{workspaceMode === "chapters" ? "按顺序完成章节执行卡和创作准备，通过创作准入后，再生成可以进入正文的候选。" : workspaceMode === "writing" ? "正式正文只供浏览；手写、修改和版本载入都先进入候选区。需要时可审核候选，确认后再同步；知识审核在审核中心集中处理。" : "作品设定、故事大纲和分卷管理按顺序推进，章节和场景把计划变成可执行的写作任务，正文区负责完成文学表达。"}</p>
       </div>
 
       {nodes.isPending ? <p className="plan-loading">正在加载规划…</p> : null}
@@ -993,7 +1025,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 
       {!selected ? <main className={`planning-dashboard${isChapterMode ? " writing-mode" : ""}`} aria-label={workspaceMode === "chapters" ? "章节工作台总览" : workspaceMode === "writing" ? "正文工作区总览" : "项目规划总览"}>
           <div className="planning-overview">
-          <div className="planning-overview-heading"><div><span className="planning-kicker">{workspaceMode === "chapters" ? "章节工作台" : workspaceMode === "writing" ? "正文工作区" : "建议下一步"}</span><h2>{isChapterMode ? (chapterNodes.length ? workspaceMode === "chapters" ? "选择章节开始准备" : "选择章节开始写作" : "还没有章节") : planningHeadline}</h2><p>{isChapterMode ? (chapterNodes.length ? workspaceMode === "chapters" ? "从执行卡开始，依次准备、检查创作条件并生成正文候选。" : "依次编辑正文、管理版本，最后提取知识；审核统一在左侧审核中心处理。" : "请先在规划页创建章节，再进入后续工作。") : "按当前流程完成作品设定后，将依次开放故事大纲、分卷管理和章节规划。"}</p></div>{isChapterMode ? chapterNodes[0] ? <button type="button" className="primary-action" onClick={() => selectNode(chapterNodes[0])}><ArrowRight size={15} />打开第1章</button> : <a className="primary-action" href="/planning"><ArrowRight size={15} />前往规划页</a> : <button type="button" className="primary-action" onClick={() => void continuePlanning()}><ArrowRight size={15} />继续下一步</button>}</div>
+          <div className="planning-overview-heading"><div><span className="planning-kicker">{workspaceMode === "chapters" ? "章节工作台" : workspaceMode === "writing" ? "正文工作区" : "建议下一步"}</span><h2>{isChapterMode ? (chapterNodes.length ? workspaceMode === "chapters" ? "选择章节开始准备" : "选择章节开始写作" : "还没有章节") : planningHeadline}</h2><p>{isChapterMode ? (chapterNodes.length ? workspaceMode === "chapters" ? "从执行卡开始，依次准备、检查创作条件并生成正文候选。" : "在候选区编辑，需要时审核，确认后同步正文，最后提取知识并集中确认事实。" : "请先在规划页创建章节，再进入后续工作。") : "按当前流程完成作品设定后，将依次开放故事大纲、分卷管理和章节规划。"}</p></div>{isChapterMode ? chapterNodes[0] ? <button type="button" className="primary-action" onClick={() => selectNode(chapterNodes[0])}><ArrowRight size={15} />打开第1章</button> : <a className="primary-action" href="/planning"><ArrowRight size={15} />前往规划页</a> : <button type="button" className="primary-action" onClick={() => void continuePlanning()}><ArrowRight size={15} />继续下一步</button>}</div>
           <div className="planning-stage-grid"><button type="button" className="planning-stage" data-state={workDesignReady ? "done" : workDesignNode ? "active" : "idle"} onClick={() => { if (workDesignNode) { if (selectNode(workDesignNode)) setSelectedPlanningSectionId(nextEssentialSectionId); } else void createStarterNode("WORK_DESIGN", "作品设定"); }}><span className="planning-stage-index">01</span><div><strong>作品设定</strong><small>完成后开放故事大纲</small></div><span className="planning-stage-count">{workDesignReady ? "已完成" : "进行中"}</span></button><button type="button" className="planning-stage" data-state={outlinePlan?.content.trim() ? "done" : outlineNode ? workDesignReady ? "active" : "idle" : "idle"} onClick={() => workDesignReady && (outlineNode ? selectNode(outlineNode) : void createStarterNode("OUTLINE", "故事大纲"))}><span className="planning-stage-index">02</span><div><strong>故事大纲</strong><small>{workDesignReady ? "开放主线规划" : "完成作品设定后开放"}</small></div><span className="planning-stage-count">{!workDesignReady ? "未开放" : outlinePlan?.content.trim() ? "已完成" : "进行中"}</span></button><button type="button" className="planning-stage" data-state={chapterNodes.length && chaptersWithPlan === chapterNodes.length ? "done" : volumePlanReady || chapterNodes.length ? "active" : "idle"} onClick={() => { if (!outlinePlan?.content.trim()) return; if (chapterNodes[0]) selectNode(chapterWithoutPlan ?? chapterNodes[0]); else if (volumeManagerNode) selectNode(volumeManagerNode); else void createStarterNode("VOLUME_MANAGER", "分卷管理"); }}><span className="planning-stage-index">03</span><div><strong>{volumePlanReady ? "拆章节" : "分卷与章节"}</strong><small>{!outlinePlan?.content.trim() ? "完成故事大纲后开放" : volumePlanReady ? "为各分卷建立章节结构" : "开放分卷管理和章节规划"}</small></div><span className="planning-stage-count">{!outlinePlan?.content.trim() ? "未开放" : volumePlanReady && !chapterNodes.length ? "待拆章节" : chapterNodes.length ? `${chaptersWithPlan}/${chapterNodes.length}` : "已开放"}</span></button></div>
           <div className="planning-overview-links"><span><UsersRound size={14} />人物、地点和规则放在知识库</span><span><FileCheck2 size={14} />章节完成后沉淀事实</span><span><Sparkles size={14} />AI 提供候选，由你定稿</span><span>{volumeNodes.length ? `已规划 ${volumeNodes.length} 卷` : "建议先规划分卷"}</span></div>
         </div>
@@ -1025,7 +1057,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
             {manuscript.data ? manuscriptViewer ? <EditorContent editor={manuscriptViewer} /> : <p className="plan-empty">正在加载正文…</p> : <div className="manuscript-stage-gate"><strong>当前还没有正式正文</strong><span>请先在候选区写作或载入候选，再同步生成第一个正文版本。</span><button type="button" className="primary-action" onClick={() => setManuscriptTab("candidate")}>进入候选区</button></div>}
           </div> : null}
           {workspaceMode === "writing" && manuscriptTab === "candidate" ? <div className="chapter-tab-panel focused-writing-panel" id="manuscript-panel-candidate" role="tabpanel" aria-labelledby="manuscript-tab-candidate">
-            <div className="manuscript-stage-heading"><div><h2>正文候选区</h2><p>手写、修改、异常草稿和历史版本都在这里整理，确认后再同步为正式正文。</p></div><span>{chapterDirty ? "有内容待同步" : "与正式正文一致"}</span></div>
+            <div className="manuscript-stage-heading"><div><h2>正文候选区</h2><p>手写、修改、异常草稿和历史版本都在这里整理；需要时审核，再决定是否同步为正式正文。</p></div><span>{chapterDirty ? "有内容待同步" : "与正式正文一致"}</span></div>
             {editor ? <>
               <div className="editor-toolbar" aria-label="编辑器工具栏">
                 <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} data-active={editor.isActive("bold") || undefined} aria-label="粗体">B</button>
@@ -1036,6 +1068,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
             </> : <p className="plan-empty">正在加载编辑器…</p>}
             {chapterDirty && manuscript.data ? <div className="manuscript-version-tools"><div><strong>同步前冲突检查</strong><span>如果正式正文可能在其他位置发生过变化，可在同步前检查并合并冲突。</span></div><button type="button" className="secondary-action" onClick={() => void mergeDraft()}>检查同步冲突</button></div> : null}
             {mergeResult ? <div className="merge-panel"><div className="section-heading"><h3>{mergeResult.conflicts.length ? `发现 ${mergeResult.conflicts.length} 个冲突块` : "没有发现冲突"}</h3>{!mergeResult.conflicts.length ? <button type="button" className="secondary-action" onClick={() => { setDraft(mergeResult.documentJson); if (editor) editor.commands.setContent(documentToJson(mergeResult.documentJson), { emitUpdate: false }); }}>应用到候选</button> : null}</div>{mergeResult.conflicts.map((conflict) => <div className="merge-conflict" key={conflict.blockId}><code>{conflict.blockId}</code><span>正式正文与候选都修改了该段，请在候选区中手工确认后再同步。</span></div>)}</div> : null}
+            {auditFlow.data?.manuscript !== false ? <div className="candidate-review-entry"><div><strong><ShieldCheck size={14} />候选审核</strong><span>需要时检查当前候选；审核不会自动触发，也不会阻止同步。</span></div><button type="button" className="secondary-action" onClick={openCandidateReview} disabled={!draft.trim()}><ShieldCheck size={14} />审核当前候选</button></div> : null}
             <div className="candidate-sync-bar" data-dirty={chapterDirty || undefined}><div><strong>{chapterDirty ? "候选内容尚未同步" : "候选内容与正式正文一致"}</strong><span>{chapterDirty ? "同步后会生成新的正式正文版本。" : "继续修改后，才会开放同步操作。"}</span></div><button type="button" className="primary-action" onClick={() => void saveDraft(true)} disabled={savingDraft || !chapterDirty || !draft.trim()}>{savingDraft ? "同步中…" : "同步为正文"}</button></div>
           </div> : null}
           {workspaceMode === "chapters" && (chapterTab === "readiness" || chapterTab === "ai") ? <div className="chapter-tab-panel" id={`chapter-panel-${chapterTab}`} role="tabpanel" aria-labelledby={`chapter-tab-${chapterTab}`}><AiWritingPanel mode={chapterTab === "readiness" ? "readiness" : "create"} onOpenAdmissionReview={() => window.location.assign(`/review?tab=admission&chapterId=${encodeURIComponent(selected.id)}`)} chapterId={selected.id} chapterTitle={selected.title} chapterPlan={nodePlanDraft} volumeId={selectedVolume?.id ?? ""} volumePlan={selectedVolumePlan?.content ?? ""} draft={draft} editor={editor} />{chapterTab === "ai" && chapterDirty ? <div className="chapter-ai-savebar"><div><strong>候选已发送到正文候选区</strong><span>请在候选区继续修改，审核统一在左侧审核中心处理。</span></div><button type="button" className="primary-action" onClick={openWritingCandidate} disabled={transferringCandidate}>{transferringCandidate ? "正在前往…" : "前往候选区确认"}</button></div> : null}</div> : null}

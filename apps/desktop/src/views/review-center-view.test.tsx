@@ -57,6 +57,7 @@ describe("ReviewCenterView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.history.replaceState({}, "", "/review");
+    window.sessionStorage.clear();
     mocks.listPlanNodes.mockResolvedValue([
       { id: "volume-1", parentId: null, kind: "VOLUME", title: "第一卷", sortOrder: 1, archived: false, revision: 1 },
       { id: "chapter-1", parentId: "volume-1", kind: "CHAPTER", title: "第1章", sortOrder: 1, archived: false, revision: 1 },
@@ -86,10 +87,23 @@ describe("ReviewCenterView", () => {
     await waitFor(() => expect(screen.getByTestId("consistency-review")).toHaveTextContent("chapter-2"));
     expect(screen.getByTestId("consistency-review")).toHaveAttribute("data-plan", "第二章执行卡");
 
-    fireEvent.click(screen.getByRole("tab", { name: "正文审核" }));
-    expect(await screen.findByTestId("consistency-review")).toHaveAttribute("data-purpose", "manuscript");
+    expect(screen.getByRole("tab", { name: "候选审核" })).toBeVisible();
 
     fireEvent.click(screen.getByRole("tab", { name: "知识审核" }));
     expect(await screen.findByTestId("facts-review")).toHaveAttribute("data-chapter", "chapter-2");
+  });
+
+  it("opens the unsynced candidate snapshot in the candidate review tab", async () => {
+    window.sessionStorage.setItem("ainoveltools:candidate-review-transfer", JSON.stringify({
+      chapterId: "chapter-1",
+      documentJson: "候选区尚未同步的正文",
+    }));
+    window.history.replaceState({}, "", "/review?tab=manuscript&chapterId=chapter-1");
+
+    renderView();
+
+    const candidateReview = await screen.findByTestId("consistency-review");
+    expect(candidateReview).toHaveAttribute("data-purpose", "manuscript");
+    expect(candidateReview).toHaveAttribute("data-draft", "候选区尚未同步的正文");
   });
 });

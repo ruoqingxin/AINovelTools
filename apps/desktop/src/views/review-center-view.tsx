@@ -9,9 +9,11 @@ type ReviewTab = "facts" | "admission" | "manuscript";
 
 const reviewTabs = [
   { value: "admission", label: "创作准入", icon: ClipboardCheck },
-  { value: "manuscript", label: "正文审核", icon: ShieldCheck },
+  { value: "manuscript", label: "候选审核", icon: ShieldCheck },
   { value: "facts", label: "知识审核", icon: FileCheck2 },
 ] as const;
+
+const candidateReviewTransferKey = "ainoveltools:candidate-review-transfer";
 
 function nodePlanId(nodeId: string) {
   return `plan-node:${nodeId}`;
@@ -20,6 +22,17 @@ function nodePlanId(nodeId: string) {
 function initialReviewTab(): ReviewTab {
   const value = new URLSearchParams(window.location.search).get("tab");
   return value === "admission" || value === "manuscript" || value === "facts" ? value : "admission";
+}
+
+function candidateReviewDocument(chapterId: string) {
+  try {
+    const stored = window.sessionStorage.getItem(candidateReviewTransferKey);
+    if (!stored) return "";
+    const transfer = JSON.parse(stored) as { chapterId?: string; documentJson?: string };
+    return transfer.chapterId === chapterId ? transfer.documentJson?.trim() ?? "" : "";
+  } catch {
+    return "";
+  }
 }
 
 function initialChapterId() {
@@ -36,6 +49,7 @@ function syncReviewLocation(tab: ReviewTab, chapterId: string) {
 export function ReviewCenterView() {
   const [tab, setTab] = useState<ReviewTab>(initialReviewTab);
   const [chapterId, setChapterId] = useState(initialChapterId);
+  const [candidateDraft, setCandidateDraft] = useState("");
   const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes });
   const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
   const auditFlow = useQuery({ queryKey: ["audit-flow-settings"], queryFn: getAuditFlowSettings });
@@ -59,6 +73,10 @@ export function ReviewCenterView() {
     ? planningSections.data?.find((section) => section.id === nodePlanId(selectedVolume.id))?.content ?? ""
     : "";
 
+  useEffect(() => {
+    setCandidateDraft(candidateReviewDocument(selectedChapterId));
+  }, [selectedChapterId]);
+
   function selectTab(next: ReviewTab) {
     setTab(next);
     syncReviewLocation(next, selectedChapterId);
@@ -73,12 +91,12 @@ export function ReviewCenterView() {
     <div className="workspace-heading">
       <p className="eyebrow">审核中心</p>
       <h1>审核</h1>
-      <p className="workspace-lede">沿着创作主线处理审核：先确认准入，再审正文，提取知识后再确认事实。</p>
+      <p className="workspace-lede">处理需要集中确认的事项：创作前确认准入，候选区内容集中审核，知识提取后确认事实。</p>
     </div>
 
     <ol className="review-flow" aria-label="审核流程">
       <li data-active={tab === "admission" || undefined}><strong>1. 创作准入</strong><span>生成正文前</span></li>
-      <li data-active={tab === "manuscript" || undefined}><strong>2. 正文审核</strong><span>正文完成后</span></li>
+      <li data-active={tab === "manuscript" || undefined}><strong>2. 候选审核</strong><span>审核候选区快照</span></li>
       <li><strong>3. 知识提取</strong><span>从正式正文提取候选</span></li>
       <li data-active={tab === "facts" || undefined}><strong>4. 知识审核</strong><span>核对事实并定稿</span></li>
     </ol>
@@ -124,8 +142,8 @@ export function ReviewCenterView() {
         draft={manuscript.data?.documentJson ?? ""}
         editor={null}
       /> : <div className="proposal-empty review-empty"><ClipboardCheck size={20} /><div><strong>暂无可审核章节</strong><span>建立章节后才能检查创作准入。</span></div></div> : null}
-      {tab === "manuscript" ? selectedChapter ? <AiWritingPanel
-        key={`manuscript-${selectedChapter.id}`}
+      {tab === "manuscript" ? selectedChapter && candidateDraft ? <AiWritingPanel
+        key={`candidate-review-${selectedChapter.id}-${candidateDraft}`}
         mode="review"
         reviewPurpose="manuscript"
         chapterId={selectedChapter.id}
@@ -133,9 +151,9 @@ export function ReviewCenterView() {
         chapterPlan={chapterPlan}
         volumeId={selectedVolume?.id ?? ""}
         volumePlan={volumePlan}
-        draft={manuscript.data?.documentJson ?? ""}
+        draft={candidateDraft}
         editor={null}
-      /> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>暂无可审核章节</strong><span>建立章节并保存正文后才能运行正文审核。</span></div></div> : null}
+      /> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>暂无候选内容可审核</strong><span>请先在正文候选区编辑内容，再选择“审核当前候选”。</span></div></div> : null}
       {tab === "facts" ? <KnowledgeReviewView embedded chapterId={selectedChapterId} onChapterChange={selectChapter} /> : null}
     </div>
   </section>;
