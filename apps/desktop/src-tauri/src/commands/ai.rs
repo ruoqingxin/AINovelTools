@@ -3548,9 +3548,7 @@ pub(crate) fn list_ai_runs(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
-        .list_ai_runs(limit.unwrap_or(20))
-        .map_err(ApiError::from)
+    manager.list_ai_runs(limit).map_err(ApiError::from)
 }
 
 #[tauri::command]

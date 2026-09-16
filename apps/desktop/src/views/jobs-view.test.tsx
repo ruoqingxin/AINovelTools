@@ -43,6 +43,8 @@ describe("JobsView", () => {
   it("uses readable task labels and enqueues the matching task type", async () => {
     render(<QueryClientProvider client={new QueryClient()}><JobsView /></QueryClientProvider>);
     const backup = await screen.findByRole("button", { name: "创建备份" });
+    expect(mocks.listJobs).toHaveBeenCalled();
+    expect(screen.getByText("已结束任务只保留最近 100 个；排队中和执行中的任务不会清理")).toBeVisible();
     fireEvent.click(backup);
     await waitFor(() => expect(mocks.enqueueJob).toHaveBeenCalledWith("BACKUP"));
   });
@@ -94,6 +96,7 @@ describe("JobsView", () => {
     render(<QueryClientProvider client={new QueryClient()}><JobsView /></QueryClientProvider>);
     fireEvent.click(screen.getByRole("tab", { name: "AI 运行记录" }));
 
+    expect(screen.getByText("模型、token、费用和状态统计长期保留；页面展示及完整请求快照各保留最近 100 条")).toBeVisible();
     expect(await screen.findByText("整章创作 · 第1章")).toBeVisible();
     expect(screen.getByText(/写作模型 · 正文创作/)).toBeVisible();
 
@@ -134,6 +137,7 @@ describe("JobsView", () => {
     render(<QueryClientProvider client={new QueryClient()}><JobsView /></QueryClientProvider>);
     fireEvent.click(screen.getByRole("tab", { name: "质量回顾" }));
 
+    expect(screen.getByText("最近 90 天 · 最多 20 组")).toBeVisible();
     expect(await screen.findByText("整章创作 · DeepSeek 写作")).toBeVisible();
     expect(mocks.getAiQualitySummary).toHaveBeenCalledWith(20, 90);
     expect(screen.getAllByText("有帮助")).toHaveLength(2);

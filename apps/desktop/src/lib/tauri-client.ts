@@ -805,7 +805,7 @@ export function listAiProposals(input: {
 export function getConsistencyReviewTrace(proposalId: string) {
   return invoke<ReviewTrace>("get_consistency_review_trace", { proposalId });
 }
-export function listAiRuns(limit = 20) {
+export function listAiRuns(limit?: number) {
   return invoke<AiRun[]>("list_ai_runs", { limit });
 }
 export function getAiRunRequest(runId: string) {

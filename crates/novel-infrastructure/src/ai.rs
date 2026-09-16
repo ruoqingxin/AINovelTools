@@ -2102,6 +2102,8 @@ impl ProjectManager {
         if changed == 0 {
             return Err(AiError::MissingRun(run_id));
         }
+        self.prune_ai_request_snapshots()
+            .map_err(AiError::from)?;
         Ok(())
     }
 
@@ -2183,6 +2185,8 @@ impl ProjectManager {
             rusqlite::params![proposal_id.to_string(), task_id.to_string(), context.chapter_id.to_string(), action_str(context.action), review_purpose, context.target_revision_id.map(|id| id.to_string()), context.context_version, context.prompt_version, output_text],
         ).map_err(DatabaseError::from)?;
         transaction.commit().map_err(DatabaseError::from)?;
+        self.prune_ai_request_snapshots()
+            .map_err(AiError::from)?;
         self.get_ai_proposal(proposal_id)
     }
 
@@ -2213,6 +2217,8 @@ impl ProjectManager {
                 rusqlite::params![run_id.to_string(), status, error.code()],
             )
             .map_err(DatabaseError::from)?;
+        self.prune_ai_request_snapshots()
+            .map_err(AiError::from)?;
         Ok(())
     }
 
@@ -2261,6 +2267,8 @@ impl ProjectManager {
         if changed == 0 {
             return Err(AiError::InvalidResponse);
         }
+        self.prune_ai_request_snapshots()
+            .map_err(AiError::from)?;
         Ok(())
     }
 
@@ -2368,8 +2376,11 @@ impl ProjectManager {
         Ok(())
     }
 
-    pub fn list_ai_runs(&self, limit: u32) -> Result<Vec<AiRun>, AiError> {
+    pub fn list_ai_runs(&self, limit: Option<u32>) -> Result<Vec<AiRun>, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
+        let limit = limit
+            .map(|value| i64::from(value.clamp(1, 100)))
+            .unwrap_or(-1);
         let mut statement = session
             .database
             .connection
@@ -2387,7 +2398,7 @@ impl ProjectManager {
             )
             .map_err(DatabaseError::from)?;
         let rows = statement
-            .query_map([i64::from(limit.clamp(1, 100))], |row| {
+            .query_map([limit], |row| {
                 let id = Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
                         0,
@@ -3602,7 +3613,9 @@ mod tests {
             )
             .expect("delete model profile");
 
-        let runs = manager.list_ai_runs(10).expect("list run history");
+        let runs = manager
+            .list_ai_runs(Some(10))
+            .expect("list run history");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].id, run_id);
         assert_eq!(runs[0].profile_name, "已删除模型");

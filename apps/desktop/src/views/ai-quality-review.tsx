@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { errorMessage, getAiQualitySummary } from "../lib/tauri-client";
 
-const QUALITY_DAYS = 90;
-const QUALITY_GROUP_LIMIT = 20;
+export const QUALITY_DAYS = 90;
+export const QUALITY_GROUP_LIMIT = 20;
 
 const RUN_ACTION_LABELS: Record<string, string> = {
   DRAFT: "整章创作",

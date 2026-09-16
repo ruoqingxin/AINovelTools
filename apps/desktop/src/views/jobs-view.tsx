@@ -1,10 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellOff, ChartNoAxesCombined, ClipboardList, History, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
+import { BellOff, ChartNoAxesCombined, ClipboardList, History, Info, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
 import { useEffect, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { formatCost } from "../lib/ai-cost-estimate";
 import { acknowledgeFailedJobs, cancelJob, enqueueJob, errorMessage, getAiRunRequest, getPlanningAiJobRequest, listAiRuns, listJobEvents, listJobs, retryJob, runNextJob, type AiRun, type Job, type JobType, type PlanningAiJobInput } from "../lib/tauri-client";
-import { AiQualityReview } from "./ai-quality-review";
+import { AiQualityReview, QUALITY_DAYS, QUALITY_GROUP_LIMIT } from "./ai-quality-review";
+
+const JOB_HISTORY_LIMIT = 100;
+const AI_RUN_HISTORY_LIMIT = 100;
 
 const systemTypes: JobType[] = ["BACKUP", "RESTORE_VERIFY", "HEALTH_SCAN", "REBUILD_SEARCH_INDEX"];
 const typeLabels: Record<JobType, string> = {
@@ -108,12 +111,13 @@ function AiRunsHistory() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showRequest, setShowRequest] = useState(false);
   const runs = useQuery({
-    queryKey: ["ai-runs", 80],
-    queryFn: () => listAiRuns(80),
+    queryKey: ["ai-runs", "ALL"],
+    queryFn: () => listAiRuns(),
     refetchInterval: 3_000,
   });
   const filteredRuns = (runs.data ?? []).filter((run) => source === "ALL" || run.source === source);
-  const selected = filteredRuns.find((run) => run.id === selectedId) ?? filteredRuns[0] ?? null;
+  const displayedRuns = filteredRuns.slice(0, AI_RUN_HISTORY_LIMIT);
+  const selected = displayedRuns.find((run) => run.id === selectedId) ?? displayedRuns[0] ?? null;
   const requestPreview = useQuery({
     queryKey: ["ai-run-request", selected?.id],
     queryFn: () => getAiRunRequest(selected!.id),
@@ -134,9 +138,9 @@ function AiRunsHistory() {
       </div>
       <button className="icon-command" type="button" onClick={() => void runs.refetch()} disabled={runs.isFetching} aria-label="刷新 AI 运行记录" title="刷新 AI 运行记录"><RefreshCw size={14} /></button>
     </div>
-    {runs.isPending ? <p className="plan-empty">正在加载 AI 运行记录…</p> : runs.isError ? <p className="project-error" role="alert">AI 运行记录加载失败：{errorMessage(runs.error)}</p> : filteredRuns.length ? <div className="jobs-workspace ai-runs-workspace">
+    {runs.isPending ? <p className="plan-empty">正在加载 AI 运行记录…</p> : runs.isError ? <p className="project-error" role="alert">AI 运行记录加载失败：{errorMessage(runs.error)}</p> : displayedRuns.length ? <div className="jobs-workspace ai-runs-workspace">
       <div className="ai-run-list jobs-list">
-        {filteredRuns.map((run) => {
+        {displayedRuns.map((run) => {
           const duration = formatRunDuration(run.createdAt, run.finishedAt);
           const estimatedTokens = run.estimatedInputTokens + run.estimatedOutputTokens;
           const failure = run.errorCode ? classifyAiFailure(run.errorCode) : null;
@@ -172,7 +176,7 @@ function AiRunsHistory() {
           </dl>
           <section className="job-request-preview">
             <button type="button" className="job-request-toggle" aria-expanded={showRequest} onClick={() => setShowRequest((value) => !value)}><span>AI 最终收到的请求</span><small>{showRequest ? "收起" : "查看完整请求"}</small></button>
-            {showRequest ? requestPreview.isPending ? <p>正在读取最终请求…</p> : requestPreview.isError ? <p className="project-error">读取失败：{errorMessage(requestPreview.error)}</p> : requestPreview.data?.requestBody ? <div className="job-request-content"><div className="job-request-meta"><span><b>POST</b>{requestPreview.data.endpoint}</span><small>估算输入 {selected.estimatedInputTokens.toLocaleString()} tokens</small></div><pre>{requestPreview.data.requestBody}</pre><p>请求体来自实际执行快照；Authorization 与 API Key 不会记录。</p></div> : <div className="job-request-empty"><strong>{selected.status === "RUNNING" ? "请求准备中" : "未记录请求快照"}</strong><span>{selected.status === "RUNNING" ? "请求发出前后，这里会显示 AI 实际收到的完整 JSON。" : "该运行早于请求快照功能，或请求模型前已经失败。"}</span></div> : null}
+            {showRequest ? requestPreview.isPending ? <p>正在读取最终请求…</p> : requestPreview.isError ? <p className="project-error">读取失败：{errorMessage(requestPreview.error)}</p> : requestPreview.data?.requestBody ? <div className="job-request-content"><div className="job-request-meta"><span><b>POST</b>{requestPreview.data.endpoint}</span><small>估算输入 {selected.estimatedInputTokens.toLocaleString()} tokens</small></div><pre>{requestPreview.data.requestBody}</pre><p>请求体来自实际执行快照；Authorization 与 API Key 不会记录。</p></div> : <div className="job-request-empty"><strong>{selected.status === "RUNNING" ? "请求准备中" : "未记录请求快照"}</strong><span>{selected.status === "RUNNING" ? "请求发出前后，这里会显示 AI 实际收到的完整 JSON。" : "该运行早于请求快照功能、请求模型前已经失败，或完整快照已超出最近 100 条保留范围。"}</span></div> : null}
           </section>
         </> : <div className="jobs-empty"><History size={22} /><span>选择一条运行记录查看详情</span></div>}
       </aside>
@@ -189,8 +193,9 @@ export function JobsView() {
   const [showRequest, setShowRequest] = useState(false);
   const action = useMutation({ mutationFn: (fn: () => Promise<unknown>) => fn(), onSettled: () => client.invalidateQueries({ queryKey: ["jobs"] }) });
   const filteredJobs = (jobs.data ?? []).filter((job) => filter === "ALL" || (filter === "AI" ? isAiJob(job) : !isAiJob(job)));
+  const displayedJobs = filteredJobs.slice(0, JOB_HISTORY_LIMIT);
   const unacknowledgedFailedCount = (jobs.data ?? []).filter((job) => job.status === "FAILED" && !job.acknowledgedAt).length;
-  const selected = (jobs.data ?? []).find((job) => job.id === selectedId) ?? filteredJobs[0] ?? null;
+  const selected = displayedJobs.find((job) => job.id === selectedId) ?? displayedJobs[0] ?? null;
   const events = useQuery({ queryKey: ["job-events", selected?.id], queryFn: () => listJobEvents(selected!.id), enabled: Boolean(selected), refetchInterval: selected?.status === "RUNNING" || selected?.status === "QUEUED" ? 1000 : false });
   const requestPreview = useQuery({
     queryKey: ["planning-ai-request", selected?.id],
@@ -224,6 +229,24 @@ export function JobsView() {
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}${hash}`);
   }
 
+  const recordGuide = recordView === "JOBS"
+      ? {
+          title: "后台任务",
+          description: "记录后台调度任务的排队、进度、重试和执行日志，包括规划推导、规划文件处理和系统维护；正文书写等直接操作不会创建后台任务，但会产生 AI 运行记录。",
+          limit: `已结束任务只保留最近 ${JOB_HISTORY_LIMIT} 个；排队中和执行中的任务不会清理`,
+        }
+    : recordView === "AI_RUNS"
+      ? {
+          title: "AI 运行记录",
+          description: "每次实际调用模型单独记录一条，包含模型、尝试与回退、token、费用和最终请求快照；直接创作也会在这里留下记录，不等同于后台任务。",
+          limit: `模型、token、费用和状态统计长期保留；页面展示及完整请求快照各保留最近 ${AI_RUN_HISTORY_LIMIT} 条`,
+        }
+      : {
+          title: "质量回顾",
+          description: "按任务、模型和提示词版本聚合候选、评价、校验问题与采用率，用来看配置效果，不替代逐条运行明细。",
+          limit: `最近 ${QUALITY_DAYS} 天 · 最多 ${QUALITY_GROUP_LIMIT} 组`,
+        };
+
   return <section className="jobs-view">
     <div className="workspace-heading workspace-heading-with-action"><div><p className="eyebrow">后台工作</p><h1>任务</h1><p className="workspace-lede">规划、正文创作、知识提炼和系统维护记录都可以在这里查看。</p></div>{recordView === "JOBS" ? <button className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => runNextJob())} disabled={action.isPending}><Play size={15} />执行下一项系统任务</button> : <a className="secondary-action" href="/settings#ai-usage">查看用量与预算</a>}</div>
     <div className="jobs-view-switch" role="tablist" aria-label="任务记录类型">
@@ -231,12 +254,17 @@ export function JobsView() {
       <button type="button" role="tab" aria-selected={recordView === "AI_RUNS"} data-active={recordView === "AI_RUNS" || undefined} onClick={() => selectRecordView("AI_RUNS")}>AI 运行记录</button>
       <button type="button" role="tab" aria-selected={recordView === "QUALITY"} data-active={recordView === "QUALITY" || undefined} onClick={() => selectRecordView("QUALITY")}><ChartNoAxesCombined size={14} />质量回顾</button>
     </div>
+    <div className="jobs-record-guide" data-view={recordView}>
+      <Info size={14} />
+      <div><strong>{recordGuide.title}</strong><span>{recordGuide.description}</span></div>
+      <small>{recordGuide.limit}</small>
+    </div>
     {recordView === "AI_RUNS" ? <AiRunsHistory /> : recordView === "QUALITY" ? <AiQualityReview /> : <>
       <div className="jobs-toolbar"><div className="jobs-filters" aria-label="任务分类">{(["ALL", "AI", "SYSTEM"] as const).map((value) => <button type="button" key={value} data-active={filter === value || undefined} onClick={() => { setFilter(value); setSelectedId(null); }}>{value === "ALL" ? "全部" : value === "AI" ? "AI 任务" : "系统任务"}</button>)}</div><div className="jobs-toolbar-actions">{unacknowledgedFailedCount ? <button className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => acknowledgeFailedJobs())} disabled={action.isPending}><BellOff size={14} />清除失败提醒 {unacknowledgedFailedCount}</button> : null}<button className="icon-command" type="button" onClick={() => void jobs.refetch()} disabled={jobs.isFetching} aria-label="刷新任务" title="刷新任务"><RefreshCw size={14} /></button></div></div>
       <details className="jobs-system-create"><summary>新建系统任务</summary><div>{systemTypes.map((type) => <button key={type} className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => enqueueJob(type))} disabled={action.isPending}>{typeLabels[type]}</button>)}</div></details>
       {action.isError ? <p className="project-error" role="alert">任务操作失败：{errorMessage(action.error)}</p> : null}
       {jobs.isPending ? <p className="plan-empty">正在加载任务…</p> : jobs.isError ? <p className="project-error" role="alert">加载失败：{errorMessage(jobs.error)}</p> : <div className="jobs-workspace">
-      <div className="jobs-list">{filteredJobs.length ? filteredJobs.map((job) => <article className="job-row" data-selected={selected?.id === job.id || undefined} key={job.id} role="button" tabIndex={0} aria-pressed={selected?.id === job.id} aria-label={`${typeLabels[job.jobType]}，${statusLabels[job.status]}，进度 ${job.progress}%`} onClick={() => setSelectedId(job.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(job.id); } }}><div className="job-main"><strong>{typeLabels[job.jobType]}</strong><small>{jobSummary(job)}</small><code>{job.id.slice(0, 8)}</code></div><span className={`job-status job-${job.status.toLowerCase()}`}>{statusLabels[job.status]}</span><div className="job-progress"><span style={{ width: `${job.progress}%` }} /></div><small>{job.progress}% · 尝试 {job.attemptCount}</small><div className="job-actions">{job.status === "FAILED" ? <button className="icon-action" type="button" title="重试" aria-label="重试" disabled={action.isPending} onClick={(event) => { event.stopPropagation(); void action.mutateAsync(() => retryJob(job.id)); }}><RotateCcw size={14} /></button> : null}{job.status === "QUEUED" || job.status === "RUNNING" ? <button className="icon-action" type="button" title="取消" aria-label="取消" disabled={action.isPending} onClick={(event) => { event.stopPropagation(); void action.mutateAsync(() => cancelJob(job.id)); }}><Square size={14} /></button> : null}</div></article>) : <div className="jobs-empty"><ClipboardList size={22} /><span>当前分类还没有任务</span></div>}</div>
+      <div className="jobs-list">{displayedJobs.length ? displayedJobs.map((job) => <article className="job-row" data-selected={selected?.id === job.id || undefined} key={job.id} role="button" tabIndex={0} aria-pressed={selected?.id === job.id} aria-label={`${typeLabels[job.jobType]}，${statusLabels[job.status]}，进度 ${job.progress}%`} onClick={() => setSelectedId(job.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(job.id); } }}><div className="job-main"><strong>{typeLabels[job.jobType]}</strong><small>{jobSummary(job)}</small><code>{job.id.slice(0, 8)}</code></div><span className={`job-status job-${job.status.toLowerCase()}`}>{statusLabels[job.status]}</span><div className="job-progress"><span style={{ width: `${job.progress}%` }} /></div><small>{job.progress}% · 尝试 {job.attemptCount}</small><div className="job-actions">{job.status === "FAILED" ? <button className="icon-action" type="button" title="重试" aria-label="重试" disabled={action.isPending} onClick={(event) => { event.stopPropagation(); void action.mutateAsync(() => retryJob(job.id)); }}><RotateCcw size={14} /></button> : null}{job.status === "QUEUED" || job.status === "RUNNING" ? <button className="icon-action" type="button" title="取消" aria-label="取消" disabled={action.isPending} onClick={(event) => { event.stopPropagation(); void action.mutateAsync(() => cancelJob(job.id)); }}><Square size={14} /></button> : null}</div></article>) : <div className="jobs-empty"><ClipboardList size={22} /><span>当前分类还没有任务</span></div>}</div>
       <aside className="job-detail" aria-label="任务详情">{selected ? <><div className="job-detail-heading"><div><span>{typeLabels[selected.jobType]}</span><h2>{jobSummary(selected)}</h2></div><span className={`job-status job-${selected.status.toLowerCase()}`}>{statusLabels[selected.status]}</span></div><dl><div><dt>任务编号</dt><dd>{selected.id}</dd></div><div><dt>创建时间</dt><dd>{new Date(selected.createdAt).toLocaleString()}</dd></div><div><dt>更新时间</dt><dd>{new Date(selected.updatedAt).toLocaleString()}</dd></div>{planningInput(selected) ? <div><dt>目标节点</dt><dd>{planningInput(selected)!.sectionTitle}</dd></div> : null}</dl>{isAiJob(selected) ? <section className="job-request-preview"><button type="button" className="job-request-toggle" aria-expanded={showRequest} onClick={() => setShowRequest((value) => !value)}><span>AI 最终收到的请求</span><small>{showRequest ? "收起" : "查看完整请求"}</small></button>{showRequest ? requestPreview.isPending ? <p>正在读取最终请求…</p> : requestPreview.isError ? <p className="project-error">读取失败：{errorMessage(requestPreview.error)}</p> : requestPreview.data?.requestBody ? <div className="job-request-content"><div className="job-request-meta"><span><b>POST</b>{requestPreview.data.endpoint}</span>{requestPreview.data.estimatedInputTokens !== null ? <small>估算输入 {requestPreview.data.estimatedInputTokens} tokens</small> : null}</div><pre>{requestPreview.data.requestBody}</pre><p>请求体来自实际执行快照；Authorization 与 API Key 不会记录。</p></div> : <div className="job-request-empty"><strong>{selected.status === "QUEUED" ? "尚未发送" : "未记录执行快照"}</strong><span>{selected.status === "QUEUED" ? "任务开始请求模型后，这里会显示 AI 实际收到的完整 JSON。" : "旧任务或请求模型前失败的任务没有最终请求记录。"}</span></div> : null}</section> : null}<div className="job-detail-progress"><div><strong>执行进度</strong><span>{selected.progress}%</span></div><div className="job-progress"><span style={{ width: `${selected.progress}%` }} /></div></div>{selected.errorSummary ? <p className="project-error">{selected.errorSummary}</p> : null}<div className="job-log-heading"><strong>运行日志</strong><span>{events.data?.length ?? 0} 条</span></div><div className="job-log">{events.isPending ? <p>正在加载日志…</p> : events.data?.length ? events.data.map((event) => <div className="job-log-entry" key={event.id}><span>{event.progress}%</span><div><strong>{stageLabels[event.stage] ?? event.stage}</strong><p>{event.message}</p><small>{new Date(event.createdAt).toLocaleString()}</small></div></div>) : <p>该任务还没有阶段日志。</p>}</div></> : <div className="jobs-empty"><ClipboardList size={22} /><span>选择一个任务查看详情</span></div>}</aside>
       </div>}
     </>}

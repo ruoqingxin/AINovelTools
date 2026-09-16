@@ -24,6 +24,9 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
+const JOB_HISTORY_RETENTION: usize = 100;
+const AI_REQUEST_SNAPSHOT_RETENTION: usize = 100;
+
 mod ai;
 mod context_store;
 mod database;
@@ -1326,36 +1329,82 @@ impl ProjectManager {
         job_type: JobType,
         payload: String,
     ) -> Result<Job, DatabaseError> {
+        let job = {
+            let session = self
+                .current
+                .as_mut()
+                .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+            let payload_value: serde_json::Value = serde_json::from_str(&payload).map_err(|_| {
+                rusqlite::Error::InvalidParameterName("job payload must be valid JSON".into())
+            })?;
+            if !payload_value.is_object() {
+                return Err(DatabaseError::Sqlite(
+                    rusqlite::Error::InvalidParameterName(
+                        "job payload must be a JSON object".into(),
+                    ),
+                ));
+            }
+            let job = Job {
+                id: Uuid::new_v4(),
+                job_type,
+                payload,
+                status: JobStatus::Queued,
+                progress: 0,
+                attempt_count: 0,
+                cancel_requested: false,
+                error_summary: None,
+                created_at: now_timestamp(),
+                updated_at: now_timestamp(),
+                acknowledged_at: None,
+            };
+            session.database.connection.execute(
+                "INSERT INTO jobs (id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary) VALUES (?1, ?2, ?3, 'QUEUED', 0, 0, 0, NULL)",
+                rusqlite::params![job.id.to_string(), job_type_str(job.job_type), job.payload],
+            )?;
+            job
+        };
+        self.prune_jobs()?;
+        Ok(job)
+    }
+
+    fn prune_jobs(&self) -> Result<(), DatabaseError> {
         let session = self
             .current
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
-        let payload_value: serde_json::Value = serde_json::from_str(&payload).map_err(|_| {
-            rusqlite::Error::InvalidParameterName("job payload must be valid JSON".into())
-        })?;
-        if !payload_value.is_object() {
-            return Err(DatabaseError::Sqlite(
-                rusqlite::Error::InvalidParameterName("job payload must be a JSON object".into()),
-            ));
-        }
-        let job = Job {
-            id: Uuid::new_v4(),
-            job_type,
-            payload,
-            status: JobStatus::Queued,
-            progress: 0,
-            attempt_count: 0,
-            cancel_requested: false,
-            error_summary: None,
-            created_at: now_timestamp(),
-            updated_at: now_timestamp(),
-            acknowledged_at: None,
-        };
         session.database.connection.execute(
-            "INSERT INTO jobs (id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary) VALUES (?1, ?2, ?3, 'QUEUED', 0, 0, 0, NULL)",
-            rusqlite::params![job.id.to_string(), job_type_str(job.job_type), job.payload],
+            "DELETE FROM jobs
+             WHERE status IN ('SUCCEEDED','FAILED','CANCELLED')
+               AND id NOT IN (
+                 SELECT id FROM jobs
+                 WHERE status IN ('SUCCEEDED','FAILED','CANCELLED')
+                 ORDER BY updated_at DESC, rowid DESC
+                 LIMIT ?1
+               )",
+            [i64::try_from(JOB_HISTORY_RETENTION).unwrap_or(100)],
         )?;
-        Ok(job)
+        Ok(())
+    }
+
+    pub(crate) fn prune_ai_request_snapshots(&self) -> Result<(), DatabaseError> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::InvalidQuery))?;
+        session.database.connection.execute(
+            "UPDATE ai_run_records
+             SET request_endpoint=NULL, request_body=NULL
+             WHERE status <> 'RUNNING'
+               AND (request_endpoint IS NOT NULL OR request_body IS NOT NULL)
+               AND id NOT IN (
+                 SELECT id FROM ai_run_records
+                 WHERE status <> 'RUNNING'
+                 ORDER BY created_at DESC, rowid DESC
+                 LIMIT ?1
+               )",
+            [i64::try_from(AI_REQUEST_SNAPSHOT_RETENTION).unwrap_or(100)],
+        )?;
+        Ok(())
     }
 
     pub fn list_jobs(&self) -> Result<Vec<Job>, DatabaseError> {
@@ -1490,11 +1539,18 @@ impl ProjectManager {
             "UPDATE jobs SET status=?1, progress=?2, error_summary=?3, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?4",
             rusqlite::params![job_status_str(status), progress, error_summary, id.to_string()],
         )?;
-        session.database.connection.query_row(
+        let job = session.database.connection.query_row(
             "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs WHERE id=?1",
             [id.to_string()],
             read_job,
-        ).map_err(DatabaseError::from)
+        ).map_err(DatabaseError::from)?;
+        if matches!(
+            status,
+            JobStatus::Succeeded | JobStatus::Failed | JobStatus::Cancelled
+        ) {
+            self.prune_jobs()?;
+        }
+        Ok(job)
     }
 
     /// Marks the current failed jobs as reviewed without changing their status.
@@ -1526,11 +1582,15 @@ impl ProjectManager {
             "UPDATE jobs SET cancel_requested=1, status=CASE WHEN status='QUEUED' THEN 'CANCELLED' ELSE status END, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status IN ('QUEUED','RUNNING')",
             [id.to_string()],
         )?;
-        session.database.connection.query_row(
+        let job = session.database.connection.query_row(
             "SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested, error_summary, created_at, updated_at, acknowledged_at FROM jobs WHERE id=?1",
             [id.to_string()],
             read_job,
-        ).map_err(DatabaseError::from)
+        ).map_err(DatabaseError::from)?;
+        if job.status == JobStatus::Cancelled {
+            self.prune_jobs()?;
+        }
+        Ok(job)
     }
 
     pub fn retry_job(&mut self, id: Uuid) -> Result<Job, DatabaseError> {
@@ -1724,6 +1784,8 @@ impl ProjectManager {
             database,
         });
         self.recover_unfinished_jobs()?;
+        self.prune_jobs()?;
+        self.prune_ai_request_snapshots()?;
         self.record_recent_project(&root, &result)?;
         Ok(result)
     }
@@ -3241,6 +3303,66 @@ mod tests {
     }
 
     #[test]
+    fn job_history_keeps_latest_hundred_terminal_jobs_and_preserves_active_jobs() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-job-retention-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "任务保留测试").expect("create");
+
+        let mut terminal_jobs = Vec::new();
+        for _ in 0..105 {
+            terminal_jobs.push(
+                manager
+                    .enqueue_job(super::JobType::HealthScan, "{}".into())
+                    .expect("enqueue terminal job"),
+            );
+        }
+        let active_job = manager
+            .enqueue_job(super::JobType::Backup, "{}".into())
+            .expect("enqueue active job");
+        manager
+            .append_job_event(terminal_jobs[0].id, "QUEUED", "将被清理", 0)
+            .expect("append event");
+
+        for job in &terminal_jobs {
+            manager
+                .update_job_status(job.id, super::JobStatus::Running, 5, None)
+                .expect("start job");
+            manager
+                .update_job_status(job.id, super::JobStatus::Succeeded, 100, None)
+                .expect("finish job");
+        }
+
+        let jobs = manager.list_jobs().expect("list jobs");
+        assert_eq!(
+            jobs.iter()
+                .filter(|job| job.status == super::JobStatus::Succeeded)
+                .count(),
+            super::JOB_HISTORY_RETENTION
+        );
+        assert!(
+            jobs.iter()
+                .any(|job| job.id == active_job.id && job.status == super::JobStatus::Queued)
+        );
+        assert!(manager.get_job(terminal_jobs[0].id).is_err());
+        assert!(manager.get_job(terminal_jobs[5].id).is_ok());
+        let event_count: i64 = manager
+            .current
+            .as_ref()
+            .expect("open project")
+            .database
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM job_events WHERE job_id=?1",
+                [terminal_jobs[0].id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("count cascaded events");
+        assert_eq!(event_count, 0);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn ai_jobs_use_a_separate_queue_and_persist_stage_events() {
         let root = std::path::PathBuf::from("target")
             .join(format!("ainovel-ai-jobs-{}", uuid::Uuid::new_v4()));
@@ -3597,7 +3719,7 @@ mod tests {
             .complete_ai_task(task_id, &context, "新的段落。".into(), None)
             .expect("proposal");
         assert_eq!(proposal.status, super::AiProposalStatus::Pending);
-        let runs = manager.list_ai_runs(10).expect("runs");
+        let runs = manager.list_ai_runs(Some(10)).expect("runs");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].task_key, "writing");
         assert_eq!(runs[0].source, "WRITING");
@@ -3965,7 +4087,7 @@ mod tests {
                 .allowed
         );
         assert_eq!(
-            manager.list_ai_runs(10).expect("runs")[0].task_key,
+            manager.list_ai_runs(Some(10)).expect("runs")[0].task_key,
             "consistencyReview"
         );
         let _ = std::fs::remove_dir_all(root);
@@ -4157,7 +4279,7 @@ mod tests {
             .record_ai_run_fallback(run_id, fallback.id, "PROVIDER_TIMEOUT")
             .expect("fallback");
         manager.complete_ai_run(run_id, None, 500).expect("complete");
-        let runs = manager.list_ai_runs(10).expect("runs");
+        let runs = manager.list_ai_runs(Some(10)).expect("runs");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].task_key, "workDesign");
         assert_eq!(runs[0].source, "PLANNING");
@@ -4176,6 +4298,89 @@ mod tests {
             request.request_body.as_deref(),
             Some(r#"{"model":"deepseek-v4-flash","messages":[]}"#)
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ai_history_retains_stats_and_limits_request_snapshots_to_latest_hundred() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-ai-run-retention-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager.create(&root, "AI 运行保留测试").expect("create");
+
+        let mut run_ids = Vec::new();
+        for index in 0..105_i64 {
+            let run_id = uuid::Uuid::new_v4();
+            manager
+                .current
+                .as_ref()
+                .expect("open project")
+                .database
+                .connection
+                .execute(
+                    "INSERT INTO ai_run_records (
+                        id, task_key, source, display_title, profile_id, action, status,
+                        estimated_input_tokens, estimated_output_tokens, price_currency, prompt_version
+                     ) VALUES (?1, 'writing', 'WRITING', ?2, NULL, 'DRAFT', 'COMPLETED', ?3, ?4, 'USD', 'test-v1')",
+                    rusqlite::params![
+                        run_id.to_string(),
+                        format!("run-{index}"),
+                        index + 1,
+                        (index + 1) * 2
+                    ],
+                )
+                .expect("insert run");
+            run_ids.push(run_id);
+        }
+
+        for run_id in &run_ids {
+            manager
+                .record_ai_run_request(
+                    *run_id,
+                    "https://api.example.com/chat/completions",
+                    r#"{"model":"test-model","messages":[]}"#,
+                )
+                .expect("record request snapshot");
+        }
+
+        let (run_count, snapshot_count, input_tokens, output_tokens): (i64, i64, i64, i64) =
+            manager
+                .current
+                .as_ref()
+                .expect("open project")
+                .database
+                .connection
+                .query_row(
+                    "SELECT COUNT(*),
+                            COUNT(request_body),
+                            COALESCE(SUM(estimated_input_tokens), 0),
+                            COALESCE(SUM(estimated_output_tokens), 0)
+                     FROM ai_run_records",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .expect("read retention summary");
+        assert_eq!(run_count, 105);
+        assert_eq!(
+            snapshot_count,
+            i64::try_from(super::AI_REQUEST_SNAPSHOT_RETENTION).expect("retention fits i64")
+        );
+        assert_eq!(input_tokens, (1..=105).sum::<i64>());
+        assert_eq!(output_tokens, (1..=105).map(|value| value * 2).sum::<i64>());
+
+        let oldest = manager
+            .get_ai_run_request(run_ids[0])
+            .expect("old request");
+        assert!(oldest.endpoint.is_none());
+        assert!(oldest.request_body.is_none());
+        let newest = manager
+            .get_ai_run_request(run_ids[104])
+            .expect("new request");
+        assert_eq!(
+            newest.endpoint.as_deref(),
+            Some("https://api.example.com/chat/completions")
+        );
+        assert!(newest.request_body.is_some());
         let _ = std::fs::remove_dir_all(root);
     }
 
