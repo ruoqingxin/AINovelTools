@@ -3954,23 +3954,26 @@ textarea:focus-visible,
 .ai-task-scope-row { display:flex; align-items:center; flex-wrap:wrap; gap:9px; padding:9px 11px; border:1px solid #dbe5f3; border-radius:7px; background:#fbfdff; }
 .ai-task-scope-row > strong { color:#405a7f; font-size:10px; }
 .ai-task-scope-row > small { color:#8294b1; font-size:9px; }
-.ai-task-workbench { display:grid; grid-template-columns:220px minmax(0,1fr); min-height:390px; border:1px solid #d7e2f2; border-radius:8px; overflow:hidden; background:#fff; }
-.ai-task-selector { display:grid; align-content:start; gap:3px; padding:8px; border-right:1px solid #dfe7f3; background:#f8fbff; }
-.ai-task-selector button { display:grid; width:100%; min-width:0; gap:3px; padding:9px 10px; border:1px solid transparent; border-radius:5px; color:#647895; background:transparent; text-align:left; }
+.ai-task-workbench { display:grid; grid-template-columns:1fr; border:1px solid #d7e2f2; border-radius:8px; overflow:hidden; background:#fff; }
+.ai-task-selector { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); align-content:start; gap:5px; padding:8px; border-bottom:1px solid #dfe7f3; background:#f8fbff; }
+.ai-task-selector button { display:grid; width:100%; min-width:0; gap:3px; padding:8px 9px; border:1px solid transparent; border-radius:5px; color:#647895; background:transparent; text-align:left; }
 .ai-task-selector button:hover { background:#f1f6ff; }
 .ai-task-selector button[data-active] { border-color:#b9cef2; color:#285dcb; background:#fff; box-shadow:inset 3px 0 0 #3f78f6; }
 .ai-task-selector strong { color:#405a7f; font-size:11px; }
 .ai-task-selector button[data-active] strong { color:#285dcb; }
 .ai-task-selector small { overflow:hidden; color:#8294b1; font-size:9px; line-height:1.4; text-overflow:ellipsis; white-space:nowrap; }
 .ai-task-selector span { overflow:hidden; color:#7183a0; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
-.ai-task-editor { display:grid; align-content:start; gap:15px; min-width:0; padding:18px; }
+.ai-task-editor { display:grid; align-content:start; gap:13px; min-width:0; padding:16px 18px; }
 .ai-task-editor-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding-bottom:13px; border-bottom:1px solid #e4eaf3; }
 .ai-task-editor-heading > div { display:grid; min-width:0; gap:4px; }
 .ai-task-editor-heading > div:last-child { justify-items:end; text-align:right; }
 .ai-task-editor-heading strong { color:#30496f; font-size:14px; }
 .ai-task-editor-heading span,.ai-task-editor-heading small { color:#8294b1; font-size:10px; line-height:1.45; }
-.ai-task-main-fields { display:grid; grid-template-columns:minmax(220px,1.6fr) minmax(72px,.45fr) minmax(110px,.65fr); gap:9px; }
-.ai-task-main-fields label { display:grid; min-width:0; gap:5px; color:#7a8ca9; font-size:9px; }
+.ai-task-reset { display:inline-flex; width:26px; height:26px; align-items:center; justify-content:center; justify-self:end; padding:0; border:1px solid #d4dfef; border-radius:5px; color:#55759e; background:#fff; }
+.ai-task-reset:hover { border-color:#8daff0; color:#2f68d1; background:#edf3ff; }
+.ai-task-main-fields { display:grid; grid-template-columns:minmax(280px,1.6fr) minmax(120px,.55fr) minmax(160px,.8fr); gap:12px; }
+.ai-task-main-fields label { display:grid; min-width:0; grid-template-rows:12px 36px 28px; gap:5px; color:#7a8ca9; font-size:9px; }
+.ai-task-main-fields small { padding-top:1px; color:#8a9bb3; font-size:9px; line-height:1.35; }
 .ai-task-main-fields select,.ai-task-main-fields input,.ai-task-optional-settings select { width:100%; min-width:0; height:36px; padding:0 10px; border:1px solid #c6d5eb; border-radius:6px; color:#405a7f; background:#fff; font:inherit; font-size:11px; }
 .ai-task-main-fields select:focus,.ai-task-main-fields input:focus,.ai-task-optional-settings select:focus { outline:2px solid #c7dafb; outline-offset:1px; border-color:#7ea6ec; }
 .ai-task-editor-actions { display:flex; min-height:20px; align-items:center; }
@@ -4158,6 +4161,7 @@ textarea:focus-visible,
   .brand-lockup { min-width:150px; }
   .top-nav-button { padding:0 8px; }
   .project-context { display:none; }
+  .ai-task-selector { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .ai-task-routing-row { grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr); }
   .ai-task-tuning-fields { grid-column:1 / -1; }
   .ai-task-routing-meta { align-items:start; }

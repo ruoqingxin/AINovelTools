@@ -326,7 +326,7 @@ describe("SettingsView", () => {
     }));
   });
 
-  it("edits and preserves per-task prompt, variables, context switches, and budget", async () => {
+  it("hides advanced prompt controls from routine task configuration", async () => {
     mocks.listModelProfiles.mockResolvedValue([
       {
         id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
@@ -341,28 +341,9 @@ describe("SettingsView", () => {
     await screen.findByRole("heading", { name: "AI 任务模型" });
     await screen.findByLabelText("作品设定温度");
     fireEvent.click(screen.getByRole("tab", { name: /正文书写/ }));
-    fireEvent.click(screen.getByText("备用模型和高级设置"));
-
-    fireEvent.change(screen.getByLabelText(/系统提示词覆盖/), { target: { value: "保持第一人称，克制表达。" } });
-    fireEvent.change(screen.getByLabelText(/自定义任务模板/), { target: { value: "章节 {{chapterTitle}}" } });
-    fireEvent.click(screen.getByRole("button", { name: "{{userInstruction}}" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /当前草稿/ }));
-    fireEvent.change(screen.getByLabelText(/输入 Token 预算/), { target: { value: "24576" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
-
-    await screen.findByText("任务模型与生成参数已保存，后续生成会立即使用新配置");
-    expect(mocks.saveAiTaskPreferences).toHaveBeenCalledWith(expect.objectContaining({
-      writing: expect.objectContaining({
-        prompt: {
-          systemPrompt: "保持第一人称，克制表达。",
-          instructionTemplate: "章节 {{chapterTitle}}{{userInstruction}}",
-          context: expect.objectContaining({
-            includeCurrentDraft: false,
-            inputTokenBudget: 24576,
-          }),
-        },
-      }),
-    }));
+    expect(screen.getByText("备用模型和高级设置")).not.toBeVisible();
+    expect(screen.getByLabelText(/系统提示词覆盖/)).not.toBeVisible();
+    expect(screen.getByLabelText(/输入 Token 预算/)).not.toBeVisible();
   });
 
   it("saves the selected task as a project-level override", async () => {

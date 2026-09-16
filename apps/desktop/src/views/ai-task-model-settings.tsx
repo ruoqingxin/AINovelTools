@@ -251,7 +251,6 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
   const effectiveProfile = selectedProfile ?? preferredProfile;
   const selectionMissing = Boolean(selectedId && !selectedProfile);
   const selectedMaxOutputLimit = maxOutputLimitForTask(selectedTask);
-  const selectedDefaults = recommendedTaskPreference(selectedTask);
   const hasProjectOverride = Boolean(projectOverrides.data?.[selectedTask]);
   const globalDirty = comparisonPreferences ? !samePreferences(draft, comparisonPreferences) : false;
   const projectDirty = projectOverrides.data?.available ? !samePreferences(projectDraft, projectBaseline) : false;
@@ -552,20 +551,17 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
         <section className="ai-task-editor">
           <div className="ai-task-editor-heading">
             <div><strong>{selectedDefinition.label}</strong><span>{selectedDefinition.description}</span></div>
-            <div><span className="ai-task-routing-state" data-ready={selectedProfile?.hasSecret || (!selectedId && preferredProfile?.hasSecret) || undefined}>{selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "模型可用" : "缺少 Key" : preferredProfile ? `自动使用 ${preferredProfile.name}` : "未配置"}</span><small>{nextRunCostLabel(estimateNextRunCost(usage.data?.byTask, selectedTask, effectiveProfile), usage.data?.days)}</small></div>
+            <div><span className="ai-task-routing-state" data-ready={selectedProfile?.hasSecret || (!selectedId && preferredProfile?.hasSecret) || undefined}>{selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "模型可用" : "缺少 Key" : preferredProfile ? `自动使用 ${preferredProfile.name}` : "未配置"}</span><small>{nextRunCostLabel(estimateNextRunCost(usage.data?.byTask, selectedTask, effectiveProfile), usage.data?.days)}</small>{hasCustomGeneration(selectedPreference, selectedTask, selectedMaxOutputLimit) ? <button type="button" className="ai-task-reset" onClick={() => clearTaskTuning(selectedTask, selectedMaxOutputLimit)} aria-label="恢复推荐参数" title={`恢复推荐值：温度 ${recommendedTaskPreference(selectedTask).temperature}，最大输出 ${Math.min(recommendedTaskPreference(selectedTask).maxOutputTokens ?? selectedMaxOutputLimit, selectedMaxOutputLimit)}`}><RotateCcw size={13} /></button> : null}</div>
           </div>
           <div className="ai-task-main-fields">
             <label className="ai-task-model-field"><span>使用模型</span><select value={selectedId} onChange={(event) => selectTaskProfile(selectedTask, event.target.value)} aria-label={`${selectedDefinition.label}模型`} data-missing={selectionMissing || undefined}>
               <option value="">自动选择可用模型</option>
               {chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {providerLabel(profile.provider)} · {profile.modelId}{recommendedIds[selectedTask] === profile.id ? " · 推荐" : ""}{profile.hasSecret ? "" : "（未设置 Key）"}</option>)}
-            </select></label>
-            <label><span>温度</span><input type="number" min="0" max="2" step="0.1" inputMode="decimal" value={selectedPreference.temperature ?? ""} onChange={(event) => updateTask(selectedTask, { temperature: parseTemperature(event.target.value) })} aria-label={`${selectedDefinition.label}温度`} /></label>
-            <label><span>最大输出</span><input type="number" min="1" max={selectedMaxOutputLimit} step="1" inputMode="numeric" value={selectedPreference.maxOutputTokens ?? ""} onChange={(event) => updateTask(selectedTask, { maxOutputTokens: parseMaxOutputTokens(event.target.value, selectedMaxOutputLimit) })} placeholder={selectedProfile ? `最大 ${selectedMaxOutputLimit}` : "模型默认"} aria-label={`${selectedDefinition.label}最大输出`} /></label>
+            </select><small>未指定时自动使用首选模型。</small></label>
+            <label><span>温度</span><input type="number" min="0" max="2" step="0.1" inputMode="decimal" value={selectedPreference.temperature ?? ""} onChange={(event) => updateTask(selectedTask, { temperature: parseTemperature(event.target.value) })} aria-label={`${selectedDefinition.label}温度`} /><small>越低越稳定，越高越有创意。</small></label>
+            <label><span>最大输出</span><input type="number" min="1" max={selectedMaxOutputLimit} step="1" inputMode="numeric" value={selectedPreference.maxOutputTokens ?? ""} onChange={(event) => updateTask(selectedTask, { maxOutputTokens: parseMaxOutputTokens(event.target.value, selectedMaxOutputLimit) })} placeholder={selectedProfile ? `最大 ${selectedMaxOutputLimit}` : "模型默认"} aria-label={`${selectedDefinition.label}最大输出`} /><small>单次生成上限；更高会更长、更慢。</small></label>
           </div>
-          <div className="ai-task-editor-actions">
-            {hasCustomGeneration(selectedPreference, selectedTask, selectedMaxOutputLimit) ? <button type="button" onClick={() => clearTaskTuning(selectedTask, selectedMaxOutputLimit)} title={`恢复 ${selectedDefinition.label} 的推荐值：温度 ${selectedDefaults.temperature}，最大输出 ${Math.min(selectedDefaults.maxOutputTokens ?? selectedMaxOutputLimit, selectedMaxOutputLimit)}`}><RotateCcw size={12} />恢复推荐参数</button> : <span>正在使用推荐生成参数</span>}
-          </div>
-          <details className="ai-task-optional-settings">
+          <details className="ai-task-optional-settings" hidden>
             <summary>备用模型和高级设置</summary>
             <div className="ai-task-optional-content">
               <label className="ai-task-model-field"><span>故障备用模型</span><select value={selectedPreference.fallbackProfileId ?? ""} onChange={(event) => updateTask(selectedTask, { fallbackProfileId: event.target.value || null })} aria-label={`${selectedDefinition.label}备用模型`}>
