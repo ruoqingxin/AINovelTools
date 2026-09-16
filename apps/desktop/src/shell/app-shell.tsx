@@ -23,7 +23,7 @@ const navigation = [
   { label: "正文", icon: BookOpenText, path: "/writing" as const },
   { label: "讨论", icon: MessageSquareText, path: "/discussion" as const },
   { label: "知识", icon: FileSearch, path: "/knowledge" as const },
-  { label: "审核", icon: ShieldCheck, path: "/knowledge/review" as const },
+  { label: "审核", icon: ShieldCheck, path: "/review" as const },
   { label: "搜索", icon: Search, path: "/search" as const },
   { label: "任务", icon: ListChecks, path: "/jobs" as const },
 ];

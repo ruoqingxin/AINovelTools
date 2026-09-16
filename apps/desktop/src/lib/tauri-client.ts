@@ -216,6 +216,7 @@ export type ModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_
 export type ModelCapability = "CHAT" | "EMBEDDING";
 export type PrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
 export type WritingReviewPolicy = "ADVISORY" | "BALANCED" | "REQUIRED";
+export type AuditFlowSettings = { admission: boolean; manuscript: boolean; knowledge: boolean };
 export type AiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE" | "CONSISTENCY_CHECK";
 export type ReviewPurpose = "ADMISSION" | "MANUSCRIPT";
 export type AiProposalStatus = "PENDING" | "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED";
@@ -750,6 +751,12 @@ export function getWritingReviewPolicy() {
 }
 export function saveWritingReviewPolicy(policy: WritingReviewPolicy) {
   return invoke<WritingReviewPolicy>("save_writing_review_policy", { policy });
+}
+export function getAuditFlowSettings() {
+  return invoke<AuditFlowSettings>("get_audit_flow_settings");
+}
+export function saveAuditFlowSettings(settings: AuditFlowSettings) {
+  return invoke<AuditFlowSettings>("save_audit_flow_settings", { settings });
 }
 export function getProjectAiTaskOverrides() {
   return invoke<ProjectAiTaskOverrides>("get_project_ai_task_overrides");

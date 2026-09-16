@@ -59,17 +59,17 @@ pub use extraction_store::{
 pub use knowledge_store::KnowledgeStoreError;
 pub use materials_store::MaterialsStoreError;
 pub use novel_domain::{
-    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, Belief, CandidateStatus, ChangeSet,
-    ChangeSetStatus, ChapterContract, ContextAuthority, Entity, EntityError, EntityInput,
-    EntityLifecycleStatus, EntityRevision, EntityType, Event, EvidenceAnchor, EvidenceAuthority,
-    Fact, FindingSource, Foreshadowing, KnowledgeCandidate, KnowledgeChunk, KnowledgeConflict,
-    KnowledgeConflictKind, KnowledgeContractError, KnowledgeExpansionError,
-    KnowledgeLifecycleStatus, KnowledgeVersion, ModelCapability, ModelProfile, ModelProfileInput,
-    ModelProvider, PrivacyLevel, Relation, RetrievalEvidence, RetrievalMethod, ReviewClaim,
-    ReviewClaimType, ReviewDecision, ReviewEvidence, ReviewEvidenceSource, ReviewFinding,
-    ReviewOmittedItem, ReviewPurpose, ReviewStage, ReviewStageRequest, ReviewStatus, ReviewTrace,
-    SummaryKind, SummaryMaterial, SummaryPrecision, WorldState, WorldStateEntry, WritingCard,
-    WritingReviewPolicy,
+    AiAction, AiProposal, AiProposalStatus, AiTaskStatus, AuditFlowSettings, Belief,
+    CandidateStatus, ChangeSet, ChangeSetStatus, ChapterContract, ContextAuthority, Entity,
+    EntityError, EntityInput, EntityLifecycleStatus, EntityRevision, EntityType, Event,
+    EvidenceAnchor, EvidenceAuthority, Fact, FindingSource, Foreshadowing, KnowledgeCandidate,
+    KnowledgeChunk, KnowledgeConflict, KnowledgeConflictKind, KnowledgeContractError,
+    KnowledgeExpansionError, KnowledgeLifecycleStatus, KnowledgeVersion, ModelCapability,
+    ModelProfile, ModelProfileInput, ModelProvider, PrivacyLevel, Relation, RetrievalEvidence,
+    RetrievalMethod, ReviewClaim, ReviewClaimType, ReviewDecision, ReviewEvidence,
+    ReviewEvidenceSource, ReviewFinding, ReviewOmittedItem, ReviewPurpose, ReviewStage,
+    ReviewStageRequest, ReviewStatus, ReviewTrace, SummaryKind, SummaryMaterial, SummaryPrecision,
+    WorldState, WorldStateEntry, WritingCard, WritingReviewPolicy,
 };
 pub use review_rules::{
     DeterministicReviewEvaluator, DeterministicReviewInput, FIXED_RULE_VERSION,
@@ -1845,6 +1845,35 @@ impl ProjectManager {
         Ok(policy)
     }
 
+    pub fn get_audit_flow_settings(&self) -> Result<AuditFlowSettings, ProjectError> {
+        let session = self.current.as_ref().ok_or(ProjectError::NoProject)?;
+        let metadata = session.database.project_metadata()?;
+        Ok(metadata
+            .get("auditFlowSettings")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default())
+    }
+
+    pub fn save_audit_flow_settings(
+        &mut self,
+        settings: AuditFlowSettings,
+    ) -> Result<AuditFlowSettings, ProjectError> {
+        let session = self.current.as_mut().ok_or(ProjectError::NoProject)?;
+        let mut metadata = session.database.project_metadata()?;
+        if !metadata.is_object() {
+            metadata = serde_json::json!({});
+        }
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert(
+                "auditFlowSettings".to_owned(),
+                serde_json::to_value(&settings)?,
+            );
+        }
+        session.database.save_project_metadata(&metadata)?;
+        Ok(settings)
+    }
+
     pub fn list_planning_sections(&self) -> Result<Vec<PlanningSection>, ProjectError> {
         let session = self
             .current
@@ -2462,9 +2491,22 @@ mod tests {
             manager.get_writing_review_policy().expect("default policy"),
             super::WritingReviewPolicy::Balanced
         );
+        assert_eq!(
+            manager
+                .get_audit_flow_settings()
+                .expect("default audit flow"),
+            super::AuditFlowSettings::default()
+        );
         manager
             .save_writing_review_policy(super::WritingReviewPolicy::Required)
             .expect("save policy");
+        manager
+            .save_audit_flow_settings(super::AuditFlowSettings {
+                admission: false,
+                manuscript: true,
+                knowledge: false,
+            })
+            .expect("save audit flow");
         assert_eq!(manager.close(), Some(manifest.clone()));
         let reopened = manager.open(&root).expect("reopen project");
         assert_eq!(reopened, manifest);
@@ -2473,6 +2515,16 @@ mod tests {
                 .get_writing_review_policy()
                 .expect("persisted policy"),
             super::WritingReviewPolicy::Required
+        );
+        assert_eq!(
+            manager
+                .get_audit_flow_settings()
+                .expect("persisted audit flow"),
+            super::AuditFlowSettings {
+                admission: false,
+                manuscript: true,
+                knowledge: false,
+            }
         );
         let _ = std::fs::remove_dir_all(root);
     }

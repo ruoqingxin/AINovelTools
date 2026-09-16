@@ -7,6 +7,7 @@ import {
   cancelAiTask,
   decideAiProposal,
   errorMessage,
+  getAuditFlowSettings,
   generateAiProposal,
   getConsistencyReviewTrace,
   getWritingReviewPolicy,
@@ -254,6 +255,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
   const reviewPolicyQuery = useQuery({ queryKey: ["writing-review-policy"], queryFn: getWritingReviewPolicy });
+  const auditFlow = useQuery({ queryKey: ["audit-flow-settings"], queryFn: getAuditFlowSettings });
   const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
   const entities = useQuery({ queryKey: ["entities", false], queryFn: () => listEntities(false) });
   const [instruction, setInstruction] = useState("");
@@ -301,6 +303,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
         run.status === "RUNNING"
         && run.chapterId === props.chapterId
         && run.taskKey === panelTaskKey
+        && (!isReviewMode || run.reviewPurpose === reviewPurpose)
       ) ?? null;
   const generationBusy = busy || Boolean(persistedRunning);
   const generationLocked = generationBusy
@@ -510,13 +513,14 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   const latestConsistencyReport = latestConsistencyReview?.consistency ?? null;
   const consistencyFreshness = latestConsistencyReview?.consistencyFreshness ?? null;
   const reviewPolicy = reviewPolicyQuery.data ?? "BALANCED";
-  const consistencyNotice = latestConsistencyReport || reviewPolicy === "REQUIRED"
+  const admissionEnabled = auditFlow.data?.admission !== false;
+  const consistencyNotice = admissionEnabled && !reviewingManuscript && (latestConsistencyReport || reviewPolicy === "REQUIRED")
     ? consistencyAdmission(latestConsistencyReport, consistencyFreshness, reviewPolicy)
     : null;
-  const freshVerdictBlocked = reviewPolicy !== "ADVISORY"
+  const freshVerdictBlocked = admissionEnabled && reviewPolicy !== "ADVISORY"
     && consistencyFreshness === "FRESH"
     && latestConsistencyReport?.verdict === "BLOCKED";
-  const strictReviewBlocked = reviewPolicy === "REQUIRED"
+  const strictReviewBlocked = admissionEnabled && reviewPolicy === "REQUIRED"
     && (!latestConsistencyReview
       || consistencyFreshness !== "FRESH"
       || latestConsistencyReport?.verdict === "UNPARSED");

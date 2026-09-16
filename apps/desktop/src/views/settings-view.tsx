@@ -39,12 +39,12 @@ export function SettingsView() {
   }, []);
 
   return <section className="settings-view">
-    <div className="workspace-heading"><p className="eyebrow">应用设置</p><h1>设置</h1><p className="workspace-lede">管理应用偏好、模型连接和当前作品的写作准入。</p></div>
+    <div className="workspace-heading"><p className="eyebrow">应用设置</p><h1>设置</h1><p className="workspace-lede">管理应用偏好、模型连接和当前作品的审核流程。</p></div>
     <div className="settings-layout">
       <nav className="settings-nav" aria-label="设置分类">
         <button type="button" className="settings-nav-item" data-active={activeSection === "MODEL_API" || undefined} onClick={() => switchSection("MODEL_API")}><Bot size={16} />模型 API</button>
         <button type="button" className="settings-nav-item" data-active={activeSection === "AI_TASKS" || undefined} onClick={() => switchSection("AI_TASKS")}><Sparkles size={16} />AI 任务模型</button>
-        <button type="button" className="settings-nav-item" data-active={activeSection === "WRITING_ADMISSION" || undefined} onClick={() => switchSection("WRITING_ADMISSION")}><ShieldCheck size={16} />写作准入</button>
+        <button type="button" className="settings-nav-item" data-active={activeSection === "WRITING_ADMISSION" || undefined} onClick={() => switchSection("WRITING_ADMISSION")}><ShieldCheck size={16} />审核流程</button>
         <button type="button" className="settings-nav-item" data-active={activeSection === "AI_RECORDS" || undefined} onClick={() => switchSection("AI_RECORDS")}><ChartNoAxesCombined size={16} />预算与记录</button>
       </nav>
       {activeSection === "MODEL_API" ? <ModelProfileSettings onDirtyChange={setModelDirty} /> : activeSection === "AI_TASKS" ? <AiTaskModelSettings onDirtyChange={setAiTaskDirty} /> : activeSection === "WRITING_ADMISSION" ? <WritingAdmissionSettings onDirtyChange={setWritingAdmissionDirty} /> : <AiUsageSettings onDirtyChange={setAiRecordsDirty} />}

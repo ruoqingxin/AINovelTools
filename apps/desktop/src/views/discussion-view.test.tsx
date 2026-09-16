@@ -329,7 +329,7 @@ describe("DiscussionView", () => {
       ),
       { target: { value: "anchor-1" } },
     );
-    fireEvent.click(within(foreshadowing!).getByRole("button", { name: "送入正文审核" }));
+    fireEvent.click(within(foreshadowing!).getByRole("button", { name: "送入事实审核" }));
     await waitFor(() =>
       expect(mocks.promoteDiscussionCandidateToForeshadowingReview).toHaveBeenCalledWith({
         id: foreshadowingCandidate.id,

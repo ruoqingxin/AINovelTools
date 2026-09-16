@@ -3159,6 +3159,31 @@ pub(crate) fn save_writing_review_policy(
 }
 
 #[tauri::command]
+pub(crate) fn get_audit_flow_settings(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<novel_infrastructure::AuditFlowSettings, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.get_audit_flow_settings().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn save_audit_flow_settings(
+    state: tauri::State<'_, ProjectState>,
+    settings: novel_infrastructure::AuditFlowSettings,
+) -> Result<novel_infrastructure::AuditFlowSettings, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .save_audit_flow_settings(settings)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn save_ai_budget_settings(
     state: tauri::State<'_, ProjectState>,
     settings: novel_infrastructure::AiBudgetSettings,
@@ -4797,16 +4822,29 @@ pub(crate) async fn generate_ai_proposal(
                 .manager
                 .lock()
                 .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-            let policy = manager
-                .get_writing_review_policy()
-                .map_err(ApiError::from)?;
-            manager
-                .chapter_writing_admission(
-                    chapter_id,
-                    current_review_context_version.as_deref(),
-                    policy,
-                )
+            if !manager
+                .get_audit_flow_settings()
                 .map_err(ApiError::from)?
+                .admission
+            {
+                novel_infrastructure::WritingAdmission {
+                    allowed: true,
+                    blocker_count: 0,
+                    reason: None,
+                    review_freshness: novel_infrastructure::ConsistencyReviewFreshness::Missing,
+                }
+            } else {
+                let policy = manager
+                    .get_writing_review_policy()
+                    .map_err(ApiError::from)?;
+                manager
+                    .chapter_writing_admission(
+                        chapter_id,
+                        current_review_context_version.as_deref(),
+                        policy,
+                    )
+                    .map_err(ApiError::from)?
+            }
         };
         if !admission.allowed {
             return Err(ApiError {

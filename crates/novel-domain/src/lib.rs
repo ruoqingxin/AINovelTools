@@ -121,6 +121,24 @@ pub enum WritingReviewPolicy {
     Required,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditFlowSettings {
+    pub admission: bool,
+    pub manuscript: bool,
+    pub knowledge: bool,
+}
+
+impl Default for AuditFlowSettings {
+    fn default() -> Self {
+        Self {
+            admission: true,
+            manuscript: true,
+            knowledge: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RetrievalMethod {

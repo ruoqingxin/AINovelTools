@@ -3760,6 +3760,23 @@ textarea:focus-visible,
 }
 
 .story-bible-view { width:min(1240px, calc(100% - 48px)); margin:0 auto; padding:38px 0 64px; }
+.review-center-view { width:min(1240px, calc(100% - 48px)); margin:0 auto; padding:38px 0 64px; }
+.review-center-tabs { display:flex; flex-wrap:wrap; gap:4px; margin-top:22px; border-bottom:1px solid var(--line-strong); }
+.review-flow { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:0; margin:22px 0 0; padding:0; list-style:none; border:1px solid #dbe4f0; border-radius:7px; background:#fff; overflow:hidden; }
+.review-flow li { position:relative; display:grid; gap:3px; min-height:62px; padding:12px 14px; color:#7285a0; }
+.review-flow li + li { border-left:1px solid #dbe4f0; }
+.review-flow li[data-active] { color:#2f5f9f; background:#f1f6ff; }
+.review-flow strong { font-size:12px; }
+.review-flow span { font-size:10px; line-height:1.45; }
+.review-center-tabs button { display:inline-flex; min-height:38px; align-items:center; gap:7px; padding:0 12px; border:0; border-bottom:2px solid transparent; color:var(--muted); background:transparent; font:inherit; font-size:12px; font-weight:650; }
+.review-center-tabs button:hover { color:var(--accent-strong); }
+.review-center-tabs button[data-active] { border-bottom-color:var(--accent); color:var(--accent-strong); }
+.review-center-context { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:14px; color:var(--muted); font-size:12px; }
+.review-center-context label { display:inline-flex; align-items:center; gap:8px; }
+.review-center-context select { min-height:36px; padding:0 10px; border:1px solid var(--line-strong); border-radius:8px; color:inherit; background:#fff; font-size:12px; }
+.review-center-context > span { color:#8294b1; }
+.review-center-panel { min-height:320px; margin-top:18px; }
+.review-center-panel .ai-panel { margin-top:0; border-top:0; }
 .knowledge-section-nav { display:flex; align-items:center; flex-wrap:wrap; gap:4px; margin-top:18px; padding:4px; border:1px solid var(--line); border-radius:9px; background:#f7f9fd; }
 .knowledge-section-link { display:inline-flex; min-height:34px; align-items:center; gap:7px; padding:0 12px; border-radius:6px; color:#64799b; font-size:12px; font-weight:600; text-decoration:none; }
 .knowledge-section-link:hover { color:#285dcb; background:#eef4ff; }
@@ -3878,6 +3895,12 @@ textarea:focus-visible,
 .settings-content-heading p { margin:8px 0 0; color:#7183a0; font-size:12px; line-height:1.6; }
 .settings-empty-label { min-height:34px; display:flex; align-items:center; padding:0 9px; border:1px dashed var(--line-strong); border-radius:5px; color:#8797b0; font-size:12px; }
 .writing-policy-options { display:grid; gap:8px; margin-top:22px; }
+.audit-flow-options { display:grid; gap:8px; margin-top:22px; }
+.audit-flow-options label { display:flex; align-items:flex-start; gap:10px; padding:12px 14px; border:1px solid #dbe4f0; border-radius:7px; color:#4e627f; background:#fff; cursor:pointer; }
+.audit-flow-options input { width:16px; height:16px; margin:2px 0 0; accent-color:var(--accent); }
+.audit-flow-options span { display:grid; gap:3px; }
+.audit-flow-options strong { font-size:12px; }
+.audit-flow-options small { color:#7486a2; font-size:10px; line-height:1.55; }
 .writing-policy-options button { display:grid; gap:4px; width:100%; padding:13px 14px; border:1px solid #dbe4f0; border-radius:7px; color:#4e627f; background:#fff; text-align:left; }
 .writing-policy-options button:hover { border-color:#b9cbe4; background:#f8fbff; }
 .writing-policy-options button[data-active] { border-color:#7ea6e8; color:#2f5f9f; background:#f1f6ff; box-shadow:inset 3px 0 #4f7fc8; }
@@ -4116,7 +4139,12 @@ textarea:focus-visible,
   .top-nav-button svg { display:none; }
   .title-action { display:none; }
   .empty-project-view, .project-workspace { width:calc(100% - 28px); padding-top:28px; }
-  .story-bible-view { width:calc(100% - 28px); padding-top:28px; }
+  .story-bible-view, .review-center-view { width:calc(100% - 28px); padding-top:28px; }
+  .review-center-tabs { overflow-x:auto; scrollbar-width:none; }
+  .review-center-tabs button { flex:0 0 auto; }
+  .review-flow { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  .review-flow li:nth-child(3) { border-left:0; border-top:1px solid #dbe4f0; }
+  .review-flow li:nth-child(4) { border-top:1px solid #dbe4f0; }
   .materials-view { width:calc(100% - 28px); padding-top:28px; }
   .search-view { width:calc(100% - 28px); padding-top:28px; }
   .settings-view { width:calc(100% - 28px); padding-top:28px; }

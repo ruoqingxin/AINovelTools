@@ -1,12 +1,11 @@
-import { BookOpenText, FileClock, FilePlus2, PenLine, ShieldCheck } from "lucide-react";
+import { BookOpenText, FileClock, FilePlus2, PenLine } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
-export type ManuscriptWorkspaceTab = "manuscript" | "candidate" | "review" | "versions" | "extraction";
+export type ManuscriptWorkspaceTab = "manuscript" | "candidate" | "versions" | "extraction";
 
 const tabs = [
   { value: "manuscript", label: "正文浏览", icon: BookOpenText },
   { value: "candidate", label: "候选区", icon: PenLine },
-  { value: "review", label: "正文审核", icon: ShieldCheck },
   { value: "versions", label: "草稿与版本", icon: FileClock },
   { value: "extraction", label: "知识提取", icon: FilePlus2 },
 ] as const;

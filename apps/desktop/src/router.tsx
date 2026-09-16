@@ -12,7 +12,7 @@ import { SearchView } from "./views/search-view";
 import { JobsView } from "./views/jobs-view";
 import { SettingsView } from "./views/settings-view";
 import { DiscussionView } from "./views/discussion-view";
-import { KnowledgeReviewView } from "./views/knowledge-review-view";
+import { ReviewCenterView } from "./views/review-center-view";
 import { KnowledgeRecordsView } from "./views/knowledge-records-view";
 import { useQuery } from "@tanstack/react-query";
 import { getCurrentProject } from "./lib/tauri-client";
@@ -64,6 +64,12 @@ function DiscussionEntryView() {
   return project.data ? <DiscussionView /> : <EmptyProjectView />;
 }
 
+function ReviewEntryView() {
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
+  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
+  return project.data ? <ReviewCenterView /> : <EmptyProjectView />;
+}
+
 const rootRoute = createRootRoute({
   component: AppShell,
   notFoundComponent: EmptyProjectView,
@@ -105,14 +111,15 @@ const knowledgeRoute = createRoute({
   path: "/knowledge",
   component: StoryBibleView,
 });
-const knowledgeReviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/review", component: KnowledgeReviewView });
+const reviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/review", component: ReviewEntryView });
+const knowledgeReviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/review", component: ReviewEntryView });
 const knowledgeRecordsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/records", component: KnowledgeRecordsView });
 const materialsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/materials", component: MaterialsView });
 const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", component: SearchView });
 const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: JobsView });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsView });
 
-const routeTree = rootRoute.addChildren([indexRoute, planningRoute, chaptersRoute, writingRoute, discussionRoute, knowledgeRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, planningRoute, chaptersRoute, writingRoute, discussionRoute, knowledgeRoute, reviewRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
 
 export const router = createRouter({ routeTree });
 

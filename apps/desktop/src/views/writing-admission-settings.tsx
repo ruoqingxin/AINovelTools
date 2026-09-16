@@ -3,9 +3,12 @@ import { Save, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   errorMessage,
+  getAuditFlowSettings,
   getProjectAiTaskOverrides,
   getWritingReviewPolicy,
   saveWritingReviewPolicy,
+  saveAuditFlowSettings,
+  type AuditFlowSettings,
   type WritingReviewPolicy,
 } from "../lib/tauri-client";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
@@ -44,7 +47,13 @@ export function WritingAdmissionSettings(props: { onDirtyChange?: (dirty: boolea
     queryFn: getWritingReviewPolicy,
     enabled: projectAvailable,
   });
+  const auditFlow = useQuery({
+    queryKey: ["audit-flow-settings"],
+    queryFn: getAuditFlowSettings,
+    enabled: projectAvailable,
+  });
   const [draft, setDraft] = useState<WritingReviewPolicy>("BALANCED");
+  const [flowDraft, setFlowDraft] = useState<AuditFlowSettings>({ admission: true, manuscript: true, knowledge: true });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -52,9 +61,12 @@ export function WritingAdmissionSettings(props: { onDirtyChange?: (dirty: boolea
   useEffect(() => {
     if (policy.data) setDraft(policy.data);
   }, [policy.data]);
+  useEffect(() => {
+    if (auditFlow.data) setFlowDraft(auditFlow.data);
+  }, [auditFlow.data]);
 
-  const dirty = Boolean(projectAvailable && policy.data && policy.data !== draft);
-  useUnsavedChangesGuard(dirty, "当前写作准入策略有未保存修改。");
+  const dirty = Boolean(projectAvailable && policy.data && auditFlow.data && (policy.data !== draft || Object.keys(flowDraft).some((key) => flowDraft[key as keyof AuditFlowSettings] !== auditFlow.data[key as keyof AuditFlowSettings])));
+  useUnsavedChangesGuard(dirty, "当前审核流程有未保存修改。");
 
   useEffect(() => {
     props.onDirtyChange?.(dirty);
@@ -66,10 +78,11 @@ export function WritingAdmissionSettings(props: { onDirtyChange?: (dirty: boolea
     setError(null);
     setNotice(null);
     try {
-      const saved = await saveWritingReviewPolicy(draft);
+      const [saved, savedFlow] = await Promise.all([saveWritingReviewPolicy(draft), saveAuditFlowSettings(flowDraft)]);
       client.setQueryData(["writing-review-policy"], saved);
+      client.setQueryData(["audit-flow-settings"], savedFlow);
       await client.invalidateQueries({ queryKey: ["ai-proposals"] });
-      setNotice("写作准入策略已保存，后续生成会立即按新策略判断。");
+      setNotice("审核流程已保存，后续创作会立即按新设置执行。");
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -80,12 +93,17 @@ export function WritingAdmissionSettings(props: { onDirtyChange?: (dirty: boolea
   return <section className="settings-content">
     <div className="settings-content-heading">
       <div>
-        <h2><ShieldCheck size={18} />写作准入</h2>
-        <p>控制一致性审核对当前作品正文生成的影响范围。</p>
+        <h2><ShieldCheck size={18} />审核流程</h2>
+        <p>按创作顺序选择启用哪些审核；关闭的步骤不会在审核中心显示。</p>
       </div>
     </div>
-    {project.isPending || (projectAvailable && policy.isPending) ? <p className="settings-empty-label">正在读取当前作品策略…</p> : project.isError ? <p className="project-error" role="alert">读取作品状态失败：{errorMessage(project.error)}</p> : !projectAvailable ? <p className="settings-empty-label">请先打开或新建作品，写作准入策略按作品单独保存。</p> : policy.isError ? <p className="project-error" role="alert">读取写作准入策略失败：{errorMessage(policy.error)}</p> : <>
-      <div className="writing-policy-options" role="radiogroup" aria-label="写作准入策略">
+    {project.isPending || (projectAvailable && (policy.isPending || auditFlow.isPending)) ? <p className="settings-empty-label">正在读取当前作品策略…</p> : project.isError ? <p className="project-error" role="alert">读取作品状态失败：{errorMessage(project.error)}</p> : !projectAvailable ? <p className="settings-empty-label">请先打开或新建作品，审核流程按作品单独保存。</p> : policy.isError || auditFlow.isError ? <p className="project-error" role="alert">读取审核流程失败：{errorMessage(policy.error ?? auditFlow.error)}</p> : <>
+      <div className="audit-flow-options" aria-label="审核步骤">
+        <label><input type="checkbox" checked={flowDraft.admission} onChange={(event) => { setFlowDraft((value) => ({ ...value, admission: event.target.checked })); setNotice(null); }} /><span><strong>1. 创作准入</strong><small>在生成正文前检查执行卡、设定与已有草稿。</small></span></label>
+        <label><input type="checkbox" checked={flowDraft.manuscript} onChange={(event) => { setFlowDraft((value) => ({ ...value, manuscript: event.target.checked })); setNotice(null); }} /><span><strong>2. 正文审核</strong><small>正文完成后检查人物状态、规则、时间线和叙述。</small></span></label>
+        <label><input type="checkbox" checked={flowDraft.knowledge} onChange={(event) => { setFlowDraft((value) => ({ ...value, knowledge: event.target.checked })); setNotice(null); }} /><span><strong>3. 知识审核</strong><small>知识提取后核对事实证据、冲突与定稿内容。</small></span></label>
+      </div>
+      {flowDraft.admission ? <div className="writing-policy-options" role="radiogroup" aria-label="写作准入策略">
         {POLICY_OPTIONS.map((option) => <button
           type="button"
           role="radio"
@@ -97,9 +115,9 @@ export function WritingAdmissionSettings(props: { onDirtyChange?: (dirty: boolea
           <strong>{option.label}</strong>
           <span>{option.description}</span>
         </button>)}
-      </div>
+      </div> : null}
       <div className="settings-save-row">
-        <button type="button" className="primary-action" onClick={() => void save()} disabled={!dirty || saving}><Save size={14} />{saving ? "保存中…" : "保存策略"}</button>
+        <button type="button" className="primary-action" onClick={() => void save()} disabled={!dirty || saving}><Save size={14} />{saving ? "保存中…" : "保存流程"}</button>
         {notice ? <span role="status">{notice}</span> : null}
       </div>
     </>}

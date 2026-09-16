@@ -38,11 +38,17 @@ function extractBlockText(documentJson: string, blockId: string) {
   }
 }
 
-export function KnowledgeReviewView() {
+export function KnowledgeReviewView(props: {
+  embedded?: boolean;
+  chapterId?: string;
+  onChapterChange?: (chapterId: string) => void;
+} = {}) {
   const client = useQueryClient();
   const chapters = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes });
   const chapterList = useMemo(() => (chapters.data ?? []).filter((node) => node.kind === "CHAPTER"), [chapters.data]);
-  const [chapterId, setChapterId] = useState("");
+  const [internalChapterId, setInternalChapterId] = useState("");
+  const chapterId = props.chapterId ?? internalChapterId;
+  const setChapterId = props.onChapterChange ?? setInternalChapterId;
   const selectedChapterId = chapterId || chapterList[0]?.id || "";
   const candidates = useQuery({
     queryKey: ["knowledge-candidates", selectedChapterId],
@@ -93,17 +99,17 @@ export function KnowledgeReviewView() {
   }
 
   return (
-    <section className="story-bible-view knowledge-review-view">
-      <div className="workspace-heading">
+    <section className={`${props.embedded ? "" : "story-bible-view "}knowledge-review-view`}>
+      {!props.embedded ? <div className="workspace-heading">
         <p className="eyebrow">内容审核</p>
         <h1>正文事实审核</h1>
         <p className="workspace-lede">只处理从正文提取的候选事实：核对原文证据、解决冲突，并将已批准内容正式定稿。</p>
-      </div>
+      </div> : null}
       <div className="story-bible-toolbar">
-        <label>章节<select value={selectedChapterId} onChange={(event) => setChapterId(event.target.value)} disabled={!chapterList.length}>
+        {!props.embedded ? <label>章节<select value={selectedChapterId} onChange={(event) => setChapterId(event.target.value)} disabled={!chapterList.length}>
           {!chapterList.length ? <option value="">暂无章节</option> : null}
           {chapterList.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapter.title}</option>)}
-        </select></label>
+        </select></label> : null}
         <button type="button" className="secondary-action" onClick={() => void candidates.refetch()} disabled={!selectedChapterId || candidates.isFetching}><RefreshCw size={14} />刷新</button>
         <button type="button" className="primary-action" onClick={() => void finalize()} disabled={!approved.length || busy !== null || Boolean(conflicts.data?.some((conflict) => conflict.highRisk))}><FileCheck2 size={14} />{busy === "finalize" ? "定稿中…" : `定稿 ${approved.length} 条`}</button>
       </div>
