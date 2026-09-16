@@ -38,6 +38,42 @@ impl Database {
         Ok(database)
     }
 
+    fn ai_run_record_columns(&self) -> Result<Vec<String>, DatabaseError> {
+        let mut statement = self
+            .connection
+            .prepare("PRAGMA table_info(ai_run_records)")?;
+        let mut rows = statement.query([])?;
+        let mut columns = Vec::new();
+        while let Some(row) = rows.next()? {
+            columns.push(row.get(1)?);
+        }
+        Ok(columns)
+    }
+
+    fn repair_ai_run_record_cost_columns(&self) -> Result<(), DatabaseError> {
+        let columns = self.ai_run_record_columns()?;
+        if columns.is_empty() {
+            return Ok(());
+        }
+        if !columns
+            .iter()
+            .any(|column| column == "input_cache_hit_price_micros_per_million")
+        {
+            self.connection.execute(
+                "ALTER TABLE ai_run_records
+                 ADD COLUMN input_cache_hit_price_micros_per_million INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !columns.iter().any(|column| column == "actual_cost_micros") {
+            self.connection.execute(
+                "ALTER TABLE ai_run_records ADD COLUMN actual_cost_micros INTEGER",
+                [],
+            )?;
+        }
+        Ok(())
+    }
+
     fn migrate(&self) -> Result<(), DatabaseError> {
         self.connection
             .execute_batch(
@@ -966,12 +1002,14 @@ impl Database {
             )?;
         }
         if applied.unwrap_or(0) < 45 {
-            self.connection.execute_batch(
-                "ALTER TABLE ai_run_records ADD COLUMN input_cache_hit_price_micros_per_million INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE ai_run_records ADD COLUMN actual_cost_micros INTEGER;
-                INSERT INTO schema_migrations (version, name) VALUES (45, 'ai_run_actual_usage_costs');",
+            self.repair_ai_run_record_cost_columns()?;
+            self.connection.execute(
+                "INSERT INTO schema_migrations (version, name)
+                 VALUES (45, 'ai_run_actual_usage_costs')",
+                [],
             )?;
         }
+        self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }
 
@@ -1853,6 +1891,51 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_repairs_missing_ai_run_cost_columns_without_removing_records() {
+        let database = Database::in_memory().expect("in-memory database");
+        let run_id = Uuid::new_v4();
+        database
+            .connection
+            .execute(
+                "INSERT INTO ai_run_records
+                 (id, task_key, source, display_title, action, status, prompt_version)
+                 VALUES (?1, 'writing', 'WRITING', '保留记录', 'DRAFT', 'COMPLETED', 'test-v1')",
+                [run_id.to_string()],
+            )
+            .expect("seed run record");
+        database
+            .connection
+            .execute_batch(
+                "ALTER TABLE ai_run_records DROP COLUMN actual_cost_micros;
+                 ALTER TABLE ai_run_records DROP COLUMN input_cache_hit_price_micros_per_million;",
+            )
+            .expect("simulate incomplete migration");
+
+        database.migrate().expect("repair migration");
+
+        let columns = database
+            .ai_run_record_columns()
+            .expect("read repaired columns");
+        assert!(columns.iter().any(|column| column == "actual_cost_micros"));
+        assert!(
+            columns
+                .iter()
+                .any(|column| { column == "input_cache_hit_price_micros_per_million" })
+        );
+        assert_eq!(
+            database
+                .connection
+                .query_row(
+                    "SELECT display_title FROM ai_run_records WHERE id=?1",
+                    [run_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("preserved run record"),
+            "保留记录"
+        );
+    }
 
     #[test]
     fn migration_40_preserves_existing_discussion_sessions() {

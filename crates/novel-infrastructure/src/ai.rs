@@ -2374,7 +2374,7 @@ impl ProjectManager {
             .database
             .connection
             .prepare(
-                "SELECT t.id, t.action, t.status, t.display_title, COALESCE(p.name, '已删除模型'),
+                "SELECT t.id, t.action, t.status, t.display_title, COALESCE(NULLIF(TRIM(p.name), ''), '已删除模型'),
                         t.attempt_count, t.retry_reason, t.error_code, t.estimated_input_tokens,
                         t.estimated_output_tokens, t.prompt_version, t.created_at, t.finished_at,
                         t.task_key, t.source, t.input_price_micros_per_million,
@@ -2557,7 +2557,7 @@ impl ProjectManager {
             .connection
             .prepare(
                 "SELECT r.task_key, r.action, r.prompt_version,
-                        COALESCE(p.name, '已删除模型'), pr.status, pr.output_text,
+                        COALESCE(NULLIF(TRIM(p.name), ''), '已删除模型'), pr.status, pr.output_text,
                         f.rating
                  FROM ai_proposals pr
                  INNER JOIN ai_run_records r ON r.id = pr.task_id
@@ -3543,6 +3543,65 @@ mod tests {
             4_000_000,
         );
         assert_eq!(cost, Some(4_510_000));
+    }
+
+    #[test]
+    fn run_history_keeps_records_after_model_profile_is_deleted() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("ainovel-ai-run-history-{}", uuid::Uuid::new_v4()));
+        let mut manager = super::ProjectManager::new();
+        manager
+            .create(&root, "运行记录测试")
+            .expect("create project");
+        let profile = manager
+            .upsert_model_profile(super::ModelProfileInput {
+                id: None,
+                name: "待删除模型".into(),
+                provider: super::ModelProvider::DeepSeek,
+                capability: super::ModelCapability::Chat,
+                base_url: "https://api.deepseek.com".into(),
+                model_id: "deepseek-chat".into(),
+                context_window: 32_768,
+                max_output_tokens: 4_096,
+                privacy_level: super::PrivacyLevel::AllowCloud,
+                timeout_seconds: 30,
+                retry_limit: 1,
+                input_price_micros_per_million: 1_000_000,
+                output_price_micros_per_million: 2_000_000,
+                price_currency: "CNY".into(),
+            })
+            .expect("create model profile");
+        let run_id = manager
+            .start_ai_run(super::AiRunStart {
+                task: super::AiTaskKind::WorkDesign,
+                source: super::AiRunSource::Planning,
+                job_id: None,
+                chapter_id: None,
+                display_title: "保留运行记录",
+                profile_id: profile.id,
+                prompt_version: "test-v1",
+                estimated_input_tokens: 128,
+            })
+            .expect("start run");
+        manager
+            .current
+            .as_ref()
+            .expect("project session")
+            .database
+            .connection
+            .execute(
+                "DELETE FROM model_profiles WHERE id=?1",
+                [profile.id.to_string()],
+            )
+            .expect("delete model profile");
+
+        let runs = manager.list_ai_runs(10).expect("list run history");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].id, run_id);
+        assert_eq!(runs[0].profile_name, "已删除模型");
+
+        drop(manager);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
