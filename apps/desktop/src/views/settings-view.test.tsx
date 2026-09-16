@@ -11,9 +11,7 @@ const mocks = vi.hoisted(() => ({
   saveAiTaskPreferences: vi.fn(),
   getAiBudgetSettings: vi.fn(),
   saveAiBudgetSettings: vi.fn(),
-  listAiRuns: vi.fn(),
   getAiUsageSummary: vi.fn(),
-  getAiQualitySummary: vi.fn(),
   getProjectAiTaskOverrides: vi.fn(),
   getAuditFlowSettings: vi.fn(),
   getWritingReviewPolicy: vi.fn(),
@@ -39,9 +37,7 @@ vi.mock("../lib/tauri-client", async () => {
     saveAiTaskPreferences: mocks.saveAiTaskPreferences,
     getAiBudgetSettings: mocks.getAiBudgetSettings,
     saveAiBudgetSettings: mocks.saveAiBudgetSettings,
-    listAiRuns: mocks.listAiRuns,
     getAiUsageSummary: mocks.getAiUsageSummary,
-    getAiQualitySummary: mocks.getAiQualitySummary,
     getProjectAiTaskOverrides: mocks.getProjectAiTaskOverrides,
     getAuditFlowSettings: mocks.getAuditFlowSettings,
     getWritingReviewPolicy: mocks.getWritingReviewPolicy,
@@ -56,7 +52,7 @@ vi.mock("../lib/tauri-client", async () => {
 describe("SettingsView", () => {
   afterEach(() => {
     cleanup();
-    window.location.hash = "";
+    window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
   });
 
   beforeEach(() => {
@@ -69,19 +65,11 @@ describe("SettingsView", () => {
       projectLimitMicros: null,
     });
     mocks.saveAiBudgetSettings.mockImplementation(async (settings) => settings);
-    mocks.listAiRuns.mockResolvedValue([]);
     mocks.getAiUsageSummary.mockResolvedValue({
       days: 30,
       total: [],
       daily: [],
       byTask: [],
-    });
-    mocks.getAiQualitySummary.mockResolvedValue({
-      totalProposals: 0,
-      totalRated: 0,
-      totalHelpful: 0,
-      totalWithIssues: 0,
-      groups: [],
     });
     mocks.getProjectAiTaskOverrides.mockResolvedValue({
       available: false,
@@ -454,45 +442,13 @@ describe("SettingsView", () => {
     expect(AI_TASK_DEFINITIONS.every(({ key }) => saved[key].profileId === "deepseek-profile")).toBe(true);
   });
 
-  it("shows estimated model cost for unified AI runs", async () => {
-    mocks.listModelProfiles.mockResolvedValue([
-      {
-        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
-        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
-        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
-        inputPriceMicrosPerMillion: 2500000, outputPriceMicrosPerMillion: 10000000,
-        priceCurrency: "USD", secretRef: "model-profile:deepseek-profile", hasSecret: true,
-        createdAt: "0", updatedAt: "0",
-      },
-    ]);
-    mocks.listAiRuns.mockResolvedValue([
-      {
-        id: "run-1",
-        taskKey: "outline",
-        source: "PLANNING",
-        action: "outline",
-        status: "COMPLETED",
-        chapterId: null,
-        chapterTitle: "故事大纲",
-        profileName: "规划模型",
-        attemptCount: 1,
-        retryReason: null,
-        errorCode: null,
-        estimatedInputTokens: 1000,
-        estimatedOutputTokens: 500,
-        estimatedCostMicros: 20000,
-        priceCurrency: "USD",
-        promptVersion: "planning-v1",
-        createdAt: "2026-09-11T00:00:00Z",
-        finishedAt: "2026-09-11T00:00:01Z",
-      },
-    ]);
-
+  it("keeps run details and quality review out of settings", async () => {
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
-    fireEvent.click(screen.getByRole("button", { name: "预算与记录" }));
-    expect(await screen.findAllByText(/USD 0\.02/)).toHaveLength(2);
-    expect(screen.getByText("大纲主线 · 故事大纲")).toBeVisible();
-    expect(screen.getByText(/耗时 1 秒/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "AI 用量与预算" }));
+
+    expect(await screen.findByRole("link", { name: "运行明细" })).toHaveAttribute("href", "/jobs#ai-runs");
+    expect(screen.queryByRole("tab", { name: /运行记录/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("质量回顾")).not.toBeInTheDocument();
   });
 
   it("estimates the next task cost from saved token usage", async () => {
@@ -565,51 +521,9 @@ describe("SettingsView", () => {
     });
 
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
-    fireEvent.click(screen.getByRole("button", { name: "预算与记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "AI 用量与预算" }));
 
     expect(await screen.findByText("今日估算费用已达到每日预算的 80%")).toBeVisible();
-  });
-
-  it("shows model and prompt quality review metrics", async () => {
-    mocks.listModelProfiles.mockResolvedValue([
-      {
-        id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
-        baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
-        maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
-        inputPriceMicrosPerMillion: 2500000, outputPriceMicrosPerMillion: 10000000,
-        priceCurrency: "USD", secretRef: "model-profile:deepseek-profile", hasSecret: true,
-        createdAt: "0", updatedAt: "0",
-      },
-    ]);
-    mocks.getAiQualitySummary.mockResolvedValue({
-      totalProposals: 3,
-      totalRated: 3,
-      totalHelpful: 2,
-      totalWithIssues: 1,
-      groups: [{
-        taskKey: "writing",
-        action: "DRAFT",
-        promptVersion: "r3-writing-v4+task-abc",
-        profileName: "DeepSeek 写作",
-        proposalCount: 3,
-        acceptedCount: 2,
-        ratedCount: 3,
-        helpfulCount: 2,
-        notHelpfulCount: 1,
-        validCount: 2,
-        warningCount: 1,
-        needsInputCount: 0,
-        invalidCount: 0,
-      }],
-    });
-
-    render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
-    fireEvent.click(screen.getByRole("button", { name: "预算与记录" }));
-
-    expect(await screen.findByText("整章创作 · DeepSeek 写作")).toBeVisible();
-    expect(screen.getByText("有帮助 67%")).toBeVisible();
-    expect(screen.getByText("需补资料 0 · 校验问题 33%")).toBeVisible();
-    expect(screen.getByText("采用 67%")).toBeVisible();
   });
 
   it("saves the project writing admission policy", async () => {

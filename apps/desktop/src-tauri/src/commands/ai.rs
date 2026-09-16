@@ -3583,13 +3583,14 @@ pub(crate) fn get_ai_usage_summary(
 pub(crate) fn get_ai_quality_summary(
     state: tauri::State<'_, ProjectState>,
     limit: Option<u32>,
+    days: Option<u32>,
 ) -> Result<novel_infrastructure::AiQualitySummary, ApiError> {
     let manager = state
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
-        .get_ai_quality_summary(limit.unwrap_or(20))
+        .get_ai_quality_summary(limit.unwrap_or(20), Some(days.unwrap_or(90)))
         .map_err(ApiError::from)
 }
 

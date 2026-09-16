@@ -814,8 +814,8 @@ export function getAiRunRequest(runId: string) {
 export function getAiUsageSummary(days = 30) {
   return invoke<AiUsageSummary>("get_ai_usage_summary", { days });
 }
-export function getAiQualitySummary(limit = 20) {
-  return invoke<AiQualitySummary>("get_ai_quality_summary", { limit });
+export function getAiQualitySummary(limit = 20, days = 90) {
+  return invoke<AiQualitySummary>("get_ai_quality_summary", { limit, days });
 }
 export function rateAiProposal(id: string, rating: "HELPFUL" | "NOT_HELPFUL", note?: string) {
   return invoke<AiProposalFeedback>("rate_ai_proposal", { id, rating, note });

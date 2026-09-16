@@ -45,7 +45,7 @@ describe("AiModelNote", () => {
   beforeEach(() => {
     mocks.getAiBudgetSettings.mockResolvedValue({
       currency: "USD",
-      dailyLimitMicros: 25000,
+      dailyLimitMicros: 20000,
       projectLimitMicros: 200000,
     });
     mocks.getAiUsageSummary.mockResolvedValue({

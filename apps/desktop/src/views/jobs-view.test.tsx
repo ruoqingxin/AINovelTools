@@ -8,22 +8,33 @@ const mocks = vi.hoisted(() => ({
   acknowledgeFailedJobs: vi.fn(),
   enqueueJob: vi.fn(),
   getAiRunRequest: vi.fn(),
+  getAiQualitySummary: vi.fn(),
   listAiRuns: vi.fn(),
   listJobs: vi.fn(),
 }));
 
 vi.mock("../lib/tauri-client", async () => {
   const actual = await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client");
-  return { ...actual, acknowledgeFailedJobs: mocks.acknowledgeFailedJobs, enqueueJob: mocks.enqueueJob, getAiRunRequest: mocks.getAiRunRequest, listAiRuns: mocks.listAiRuns, listJobs: mocks.listJobs };
+  return { ...actual, acknowledgeFailedJobs: mocks.acknowledgeFailedJobs, enqueueJob: mocks.enqueueJob, getAiRunRequest: mocks.getAiRunRequest, getAiQualitySummary: mocks.getAiQualitySummary, listAiRuns: mocks.listAiRuns, listJobs: mocks.listJobs };
 });
 
 describe("JobsView", () => {
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    window.history.replaceState({}, "", "/jobs");
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.acknowledgeFailedJobs.mockResolvedValue(1);
     mocks.getAiRunRequest.mockResolvedValue({ endpoint: null, requestBody: null });
+    mocks.getAiQualitySummary.mockResolvedValue({
+      totalProposals: 0,
+      totalRated: 0,
+      totalHelpful: 0,
+      totalWithIssues: 0,
+      groups: [],
+    });
     mocks.listAiRuns.mockResolvedValue([]);
     mocks.listJobs.mockResolvedValue([]);
     mocks.enqueueJob.mockResolvedValue({});
@@ -95,5 +106,39 @@ describe("JobsView", () => {
 
     expect(await screen.findByText(/api\.deepseek\.com\/chat\/completions/)).toBeVisible();
     expect(screen.getByText(/deepseek-v4-flash/)).toBeVisible();
+  });
+
+  it("shows model and prompt quality review metrics beside AI history", async () => {
+    mocks.getAiQualitySummary.mockResolvedValue({
+      totalProposals: 3,
+      totalRated: 3,
+      totalHelpful: 2,
+      totalWithIssues: 1,
+      groups: [{
+        taskKey: "writing",
+        action: "DRAFT",
+        promptVersion: "r3-writing-v4+task-abc",
+        profileName: "DeepSeek 写作",
+        proposalCount: 3,
+        acceptedCount: 2,
+        ratedCount: 3,
+        helpfulCount: 2,
+        notHelpfulCount: 1,
+        validCount: 2,
+        warningCount: 1,
+        needsInputCount: 0,
+        invalidCount: 0,
+      }],
+    });
+
+    render(<QueryClientProvider client={new QueryClient()}><JobsView /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("tab", { name: "质量回顾" }));
+
+    expect(await screen.findByText("整章创作 · DeepSeek 写作")).toBeVisible();
+    expect(mocks.getAiQualitySummary).toHaveBeenCalledWith(20, 90);
+    expect(screen.getAllByText("有帮助")).toHaveLength(2);
+    expect(screen.getAllByText("67%")).toHaveLength(2);
+    expect(screen.getByText("校验问题 33%")).toBeVisible();
+    expect(screen.getByText("采用率")).toBeVisible();
   });
 });

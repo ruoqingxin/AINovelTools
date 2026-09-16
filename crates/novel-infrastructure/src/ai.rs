@@ -2550,8 +2550,14 @@ impl ProjectManager {
         })
     }
 
-    pub fn get_ai_quality_summary(&self, limit: u32) -> Result<AiQualitySummary, AiError> {
+    pub fn get_ai_quality_summary(
+        &self,
+        limit: u32,
+        days: Option<u32>,
+    ) -> Result<AiQualitySummary, AiError> {
         let session = self.current.as_ref().ok_or(AiError::NoProject)?;
+        let date_modifier =
+            days.map(|days| format!("-{} days", days.clamp(1, 3_650).saturating_sub(1)));
         let mut statement = session
             .database
             .connection
@@ -2562,11 +2568,12 @@ impl ProjectManager {
                  FROM ai_proposals pr
                  INNER JOIN ai_run_records r ON r.id = pr.task_id
                  LEFT JOIN model_profiles p ON p.id = r.profile_id
-                 LEFT JOIN ai_proposal_feedback f ON f.proposal_id = pr.id",
+                 LEFT JOIN ai_proposal_feedback f ON f.proposal_id = pr.id
+                 WHERE (?1 IS NULL OR date(r.created_at, 'localtime') >= date('now', 'localtime', ?1))",
             )
             .map_err(DatabaseError::from)?;
         let rows = statement
-            .query_map([], |row| {
+            .query_map(rusqlite::params![date_modifier.as_deref()], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,

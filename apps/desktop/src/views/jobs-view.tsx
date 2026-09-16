@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellOff, ClipboardList, History, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
+import { BellOff, ChartNoAxesCombined, ClipboardList, History, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
 import { useEffect, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { formatCost } from "../lib/ai-cost-estimate";
 import { acknowledgeFailedJobs, cancelJob, enqueueJob, errorMessage, getAiRunRequest, getPlanningAiJobRequest, listAiRuns, listJobEvents, listJobs, retryJob, runNextJob, type AiRun, type Job, type JobType, type PlanningAiJobInput } from "../lib/tauri-client";
+import { AiQualityReview } from "./ai-quality-review";
 
 const systemTypes: JobType[] = ["BACKUP", "RESTORE_VERIFY", "HEALTH_SCAN", "REBUILD_SEARCH_INDEX"];
 const typeLabels: Record<JobType, string> = {
@@ -54,6 +55,13 @@ const runSourceFilters = [
   { value: "KNOWLEDGE_EXTRACTION", label: "知识提炼" },
 ] as const;
 type RunSourceFilter = (typeof runSourceFilters)[number]["value"];
+type RecordView = "JOBS" | "AI_RUNS" | "QUALITY";
+
+function recordViewFromHash(): RecordView {
+  if (window.location.hash === "#ai-runs") return "AI_RUNS";
+  if (window.location.hash === "#quality") return "QUALITY";
+  return "JOBS";
+}
 
 function isAiJob(job: Job) {
   return job.jobType === "AI_PLANNING_GENERATE" || job.jobType === "AI_PLANNING_EXTRACT";
@@ -175,7 +183,7 @@ function AiRunsHistory() {
 export function JobsView() {
   const client = useQueryClient();
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
-  const [recordView, setRecordView] = useState<"JOBS" | "AI_RUNS">("JOBS");
+  const [recordView, setRecordView] = useState<RecordView>(recordViewFromHash);
   const [filter, setFilter] = useState<"ALL" | "AI" | "SYSTEM">("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showRequest, setShowRequest] = useState(false);
@@ -198,16 +206,32 @@ export function JobsView() {
   useEffect(() => setShowRequest(false), [selected?.id]);
 
   useEffect(() => {
+    const syncRecordViewFromHash = () => {
+      setRecordView(recordViewFromHash());
+    };
+    syncRecordViewFromHash();
+    window.addEventListener("hashchange", syncRecordViewFromHash);
+    return () => window.removeEventListener("hashchange", syncRecordViewFromHash);
+  }, []);
+
+  useEffect(() => {
     if (showRequest && selected && isAiJob(selected)) void requestPreview.refetch();
   }, [selected?.updatedAt, showRequest]);
 
+  function selectRecordView(next: RecordView) {
+    setRecordView(next);
+    const hash = next === "AI_RUNS" ? "#ai-runs" : next === "QUALITY" ? "#quality" : "";
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}${hash}`);
+  }
+
   return <section className="jobs-view">
-    <div className="workspace-heading workspace-heading-with-action"><div><p className="eyebrow">后台工作</p><h1>任务</h1><p className="workspace-lede">规划、正文创作、知识提炼和系统维护记录都可以在这里查看。</p></div>{recordView === "JOBS" ? <button className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => runNextJob())} disabled={action.isPending}><Play size={15} />执行下一项系统任务</button> : <a className="secondary-action" href="/settings#ai-records">查看预算与记录</a>}</div>
+    <div className="workspace-heading workspace-heading-with-action"><div><p className="eyebrow">后台工作</p><h1>任务</h1><p className="workspace-lede">规划、正文创作、知识提炼和系统维护记录都可以在这里查看。</p></div>{recordView === "JOBS" ? <button className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => runNextJob())} disabled={action.isPending}><Play size={15} />执行下一项系统任务</button> : <a className="secondary-action" href="/settings#ai-usage">查看用量与预算</a>}</div>
     <div className="jobs-view-switch" role="tablist" aria-label="任务记录类型">
-      <button type="button" role="tab" aria-selected={recordView === "JOBS"} data-active={recordView === "JOBS" || undefined} onClick={() => setRecordView("JOBS")}>后台任务</button>
-      <button type="button" role="tab" aria-selected={recordView === "AI_RUNS"} data-active={recordView === "AI_RUNS" || undefined} onClick={() => setRecordView("AI_RUNS")}>AI 运行记录</button>
+      <button type="button" role="tab" aria-selected={recordView === "JOBS"} data-active={recordView === "JOBS" || undefined} onClick={() => selectRecordView("JOBS")}>后台任务</button>
+      <button type="button" role="tab" aria-selected={recordView === "AI_RUNS"} data-active={recordView === "AI_RUNS" || undefined} onClick={() => selectRecordView("AI_RUNS")}>AI 运行记录</button>
+      <button type="button" role="tab" aria-selected={recordView === "QUALITY"} data-active={recordView === "QUALITY" || undefined} onClick={() => selectRecordView("QUALITY")}><ChartNoAxesCombined size={14} />质量回顾</button>
     </div>
-    {recordView === "AI_RUNS" ? <AiRunsHistory /> : <>
+    {recordView === "AI_RUNS" ? <AiRunsHistory /> : recordView === "QUALITY" ? <AiQualityReview /> : <>
       <div className="jobs-toolbar"><div className="jobs-filters" aria-label="任务分类">{(["ALL", "AI", "SYSTEM"] as const).map((value) => <button type="button" key={value} data-active={filter === value || undefined} onClick={() => { setFilter(value); setSelectedId(null); }}>{value === "ALL" ? "全部" : value === "AI" ? "AI 任务" : "系统任务"}</button>)}</div><div className="jobs-toolbar-actions">{unacknowledgedFailedCount ? <button className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => acknowledgeFailedJobs())} disabled={action.isPending}><BellOff size={14} />清除失败提醒 {unacknowledgedFailedCount}</button> : null}<button className="icon-command" type="button" onClick={() => void jobs.refetch()} disabled={jobs.isFetching} aria-label="刷新任务" title="刷新任务"><RefreshCw size={14} /></button></div></div>
       <details className="jobs-system-create"><summary>新建系统任务</summary><div>{systemTypes.map((type) => <button key={type} className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => enqueueJob(type))} disabled={action.isPending}>{typeLabels[type]}</button>)}</div></details>
       {action.isError ? <p className="project-error" role="alert">任务操作失败：{errorMessage(action.error)}</p> : null}

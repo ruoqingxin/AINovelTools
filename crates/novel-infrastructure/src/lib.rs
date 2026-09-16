@@ -3645,7 +3645,9 @@ mod tests {
         manager
             .decide_ai_proposal(proposal.id, super::AiProposalStatus::Accepted, None)
             .expect("accept");
-        let quality = manager.get_ai_quality_summary(20).expect("quality summary");
+        let quality = manager
+            .get_ai_quality_summary(20, None)
+            .expect("quality summary");
         assert_eq!(quality.total_proposals, 1);
         assert_eq!(quality.total_rated, 1);
         assert_eq!(quality.total_helpful, 1);
@@ -3700,10 +3702,27 @@ mod tests {
                 .status,
             super::AiProposalStatus::Rejected
         );
-        let quality = manager.get_ai_quality_summary(20).expect("quality summary");
+        let quality = manager
+            .get_ai_quality_summary(20, None)
+            .expect("quality summary");
         assert_eq!(quality.total_proposals, 2);
         assert_eq!(quality.total_with_issues, 2);
         assert_eq!(quality.groups[0].needs_input_count, 1);
+        manager
+            .current
+            .as_ref()
+            .expect("session")
+            .database
+            .connection
+            .execute(
+                "UPDATE ai_run_records SET created_at='2000-01-01T00:00:00Z'",
+                [],
+            )
+            .expect("age run records");
+        let recent_quality = manager
+            .get_ai_quality_summary(20, Some(90))
+            .expect("recent quality summary");
+        assert_eq!(recent_quality.total_proposals, 0);
         assert!(
             manager
                 .current_manuscript(chapter.id)
