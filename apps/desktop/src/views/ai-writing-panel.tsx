@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import type { Editor } from "@tiptap/react";
-import { Ban, Check, ClipboardCheck, Columns2, LoaderCircle, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { Ban, Check, ClipboardCheck, Columns2, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useDeferredValue, useEffect, useState } from "react";
 import {
   cancelAiTask,
   decideAiProposal,
+  enqueueChapterSummaryRefresh,
   errorMessage,
   getAuditFlowSettings,
   generateAiProposal,
@@ -14,8 +15,10 @@ import {
   listAiRuns,
   listAiProposals,
   listEntities,
+  listJobs,
   listModelProfiles,
   listPlanningSections,
+  listSummaryMaterials,
   rateAiProposal,
   type AiAction,
   type AiConsistencyReport,
@@ -24,6 +27,7 @@ import {
   type AiProposal,
   type AiProposalReview,
   type ConsistencyReviewFreshness,
+  type Job,
   type ReviewPurpose,
   type ReviewTrace,
   type WritingReviewPolicy,
@@ -62,6 +66,15 @@ const reviewStatusLabels: Record<ReviewTrace["modelFindings"][number]["status"],
   BLOCK: "阻断",
   UNKNOWN: "无法确认",
 };
+
+function isChapterSummaryJobFor(job: Job, chapterId: string) {
+  if (job.jobType !== "REFRESH_CHAPTER_SUMMARY") return false;
+  try {
+    return JSON.parse(job.payload).chapterId === chapterId;
+  } catch {
+    return false;
+  }
+}
 
 function consistencyAdmission(
   report: AiConsistencyReport | null,
@@ -258,6 +271,12 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   const auditFlow = useQuery({ queryKey: ["audit-flow-settings"], queryFn: getAuditFlowSettings });
   const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
   const entities = useQuery({ queryKey: ["entities", false], queryFn: () => listEntities(false) });
+  const chapterSummaries = useQuery({ queryKey: ["summary-materials"], queryFn: listSummaryMaterials });
+  const summaryJobs = useQuery({
+    queryKey: ["jobs", 100],
+    queryFn: listJobs,
+    refetchInterval: (query) => query.state.data?.some((job) => isChapterSummaryJobFor(job, props.chapterId) && (job.status === "QUEUED" || job.status === "RUNNING")) ? 1_000 : false,
+  });
   const [instruction, setInstruction] = useState("");
   const deferredInstruction = useDeferredValue(instruction);
   const currentDocumentJson = reviewingManuscript && props.editor
@@ -311,6 +330,12 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   const generationLocked = generationBusy
     || (!isReadinessMode && (runningRuns.isPending || runningRuns.isFetching));
   const effectiveTaskId = persistedRunning?.id ?? null;
+  const chapterSummary = (chapterSummaries.data ?? []).find((item) => item.sourceId === props.chapterId && item.generationMode === "EXTRACTIVE_AUTO");
+  const chapterSummaryJob = (summaryJobs.data ?? []).find((job) => isChapterSummaryJobFor(job, props.chapterId) && (job.status === "QUEUED" || job.status === "RUNNING"));
+  const chapterSummaryStatus = chapterSummaryJob?.status === "RUNNING"
+    ? "章节记忆更新中"
+    : chapterSummaryJob ? "章节记忆等待更新"
+    : chapterSummary?.lifecycleStatus === "ACTIVE" ? "章节记忆最新" : "章节记忆已过期";
 
   useEffect(() => {
     let disposed = false;
@@ -504,6 +529,18 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
       : current.length >= 2 ? [current[1]!, proposalId] : [...current, proposalId]);
   }
 
+  async function refreshChapterMemory() {
+    try {
+      await enqueueChapterSummaryRefresh(props.chapterId);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["summary-materials"] }),
+        client.invalidateQueries({ queryKey: ["jobs"] }),
+      ]);
+      setFallbackNotice("章节记忆已加入后台队列");
+      setError(null);
+    } catch (cause) { setError(errorMessage(cause)); }
+  }
+
   const selectedChatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "writing");
   const selectedChatPreference = resolveTaskPreference(aiPreferences.data, "writing");
   const reviewProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "consistencyReview");
@@ -552,7 +589,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     </> : null}
 
     {isCreationMode ? <>
-      <div className="section-heading ai-stage-heading"><div><h2><Sparkles size={15} />AI 创作</h2><p>填写本章补充意见，生成正文，并在候选写入草稿前完成确认。</p></div><div className="proposal-heading-actions"><span>云端模型 · 候选确认</span>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
+      <div className="section-heading ai-stage-heading"><div><h2><Sparkles size={15} />AI 创作</h2><p>填写本章补充意见，生成正文，并在候选写入草稿前完成确认。</p></div><div className="proposal-heading-actions"><span>{chapterSummary || chapterSummaryJob ? chapterSummaryStatus : "尚未生成章节记忆"}</span><button type="button" className="secondary-action" onClick={() => void refreshChapterMemory()} disabled={!visibleDraftAvailable || Boolean(chapterSummaryJob)}><RefreshCw size={14} />更新章节记忆</button>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
       <AiModelNote taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
       {consistencyNotice ? <div className="consistency-admission creation-admission" data-state={consistencyNotice.state}><span>{consistencyNotice.text}</span>{consistencyBlocked && props.onOpenAdmissionReview ? <button type="button" className="secondary-action" onClick={props.onOpenAdmissionReview}>前往创作准入处理</button> : null}</div> : null}
       <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>

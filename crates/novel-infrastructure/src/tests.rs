@@ -340,6 +340,55 @@ fn queued_chapter_summary_refresh_creates_chapter_and_project_memory() {
 }
 
 #[test]
+fn queued_setting_summary_refresh_uses_confirmed_sections_only() {
+    let root = std::path::PathBuf::from("target")
+        .join(format!("ainovel-setting-summary-{}", uuid::Uuid::new_v4()));
+    let mut manager = super::ProjectManager::new();
+    manager.create(&root, "设定摘要").expect("create project");
+    manager
+        .save_planning_section(super::PlanningSection {
+            id: "seed-premise".to_owned(),
+            content: "主角在雨夜追查失踪者的信件。".to_owned(),
+            pending_content: String::new(),
+            story_state: super::PlanningStoryState::Confirmed,
+            rationale: String::new(),
+            consequence: String::new(),
+            references: Vec::new(),
+            updated_at: String::new(),
+        })
+        .expect("save confirmed setting");
+    manager
+        .save_planning_section(super::PlanningSection {
+            id: "pending-idea".to_owned(),
+            content: String::new(),
+            pending_content: "这条候选不应进入正式设定记忆。".to_owned(),
+            story_state: super::PlanningStoryState::AiSuggested,
+            rationale: String::new(),
+            consequence: String::new(),
+            references: Vec::new(),
+            updated_at: String::new(),
+        })
+        .expect("save pending setting");
+    manager
+        .enqueue_job(
+            super::JobType::RefreshProjectSettingSummary,
+            "{}".to_owned(),
+        )
+        .expect("enqueue setting summary");
+    let completed = manager.run_next_job().expect("run").expect("job");
+    assert_eq!(completed.status, super::JobStatus::Succeeded);
+    let summary = manager
+        .list_summary_materials()
+        .expect("list summaries")
+        .into_iter()
+        .find(|item| item.generation_mode == "EXTRACTIVE_AUTO_SETTINGS")
+        .expect("setting memory");
+    assert!(summary.content.contains("主角在雨夜"));
+    assert!(!summary.content.contains("不应进入正式设定记忆"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn failed_creation_does_not_leave_project_directory() {
     let root = std::path::PathBuf::from("target")
         .join(format!("ainovel-project-{}", uuid::Uuid::new_v4()));

@@ -26,11 +26,9 @@ pub(crate) fn save_manuscript(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    let revision = manager
+    manager
         .save_manuscript(chapter_id, document_json, creation_reason)
-        .map_err(ApiError::from)?;
-    enqueue_summary_refresh(&mut manager, &revision)?;
-    Ok(revision)
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -45,27 +43,37 @@ pub(crate) fn save_manuscript_checked(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    let revision = manager
+    manager
         .save_manuscript_checked(chapter_id, base_revision_id, document_json, creation_reason)
-        .map_err(ApiError::from)?;
-    enqueue_summary_refresh(&mut manager, &revision)?;
-    Ok(revision)
+        .map_err(ApiError::from)
 }
 
-fn enqueue_summary_refresh(
-    manager: &mut novel_infrastructure::ProjectManager,
-    revision: &novel_infrastructure::ManuscriptRevision,
-) -> Result<(), ApiError> {
+#[tauri::command]
+pub(crate) fn enqueue_chapter_summary_refresh(
+    state: tauri::State<'_, ProjectState>,
+    chapter_id: uuid::Uuid,
+) -> Result<novel_infrastructure::Job, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    let revision = manager
+        .current_manuscript(chapter_id)
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError {
+            code: "INVALID_INPUT",
+            message: "当前章节没有可生成摘要的正文修订".to_owned(),
+        })?;
     let payload = serde_json::json!({
-        "chapterId": revision.chapter_id,
+        "chapterId": chapter_id,
         "revisionId": revision.id,
     })
     .to_string();
     let job = manager
         .enqueue_job(novel_infrastructure::JobType::RefreshChapterSummary, payload)
         .map_err(|error| ApiError::internal(error.to_string()))?;
-    let _ = manager.append_job_event(job.id, "QUEUED", "等待异步更新章节摘要", 0);
-    Ok(())
+    let _ = manager.append_job_event(job.id, "QUEUED", "等待用户请求的章节摘要更新", 0);
+    Ok(job)
 }
 
 #[tauri::command]

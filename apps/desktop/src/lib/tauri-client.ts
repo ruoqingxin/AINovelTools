@@ -462,7 +462,7 @@ export type AiProposalReview = {
   consistencyFreshness: ConsistencyReviewFreshness | null;
   hasReviewTrace: boolean;
 };
-export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX" | "REFRESH_CHAPTER_SUMMARY" | "AI_PLANNING_GENERATE" | "AI_PLANNING_EXTRACT";
+export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX" | "REFRESH_CHAPTER_SUMMARY" | "REFRESH_PROJECT_SETTING_SUMMARY" | "AI_PLANNING_GENERATE" | "AI_PLANNING_EXTRACT";
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
 export type Job = {
   id: string; jobType: JobType; payload: string; status: JobStatus; progress: number;
@@ -723,6 +723,12 @@ export function saveManuscript(input: { chapterId: string; documentJson: string;
 
 export function saveManuscriptChecked(input: { chapterId: string; baseRevisionId?: string; documentJson: string; creationReason: string }) {
   return invoke<ManuscriptRevision>("save_manuscript_checked", input);
+}
+export function enqueueChapterSummaryRefresh(chapterId: string) {
+  return invoke<Job>("enqueue_chapter_summary_refresh", { chapterId });
+}
+export function enqueueProjectSettingSummaryRefresh() {
+  return invoke<Job>("enqueue_project_setting_summary_refresh");
 }
 
 export function mergeManuscript(input: { base: string; current: string; draft: string }) {

@@ -39,6 +39,24 @@ pub(crate) fn save_planning_section(
 }
 
 #[tauri::command]
+pub(crate) fn enqueue_project_setting_summary_refresh(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<novel_infrastructure::Job, ApiError> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    let job = manager
+        .enqueue_job(
+            novel_infrastructure::JobType::RefreshProjectSettingSummary,
+            "{}".to_owned(),
+        )
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let _ = manager.append_job_event(job.id, "QUEUED", "等待用户请求的设定摘要更新", 0);
+    Ok(job)
+}
+
+#[tauri::command]
 pub(crate) fn list_planning_embeddings(
     state: tauri::State<'_, ProjectState>,
 ) -> Result<Vec<novel_infrastructure::PlanningEmbedding>, ApiError> {

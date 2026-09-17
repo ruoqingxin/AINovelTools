@@ -1,8 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Save } from "lucide-react";
+import { RefreshCw, Save } from "lucide-react";
 import { useState } from "react";
 import {
   errorMessage,
+  enqueueProjectSettingSummaryRefresh,
+  listJobs,
   listSummaryMaterials,
   listWritingCards,
   rebuildSummaryMaterial,
@@ -31,6 +33,11 @@ function cardSignature(card: WritingCard) {
 export function MaterialsView() {
   const client = useQueryClient();
   const summaries = useQuery({ queryKey: ["summary-materials"], queryFn: listSummaryMaterials });
+  const jobs = useQuery({
+    queryKey: ["jobs", 100],
+    queryFn: listJobs,
+    refetchInterval: (query) => query.state.data?.some((job) => job.jobType === "REFRESH_PROJECT_SETTING_SUMMARY" && (job.status === "QUEUED" || job.status === "RUNNING")) ? 1_000 : false,
+  });
   const cards = useQuery({ queryKey: ["writing-cards"], queryFn: () => listWritingCards() });
   const [summary, setSummary] = useState({ kind: "CHAPTER" as SummaryKind, precision: "L0" as SummaryPrecision, content: "", sourceVersion: "" });
   const [card, setCard] = useState<WritingCard>(emptyCard);
@@ -41,6 +48,12 @@ export function MaterialsView() {
     || Boolean(summary.sourceVersion.trim())
     || Boolean(summary.content.trim());
   const cardDirty = cardSignature(card) !== cardSignature(emptyCard);
+  const autoSettingSummary = (summaries.data ?? []).find((item) => item.generationMode === "EXTRACTIVE_AUTO_SETTINGS");
+  const settingRefreshJob = (jobs.data ?? []).find((job) => job.jobType === "REFRESH_PROJECT_SETTING_SUMMARY" && (job.status === "QUEUED" || job.status === "RUNNING"));
+  const settingSummaryStatus = settingRefreshJob?.status === "RUNNING"
+    ? "设定记忆更新中"
+    : settingRefreshJob ? "设定记忆等待更新"
+    : autoSettingSummary?.lifecycleStatus === "ACTIVE" ? "设定记忆最新" : "设定记忆已过期";
   useUnsavedChangesGuard(summaryDirty || cardDirty, summaryDirty ? "当前摘要有未保存内容。" : "当前写作卡片有未保存内容。");
 
   async function refresh(key: string[]) {
@@ -70,8 +83,19 @@ export function MaterialsView() {
       setCard(emptyCard); setNotice("卡片已保存"); setError(null); await client.invalidateQueries({ queryKey: ["writing-cards"] });
     } catch (cause) { setError(errorMessage(cause)); }
   }
+  async function refreshSettingMemory() {
+    try {
+      await enqueueProjectSettingSummaryRefresh();
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["summary-materials"] }),
+        client.invalidateQueries({ queryKey: ["jobs"] }),
+      ]);
+      setNotice("设定记忆已加入后台队列");
+      setError(null);
+    } catch (cause) { setError(errorMessage(cause)); }
+  }
   return <section className="materials-view">
-    <div className="workspace-heading"><p className="eyebrow">知识资料</p><h1>摘要与写作卡片</h1><p className="workspace-lede">维护多精度摘要、风格规则和写作技巧。内容保留来源与生命周期信息，供后续上下文组装使用。</p></div>
+    <div className="workspace-heading"><p className="eyebrow">知识资料</p><h1>摘要与写作卡片</h1><p className="workspace-lede">维护多精度摘要、风格规则和写作技巧。内容保留来源与生命周期信息，供后续上下文组装使用。</p><div className="workspace-heading-actions"><span>{autoSettingSummary || settingRefreshJob ? settingSummaryStatus : "尚未生成设定记忆"}</span><button type="button" className="secondary-action" onClick={() => void refreshSettingMemory()} disabled={Boolean(settingRefreshJob)}><RefreshCw size={15} />更新设定记忆</button></div></div>
     <KnowledgeSectionNav />
     {notice ? <p className="project-notice" role="status">{notice}</p> : null}{error ? <p className="project-error" role="alert">{error}</p> : null}
     <div className="materials-layout">

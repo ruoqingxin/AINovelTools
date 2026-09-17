@@ -7,6 +7,7 @@ fn job_type_str(value: JobType) -> &'static str {
         JobType::HealthScan => "HEALTH_SCAN",
         JobType::RebuildSearchIndex => "REBUILD_SEARCH_INDEX",
         JobType::RefreshChapterSummary => "REFRESH_CHAPTER_SUMMARY",
+        JobType::RefreshProjectSettingSummary => "REFRESH_PROJECT_SETTING_SUMMARY",
         JobType::AiPlanningGenerate => "AI_PLANNING_GENERATE",
         JobType::AiPlanningExtract => "AI_PLANNING_EXTRACT",
     }
@@ -18,6 +19,7 @@ fn parse_job_type(value: &str) -> JobType {
         "HEALTH_SCAN" => JobType::HealthScan,
         "REBUILD_SEARCH_INDEX" => JobType::RebuildSearchIndex,
         "REFRESH_CHAPTER_SUMMARY" => JobType::RefreshChapterSummary,
+        "REFRESH_PROJECT_SETTING_SUMMARY" => JobType::RefreshProjectSettingSummary,
         "AI_PLANNING_GENERATE" => JobType::AiPlanningGenerate,
         "AI_PLANNING_EXTRACT" => JobType::AiPlanningExtract,
         _ => JobType::Backup,
@@ -304,6 +306,10 @@ impl ProjectManager {
             JobType::RebuildSearchIndex => self.rebuild_search_index().map_err(|e| e.to_string()),
             JobType::RefreshChapterSummary => self
                 .refresh_chapter_summary_from_job(&job.payload)
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+            JobType::RefreshProjectSettingSummary => self
+                .refresh_project_setting_summary_from_job(&job.payload)
                 .map(|_| ())
                 .map_err(|e| e.to_string()),
             JobType::HealthScan => self.health_scan().map(|_| ()).map_err(|e| e.to_string()),

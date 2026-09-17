@@ -48,7 +48,7 @@ use commands::knowledge::{
 };
 use commands::manuscript::{
     clear_recovery_logs, current_manuscript, list_all_recovery_logs, list_manuscript_revisions,
-    list_recovery_logs, merge_manuscript, save_manuscript, save_manuscript_checked,
+    list_recovery_logs, merge_manuscript, enqueue_chapter_summary_refresh, save_manuscript, save_manuscript_checked,
     save_recovery_log,
 };
 use commands::materials::{
@@ -58,7 +58,7 @@ use commands::materials::{
 };
 use commands::planning::{
     clear_planning_embedding, create_plan_node, generate_planning_embedding, list_plan_nodes,
-    list_planning_embeddings, list_planning_sections, move_plan_node, save_planning_section,
+    list_planning_embeddings, list_planning_sections, move_plan_node, enqueue_project_setting_summary_refresh, save_planning_section,
     update_plan_node, update_plan_node_checked,
 };
 use commands::project::{
@@ -133,6 +133,7 @@ pub fn run() {
             list_plan_nodes,
             list_planning_sections,
             save_planning_section,
+            enqueue_project_setting_summary_refresh,
             list_planning_embeddings,
             generate_planning_embedding,
             clear_planning_embedding,
@@ -147,6 +148,7 @@ pub fn run() {
             clear_recovery_logs,
             save_manuscript,
             save_manuscript_checked,
+            enqueue_chapter_summary_refresh,
             merge_manuscript,
             save_recovery_log,
             list_model_profiles,

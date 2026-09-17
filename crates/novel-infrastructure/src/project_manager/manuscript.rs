@@ -176,7 +176,9 @@ impl ProjectManager {
             return;
         };
         for material in materials.into_iter().filter(|material| {
-            material.source_id == Some(chapter_id) && material.lifecycle_status == "ACTIVE"
+            material.lifecycle_status == "ACTIVE"
+                && (material.source_id == Some(chapter_id)
+                    || material.generation_mode == "EXTRACTIVE_AUTO_PROJECT")
         }) {
             let _ = self.set_summary_material_lifecycle(material.id, "STALE".to_owned());
         }

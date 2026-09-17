@@ -31,7 +31,93 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or_else(|| ProjectError::NotInitialized(PathBuf::from("<none>")))?;
-        Ok(session.database.save_planning_section(section)?)
+        let previous = session
+            .database
+            .list_planning_sections()?
+            .into_iter()
+            .find(|existing| existing.id == section.id);
+        let saved = session.database.save_planning_section(section)?;
+        let is_formal = |item: &PlanningSection| {
+            !item.content.trim().is_empty()
+                && matches!(
+                    item.story_state,
+                    PlanningStoryState::Confirmed | PlanningStoryState::Locked
+                )
+        };
+        let formal_changed = match previous.as_ref().filter(|item| is_formal(item)) {
+            Some(before) if is_formal(&saved) => {
+                before.content != saved.content || before.story_state != saved.story_state
+            }
+            Some(_) => true,
+            None => is_formal(&saved),
+        };
+        if formal_changed {
+            self.invalidate_auto_setting_summaries();
+        }
+        Ok(saved)
+    }
+
+    pub fn refresh_project_setting_summary_from_job(
+        &mut self,
+        payload: &str,
+    ) -> Result<bool, ProjectError> {
+        let _ = payload;
+        let sections = self.list_planning_sections()?;
+        let formal_sections = sections
+            .into_iter()
+            .filter(|section| {
+                !section.content.trim().is_empty()
+                    && matches!(
+                        section.story_state,
+                        PlanningStoryState::Confirmed | PlanningStoryState::Locked
+                    )
+            })
+            .collect::<Vec<_>>();
+        if formal_sections.is_empty() {
+            return Ok(false);
+        }
+        let content = formal_sections
+            .iter()
+            .take(16)
+            .map(|section| {
+                format!(
+                    "{}：{}",
+                    section.id,
+                    compact_setting_excerpt(&section.content, 280)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let material = SummaryMaterial {
+            id: Uuid::new_v4(),
+            project_id: Uuid::nil(),
+            kind: SummaryKind::Setting,
+            precision: SummaryPrecision::L4,
+            source_id: None,
+            source_version: Some("planning:formal".to_owned()),
+            content: compact_setting_excerpt(&content, 2_400),
+            generation_mode: "EXTRACTIVE_AUTO_SETTINGS".to_owned(),
+            lifecycle_status: "ACTIVE".to_owned(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        self.invalidate_auto_setting_summaries();
+        let _ = self.upsert_summary_material(material);
+        Ok(true)
+    }
+
+    fn invalidate_auto_setting_summaries(&mut self) {
+        let Ok(materials) = self.list_summary_materials() else {
+            return;
+        };
+        for material in materials.into_iter().filter(|material| {
+            material.kind == SummaryKind::Setting
+                && material.precision == SummaryPrecision::L4
+                && material.lifecycle_status == "ACTIVE"
+                && material.generation_mode == "EXTRACTIVE_AUTO_SETTINGS"
+        }) {
+            let _ = self.set_summary_material_lifecycle(material.id, "STALE".to_owned());
+        }
     }
 
     pub fn list_planning_embeddings(&self) -> Result<Vec<PlanningEmbedding>, ProjectError> {
@@ -170,4 +256,24 @@ impl ProjectManager {
             .rebuild_search_index(session.manifest.project_id)?;
         Ok(node)
     }
+}
+
+fn compact_setting_excerpt(value: &str, max_chars: usize) -> String {
+    let value = value.trim();
+    if value.chars().count() <= max_chars {
+        return value.to_owned();
+    }
+    let marker = "\n[设定原文请按需回查]\n";
+    let available = max_chars.saturating_sub(marker.chars().count());
+    let head = available.saturating_mul(2) / 3;
+    let tail = available.saturating_sub(head);
+    format!(
+        "{}{}{}",
+        value.chars().take(head).collect::<String>(),
+        marker,
+        value
+            .chars()
+            .skip(value.chars().count().saturating_sub(tail))
+            .collect::<String>()
+    )
 }
