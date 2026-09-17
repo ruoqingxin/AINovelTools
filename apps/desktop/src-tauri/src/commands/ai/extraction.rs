@@ -71,8 +71,8 @@ pub(crate) async fn extract_entities_from_text(
         &source_text,
         usize::try_from(input_token_budget)
             .unwrap_or(usize::MAX)
-            .saturating_mul(4)
             .saturating_sub(8_192)
+            .saturating_sub(1_024)
             .max(1_024),
         "\n[已按上下文预算截断文件内容]",
     );
@@ -100,7 +100,7 @@ pub(crate) async fn extract_entities_from_text(
         ],
     );
     context.estimated_input_tokens = u32::try_from(
-        (context.system_prompt.chars().count() + context.user_prompt.chars().count()).div_ceil(4),
+        context.system_prompt.chars().count() + context.user_prompt.chars().count(),
     )
     .unwrap_or(u32::MAX)
     .min(input_token_budget);
@@ -285,8 +285,8 @@ pub(crate) async fn extract_chapter_candidates(
         &block_payload,
         usize::try_from(input_token_budget)
             .unwrap_or(usize::MAX)
-            .saturating_mul(4)
             .saturating_sub(8_192)
+            .saturating_sub(1_024)
             .max(1_024),
         "\n[已按上下文预算截断正文块]",
     );
@@ -321,7 +321,7 @@ pub(crate) async fn extract_chapter_candidates(
     );
     EXTRACTION_PROMPT_VERSION.clone_into(&mut context.prompt_version);
     context.estimated_input_tokens = u32::try_from(
-        (context.system_prompt.chars().count() + context.user_prompt.chars().count()).div_ceil(4),
+        context.system_prompt.chars().count() + context.user_prompt.chars().count(),
     )
     .unwrap_or(u32::MAX)
     .min(input_token_budget);

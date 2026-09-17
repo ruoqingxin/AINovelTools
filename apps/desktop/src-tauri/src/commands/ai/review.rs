@@ -1188,10 +1188,10 @@ pub(crate) async fn generate_ai_proposal(
         context = context.with_review_purpose(effective_review_purpose);
     }
     context.estimated_input_tokens = u32::try_from(
-        (context.system_prompt.chars().count() + context.user_prompt.chars().count()).div_ceil(4),
+        context.system_prompt.chars().count() + context.user_prompt.chars().count(),
     )
     .unwrap_or(u32::MAX)
-    .min(profile.context_window.saturating_sub(max_output_tokens));
+    .min(input_token_budget);
     if matches!(
         action,
         novel_infrastructure::AiAction::Draft | novel_infrastructure::AiAction::Continue

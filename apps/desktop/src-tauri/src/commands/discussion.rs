@@ -205,7 +205,16 @@ pub(crate) async fn ask_project_discussion(
         let recent_messages = manager
             .list_discussion_messages(session.id, 20)
             .map_err(ApiError::from)?;
-        let history = render_history(&recent_messages, None);
+        let recent_history = render_history(&recent_messages, None, 8_192);
+        let history = if session.summary.trim().is_empty() {
+            recent_history
+        } else {
+            format!(
+                "[会话记忆]\n{}\n\n[最近消息]\n{}",
+                session.summary.trim(),
+                recent_history
+            )
+        };
         let context = manager
             .assemble_discussion_context(&novel_application::DiscussionContextInput {
                 scope_label: scope_label.clone(),
@@ -368,24 +377,31 @@ fn discussion_scope(
 fn render_history(
     messages: &[novel_infrastructure::DiscussionMessage],
     excluded_message_id: Option<uuid::Uuid>,
+    max_chars: usize,
 ) -> String {
-    messages
+    let mut rendered = Vec::new();
+    let mut used = 0usize;
+    for message in messages
         .iter()
         .filter(|message| Some(message.id) != excluded_message_id)
         .rev()
-        .take(12)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .map(|message| {
-            let role = match message.role {
-                novel_infrastructure::DiscussionMessageRole::User => "作者",
-                novel_infrastructure::DiscussionMessageRole::Assistant => "AI",
-            };
-            format!("{role}：{}", message.content.trim())
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        .take(20)
+    {
+        if used >= max_chars {
+            break;
+        }
+        let role = match message.role {
+            novel_infrastructure::DiscussionMessageRole::User => "作者",
+            novel_infrastructure::DiscussionMessageRole::Assistant => "AI",
+        };
+        let content = message.content.trim();
+        let allowance = max_chars.saturating_sub(used).min(1_200);
+        let content = content.chars().take(allowance).collect::<String>();
+        let entry = format!("{role}：{content}");
+        used = used.saturating_add(entry.chars().count().saturating_add(2));
+        rendered.push(entry);
+    }
+    rendered.into_iter().rev().collect::<Vec<_>>().join("\n\n")
 }
 
 fn plan_kind_label(kind: novel_infrastructure::PlanNodeKind) -> &'static str {

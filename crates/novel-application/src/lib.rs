@@ -415,4 +415,27 @@ mod tests {
                 .contains("不输出修改后的正式对象")
         );
     }
+
+    #[test]
+    fn long_drafts_keep_both_ends_instead_of_only_the_head() {
+        let input = super::AssembleContextInput {
+            chapter_id: uuid::Uuid::new_v4(),
+            target_revision_id: None,
+            action: novel_domain::AiAction::Summarize,
+            chapter_title: "长章".into(),
+            chapter_plan: "总结当前章节".into(),
+            volume_plan: String::new(),
+            document_json: format!(
+                r#"{{"type":"doc","content":[{{"type":"paragraph","content":[{{"type":"text","text":"开场锚点{}结尾锚点"}}]}}]}}"#,
+                "中段内容".repeat(6_000)
+            ),
+            selection: None,
+            instruction: None,
+            input_token_budget: 20_000,
+        };
+        let package = super::ContextAssembler::assemble(&input).expect("assemble");
+        assert!(package.user_prompt.contains("开场锚点"));
+        assert!(package.user_prompt.contains("结尾锚点"));
+        assert!(package.user_prompt.contains("正文中段已移入章节摘要或按需检索"));
+    }
 }

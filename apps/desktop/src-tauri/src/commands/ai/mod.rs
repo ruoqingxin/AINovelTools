@@ -217,12 +217,21 @@ pub(crate) fn effective_task_input_budget(
     max_output_tokens: u32,
     preference: &novel_infrastructure::AiTaskPreference,
 ) -> u32 {
-    let model_budget = profile.context_window.saturating_sub(max_output_tokens);
+    // Keep every provider request inside a predictable envelope. Provider
+    // tokenizers, system messages and protocol wrappers consume space that
+    // cannot be inferred from the user prompt alone.
+    const SAFETY_MARGIN_TOKENS: u32 = 1_024;
+    const MAX_SAFE_INPUT_TOKENS: u32 = 32_768;
+    let model_budget = profile
+        .context_window
+        .saturating_sub(max_output_tokens)
+        .saturating_sub(SAFETY_MARGIN_TOKENS);
     preference
         .prompt
         .context
         .input_token_budget
         .map_or(model_budget, |budget| model_budget.min(budget))
+        .min(MAX_SAFE_INPUT_TOKENS)
         .max(256)
 }
 

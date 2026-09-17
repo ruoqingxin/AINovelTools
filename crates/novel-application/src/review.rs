@@ -223,10 +223,11 @@ fn build_review_context(
                 .as_bytes()
         )
     );
-    let estimated_input_tokens =
-        u32::try_from((system_prompt.chars().count() + user_prompt.chars().count()).div_ceil(4))
-            .unwrap_or(u32::MAX)
-            .min(input_token_budget);
+    let estimated_input_tokens = u32::try_from(
+        system_prompt.chars().count() + user_prompt.chars().count(),
+    )
+    .unwrap_or(u32::MAX)
+    .min(input_token_budget);
     ContextPackage {
         chapter_id,
         target_revision_id,

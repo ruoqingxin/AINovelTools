@@ -26,9 +26,11 @@ pub(crate) fn save_manuscript(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
+    let revision = manager
         .save_manuscript(chapter_id, document_json, creation_reason)
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    enqueue_summary_refresh(&mut manager, &revision)?;
+    Ok(revision)
 }
 
 #[tauri::command]
@@ -43,9 +45,27 @@ pub(crate) fn save_manuscript_checked(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
+    let revision = manager
         .save_manuscript_checked(chapter_id, base_revision_id, document_json, creation_reason)
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    enqueue_summary_refresh(&mut manager, &revision)?;
+    Ok(revision)
+}
+
+fn enqueue_summary_refresh(
+    manager: &mut novel_infrastructure::ProjectManager,
+    revision: &novel_infrastructure::ManuscriptRevision,
+) -> Result<(), ApiError> {
+    let payload = serde_json::json!({
+        "chapterId": revision.chapter_id,
+        "revisionId": revision.id,
+    })
+    .to_string();
+    let job = manager
+        .enqueue_job(novel_infrastructure::JobType::RefreshChapterSummary, payload)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let _ = manager.append_job_event(job.id, "QUEUED", "等待异步更新章节摘要", 0);
+    Ok(())
 }
 
 #[tauri::command]

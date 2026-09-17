@@ -471,8 +471,7 @@ fn build_planning_context_plan(
             .saturating_sub(PLANNING_CONTEXT_RESERVE_TOKENS)
             .max(1),
     )
-    .unwrap_or(usize::MAX)
-    .saturating_mul(4);
+    .unwrap_or(usize::MAX);
     let (project_budget, reference_budget) = match mode {
         novel_application::PlanningContextMode::Generate => (available_chars, available_chars / 4),
         novel_application::PlanningContextMode::Extract => {
@@ -786,14 +785,12 @@ pub(crate) async fn generate_planning_content(
     let mut context = planning_context(&input)?;
     let estimated_input_chars = context
         .system_prompt
-        .len()
-        .saturating_add(context.user_prompt.len());
-    context.estimated_input_tokens = (u32::try_from(estimated_input_chars).unwrap_or(u32::MAX) / 4)
-        .min(
-            profile
-                .context_window
-                .saturating_sub(profile.max_output_tokens),
-        );
+        .chars()
+        .count()
+        .saturating_add(context.user_prompt.chars().count());
+    context.estimated_input_tokens = u32::try_from(estimated_input_chars)
+        .unwrap_or(u32::MAX)
+        .min(input_token_budget);
     state
         .gateway
         .generate(

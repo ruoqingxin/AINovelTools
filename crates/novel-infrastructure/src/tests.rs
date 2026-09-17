@@ -296,6 +296,50 @@ fn manuscript_documents_are_validated_normalized_and_hashed() {
 }
 
 #[test]
+fn queued_chapter_summary_refresh_creates_chapter_and_project_memory() {
+    let root = std::path::PathBuf::from("target")
+        .join(format!("ainovel-summary-refresh-{}", uuid::Uuid::new_v4()));
+    let mut manager = super::ProjectManager::new();
+    manager.create(&root, "摘要任务").expect("create project");
+    let chapter = manager
+        .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+        .expect("chapter");
+    let revision = manager
+        .save_manuscript(
+            chapter.id,
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"开场发生在雨夜。"}]},{"type":"paragraph","content":[{"type":"text","text":"结尾揭示了失踪者的信件。"}]}]}"#.into(),
+            "test".into(),
+        )
+        .expect("save");
+    manager
+        .enqueue_job(
+            super::JobType::RefreshChapterSummary,
+            serde_json::json!({
+                "chapterId": chapter.id,
+                "revisionId": revision.id,
+            })
+            .to_string(),
+        )
+        .expect("enqueue summary refresh");
+    let completed = manager.run_next_job().expect("run").expect("job");
+    assert_eq!(completed.status, super::JobStatus::Succeeded);
+    let summaries = manager.list_summary_materials().expect("list summaries");
+    assert!(summaries.iter().any(|summary| {
+        summary.kind == novel_domain::SummaryKind::Chapter
+            && summary.lifecycle_status == "ACTIVE"
+            && summary.source_id == Some(chapter.id)
+            && summary.source_version.as_deref() == Some(&format!("manuscript:{}", revision.id))
+    }));
+    assert!(summaries.iter().any(|summary| {
+        summary.kind == novel_domain::SummaryKind::Setting
+            && summary.precision == novel_domain::SummaryPrecision::L5
+            && summary.generation_mode == "EXTRACTIVE_AUTO_PROJECT"
+            && summary.lifecycle_status == "ACTIVE"
+    }));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn failed_creation_does_not_leave_project_directory() {
     let root = std::path::PathBuf::from("target")
         .join(format!("ainovel-project-{}", uuid::Uuid::new_v4()));

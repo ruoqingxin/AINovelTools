@@ -462,7 +462,7 @@ export type AiProposalReview = {
   consistencyFreshness: ConsistencyReviewFreshness | null;
   hasReviewTrace: boolean;
 };
-export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX" | "AI_PLANNING_GENERATE" | "AI_PLANNING_EXTRACT";
+export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX" | "REFRESH_CHAPTER_SUMMARY" | "AI_PLANNING_GENERATE" | "AI_PLANNING_EXTRACT";
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
 export type Job = {
   id: string; jobType: JobType; payload: string; status: JobStatus; progress: number;

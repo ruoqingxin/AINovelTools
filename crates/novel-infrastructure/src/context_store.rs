@@ -23,6 +23,7 @@ const WRITING_SETTING_SECTIONS: [(&str, &str); 15] = [
 const MAX_WRITING_SETTING_SECTION_CHARS: usize = 1_400;
 const MAX_WRITING_SETTINGS_CHARS: usize = 10_000;
 const SETTING_TRUNCATION_MARKER: &str = "\n[正式设定片段已按上下文预算截断]";
+const MAX_SUMMARY_CONTEXT_CHARS: usize = 1_200;
 
 impl ProjectManager {
     pub(crate) fn collect_context_candidates(
@@ -31,13 +32,22 @@ impl ProjectManager {
         object_ids: &[Uuid],
     ) -> Vec<ContextCandidate> {
         let mut candidates = Vec::new();
+        let draft_query = novel_application::document_text(&input.document_json)
+            .unwrap_or_default()
+            .chars()
+            .rev()
+            .take(8_000)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>();
         let query_text = [
             input.chapter_title.as_str(),
             input.chapter_plan.as_str(),
             input.volume_plan.as_str(),
             input.instruction.as_deref().unwrap_or_default(),
             input.selection.as_deref().unwrap_or_default(),
-            input.document_json.as_str(),
+            draft_query.as_str(),
         ]
         .join("\n");
         let normalized_query = normalize_for_match(&query_text);
@@ -280,28 +290,54 @@ impl ProjectManager {
             .list_summary_materials()
             .unwrap_or_default()
             .into_iter()
-            .filter(|item| item.lifecycle_status == "ACTIVE")
+            .filter(|item| {
+                item.lifecycle_status == "ACTIVE" || item.lifecycle_status == "STALE"
+            })
             .map(|item| {
                 let current_chapter_score =
                     u16::from(item.source_id == Some(input.chapter_id)).saturating_mul(5_000);
                 let setting_score =
                     u16::from(item.kind == SummaryKind::Setting).saturating_mul(2_000);
+                let precision_score = summary_precision_score(item.precision, item.kind, input);
+                let freshness_score = if item.lifecycle_status == "STALE" {
+                    0
+                } else {
+                    2_000
+                };
+                let revision_score = if summary_matches_revision(
+                    item.source_version.as_deref(),
+                    input.target_revision_id,
+                ) {
+                    3_000
+                } else {
+                    0
+                };
                 let score = score_values(&normalized_query, &[&item.content])
                     .saturating_add(current_chapter_score)
-                    .saturating_add(setting_score);
+                    .saturating_add(setting_score)
+                    .saturating_add(precision_score)
+                    .saturating_add(freshness_score)
+                    .saturating_add(revision_score);
                 (score, item)
             })
             .collect::<Vec<_>>();
         summaries.sort_by_key(|left| std::cmp::Reverse(left.0));
         summaries.truncate(6);
         for (score, item) in summaries {
+            let summary_content = truncate_summary_for_context(&item.content);
+            let freshness = if item.lifecycle_status == "STALE" {
+                "（过期导航，仅供定位，必须回查原文）"
+            } else {
+                ""
+            };
             candidates.push(build_candidate(
                 ContextCandidateKind::Summary,
                 format!(
-                    "{} {}摘要：{}",
+                    "{} {}摘要{}：{}",
                     summary_precision_label(item.precision),
                     summary_kind_label(item.kind),
-                    item.content.trim()
+                    freshness,
+                    summary_content
                 ),
                 item.id,
                 item.source_version
@@ -369,6 +405,47 @@ impl ProjectManager {
         }
 
         candidates
+    }
+}
+
+fn truncate_summary_for_context(value: &str) -> String {
+    let value = value.trim();
+    if value.chars().count() <= MAX_SUMMARY_CONTEXT_CHARS {
+        return value.to_owned();
+    }
+    let keep = MAX_SUMMARY_CONTEXT_CHARS.saturating_sub(24);
+    format!(
+        "{}\n[摘要片段已按上下文预算截断]",
+        value.chars().take(keep).collect::<String>()
+    )
+}
+
+fn summary_matches_revision(source_version: Option<&str>, revision_id: Option<Uuid>) -> bool {
+    let Some(revision_id) = revision_id else {
+        return false;
+    };
+    source_version.is_some_and(|value| value.contains(&revision_id.to_string()))
+}
+
+fn summary_precision_score(
+    precision: SummaryPrecision,
+    kind: SummaryKind,
+    input: &novel_application::AssembleContextInput,
+) -> u16 {
+    let rank: u16 = match precision {
+        SummaryPrecision::L0 => 0,
+        SummaryPrecision::L1 => 1,
+        SummaryPrecision::L2 => 2,
+        SummaryPrecision::L3 => 3,
+        SummaryPrecision::L4 => 4,
+        SummaryPrecision::L5 => 5,
+    };
+    match kind {
+        SummaryKind::Chapter if input.chapter_id != Uuid::nil() => {
+            2_000u16.saturating_sub(rank.saturating_mul(250))
+        }
+        SummaryKind::Setting => rank.saturating_mul(250),
+        _ => 500u16.saturating_sub(rank.saturating_mul(50)),
     }
 }
 

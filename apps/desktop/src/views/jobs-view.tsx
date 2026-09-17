@@ -15,6 +15,7 @@ const typeLabels: Record<JobType, string> = {
   RESTORE_VERIFY: "恢复校验",
   HEALTH_SCAN: "健康扫描",
   REBUILD_SEARCH_INDEX: "重建索引",
+  REFRESH_CHAPTER_SUMMARY: "更新章节摘要",
   AI_PLANNING_GENERATE: "规划 AI 推导",
   AI_PLANNING_EXTRACT: "规划文件处理",
 };

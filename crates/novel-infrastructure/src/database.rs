@@ -1009,6 +1009,55 @@ impl Database {
                 [],
             )?;
         }
+        if applied.unwrap_or(0) < 46 {
+            self.connection.execute_batch(
+                "PRAGMA foreign_keys=OFF;
+                BEGIN;
+                ALTER TABLE job_events RENAME TO job_events_before_summary_refresh;
+                ALTER TABLE jobs RENAME TO jobs_before_summary_refresh;
+                CREATE TABLE jobs (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    job_type TEXT NOT NULL CHECK(job_type IN (
+                        'BACKUP','RESTORE_VERIFY','HEALTH_SCAN','REBUILD_SEARCH_INDEX',
+                        'REFRESH_CHAPTER_SUMMARY','AI_PLANNING_GENERATE','AI_PLANNING_EXTRACT'
+                    )),
+                    payload TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload)),
+                    status TEXT NOT NULL CHECK(status IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELLED')),
+                    progress INTEGER NOT NULL DEFAULT 0 CHECK(progress BETWEEN 0 AND 100),
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    error_summary TEXT,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    acknowledged_at TEXT
+                );
+                INSERT INTO jobs
+                    (id, job_type, payload, status, progress, attempt_count, cancel_requested,
+                     error_summary, created_at, updated_at, acknowledged_at)
+                SELECT id, job_type, payload, status, progress, attempt_count, cancel_requested,
+                       error_summary, created_at, updated_at, acknowledged_at
+                FROM jobs_before_summary_refresh;
+                CREATE TABLE job_events (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    stage TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    progress INTEGER NOT NULL CHECK(progress BETWEEN 0 AND 100),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                INSERT INTO job_events (id, job_id, stage, message, progress, created_at)
+                SELECT id, job_id, stage, message, progress, created_at
+                FROM job_events_before_summary_refresh;
+                DROP TABLE job_events_before_summary_refresh;
+                DROP TABLE jobs_before_summary_refresh;
+                CREATE INDEX idx_jobs_status_updated ON jobs(status, updated_at);
+                CREATE INDEX idx_job_events_job_created ON job_events(job_id, created_at);
+                INSERT INTO schema_migrations (version, name)
+                    VALUES (46, 'context_summary_refresh_jobs');
+                COMMIT;
+                PRAGMA foreign_keys=ON;",
+            )?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }

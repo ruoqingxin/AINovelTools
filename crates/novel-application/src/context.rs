@@ -8,6 +8,11 @@ use uuid::Uuid;
 pub const PROMPT_VERSION: &str = "r5.1-writing-v1";
 const TRUNCATION_MARKER: &str = "[已按 TokenBudget 截断]";
 
+/// Conservative upper bound used when converting a token budget to text.
+/// Chinese characters can occupy roughly one token each, so a 1:1 budget is
+/// intentionally stricter than the old 4:1 character estimate.
+const CONSERVATIVE_CHARS_PER_TOKEN: usize = 1;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RetrievalIntent {
@@ -428,7 +433,7 @@ impl ContextAssembler {
         );
         let character_budget = usize::try_from(input.input_token_budget)
             .unwrap_or(usize::MAX)
-            .saturating_mul(4);
+            .saturating_mul(CONSERVATIVE_CHARS_PER_TOKEN);
         let (user_prompt, section_audit, truncated) = compile_sections(
             &mut sections,
             character_budget.saturating_sub(system_prompt.chars().count()),
@@ -447,10 +452,7 @@ impl ContextAssembler {
             "sectionAudit": section_audit,
         });
         let context_version = format!("{:x}", Sha256::digest(canonical.to_string().as_bytes()));
-        let estimated_input_tokens = u32::try_from(
-            (system_prompt.chars().count() + user_prompt.chars().count()).div_ceil(4),
-        )
-        .unwrap_or(u32::MAX);
+        let estimated_input_tokens = estimate_input_tokens(&system_prompt, &user_prompt);
         Ok(ContextPackage {
             chapter_id: input.chapter_id,
             target_revision_id: input.target_revision_id,
@@ -590,7 +592,7 @@ impl ContextAssembler {
         ];
         let character_budget = usize::try_from(input.input_token_budget)
             .unwrap_or(usize::MAX)
-            .saturating_mul(4);
+            .saturating_mul(CONSERVATIVE_CHARS_PER_TOKEN);
         let (user_prompt, section_audit, truncated) = compile_sections(
             &mut sections,
             character_budget.saturating_sub(system_prompt.chars().count()),
@@ -610,10 +612,7 @@ impl ContextAssembler {
             "sectionAudit": section_audit,
         });
         let context_version = format!("{:x}", Sha256::digest(canonical.to_string().as_bytes()));
-        let estimated_input_tokens = u32::try_from(
-            (system_prompt.chars().count() + user_prompt.chars().count()).div_ceil(4),
-        )
-        .unwrap_or(u32::MAX);
+        let estimated_input_tokens = estimate_input_tokens(&system_prompt, &user_prompt);
         Ok(ContextPackage {
             chapter_id: Uuid::nil(),
             target_revision_id: None,
@@ -685,6 +684,7 @@ fn build_prompt_sections(
     task_contract: &AiTaskContract,
     retrieval: &CompiledRetrieval,
 ) -> Vec<PromptSection> {
+    let document = compact_document_for_context(&document, 16_000);
     let user_material = format!(
         "用户要求：{}\n处理选区：{}",
         input.instruction.as_deref().unwrap_or("无").trim(),
@@ -774,6 +774,24 @@ fn build_prompt_sections(
             retrieval.reference_count,
         ),
     ]
+}
+
+fn compact_document_for_context(value: &str, max_chars: usize) -> String {
+    let value = value.trim();
+    let length = value.chars().count();
+    if length <= max_chars {
+        return value.to_owned();
+    }
+    let marker = "\n[正文中段已移入章节摘要或按需检索]\n";
+    let available = max_chars.saturating_sub(marker.chars().count());
+    let head = available.saturating_mul(2) / 5;
+    let tail = available.saturating_sub(head);
+    let head_text = value.chars().take(head).collect::<String>();
+    let tail_text = value
+        .chars()
+        .skip(length.saturating_sub(tail))
+        .collect::<String>();
+    format!("{head_text}{marker}{tail_text}")
 }
 
 struct TaskContractDefinition {
@@ -997,6 +1015,33 @@ fn non_empty_or(value: String, fallback: &str) -> String {
     } else {
         value
     }
+}
+
+/// Estimates prompt tokens conservatively without coupling the application
+/// crate to a provider-specific tokenizer. Non-ASCII characters count as one
+/// token; ASCII runs use the usual four-characters-per-token approximation.
+fn estimate_input_tokens(system_prompt: &str, user_prompt: &str) -> u32 {
+    let mut tokens = 0usize;
+    let mut ascii_run = 0usize;
+    for character in system_prompt.chars().chain(user_prompt.chars()) {
+        if character.is_ascii() {
+            ascii_run = ascii_run.saturating_add(1);
+            if ascii_run == 4 {
+                tokens = tokens.saturating_add(1);
+                ascii_run = 0;
+            }
+        } else {
+            if ascii_run > 0 {
+                tokens = tokens.saturating_add(1);
+                ascii_run = 0;
+            }
+            tokens = tokens.saturating_add(1);
+        }
+    }
+    if ascii_run > 0 {
+        tokens = tokens.saturating_add(1);
+    }
+    u32::try_from(tokens).unwrap_or(u32::MAX)
 }
 
 fn compile_retrieval_evidence(evidence: &[RetrievalEvidence]) -> CompiledRetrieval {

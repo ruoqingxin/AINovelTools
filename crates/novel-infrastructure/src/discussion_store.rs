@@ -278,6 +278,20 @@ impl Database {
         Ok(())
     }
 
+    pub(super) fn update_discussion_summary(
+        &self,
+        session_id: Uuid,
+        summary: &str,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "UPDATE discussion_sessions
+             SET summary=?1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id=?2",
+            rusqlite::params![summary, session_id.to_string()],
+        )?;
+        Ok(())
+    }
+
     pub(super) fn list_discussion_messages(
         &self,
         session_id: Uuid,
@@ -684,6 +698,11 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(DiscussionStoreError::NoProject)?;
+        let previous_summary = session
+            .database
+            .get_discussion_session(session_id)?
+            .ok_or(DiscussionStoreError::MissingSession(session_id))?
+            .summary;
         session
             .database
             .append_discussion_exchange(&user_message, &assistant_message)
@@ -693,6 +712,14 @@ impl ProjectManager {
                 }
                 other => DiscussionStoreError::Database(other),
             })?;
+        session.database.update_discussion_summary(
+            session_id,
+            &compact_discussion_memory(
+                &previous_summary,
+                &user_message.content,
+                &assistant_message.content,
+            ),
+        )?;
         Ok((user_message, assistant_message))
     }
 
@@ -824,6 +851,36 @@ impl ProjectManager {
                 evidence_anchor_id,
             )
     }
+}
+
+fn compact_discussion_memory(previous: &str, user: &str, assistant: &str) -> String {
+    const MAX_CHARS: usize = 4_000;
+    let addition = format!(
+        "{}\n作者：{}\nAI：{}",
+        if previous.trim().is_empty() {
+            "讨论记忆："
+        } else {
+            previous.trim()
+        },
+        user.trim(),
+        assistant.trim()
+    );
+    if addition.chars().count() <= MAX_CHARS {
+        return addition;
+    }
+    let marker = "\n[更早讨论已压缩，原始消息可回查]\n";
+    let available = MAX_CHARS.saturating_sub(marker.chars().count());
+    let head = available / 3;
+    let tail = available.saturating_sub(head);
+    format!(
+        "{}{}{}",
+        addition.chars().take(head).collect::<String>(),
+        marker,
+        addition
+            .chars()
+            .skip(addition.chars().count().saturating_sub(tail))
+            .collect::<String>()
+    )
 }
 
 fn insert_discussion_message(
