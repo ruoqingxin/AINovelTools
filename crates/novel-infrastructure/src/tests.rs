@@ -369,6 +369,11 @@ fn queued_setting_summary_refresh_uses_confirmed_sections_only() {
             updated_at: String::new(),
         })
         .expect("save pending setting");
+    assert!(manager
+        .list_summary_materials()
+        .expect("list summaries before manual refresh")
+        .iter()
+        .all(|item| item.generation_mode != "EXTRACTIVE_AUTO_SETTINGS"));
     manager
         .enqueue_job(
             super::JobType::RefreshProjectSettingSummary,
@@ -385,6 +390,66 @@ fn queued_setting_summary_refresh_uses_confirmed_sections_only() {
         .expect("setting memory");
     assert!(summary.content.contains("主角在雨夜"));
     assert!(!summary.content.contains("不应进入正式设定记忆"));
+    let summary_id = summary.id;
+
+    manager
+        .save_planning_section(super::PlanningSection {
+            id: "seed-premise".to_owned(),
+            content: "主角改在清晨追查失踪者留下的信件。".to_owned(),
+            pending_content: String::new(),
+            story_state: super::PlanningStoryState::Confirmed,
+            rationale: String::new(),
+            consequence: String::new(),
+            references: Vec::new(),
+            updated_at: String::new(),
+        })
+        .expect("change confirmed setting");
+    assert!(manager
+        .list_summary_materials()
+        .expect("list stale summaries")
+        .iter()
+        .any(|item| item.id == summary_id && item.lifecycle_status == "STALE"));
+
+    manager
+        .enqueue_job(
+            super::JobType::RefreshProjectSettingSummary,
+            "{}".to_owned(),
+        )
+        .expect("enqueue refreshed setting summary");
+    let completed = manager.run_next_job().expect("run refreshed job").expect("job");
+    assert_eq!(completed.status, super::JobStatus::Succeeded);
+    let refreshed_summary = manager
+        .list_summary_materials()
+        .expect("list refreshed summaries")
+        .into_iter()
+        .find(|item| {
+            item.generation_mode == "EXTRACTIVE_AUTO_SETTINGS"
+                && item.lifecycle_status == "ACTIVE"
+        })
+        .expect("active setting memory");
+    assert!(refreshed_summary.content.contains("主角改在清晨"));
+
+    let chapter = manager
+        .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+        .expect("chapter");
+    let package = manager
+        .assemble_context_with_project_knowledge(&novel_application::AssembleContextInput {
+            chapter_id: chapter.id,
+            target_revision_id: None,
+            action: super::AiAction::Draft,
+            chapter_title: "第一章".into(),
+            chapter_plan: "主角开始查信。".into(),
+            volume_plan: String::new(),
+            document_json: r#"{"type":"doc","content":[]}"#.into(),
+            selection: None,
+            instruction: Some("遵守清晨的时间设定".into()),
+            input_token_budget: 8_192,
+        })
+        .expect("assemble context");
+    assert!(package.retrieval_evidence.iter().any(|item| {
+        item.source_revision == "planning:formal"
+            && item.authority == super::ContextAuthority::Reference
+    }));
     let _ = std::fs::remove_dir_all(root);
 }
 
