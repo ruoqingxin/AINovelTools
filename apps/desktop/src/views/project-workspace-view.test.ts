@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildVolumePlanTargetGuidance, parseChapterPlanCandidates, parseVolumePlanCandidates, resolveDefaultWritingChapter } from "./project-workspace-view";
+import { buildVolumePlanTargetGuidance, parseChapterPlanCandidates, parseVolumePlanCandidates, resolveDefaultWritingChapter } from "./project-workspace-utils";
 
 describe("parseVolumePlanCandidates", () => {
   it("parses numbered, Chinese-numbered, and duplicate volume candidates", () => {

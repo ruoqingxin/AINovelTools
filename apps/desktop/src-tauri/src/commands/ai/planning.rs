@@ -1,0 +1,1553 @@
+use super::*;
+
+pub(crate) fn effective_max_output_tokens(
+    profile: &novel_domain::ModelProfile,
+    options: novel_infrastructure::GenerationOptions,
+) -> u32 {
+    options
+        .max_output_tokens
+        .unwrap_or(profile.max_output_tokens)
+        .clamp(1, profile.max_output_tokens.max(1))
+}
+
+fn is_core_planning_section(section_id: &str) -> bool {
+    matches!(
+        section_id,
+        "seed-premise"
+            | "seed-genre-promise"
+            | "engine-protagonist"
+            | "engine-antagonism"
+            | "engine-stakes"
+            | "engine-ending"
+    )
+}
+
+fn planning_context_sections(value: &str) -> Vec<(String, String)> {
+    let mut sections = Vec::<(String, String)>::new();
+    let mut current_id: Option<String> = None;
+    let mut current_content = String::new();
+    for line in value.lines() {
+        let candidate = line.split_once(':').and_then(|(id, _)| {
+            (!id.is_empty()
+                && id.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || character == '-' || character == '_'
+                }))
+            .then(|| id.to_owned())
+        });
+        if let Some(id) = candidate {
+            if let Some(previous_id) = current_id.replace(id) {
+                sections.push((previous_id, std::mem::take(&mut current_content)));
+            }
+            current_content.push_str(
+                line.split_once(':')
+                    .map(|(_, text)| text)
+                    .unwrap_or_default(),
+            );
+            current_content.push('\n');
+        } else if current_id.is_some() {
+            current_content.push_str(line);
+            current_content.push('\n');
+        }
+    }
+    if let Some(id) = current_id {
+        sections.push((id, current_content));
+    }
+    sections
+}
+
+fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
+    if left.len() != right.len() || left.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0;
+    let mut left_norm = 0.0;
+    let mut right_norm = 0.0;
+    for (left_value, right_value) in left.iter().zip(right) {
+        dot += left_value * right_value;
+        left_norm += left_value * left_value;
+        right_norm += right_value * right_value;
+    }
+    if left_norm == 0.0 || right_norm == 0.0 {
+        0.0
+    } else {
+        dot / (left_norm.sqrt() * right_norm.sqrt())
+    }
+}
+
+fn planning_content_hash(value: &str) -> String {
+    format!("sha256:{:x}", Sha256::digest(value.as_bytes()))
+}
+
+struct PlanningEmbeddingQuery {
+    profile: novel_domain::ModelProfile,
+    secret: String,
+    vector: Vec<f32>,
+}
+
+struct PlanningEmbeddingQueryResult {
+    query: PlanningEmbeddingQuery,
+    elapsed_ms: u128,
+}
+
+struct SemanticProjectRetrieval {
+    section_similarities: HashMap<String, f32>,
+    chunk_similarities: HashMap<String, f32>,
+    persisted_vectors: usize,
+    embedded_vectors: usize,
+    embedded_chars: usize,
+    candidate_sections: usize,
+    candidate_chunks: usize,
+    persisted_chunks: usize,
+    embedded_chunks: usize,
+    embedded_chunk_chars: usize,
+    elapsed_ms: u128,
+}
+
+struct SemanticReferenceRetrieval {
+    similarities: HashMap<String, f32>,
+    candidate_blocks: usize,
+    embedded_blocks: usize,
+    embedded_chars: usize,
+    elapsed_ms: u128,
+}
+
+struct PlanningRetrievalSimilarities<'a> {
+    project_sections: &'a HashMap<String, f32>,
+    project_chunks: &'a HashMap<String, f32>,
+    references: &'a HashMap<String, f32>,
+}
+
+async fn planning_embedding_query(
+    state: &ProjectState,
+    query: &str,
+) -> Result<PlanningEmbeddingQueryResult, String> {
+    let started = Instant::now();
+    let profile = {
+        let store = state
+            .model_profiles
+            .lock()
+            .map_err(|_| "模型配置不可用".to_owned())?;
+        let profiles = store
+            .list()
+            .map_err(|error| format!("读取模型配置失败（{}）", error.code()))?;
+        profiles
+            .into_iter()
+            .find(|item| {
+                item.capability == novel_infrastructure::ModelCapability::Embedding
+                    && item.has_secret
+            })
+            .ok_or_else(|| "未配置带密钥的 Embedding 模型".to_owned())?
+    };
+    let secret_ref = profile
+        .secret_ref
+        .as_deref()
+        .ok_or_else(|| "Embedding 模型缺少密钥".to_owned())?;
+    let secret = novel_infrastructure::SecretStore::get(secret_ref)
+        .map_err(|_| "读取 Embedding 模型密钥失败".to_owned())?;
+    let query_vector = state
+        .embedding_gateway
+        .embed(&profile, &secret, query)
+        .await
+        .map_err(|error| format!("查询向量生成失败（{}）", error.code()))?;
+    Ok(PlanningEmbeddingQueryResult {
+        query: PlanningEmbeddingQuery {
+            profile,
+            secret,
+            vector: query_vector,
+        },
+        elapsed_ms: started.elapsed().as_millis(),
+    })
+}
+
+async fn semantic_planning_context(
+    state: &ProjectState,
+    existing_context: &str,
+    query: &str,
+    embedding: &PlanningEmbeddingQuery,
+) -> Result<SemanticProjectRetrieval, String> {
+    const MAX_PROJECT_SEMANTIC_SECTIONS: usize = 8;
+    const MAX_PROJECT_CHUNK_CANDIDATES_PER_SECTION: usize = 6;
+
+    let started = Instant::now();
+    let sections = planning_context_sections(existing_context);
+    if sections.len() < 2 {
+        return Ok(SemanticProjectRetrieval {
+            section_similarities: HashMap::new(),
+            chunk_similarities: HashMap::new(),
+            persisted_vectors: 0,
+            embedded_vectors: 0,
+            embedded_chars: 0,
+            candidate_sections: 0,
+            candidate_chunks: 0,
+            persisted_chunks: 0,
+            embedded_chunks: 0,
+            embedded_chunk_chars: 0,
+            elapsed_ms: started.elapsed().as_millis(),
+        });
+    }
+    let (persisted, persisted_chunks) = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| "读取正式设定向量失败".to_owned())?;
+        let dimensions = i64::try_from(embedding.vector.len()).unwrap_or_default();
+        let persisted = manager
+            .list_planning_embeddings()
+            .map_err(|_| "读取正式设定向量失败".to_owned())?
+            .into_iter()
+            .filter(|item| {
+                item.profile_id == embedding.profile.id
+                    && item.model_id == embedding.profile.model_id
+                    && item.dimensions == dimensions
+            })
+            .map(|item| (item.section_id, item.vector))
+            .collect::<HashMap<_, _>>();
+        let persisted_chunks = manager
+            .list_planning_chunk_embeddings()
+            .map_err(|_| "读取正式设定分块向量失败".to_owned())?
+            .into_iter()
+            .filter(|item| {
+                item.profile_id == embedding.profile.id
+                    && item.model_id == embedding.profile.model_id
+                    && item.dimensions == dimensions
+            })
+            .map(|item| (item.chunk_id.clone(), item))
+            .collect::<HashMap<_, _>>();
+        (persisted, persisted_chunks)
+    };
+    let persisted_vectors = sections
+        .iter()
+        .filter(|(id, _)| persisted.contains_key(id))
+        .count();
+    let mut section_similarities = HashMap::with_capacity(sections.len());
+    let mut missing_briefs = Vec::new();
+    for (id, content) in &sections {
+        let brief = novel_application::PlanningContextPlanner::project_section_brief(content, 240);
+        if !brief.is_empty() {
+            missing_briefs.push((id.clone(), brief));
+        }
+    }
+    let embedded_vectors = missing_briefs.len();
+    let embedded_chars = missing_briefs
+        .iter()
+        .map(|(_, content)| content.chars().count())
+        .sum();
+    if !missing_briefs.is_empty() {
+        let inputs = missing_briefs
+            .iter()
+            .map(|(_, content)| content.clone())
+            .collect::<Vec<_>>();
+        let embedded = state
+            .embedding_gateway
+            .embed_many(&embedding.profile, &embedding.secret, &inputs)
+            .await
+            .map_err(|error| format!("正式设定摘要批量向量化失败（{}）", error.code()))?;
+        if embedded.len() != missing_briefs.len() {
+            return Err("正式设定摘要向量数量不匹配".to_owned());
+        }
+        for ((id, _), vector) in missing_briefs.into_iter().zip(embedded) {
+            let brief_similarity = cosine_similarity(&embedding.vector, &vector);
+            let section_similarity = persisted.get(&id).map_or(brief_similarity, |vector| {
+                brief_similarity * 0.7 + cosine_similarity(&embedding.vector, vector) * 0.3
+            });
+            section_similarities.insert(id, section_similarity);
+        }
+    }
+    let mut ranked = sections
+        .iter()
+        .enumerate()
+        .map(|(index, (id, _))| {
+            (
+                index,
+                section_similarities.get(id).copied().unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    let section_limit = MAX_PROJECT_SEMANTIC_SECTIONS.min(sections.len());
+    let mut selected = sections
+        .iter()
+        .enumerate()
+        .filter(|(_, (id, _))| is_core_planning_section(id))
+        .map(|(index, _)| index)
+        .take(section_limit)
+        .collect::<HashSet<_>>();
+    for (index, _) in ranked {
+        if selected.len() >= section_limit {
+            break;
+        }
+        selected.insert(index);
+    }
+    let candidate_sections = selected.len();
+    let candidate_blocks = sections
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| selected.contains(index))
+        .map(
+            |(_, (id, content))| novel_application::PlanningContextBlock {
+                id: id.clone(),
+                heading: String::new(),
+                content: content.clone(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let candidates = novel_application::PlanningContextPlanner::project_semantic_candidates(
+        &candidate_blocks,
+        query,
+        MAX_PROJECT_CHUNK_CANDIDATES_PER_SECTION,
+    );
+    let candidate_chunks = candidates.len();
+    let mut chunk_similarities = HashMap::with_capacity(candidate_chunks);
+    let mut missing_chunks = Vec::new();
+    for candidate in candidates {
+        let content_hash = planning_content_hash(&candidate.content);
+        if let Some(cached) = persisted_chunks.get(&candidate.id)
+            && cached.content_hash == content_hash
+        {
+            chunk_similarities.insert(
+                candidate.id,
+                cosine_similarity(&embedding.vector, &cached.vector),
+            );
+        } else {
+            missing_chunks.push((candidate, content_hash));
+        }
+    }
+    let persisted_chunks = candidate_chunks.saturating_sub(missing_chunks.len());
+    let embedded_chunks = missing_chunks.len();
+    let embedded_chunk_chars = missing_chunks
+        .iter()
+        .map(|(candidate, _)| candidate.content.chars().count())
+        .sum();
+    let mut generated_chunks = Vec::with_capacity(missing_chunks.len());
+    if !missing_chunks.is_empty() {
+        let inputs = missing_chunks
+            .iter()
+            .map(|(candidate, _)| candidate.content.clone())
+            .collect::<Vec<_>>();
+        let vectors = state
+            .embedding_gateway
+            .embed_many(&embedding.profile, &embedding.secret, &inputs)
+            .await
+            .map_err(|error| format!("正式设定分块批量向量化失败（{}）", error.code()))?;
+        if vectors.len() != missing_chunks.len() {
+            return Err("正式设定分块向量数量不匹配".to_owned());
+        }
+        for ((candidate, content_hash), vector) in missing_chunks.into_iter().zip(vectors) {
+            chunk_similarities.insert(
+                candidate.id.clone(),
+                cosine_similarity(&embedding.vector, &vector),
+            );
+            generated_chunks.push((candidate, content_hash, vector));
+        }
+    }
+    if !generated_chunks.is_empty()
+        && let Ok(mut manager) = state.manager.lock()
+    {
+        for (candidate, content_hash, vector) in generated_chunks {
+            let chunk_index = candidate
+                .id
+                .rsplit_once("#chunk-")
+                .and_then(|(_, index)| index.parse::<i64>().ok())
+                .unwrap_or_default();
+            let _ = manager.generate_planning_chunk_embedding(
+                novel_infrastructure::PlanningChunkEmbedding {
+                    chunk_id: candidate.id,
+                    section_id: candidate.section_id,
+                    chunk_index,
+                    profile_id: embedding.profile.id,
+                    model_id: embedding.profile.model_id.clone(),
+                    dimensions: i64::try_from(vector.len()).unwrap_or_default(),
+                    content_hash,
+                    vector,
+                    updated_at: String::new(),
+                },
+            );
+        }
+    }
+    Ok(SemanticProjectRetrieval {
+        section_similarities,
+        chunk_similarities,
+        persisted_vectors,
+        embedded_vectors,
+        embedded_chars,
+        candidate_sections,
+        candidate_chunks,
+        persisted_chunks,
+        embedded_chunks,
+        embedded_chunk_chars,
+        elapsed_ms: started.elapsed().as_millis(),
+    })
+}
+
+async fn semantic_reference_similarities(
+    state: &ProjectState,
+    reference_content: &str,
+    query: &str,
+    embedding: &PlanningEmbeddingQuery,
+) -> Result<SemanticReferenceRetrieval, String> {
+    const MAX_REFERENCE_EMBEDDING_CANDIDATES: usize = 24;
+    const MAX_REFERENCE_EMBEDDING_CHARS: usize = 4_000;
+
+    let started = Instant::now();
+    let candidates = novel_application::PlanningContextPlanner::reference_semantic_candidates(
+        reference_content,
+        query,
+        MAX_REFERENCE_EMBEDDING_CANDIDATES,
+    );
+    if candidates.is_empty() {
+        return Ok(SemanticReferenceRetrieval {
+            similarities: HashMap::new(),
+            candidate_blocks: 0,
+            embedded_blocks: 0,
+            embedded_chars: 0,
+            elapsed_ms: started.elapsed().as_millis(),
+        });
+    }
+    let candidate_blocks = candidates.len();
+    let inputs = candidates
+        .iter()
+        .map(|candidate| {
+            candidate
+                .content
+                .chars()
+                .take(MAX_REFERENCE_EMBEDDING_CHARS)
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    let embedded_chars = inputs.iter().map(|input| input.chars().count()).sum();
+    let vectors = state
+        .embedding_gateway
+        .embed_many(&embedding.profile, &embedding.secret, &inputs)
+        .await
+        .map_err(|error| format!("文件片段批量向量化失败（{}）", error.code()))?;
+    if vectors.len() != candidates.len() {
+        return Err("文件片段向量数量不匹配".to_owned());
+    }
+    let embedded_blocks = vectors.len();
+    let similarities = candidates
+        .into_iter()
+        .zip(vectors)
+        .map(|(candidate, vector)| (candidate.id, cosine_similarity(&embedding.vector, &vector)))
+        .collect();
+    Ok(SemanticReferenceRetrieval {
+        similarities,
+        candidate_blocks,
+        embedded_blocks,
+        embedded_chars,
+        elapsed_ms: started.elapsed().as_millis(),
+    })
+}
+
+fn planning_context_mode(
+    mode: &str,
+    allow_rewrite: bool,
+) -> Result<novel_application::PlanningContextMode, ApiError> {
+    match (mode, allow_rewrite) {
+        ("GENERATE", _) => Ok(novel_application::PlanningContextMode::Generate),
+        ("EXTRACT", true) => Ok(novel_application::PlanningContextMode::ExtractRewrite),
+        ("EXTRACT", false) => Ok(novel_application::PlanningContextMode::Extract),
+        _ => Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "不支持的规划 AI 模式".to_owned(),
+        }),
+    }
+}
+
+fn build_planning_context_plan(
+    existing_context: &str,
+    reference_content: &str,
+    query: &str,
+    mode: novel_application::PlanningContextMode,
+    input_token_budget: u32,
+    similarities: PlanningRetrievalSimilarities<'_>,
+) -> novel_application::PlanningContextPlan {
+    let available_chars = usize::try_from(
+        input_token_budget
+            .saturating_sub(PLANNING_CONTEXT_RESERVE_TOKENS)
+            .max(1),
+    )
+    .unwrap_or(usize::MAX)
+    .saturating_mul(4);
+    let (project_budget, reference_budget) = match mode {
+        novel_application::PlanningContextMode::Generate => (available_chars, available_chars / 4),
+        novel_application::PlanningContextMode::Extract => {
+            let project_budget = available_chars / 3;
+            (
+                project_budget,
+                available_chars.saturating_sub(project_budget),
+            )
+        }
+        novel_application::PlanningContextMode::ExtractRewrite => {
+            let project_budget = available_chars.saturating_mul(2) / 5;
+            (
+                project_budget,
+                available_chars.saturating_sub(project_budget),
+            )
+        }
+    };
+    novel_application::PlanningContextPlanner::plan_with_similarities(
+        existing_context,
+        reference_content,
+        query,
+        mode,
+        project_budget,
+        reference_budget,
+        similarities.project_sections,
+        similarities.project_chunks,
+        similarities.references,
+    )
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PlanningAiRequestPreview {
+    pub(crate) endpoint: Option<String>,
+    pub(crate) request_body: Option<String>,
+    pub(crate) estimated_input_tokens: Option<u32>,
+}
+
+fn validate_planning_input(input: &PlanningAiJobInput) -> Result<bool, ApiError> {
+    if input.section_title.trim().is_empty() || input.section_prompt.trim().is_empty() {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "规划节点名称和目标不能为空".to_owned(),
+        });
+    }
+    let extract_mode = match input.mode.as_str() {
+        "GENERATE" => false,
+        "EXTRACT" => true,
+        _ => {
+            return Err(ApiError {
+                code: "INVALID_INPUT",
+                message: "不支持的规划 AI 模式".to_owned(),
+            });
+        }
+    };
+    if extract_mode && input.reference_content.trim().is_empty() {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "导入文件内容为空".to_owned(),
+        });
+    }
+    Ok(extract_mode)
+}
+
+fn planning_context(
+    input: &PlanningAiJobInput,
+) -> Result<novel_application::ContextPackage, ApiError> {
+    let extract_mode = validate_planning_input(input)?;
+    let mut context = novel_application::ContextPackage::connection_test();
+    novel_application::PLANNING_PROMPT_VERSION.clone_into(&mut context.context_version);
+    novel_application::PLANNING_PROMPT_VERSION.clone_into(&mut context.prompt_version);
+    context.system_prompt = if extract_mode && input.allow_rewrite {
+        "你是小说设定改写助手。以用户提供的文件为核心依据，围绕当前规划节点筛选信息，并允许重新组织、改写、归纳和合理补全，使结果完整且符合节点范围。补全内容必须与文件事实和已有约束一致，不得引入冲突设定。不要输出解释、标题或分析过程。".to_owned()
+    } else if extract_mode {
+        "你是小说资料提取助手。只允许从用户提供的文件证据片段中提取与当前规划节点直接相关的信息。不得补写、推测、扩展或引入文件外知识。不要输出解释、标题或分析过程。".to_owned()
+    } else {
+        "你是小说项目规划助手。你的职责是帮助作者把当前小说要素写成清晰、具体、可继续修改的设定。不得把推测写成已经确认的事实，不要输出解释、标题或分析过程。".to_owned()
+    };
+    context.user_prompt = if extract_mode && input.allow_rewrite {
+        format!(
+            "当前规划节点：{}\n节点目标：{}\n作者补充要求：{}\n\n已有正式作品设定（[节点导航] 仅用于定位相关节点，[原文片段] 为原始设定证据；仅用于理解范围和保持一致，不得当作文件事实写入）：\n{}\n\n文件证据片段（均来自用户选择的文件，已按节点相关度和输入预算筛选）：\n{}\n\n请以文件证据为核心依据，生成只属于当前节点范围的设定正文。可以改写表达、重组结构，并补足必要的逻辑连接或缺失细节；补全必须合理、克制，且不能违背文件事实、已有设定和当前节点填写提示。忽略与当前节点无关的内容，只输出连贯、可编辑的正文。",
+            input.section_title,
+            input.section_prompt,
+            if input.user_guidance.trim().is_empty() {
+                "无"
+            } else {
+                input.user_guidance.trim()
+            },
+            if input.existing_context.trim().is_empty() {
+                "暂无"
+            } else {
+                input.existing_context.trim()
+            },
+            input.reference_content.trim()
+        )
+    } else if extract_mode {
+        format!(
+            "当前规划节点：{}\n节点目标：{}\n作者补充的提取要求：{}\n\n已有正式作品设定（[节点导航] 仅用于定位相关节点，[原文片段] 为原始设定证据；仅用于理解范围和保持一致，不得当作文件事实写入）：\n{}\n\n文件证据片段（均来自用户选择的文件，已按节点相关度和输入预算筛选）：\n{}\n\n只提取与当前节点直接相关的内容，并整理成连贯、可编辑的设定正文。已有正式设定和作者补充要求只能作为筛选、组织和一致性检查规则，不能作为文件事实写入结果。保留文件证据中的事实和限定条件，忽略无关内容，不得补充文件中没有的信息。如果完全没有相关内容，只回复：未提取到相关内容。",
+            input.section_title,
+            input.section_prompt,
+            if input.user_guidance.trim().is_empty() {
+                "无"
+            } else {
+                input.user_guidance.trim()
+            },
+            if input.existing_context.trim().is_empty() {
+                "暂无"
+            } else {
+                input.existing_context.trim()
+            },
+            input.reference_content.trim()
+        )
+    } else {
+        format!(
+            "当前规划节点：{}\n节点目标：{}\n作者的补充意见：{}\n\n已有项目设定（[节点导航] 仅用于定位相关节点，[原文片段] 为原始设定证据；有冲突时以 [原文片段] 为准）：\n{}\n\n请遵循作者的补充意见，只输出当前节点的设定正文。内容应具体、内部一致，并为后续人物、冲突和情节规划提供可用约束。",
+            input.section_title,
+            input.section_prompt,
+            if input.user_guidance.trim().is_empty() {
+                "无"
+            } else {
+                input.user_guidance.trim()
+            },
+            if input.existing_context.trim().is_empty() {
+                "暂无"
+            } else {
+                input.existing_context.trim()
+            },
+        )
+    };
+    context.task_contract.role = novel_application::AiTaskRole::ChapterSummarizer;
+    context.task_contract.goal = if extract_mode && input.allow_rewrite {
+        format!(
+            "根据文件改写并补全小说规划节点“{}”的内容",
+            input.section_title
+        )
+    } else if extract_mode {
+        format!(
+            "从文件中提取与小说规划节点“{}”相关的内容",
+            input.section_title
+        )
+    } else {
+        format!("生成小说规划节点“{}”的可编辑设定正文", input.section_title)
+    };
+    "PLANNING_SECTION".clone_into(&mut context.task_contract.target_type);
+    context.task_contract.permissions = if extract_mode && input.allow_rewrite {
+        vec!["依据文件改写、重组并合理补全当前节点的设定内容。".to_owned()]
+    } else if extract_mode {
+        vec!["提取并整理文件中与当前节点直接相关的内容。".to_owned()]
+    } else {
+        vec!["根据已有设定提出规划文本。".to_owned()]
+    };
+    context.task_contract.forbidden_actions = if extract_mode && input.allow_rewrite {
+        vec![
+            "不得修改项目数据。".to_owned(),
+            "不得引入与文件事实或已有设定冲突的内容。".to_owned(),
+        ]
+    } else {
+        vec![
+            "不得修改项目数据。".to_owned(),
+            "不得把不确定内容表述为已确认事实。".to_owned(),
+        ]
+    };
+    context.task_contract.acceptance_criteria = vec!["输出可直接编辑的设定正文。".to_owned()];
+    "只输出设定正文，不要 Markdown 标题或解释。"
+        .clone_into(&mut context.task_contract.output_contract);
+    if let Some(system_prompt) = input.system_prompt_snapshot.as_deref() {
+        system_prompt.clone_into(&mut context.system_prompt);
+    }
+    if let Some(user_prompt) = input.user_prompt_snapshot.as_deref() {
+        user_prompt.clone_into(&mut context.user_prompt);
+    }
+    Ok(context)
+}
+
+#[cfg(test)]
+mod planning_context_tests {
+    use super::*;
+
+    #[test]
+    fn planning_context_marks_selected_file_evidence() {
+        let context = planning_context(&PlanningAiJobInput {
+            profile_id: uuid::Uuid::new_v4(),
+            mode: "EXTRACT".to_owned(),
+            section_id: "seed-premise".to_owned(),
+            section_title: "核心前提与开局情境".to_owned(),
+            section_prompt: "提取主角开局遭遇。".to_owned(),
+            existing_context: "seed-genre-promise: 都市悬疑。".to_owned(),
+            reference_content: "[文件片段 1] 主角在停电城市寻找失踪姐姐。".to_owned(),
+            user_guidance: String::new(),
+            allow_rewrite: false,
+            temperature: None,
+            max_output_tokens: None,
+            task_key: None,
+            source_name: None,
+            system_prompt_snapshot: None,
+            user_prompt_snapshot: None,
+            final_request_endpoint: None,
+            final_request_body: None,
+            final_request_estimated_input_tokens: None,
+        })
+        .expect("planning context");
+
+        assert_eq!(
+            context.prompt_version,
+            novel_application::PLANNING_PROMPT_VERSION
+        );
+        assert!(context.user_prompt.contains("文件证据片段"));
+        assert!(context.user_prompt.contains("主角在停电城市寻找失踪姐姐"));
+    }
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn generate_planning_content(
+    state: tauri::State<'_, ProjectState>,
+    profile_id: uuid::Uuid,
+    mode: String,
+    section_title: String,
+    section_prompt: String,
+    existing_context: String,
+    reference_content: String,
+    user_guidance: String,
+    allow_rewrite: bool,
+) -> Result<String, ApiError> {
+    let profile = {
+        let store = state
+            .model_profiles
+            .lock()
+            .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
+        store.get(profile_id).map_err(ApiError::from)?
+    };
+    if profile.capability != novel_infrastructure::ModelCapability::Chat {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "请选择聊天模型配置".to_owned(),
+        });
+    }
+    if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
+        return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
+    }
+    let secret_ref = profile
+        .secret_ref
+        .as_deref()
+        .ok_or(novel_infrastructure::AiError::MissingSecret)
+        .map_err(ApiError::from)?;
+    let secret = novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?;
+    let input_token_budget = profile
+        .context_window
+        .saturating_sub(profile.max_output_tokens);
+    let query = format!("{section_title} {section_prompt} {user_guidance}");
+    let planning_mode = planning_context_mode(&mode, allow_rewrite)?;
+    let embedding_query = planning_embedding_query(&state, &query).await.ok();
+    let project_retrieval = if let Some(embedding) = embedding_query.as_ref() {
+        semantic_planning_context(&state, &existing_context, &query, &embedding.query)
+            .await
+            .ok()
+    } else {
+        None
+    };
+    let empty_project_section_similarities = HashMap::new();
+    let empty_project_chunk_similarities = HashMap::new();
+    let project_section_similarities = project_retrieval
+        .as_ref()
+        .map_or(&empty_project_section_similarities, |retrieval| {
+            &retrieval.section_similarities
+        });
+    let project_chunk_similarities = project_retrieval
+        .as_ref()
+        .map_or(&empty_project_chunk_similarities, |retrieval| {
+            &retrieval.chunk_similarities
+        });
+    let reference_similarities = if let Some(embedding) = embedding_query.as_ref() {
+        semantic_reference_similarities(&state, &reference_content, &query, &embedding.query)
+            .await
+            .map_or_else(|_| HashMap::new(), |retrieval| retrieval.similarities)
+    } else {
+        HashMap::new()
+    };
+    let planned_context = build_planning_context_plan(
+        &existing_context,
+        &reference_content,
+        &query,
+        planning_mode,
+        input_token_budget,
+        PlanningRetrievalSimilarities {
+            project_sections: project_section_similarities,
+            project_chunks: project_chunk_similarities,
+            references: &reference_similarities,
+        },
+    );
+    let input = PlanningAiJobInput {
+        profile_id,
+        mode,
+        section_id: String::new(),
+        section_title,
+        section_prompt,
+        existing_context: planned_context.project_context,
+        reference_content: planned_context.reference_context,
+        user_guidance,
+        allow_rewrite,
+        temperature: None,
+        max_output_tokens: None,
+        task_key: None,
+        source_name: None,
+        system_prompt_snapshot: None,
+        user_prompt_snapshot: None,
+        final_request_endpoint: None,
+        final_request_body: None,
+        final_request_estimated_input_tokens: None,
+    };
+    let mut context = planning_context(&input)?;
+    let estimated_input_chars = context
+        .system_prompt
+        .len()
+        .saturating_add(context.user_prompt.len());
+    context.estimated_input_tokens = (u32::try_from(estimated_input_chars).unwrap_or(u32::MAX) / 4)
+        .min(
+            profile
+                .context_window
+                .saturating_sub(profile.max_output_tokens),
+        );
+    state
+        .gateway
+        .generate(
+            &profile,
+            Some(&secret),
+            &context,
+            false,
+            false,
+            Arc::new(AtomicBool::new(false)),
+            |_| {},
+        )
+        .await
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn enqueue_planning_ai_job(
+    state: tauri::State<'_, ProjectState>,
+    mut input: PlanningAiJobInput,
+) -> Result<novel_infrastructure::Job, ApiError> {
+    validate_planning_input(&input)?;
+    input.system_prompt_snapshot = None;
+    input.user_prompt_snapshot = None;
+    let job_type = match input.mode.as_str() {
+        "GENERATE" => novel_infrastructure::JobType::AiPlanningGenerate,
+        "EXTRACT" => novel_infrastructure::JobType::AiPlanningExtract,
+        _ => {
+            return Err(ApiError {
+                code: "INVALID_INPUT",
+                message: "不支持的规划 AI 模式".to_owned(),
+            });
+        }
+    };
+    let payload =
+        serde_json::to_string(&input).map_err(|error| ApiError::internal(error.to_string()))?;
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    let job = manager
+        .enqueue_job(job_type, payload)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    manager
+        .append_job_event(job.id, "QUEUED", "任务已进入 AI 队列", 0)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    Ok(job)
+}
+
+#[tauri::command]
+pub(crate) fn get_planning_ai_job_request(
+    state: tauri::State<'_, ProjectState>,
+    job_id: uuid::Uuid,
+) -> Result<PlanningAiRequestPreview, ApiError> {
+    let job = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        manager
+            .get_job(job_id)
+            .map_err(|error| ApiError::internal(error.to_string()))?
+    };
+    if !matches!(
+        job.job_type,
+        novel_infrastructure::JobType::AiPlanningGenerate
+            | novel_infrastructure::JobType::AiPlanningExtract
+    ) {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "该任务不是规划 AI 任务".to_owned(),
+        });
+    }
+    let input: PlanningAiJobInput = serde_json::from_str(&job.payload)
+        .map_err(|error| ApiError::internal(format!("任务参数无效：{error}")))?;
+    Ok(PlanningAiRequestPreview {
+        endpoint: input.final_request_endpoint,
+        request_body: input.final_request_body,
+        estimated_input_tokens: input.final_request_estimated_input_tokens,
+    })
+}
+
+fn fail_planning_job(state: &ProjectState, job_id: uuid::Uuid, message: impl Into<String>) {
+    let message = message.into();
+    if let Ok(mut manager) = state.manager.lock() {
+        let _ = manager.append_job_event(job_id, "FAILED", &message, 100);
+        let _ = manager.update_job_status(
+            job_id,
+            novel_infrastructure::JobStatus::Failed,
+            100,
+            Some(message),
+        );
+    }
+}
+
+fn append_planning_job_event(
+    state: &ProjectState,
+    job_id: uuid::Uuid,
+    job_stage: &str,
+    message: impl Into<String>,
+    progress: u8,
+) {
+    if let Ok(mut manager) = state.manager.lock() {
+        let _ = manager.append_job_event(job_id, job_stage, message, progress);
+    }
+}
+
+pub(crate) fn incomplete_generation_failure(
+    completion: novel_infrastructure::GenerationCompletion,
+    output_chars: usize,
+    finish_reason: Option<&str>,
+) -> (novel_infrastructure::AiError, String) {
+    let finish_detail = finish_reason
+        .filter(|reason| !reason.trim().is_empty())
+        .map(|reason| format!("（finish_reason: {reason}）"))
+        .unwrap_or_default();
+    let output_detail = if output_chars == 0 {
+        "模型没有返回任何可用正文".to_owned()
+    } else {
+        format!("已将已生成的 {output_chars} 字保留到待定区")
+    };
+    match completion {
+        novel_infrastructure::GenerationCompletion::LengthLimit => (
+            novel_infrastructure::AiError::OutputLengthLimit,
+            format!(
+                "输出预算不足：模型达到最大输出长度，返回内容未写完；{output_detail}。请在“AI 任务模型”中提高该任务的最大输出 tokens 后重试；开启思考时，思考内容也会占用同一份输出预算。{finish_detail}"
+            ),
+        ),
+        novel_infrastructure::GenerationCompletion::ContentFiltered => (
+            novel_infrastructure::AiError::ContentFiltered,
+            format!(
+                "模型因内容安全策略停止生成；{output_detail}。请调整设定或补充意见后重试。{finish_detail}"
+            ),
+        ),
+        novel_infrastructure::GenerationCompletion::Interrupted => (
+            novel_infrastructure::AiError::StreamInterrupted,
+            format!("模型响应在完整结束前中断；{output_detail}。请检查网络后重试。{finish_detail}"),
+        ),
+        novel_infrastructure::GenerationCompletion::LikelyTruncated => (
+            novel_infrastructure::AiError::OutputIncomplete,
+            format!(
+                "模型虽然结束了响应，但正文结尾停在半句；{output_detail}。请检查结尾并重试或继续补写。{finish_detail}"
+            ),
+        ),
+        novel_infrastructure::GenerationCompletion::Complete => {
+            unreachable!("complete generations are handled before incomplete failure")
+        }
+    }
+}
+
+pub(crate) fn persist_ai_run_request(
+    state: &ProjectState,
+    run_id: uuid::Uuid,
+    profile: &novel_infrastructure::ModelProfile,
+    context: &novel_application::ContextPackage,
+    stream: bool,
+    disable_thinking: bool,
+    options: novel_infrastructure::GenerationOptions,
+) -> Result<(), ApiError> {
+    let (endpoint, request_body) = state.gateway.request_preview_with_options(
+        profile,
+        context,
+        stream,
+        disable_thinking,
+        options,
+    );
+    let request_body = serde_json::to_string_pretty(&request_body)
+        .map_err(|error| ApiError::internal(format!("无法记录 AI 请求：{error}")))?;
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .record_ai_run_request(run_id, &endpoint, &request_body)
+        .map_err(ApiError::from)
+}
+
+pub(crate) fn planning_output_looks_truncated(output: &str) -> bool {
+    let trimmed = output.trim();
+    let Some(last) = trimmed.chars().last() else {
+        return false;
+    };
+    if "。！？!?；;…".contains(last) {
+        return false;
+    }
+    if "：:".contains(last) {
+        return true;
+    }
+    "的地得和与及或但而因在为从把被将以可能要会是有对向让使".contains(last)
+}
+
+pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
+    let state = app.state::<ProjectState>();
+    let job = {
+        let Ok(mut manager) = state.manager.lock() else {
+            return false;
+        };
+        match manager.claim_next_ai_job() {
+            Ok(job) => job,
+            Err(_) => return false,
+        }
+    };
+    let Some(job) = job else {
+        return false;
+    };
+    if let Ok(mut manager) = state.manager.lock() {
+        let _ = manager.update_job_progress(job.id, 5);
+        let _ = manager.append_job_event(job.id, "PREPARING", "正在读取任务参数", 5);
+    }
+    let mut input: PlanningAiJobInput = match serde_json::from_str(&job.payload) {
+        Ok(input) => input,
+        Err(error) => {
+            fail_planning_job(&state, job.id, format!("任务参数无效：{error}"));
+            return true;
+        }
+    };
+    let profile = {
+        let Ok(store) = state.model_profiles.lock() else {
+            fail_planning_job(&state, job.id, "无法读取模型配置");
+            return true;
+        };
+        match store.get(input.profile_id) {
+            Ok(profile) => profile,
+            Err(error) => {
+                fail_planning_job(&state, job.id, error.to_string());
+                return true;
+            }
+        }
+    };
+    if profile.capability != novel_infrastructure::ModelCapability::Chat {
+        fail_planning_job(&state, job.id, "请选择聊天模型配置");
+        return true;
+    }
+    if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
+        fail_planning_job(&state, job.id, "本地隐私策略禁止调用远程模型");
+        return true;
+    }
+    let generation_options =
+        match task_generation_options(input.task_key, input.temperature, input.max_output_tokens) {
+            Ok(options) => options,
+            Err(error) => {
+                fail_planning_job(&state, job.id, error.message);
+                return true;
+            }
+        };
+    let max_output_tokens = effective_max_output_tokens(&profile, generation_options);
+    let task_kind = input
+        .task_key
+        .unwrap_or(novel_infrastructure::AiTaskKind::WorkDesign);
+    let task_preference = match load_ai_task_preference(&state, task_kind) {
+        Ok(preference) => preference,
+        Err(error) => {
+            fail_planning_job(&state, job.id, error.message);
+            return true;
+        }
+    };
+    let include_project_context = context_option(
+        task_preference.prompt.context.include_project_context,
+        task_kind.default_include_project_context(),
+    );
+    let include_reference_content = context_option(
+        task_preference.prompt.context.include_reference_content,
+        task_kind.default_include_reference_content(),
+    );
+    let include_project_knowledge = context_option(
+        task_preference.prompt.context.include_project_knowledge,
+        task_kind.default_include_project_knowledge(),
+    );
+    let input_token_budget =
+        effective_task_input_budget(&profile, max_output_tokens, &task_preference);
+    let secret = if let Some(secret_ref) = profile.secret_ref.as_deref() {
+        match novel_infrastructure::SecretStore::get(secret_ref) {
+            Ok(secret) => secret,
+            Err(error) => {
+                fail_planning_job(&state, job.id, error.to_string());
+                return true;
+            }
+        }
+    } else {
+        fail_planning_job(&state, job.id, "模型配置缺少 API 密钥");
+        return true;
+    };
+    let query = format!(
+        "{} {} {}",
+        input.section_title, input.section_prompt, input.user_guidance
+    );
+    if !include_project_context {
+        input.existing_context.clear();
+    }
+    if !include_reference_content {
+        input.reference_content.clear();
+    }
+    let planning_mode = match planning_context_mode(&input.mode, input.allow_rewrite) {
+        Ok(mode) => mode,
+        Err(error) => {
+            fail_planning_job(&state, job.id, error.message);
+            return true;
+        }
+    };
+    let embedding_query =
+        if include_project_knowledge && (include_project_context || include_reference_content) {
+            match planning_embedding_query(&state, &query).await {
+                Ok(result) => {
+                    append_planning_job_event(
+                        &state,
+                        job.id,
+                        "RETRIEVAL",
+                        format!("查询向量生成完成，耗时 {} ms", result.elapsed_ms),
+                        7,
+                    );
+                    Some(result)
+                }
+                Err(reason) => {
+                    append_planning_job_event(
+                        &state,
+                        job.id,
+                        "RETRIEVAL",
+                        format!("向量检索不可用（{reason}），已回退关键词匹配"),
+                        7,
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+    let project_retrieval = if include_project_context {
+        if let Some(embedding) = embedding_query.as_ref() {
+            match semantic_planning_context(
+                &state,
+                &input.existing_context,
+                &query,
+                &embedding.query,
+            )
+            .await
+            {
+                Ok(retrieval) => Some(retrieval),
+                Err(reason) => {
+                    append_planning_job_event(
+                        &state,
+                        job.id,
+                        "RETRIEVAL",
+                        format!("正式设定向量筛选失败（{reason}），已回退关键词匹配"),
+                        8,
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let reference_retrieval = if include_reference_content {
+        if let Some(embedding) = embedding_query.as_ref() {
+            match semantic_reference_similarities(
+                &state,
+                &input.reference_content,
+                &query,
+                &embedding.query,
+            )
+            .await
+            {
+                Ok(retrieval) => Some(retrieval),
+                Err(reason) => {
+                    append_planning_job_event(
+                        &state,
+                        job.id,
+                        "RETRIEVAL",
+                        format!("文件证据向量筛选失败（{reason}），已回退关键词匹配"),
+                        9,
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let empty_similarities = HashMap::new();
+    let reference_similarities = reference_retrieval
+        .as_ref()
+        .map_or(&empty_similarities, |retrieval| &retrieval.similarities);
+    let empty_project_section_similarities = HashMap::new();
+    let empty_project_chunk_similarities = HashMap::new();
+    let project_section_similarities = project_retrieval
+        .as_ref()
+        .map_or(&empty_project_section_similarities, |retrieval| {
+            &retrieval.section_similarities
+        });
+    let project_chunk_similarities = project_retrieval
+        .as_ref()
+        .map_or(&empty_project_chunk_similarities, |retrieval| {
+            &retrieval.chunk_similarities
+        });
+    let planned_context = build_planning_context_plan(
+        &input.existing_context,
+        &input.reference_content,
+        &query,
+        planning_mode,
+        input_token_budget,
+        PlanningRetrievalSimilarities {
+            project_sections: project_section_similarities,
+            project_chunks: project_chunk_similarities,
+            references: reference_similarities,
+        },
+    );
+    if let Some(retrieval) = project_retrieval.as_ref()
+        && retrieval.candidate_sections > 0
+    {
+        append_planning_job_event(
+            &state,
+            job.id,
+            "RETRIEVAL",
+            format!(
+                "正式设定：摘要向量生成 {} 个（{} 字符），整节点向量补充 {} 个；候选 {} 个节点 / {} 个分块，复用 {} 个分块向量，临时生成 {} 个（{} 字符）；最终保留 {} 个节点 / {} 个原文片段，耗时 {} ms",
+                retrieval.embedded_vectors,
+                retrieval.embedded_chars,
+                retrieval.persisted_vectors,
+                retrieval.candidate_sections,
+                retrieval.candidate_chunks,
+                retrieval.persisted_chunks,
+                retrieval.embedded_chunks,
+                retrieval.embedded_chunk_chars,
+                planned_context.selected_project_sections,
+                planned_context.selected_project_chunks,
+                retrieval.elapsed_ms
+            ),
+            9,
+        );
+    }
+    if let Some(retrieval) = reference_retrieval.as_ref()
+        && retrieval.candidate_blocks > 0
+    {
+        append_planning_job_event(
+            &state,
+            job.id,
+            "RETRIEVAL",
+            format!(
+                "文件证据：候选 {} 个片段，向量生成 {} 个（{} 字符），最终保留 {} 个，耗时 {} ms",
+                retrieval.candidate_blocks,
+                retrieval.embedded_blocks,
+                retrieval.embedded_chars,
+                planned_context.selected_reference_blocks,
+                retrieval.elapsed_ms
+            ),
+            10,
+        );
+    }
+    if let Ok(mut manager) = state.manager.lock() {
+        let _ = manager.append_job_event(
+            job.id,
+            "CONTEXT",
+            format!(
+                "已保留 {} 个正式设定节点 / {} 个原文片段（{} 字符）和 {} 个文件片段（{} 字符）",
+                planned_context.selected_project_sections,
+                planned_context.selected_project_chunks,
+                planned_context.project_context.chars().count(),
+                planned_context.selected_reference_blocks,
+                planned_context.reference_context.chars().count()
+            ),
+            12,
+        );
+    }
+    input.existing_context = planned_context.project_context;
+    input.reference_content = planned_context.reference_context;
+    input.system_prompt_snapshot = None;
+    input.user_prompt_snapshot = None;
+    let mut context = match planning_context(&input) {
+        Ok(context) => context,
+        Err(error) => {
+            fail_planning_job(&state, job.id, error.message);
+            return true;
+        }
+    };
+    novel_infrastructure::apply_task_prompt_preferences(
+        &mut context,
+        &task_preference,
+        &[
+            ("sectionTitle", input.section_title.as_str()),
+            ("sectionPrompt", input.section_prompt.as_str()),
+            ("userGuidance", input.user_guidance.as_str()),
+            ("existingContext", input.existing_context.as_str()),
+            ("referenceContent", input.reference_content.as_str()),
+        ],
+    );
+    input.system_prompt_snapshot = Some(context.system_prompt.clone());
+    input.user_prompt_snapshot = Some(context.user_prompt.clone());
+    let estimated_input_chars = context
+        .system_prompt
+        .len()
+        .saturating_add(context.user_prompt.len());
+    context.estimated_input_tokens = (u32::try_from(estimated_input_chars).unwrap_or(u32::MAX) / 4)
+        .min(profile.context_window.saturating_sub(max_output_tokens));
+    let (endpoint, request_body) = state.gateway.request_preview_with_options(
+        &profile,
+        &context,
+        true,
+        false,
+        generation_options,
+    );
+    input.final_request_endpoint = Some(endpoint);
+    input.final_request_estimated_input_tokens = Some(context.estimated_input_tokens);
+    input.final_request_body = match serde_json::to_string_pretty(&request_body) {
+        Ok(body) => Some(body),
+        Err(error) => {
+            fail_planning_job(&state, job.id, format!("无法记录最终 AI 请求：{error}"));
+            return true;
+        }
+    };
+    let updated_payload = match serde_json::to_string(&input) {
+        Ok(payload) => payload,
+        Err(error) => {
+            fail_planning_job(&state, job.id, format!("无法保存最终 AI 请求：{error}"));
+            return true;
+        }
+    };
+    if let Ok(mut manager) = state.manager.lock() {
+        let _ = manager.update_job_progress(job.id, 20);
+        let _ = manager.append_job_event(job.id, "CONTEXT", "提示词与上下文已准备完成", 20);
+        if let Err(error) = manager.update_job_payload(job.id, updated_payload) {
+            drop(manager);
+            fail_planning_job(&state, job.id, format!("无法保存最终 AI 请求：{error}"));
+            return true;
+        }
+        let _ = manager.update_job_progress(job.id, 30);
+        let _ = manager.append_job_event(job.id, "REQUESTING", "正在等待模型响应", 30);
+    }
+    let run_id = {
+        let Ok(mut manager) = state.manager.lock() else {
+            fail_planning_job(&state, job.id, "无法写入 AI 运行记录");
+            return true;
+        };
+        match manager.start_ai_run(novel_infrastructure::AiRunStart {
+            task: task_kind,
+            source: novel_infrastructure::AiRunSource::Planning,
+            job_id: Some(job.id),
+            chapter_id: None,
+            display_title: &input.section_title,
+            profile_id: profile.id,
+            prompt_version: &context.prompt_version,
+            estimated_input_tokens: context.estimated_input_tokens,
+        }) {
+            Ok(run_id) => {
+                if let Err(error) = manager.record_ai_run_request(
+                    run_id,
+                    input.final_request_endpoint.as_deref().unwrap_or_default(),
+                    input.final_request_body.as_deref().unwrap_or_default(),
+                ) {
+                    drop(manager);
+                    fail_planning_job(&state, job.id, format!("无法保存 AI 请求快照：{error}"));
+                    return true;
+                }
+                run_id
+            }
+            Err(error) => {
+                drop(manager);
+                fail_planning_job(&state, job.id, format!("无法创建 AI 运行记录：{error}"));
+                return true;
+            }
+        }
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    if let Ok(mut cancellations) = state.ai_cancellations.lock() {
+        cancellations.insert(job.id, Arc::clone(&cancelled));
+    }
+    let callback_app = app.clone();
+    let mut received_chars = 0usize;
+    let mut last_progress = 30u8;
+    let result = generate_with_task_fallback(
+        &state,
+        &task_preference,
+        &profile,
+        Some(&secret),
+        &context,
+        generation_options,
+        true,
+        false,
+        Arc::clone(&cancelled),
+        move |chunk| {
+            received_chars += chunk.chars().count();
+            let progress = u8::try_from(35 + (received_chars / 120).min(50)).unwrap_or(u8::MAX);
+            if progress >= last_progress.saturating_add(5) {
+                last_progress = progress;
+                let callback_state = callback_app.state::<ProjectState>();
+                if let Ok(mut manager) = callback_state.manager.lock() {
+                    let _ = manager.update_job_progress(job.id, progress);
+                    let _ = manager.append_job_event(
+                        job.id,
+                        "RECEIVING",
+                        format!("已接收约 {received_chars} 个字符"),
+                        progress,
+                    );
+                }
+            }
+        },
+    )
+    .await;
+    if let Ok(mut cancellations) = state.ai_cancellations.lock() {
+        cancellations.remove(&job.id);
+    }
+    match result {
+        Ok(outcome) => {
+            let AiGenerationOutcome {
+                output,
+                completion,
+                finish_reason,
+                usage,
+                fallback_profile,
+                fallback_reason,
+            } = outcome;
+            if let Some(fallback) = fallback_profile.as_ref() {
+                if let Ok(mut manager) = state.manager.lock() {
+                    let _ = manager.record_ai_run_fallback(
+                        run_id,
+                        fallback.id,
+                        fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+                    );
+                    let (endpoint, request_body) = state.gateway.request_preview_with_options(
+                        fallback,
+                        &context,
+                        true,
+                        false,
+                        generation_options,
+                    );
+                    input.final_request_endpoint = Some(endpoint);
+                    input.final_request_estimated_input_tokens =
+                        Some(context.estimated_input_tokens);
+                    input.final_request_body = serde_json::to_string_pretty(&request_body).ok();
+                    if let Ok(payload) = serde_json::to_string(&input) {
+                        let _ = manager.update_job_payload(job.id, payload);
+                    }
+                    let _ = manager.record_ai_run_request(
+                        run_id,
+                        input.final_request_endpoint.as_deref().unwrap_or_default(),
+                        input.final_request_body.as_deref().unwrap_or_default(),
+                    );
+                }
+                append_planning_job_event(
+                    &state,
+                    job.id,
+                    "FALLBACK",
+                    format!(
+                        "主模型调用失败（{}），已切换到备用模型“{}”",
+                        fallback_reason.as_deref().unwrap_or("UNKNOWN"),
+                        fallback.name
+                    ),
+                    35,
+                );
+            }
+            let Ok(mut manager) = state.manager.lock() else {
+                return true;
+            };
+            if manager.is_job_cancel_requested(job.id).unwrap_or(false) {
+                let _ = manager.append_job_event(job.id, "CANCELLED", "任务已取消", 100);
+                let _ = manager.update_job_status(
+                    job.id,
+                    novel_infrastructure::JobStatus::Cancelled,
+                    100,
+                    None,
+                );
+                return true;
+            }
+            let _ = manager.update_job_progress(job.id, 92);
+            let _ = manager.append_job_event(job.id, "SAVING", "正在保存到待定区", 92);
+            let existing = manager.list_planning_sections().ok().and_then(|sections| {
+                sections
+                    .into_iter()
+                    .find(|item| item.id == input.section_id)
+            });
+            let mut section = existing.unwrap_or(novel_infrastructure::PlanningSection {
+                id: input.section_id.clone(),
+                content: String::new(),
+                pending_content: String::new(),
+                story_state: novel_infrastructure::PlanningStoryState::Unset,
+                rationale: String::new(),
+                consequence: String::new(),
+                references: Vec::new(),
+                updated_at: String::new(),
+            });
+            let output_chars = output.chars().count();
+            let likely_truncated = planning_output_looks_truncated(&output);
+            section.pending_content = output;
+            if section.content.trim().is_empty()
+                && matches!(
+                    section.story_state,
+                    novel_infrastructure::PlanningStoryState::Unset
+                        | novel_infrastructure::PlanningStoryState::AiSuggested
+                )
+            {
+                section.story_state = novel_infrastructure::PlanningStoryState::AiSuggested;
+            }
+            section.references = input.source_name.clone().unwrap_or_default();
+            let output_tokens = u32::try_from(section.pending_content.chars().count().div_ceil(4))
+                .unwrap_or(u32::MAX);
+            if let Err(error) = manager.save_planning_section(section) {
+                drop(manager);
+                if let Ok(mut manager) = state.manager.lock() {
+                    let _ = manager
+                        .fail_ai_run(run_id, &novel_infrastructure::AiError::InvalidResponse);
+                }
+                fail_planning_job(&state, job.id, error.to_string());
+                return true;
+            }
+            let completion = if completion.is_complete() && likely_truncated {
+                novel_infrastructure::GenerationCompletion::LikelyTruncated
+            } else {
+                completion
+            };
+            if completion.is_complete() {
+                let _ = manager.complete_ai_run(run_id, usage.as_ref(), output_tokens);
+                let _ = manager.append_job_event(job.id, "COMPLETED", "结果已保存到待定区", 100);
+                let _ = manager.update_job_status(
+                    job.id,
+                    novel_infrastructure::JobStatus::Succeeded,
+                    100,
+                    None,
+                );
+            } else {
+                let (error, message) = incomplete_generation_failure(
+                    completion,
+                    output_chars,
+                    finish_reason.as_deref(),
+                );
+                let _ = manager.fail_ai_run(run_id, &error);
+                let _ = manager.append_job_event(job.id, "INCOMPLETE", &message, 100);
+                let _ = manager.update_job_status(
+                    job.id,
+                    novel_infrastructure::JobStatus::Failed,
+                    100,
+                    Some(message),
+                );
+            }
+        }
+        Err(novel_infrastructure::AiError::Cancelled) => {
+            if let Ok(mut manager) = state.manager.lock() {
+                let _ = manager.fail_ai_run(run_id, &novel_infrastructure::AiError::Cancelled);
+                let _ = manager.append_job_event(job.id, "CANCELLED", "任务已取消", 100);
+                let _ = manager.update_job_status(
+                    job.id,
+                    novel_infrastructure::JobStatus::Cancelled,
+                    100,
+                    None,
+                );
+            }
+        }
+        Err(error) => {
+            if let Ok(mut manager) = state.manager.lock() {
+                let _ = manager.fail_ai_run(run_id, &error);
+            }
+            fail_planning_job(&state, job.id, error.to_string());
+        }
+    }
+    true
+}
