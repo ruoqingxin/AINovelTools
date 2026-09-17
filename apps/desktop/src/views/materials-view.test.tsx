@@ -37,7 +37,8 @@ describe("MaterialsView", () => {
     expect(screen.getByRole("heading", { name: "摘要与写作卡片" })).toBeVisible();
     expect(screen.getByRole("button", { name: "保存摘要" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "保存卡片" })).toBeDisabled();
-    expect(await screen.findByText("新建摘要")).toBeVisible();
+    expect(await screen.findByText("新建参考摘要")).toBeVisible();
+    expect(screen.queryByText("精度")).not.toBeInTheDocument();
     expect(screen.getByText("写作卡片")).toBeVisible();
   });
 

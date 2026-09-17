@@ -290,20 +290,15 @@ impl ProjectManager {
             .list_summary_materials()
             .unwrap_or_default()
             .into_iter()
-            .filter(|item| {
-                item.lifecycle_status == "ACTIVE" || item.lifecycle_status == "STALE"
-            })
+            // Stale summaries remain visible for people to inspect, but must not
+            // consume model context or be mistaken for current project memory.
+            .filter(|item| item.lifecycle_status == "ACTIVE")
             .map(|item| {
                 let current_chapter_score =
                     u16::from(item.source_id == Some(input.chapter_id)).saturating_mul(5_000);
                 let setting_score =
                     u16::from(item.kind == SummaryKind::Setting).saturating_mul(2_000);
                 let precision_score = summary_precision_score(item.precision, item.kind, input);
-                let freshness_score = if item.lifecycle_status == "STALE" {
-                    0
-                } else {
-                    2_000
-                };
                 let revision_score = if summary_matches_revision(
                     item.source_version.as_deref(),
                     input.target_revision_id,
@@ -316,7 +311,6 @@ impl ProjectManager {
                     .saturating_add(current_chapter_score)
                     .saturating_add(setting_score)
                     .saturating_add(precision_score)
-                    .saturating_add(freshness_score)
                     .saturating_add(revision_score);
                 (score, item)
             })
@@ -325,18 +319,12 @@ impl ProjectManager {
         summaries.truncate(6);
         for (score, item) in summaries {
             let summary_content = truncate_summary_for_context(&item.content);
-            let freshness = if item.lifecycle_status == "STALE" {
-                "（过期导航，仅供定位，必须回查原文）"
-            } else {
-                ""
-            };
             candidates.push(build_candidate(
                 ContextCandidateKind::Summary,
                 format!(
-                    "{} {}摘要{}：{}",
+                    "{} {}摘要（仅作导航，必须回查来源）：{}",
                     summary_precision_label(item.precision),
                     summary_kind_label(item.kind),
-                    freshness,
                     summary_content
                 ),
                 item.id,

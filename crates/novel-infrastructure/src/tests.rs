@@ -773,6 +773,56 @@ fn context_assembly_attaches_only_active_project_sources() {
 }
 
 #[test]
+fn context_assembly_excludes_stale_summaries() {
+    let root = std::path::PathBuf::from("target")
+        .join(format!("ainovel-stale-summary-{}", uuid::Uuid::new_v4()));
+    let mut manager = super::ProjectManager::new();
+    manager.create(&root, "过期摘要").expect("create project");
+    let chapter = manager
+        .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
+        .expect("chapter");
+    for (content, lifecycle_status, kind, source_id) in [
+        ("当前摘要内容", "ACTIVE", super::SummaryKind::Chapter, Some(chapter.id)),
+        ("过期摘要内容", "STALE", super::SummaryKind::Character, None),
+    ] {
+        manager
+            .upsert_summary_material(super::SummaryMaterial {
+                id: uuid::Uuid::new_v4(),
+                project_id: uuid::Uuid::nil(),
+                kind,
+                precision: super::SummaryPrecision::L1,
+                source_id,
+                source_version: Some(format!("manuscript:{}", uuid::Uuid::new_v4())),
+                content: content.to_owned(),
+                generation_mode: "TEST".to_owned(),
+                lifecycle_status: lifecycle_status.to_owned(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            })
+            .expect("save summary");
+    }
+
+    let package = manager
+        .assemble_context_with_project_knowledge(&novel_application::AssembleContextInput {
+            chapter_id: chapter.id,
+            target_revision_id: None,
+            action: super::AiAction::Draft,
+            chapter_title: "第一章".into(),
+            chapter_plan: "当前剧情".into(),
+            volume_plan: String::new(),
+            document_json: r#"{"type":"doc","content":[]}"#.into(),
+            selection: None,
+            instruction: Some("当前剧情".into()),
+            input_token_budget: 4_096,
+        })
+        .expect("context package");
+
+    assert!(package.user_prompt.contains("当前摘要内容"));
+    assert!(!package.user_prompt.contains("过期摘要内容"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn context_assembly_includes_formal_settings_and_preserves_unknown_state() {
     let root = std::path::PathBuf::from("target")
         .join(format!("ainovel-context-settings-{}", uuid::Uuid::new_v4()));

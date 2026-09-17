@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
-import { cancelJob, clearRecoveryLogs, createPlanNode, currentManuscript, enqueuePlanningAiJob, errorMessage, getAuditFlowSettings, getCurrentProject, listJobs, listManuscriptRevisions, listModelProfiles, listPlanningSections, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, savePlanningSection, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
+import { cancelJob, clearRecoveryLogs, createPlanNode, currentManuscript, enqueueChapterSummaryRefresh, enqueuePlanningAiJob, errorMessage, getAuditFlowSettings, getCurrentProject, listJobs, listManuscriptRevisions, listModelProfiles, listPlanningSections, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, savePlanningSection, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
 import { AiModelNote } from "./ai-model-note";
 import { ChapterExtractionPanel } from "./chapter-extraction-panel";
@@ -76,6 +76,8 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const [clearingRecovery, setClearingRecovery] = useState(false);
   const [transferringCandidate, setTransferringCandidate] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [manuscriptMemoryNeedsRefresh, setManuscriptMemoryNeedsRefresh] = useState(false);
+  const [refreshingChapterMemory, setRefreshingChapterMemory] = useState(false);
   const [compareLeftId, setCompareLeftId] = useState<string | null>(null);
   const [compareRightId, setCompareRightId] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
@@ -304,6 +306,10 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   }, [selected?.id]);
 
   useEffect(() => {
+    setManuscriptMemoryNeedsRefresh(false);
+  }, [selected?.id]);
+
+  useEffect(() => {
     if (!volumePlanReady) {
       setChapterSplitVolumeId("");
       setChapterSplitPendingDraft("");
@@ -450,11 +456,27 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
       await client.invalidateQueries({ queryKey: ["manuscript-history", selected.id] });
       await client.invalidateQueries({ queryKey: ["recovery-logs", selected.id] });
       await client.invalidateQueries({ queryKey: ["recovery-all"] });
+      setManuscriptMemoryNeedsRefresh(true);
       if (showManuscriptAfterSave && workspaceMode === "writing") setManuscriptTab("manuscript");
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
       setSavingDraft(false);
+    }
+  }
+
+  async function refreshChapterMemory() {
+    if (!selected || selected.kind !== "CHAPTER") return;
+    setRefreshingChapterMemory(true);
+    setError(null);
+    try {
+      await enqueueChapterSummaryRefresh(selected.id);
+      await client.invalidateQueries({ queryKey: ["jobs"] });
+      setManuscriptMemoryNeedsRefresh(false);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setRefreshingChapterMemory(false);
     }
   }
 
@@ -919,6 +941,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
         {selected.kind === "WORK_DESIGN" ? <StoryPlanningWorkbench selectedSectionId={selectedPlanningSectionId} onSelectSection={setSelectedPlanningSectionId} onDirtyChange={setPlanningSectionDirty} /> : null}
         {selected.kind === "CHAPTER" && workspaceMode === "planning" ? <div className="planning-redirect-panel"><BookOpen size={18} /><div><strong>章节已拆分，进入章节工作台继续准备</strong><span>先完成执行卡和创作准备，通过创作准入后生成正文候选；版本与知识提取在正文页处理，审核统一在左侧审核中心。</span></div><a href={`/chapters#${selected.id}`}>准备本章</a></div> : null}
         {selected.kind === "CHAPTER" && isChapterMode ? <div className="chapter-editor">
+          {manuscriptMemoryNeedsRefresh ? <div className="project-notice"><span>正文已同步，当前章节 AI 会读取最新版本。需要跨章节续写或回顾时，请更新章节记忆。</span><button type="button" className="secondary-action" onClick={() => void refreshChapterMemory()} disabled={refreshingChapterMemory}>{refreshingChapterMemory ? "提交中…" : "更新章节记忆"}</button></div> : null}
           {workspaceMode === "writing" && manuscriptTab === "manuscript" ? <div className="chapter-tab-panel focused-manuscript-panel" id="manuscript-panel-manuscript" role="tabpanel" aria-labelledby="manuscript-tab-manuscript">
             <div className="manuscript-stage-heading"><div><h2>已保存正文</h2><p>这里展示当前正式版本，只供阅读。需要修改时请进入候选区。</p></div><span>{manuscript.data ? `${formatSavedAt(manuscript.data.createdAt)} · 约 ${documentCharacterCount(manuscript.data.documentJson)} 字` : "尚无正式正文"}</span></div>
             {manuscript.data ? manuscriptViewer ? <EditorContent editor={manuscriptViewer} /> : <p className="plan-empty">正在加载正文…</p> : <div className="manuscript-stage-gate"><strong>当前还没有正式正文</strong><span>请先在候选区写作或载入候选，再同步生成第一个正文版本。</span><button type="button" className="primary-action" onClick={() => setManuscriptTab("candidate")}>进入候选区</button></div>}

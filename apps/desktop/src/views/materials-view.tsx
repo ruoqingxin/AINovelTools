@@ -13,13 +13,25 @@ import {
   upsertSummaryMaterial,
   upsertWritingCard,
   type SummaryKind,
-  type SummaryPrecision,
   type WritingCard,
 } from "../lib/tauri-client";
 import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 const emptyCard: WritingCard = { id: "", projectId: "", cardType: "STYLE_RULE", title: "", content: "", sourceVersion: null, scope: "PROJECT", enabled: true, sortOrder: 0, createdAt: "", updatedAt: "" };
+
+const summaryKindLabels: Record<SummaryKind, string> = {
+  CHAPTER: "章节",
+  CHARACTER: "人物",
+  SETTING: "设定",
+};
+
+function summaryLabel(item: { kind: SummaryKind; generationMode: string }) {
+  if (item.generationMode === "EXTRACTIVE_AUTO") return "章节记忆";
+  if (item.generationMode === "EXTRACTIVE_AUTO_PROJECT") return "项目概览";
+  if (item.generationMode === "EXTRACTIVE_AUTO_SETTINGS") return "设定概览";
+  return `参考摘要 · ${summaryKindLabels[item.kind]}`;
+}
 
 function cardSignature(card: WritingCard) {
   return JSON.stringify({
@@ -39,12 +51,11 @@ export function MaterialsView() {
     refetchInterval: (query) => query.state.data?.some((job) => job.jobType === "REFRESH_PROJECT_SETTING_SUMMARY" && (job.status === "QUEUED" || job.status === "RUNNING")) ? 1_000 : false,
   });
   const cards = useQuery({ queryKey: ["writing-cards"], queryFn: () => listWritingCards() });
-  const [summary, setSummary] = useState({ kind: "CHAPTER" as SummaryKind, precision: "L0" as SummaryPrecision, content: "", sourceVersion: "" });
+  const [summary, setSummary] = useState({ kind: "CHAPTER" as SummaryKind, content: "", sourceVersion: "" });
   const [card, setCard] = useState<WritingCard>(emptyCard);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const summaryDirty = summary.kind !== "CHAPTER"
-    || summary.precision !== "L0"
     || Boolean(summary.sourceVersion.trim())
     || Boolean(summary.content.trim());
   const cardDirty = cardSignature(card) !== cardSignature(emptyCard);
@@ -73,7 +84,7 @@ export function MaterialsView() {
 
   async function saveSummary() {
     try {
-      await upsertSummaryMaterial({ id: crypto.randomUUID(), projectId: "", kind: summary.kind, precision: summary.precision, sourceId: null, sourceVersion: summary.sourceVersion || null, content: summary.content, generationMode: "MANUAL", lifecycleStatus: "ACTIVE", createdAt: "", updatedAt: "" });
+      await upsertSummaryMaterial({ id: crypto.randomUUID(), projectId: "", kind: summary.kind, precision: "L0", sourceId: null, sourceVersion: summary.sourceVersion || null, content: summary.content, generationMode: "MANUAL_REFERENCE", lifecycleStatus: "ACTIVE", createdAt: "", updatedAt: "" });
       setSummary((value) => ({ ...value, content: "" })); setNotice("摘要已保存"); setError(null); await client.invalidateQueries({ queryKey: ["summary-materials"] });
     } catch (cause) { setError(errorMessage(cause)); }
   }
@@ -95,13 +106,13 @@ export function MaterialsView() {
     } catch (cause) { setError(errorMessage(cause)); }
   }
   return <section className="materials-view">
-    <div className="workspace-heading"><p className="eyebrow">知识资料</p><h1>摘要与写作卡片</h1><p className="workspace-lede">维护多精度摘要、风格规则和写作技巧。内容保留来源与生命周期信息，供后续上下文组装使用。</p><div className="workspace-heading-actions"><span>{autoSettingSummary || settingRefreshJob ? settingSummaryStatus : "尚未生成设定记忆"}</span><button type="button" className="secondary-action" onClick={() => void refreshSettingMemory()} disabled={Boolean(settingRefreshJob)}><RefreshCw size={15} />更新设定记忆</button></div></div>
+    <div className="workspace-heading"><p className="eyebrow">知识资料</p><h1>摘要与写作卡片</h1><p className="workspace-lede">维护章节记忆、设定概览和参考摘要；摘要用于导航，正式设定与知识记录才是写作依据。</p><div className="workspace-heading-actions"><span>{autoSettingSummary || settingRefreshJob ? settingSummaryStatus : "尚未生成设定记忆"}</span><button type="button" className="secondary-action" onClick={() => void refreshSettingMemory()} disabled={Boolean(settingRefreshJob)}><RefreshCw size={15} />更新设定记忆</button></div></div>
     <KnowledgeSectionNav />
     {notice ? <p className="project-notice" role="status">{notice}</p> : null}{error ? <p className="project-error" role="alert">{error}</p> : null}
     <div className="materials-layout">
-      <div className="materials-panel"><div className="section-heading"><h2>新建摘要</h2><span>{summaries.data?.length ?? 0} 条</span></div>
-        <div className="entity-form-grid"><label>类型<select value={summary.kind} onChange={(e) => setSummary({ ...summary, kind: e.target.value as SummaryKind })}><option value="CHAPTER">章节</option><option value="CHARACTER">人物</option><option value="SETTING">设定</option></select></label><label>精度<select value={summary.precision} onChange={(e) => setSummary({ ...summary, precision: e.target.value as SummaryPrecision })}>{["L0","L1","L2","L3","L4","L5"].map((v) => <option key={v}>{v}</option>)}</select></label><label className="entity-form-wide">来源版本<input value={summary.sourceVersion} onChange={(e) => setSummary({ ...summary, sourceVersion: e.target.value })} placeholder="例如：chapter:2" /></label><label className="entity-form-wide">摘要内容<textarea rows={6} value={summary.content} onChange={(e) => setSummary({ ...summary, content: e.target.value })} /></label></div><button type="button" className="primary-action" onClick={() => void saveSummary()} disabled={!summary.content.trim()}><Save size={15} />保存摘要</button>
-        <div className="materials-list">{summaries.data?.map((item) => <div className="material-row" key={item.id}><strong>{item.kind} · {item.precision}</strong><span>{item.content}</span><small>{item.sourceVersion ?? "暂无来源"} · <span className={item.lifecycleStatus === "CANDIDATE" ? "material-candidate" : undefined}>{item.lifecycleStatus === "ACTIVE" ? "有效" : item.lifecycleStatus === "CANDIDATE" ? "AI 候选" : "已失效"}</span> · {item.generationMode}</small><div className="material-actions"><button type="button" className="secondary-action" onClick={() => void runItemAction(() => setSummaryMaterialLifecycle(item.id, item.lifecycleStatus === "ACTIVE" ? "STALE" : "ACTIVE"), ["summary-materials"], item.lifecycleStatus === "ACTIVE" ? "摘要已标记失效" : "摘要已恢复有效")}>{item.lifecycleStatus === "ACTIVE" ? "标记失效" : "恢复摘要"}</button><button type="button" className="secondary-action" onClick={() => void runItemAction(() => setSummaryMaterialLifecycle(item.id, item.lifecycleStatus === "CANDIDATE" ? "ACTIVE" : "CANDIDATE"), ["summary-materials"], item.lifecycleStatus === "CANDIDATE" ? "摘要已设为有效" : "摘要已标记候选")}>{item.lifecycleStatus === "CANDIDATE" ? "设为有效" : "标记候选"}</button><button type="button" className="secondary-action" onClick={() => void runItemAction(() => rebuildSummaryMaterial(item.id), ["summary-materials"], "摘要已重建")}>重建记录</button></div></div>)}</div>
+      <div className="materials-panel"><div className="section-heading"><h2>新建参考摘要</h2><span>{summaries.data?.length ?? 0} 条</span></div>
+        <div className="entity-form-grid"><label>关联内容<select value={summary.kind} onChange={(e) => setSummary({ ...summary, kind: e.target.value as SummaryKind })}><option value="CHAPTER">章节</option><option value="CHARACTER">人物</option><option value="SETTING">设定</option></select></label><label className="entity-form-wide">来源标识<input value={summary.sourceVersion} onChange={(e) => setSummary({ ...summary, sourceVersion: e.target.value })} placeholder="例如：chapter:2" /></label><label className="entity-form-wide">摘要内容<textarea rows={6} value={summary.content} onChange={(e) => setSummary({ ...summary, content: e.target.value })} /></label></div><button type="button" className="primary-action" onClick={() => void saveSummary()} disabled={!summary.content.trim()}><Save size={15} />保存摘要</button>
+        <div className="materials-list">{summaries.data?.map((item) => <div className="material-row" key={item.id}><strong>{summaryLabel(item)}</strong><span>{item.content}</span><small>{item.sourceVersion ?? "暂无来源"} · <span className={item.lifecycleStatus === "CANDIDATE" ? "material-candidate" : undefined}>{item.lifecycleStatus === "ACTIVE" ? "有效" : item.lifecycleStatus === "CANDIDATE" ? "AI 候选" : "已失效"}</span></small><div className="material-actions"><button type="button" className="secondary-action" onClick={() => void runItemAction(() => setSummaryMaterialLifecycle(item.id, item.lifecycleStatus === "ACTIVE" ? "STALE" : "ACTIVE"), ["summary-materials"], item.lifecycleStatus === "ACTIVE" ? "摘要已标记失效" : "摘要已恢复有效")}>{item.lifecycleStatus === "ACTIVE" ? "标记失效" : "恢复摘要"}</button><button type="button" className="secondary-action" onClick={() => void runItemAction(() => setSummaryMaterialLifecycle(item.id, item.lifecycleStatus === "CANDIDATE" ? "ACTIVE" : "CANDIDATE"), ["summary-materials"], item.lifecycleStatus === "CANDIDATE" ? "摘要已设为有效" : "摘要已标记候选")}>{item.lifecycleStatus === "CANDIDATE" ? "设为有效" : "标记候选"}</button><button type="button" className="secondary-action" onClick={() => void runItemAction(() => rebuildSummaryMaterial(item.id), ["summary-materials"], "摘要已恢复为有效")}>恢复为有效</button></div></div>)}</div>
       </div>
       <div className="materials-panel"><div className="section-heading"><h2>写作卡片</h2><span>{cards.data?.length ?? 0} 条</span></div>
         <div className="entity-form-grid"><label>卡片类型<select value={card.cardType} onChange={(e) => setCard({ ...card, cardType: e.target.value as WritingCard["cardType"] })}><option value="STYLE_RULE">风格规则</option><option value="TECHNIQUE">写作技巧</option></select></label><label>作用范围<input value={card.scope} onChange={(e) => setCard({ ...card, scope: e.target.value })} /></label><label className="entity-form-wide">标题<input value={card.title} onChange={(e) => setCard({ ...card, title: e.target.value })} /></label><label className="entity-form-wide">内容<textarea rows={6} value={card.content} onChange={(e) => setCard({ ...card, content: e.target.value })} /></label></div><button type="button" className="primary-action" onClick={() => void saveCard()} disabled={!card.title.trim() || !card.content.trim()}><Save size={15} />保存卡片</button>

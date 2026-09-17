@@ -1,18 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, DatabaseZap, FileUp, PenLine, RotateCcw, Save, Sparkles, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, FileUp, PenLine, RotateCcw, Save, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
   errorMessage,
   cancelJob,
+  enqueueProjectSettingSummaryRefresh,
   enqueuePlanningAiJob,
   listJobs,
   listPlanningSections,
   listModelProfiles,
-  listPlanningEmbeddings,
-  generatePlanningEmbedding,
-  clearPlanningEmbedding,
   retryJob,
   savePlanningSection,
   type PlanningSection,
@@ -125,12 +123,13 @@ export function StoryPlanningWorkbench(props: {
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
-  const embeddings = useQuery({ queryKey: ["planning-embeddings"], queryFn: listPlanningEmbeddings });
   const selectedId = props.selectedSectionId ?? "seed-premise";
   const [form, setForm] = useState<PlanningSection>(emptySection(selectedId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [settingMemoryNeedsRefresh, setSettingMemoryNeedsRefresh] = useState(false);
+  const [refreshingSettingMemory, setRefreshingSettingMemory] = useState(false);
   const [editorTab, setEditorTab] = useState<"formal" | "pending">("formal");
   const [showEditor, setShowEditor] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -177,9 +176,6 @@ export function StoryPlanningWorkbench(props: {
   const phaseDescriptions = ["先确定故事入口", "建立持续推进的引擎", "连载中逐步补齐"];
   const chatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "workDesign");
   const chatPreference = resolveTaskPreference(aiPreferences.data, "workDesign");
-  const embeddingProfile = profiles.data?.find((profile) => profile.capability === "EMBEDDING" && profile.hasSecret);
-  const currentEmbedding = embeddings.data?.find((item) => item.sectionId === selectedId);
-  const embeddingState = currentEmbedding ? "已生成" : "未生成";
   const sectionJobs = (jobs.data ?? []).filter((job) => planningJobInput(job)?.sectionId === selectedId);
   const activeJob = sectionJobs.find((job) => job.status === "QUEUED" || job.status === "RUNNING");
   const latestJob = sectionJobs[0];
@@ -268,13 +264,14 @@ export function StoryPlanningWorkbench(props: {
     setError(null);
     setNotice(null);
     try {
+      const formalChanged = editorTab === "formal" && formalDirty;
       await savePlanningSection({
         ...form,
         id: selectedId,
       });
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
-      await client.invalidateQueries({ queryKey: ["planning-embeddings"] });
-      setNotice(editorTab === "pending" ? "待定内容已保存" : "正式设定已保存");
+      setSettingMemoryNeedsRefresh(formalChanged);
+      setNotice(editorTab === "pending" ? "待定内容已保存" : formalChanged ? "正式设定已保存，后续 AI 会直接读取最新内容" : "正式设定已保存");
       setPreviousForm(null);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -359,6 +356,7 @@ export function StoryPlanningWorkbench(props: {
     setRetrying(true);
     setError(null);
     setNotice(null);
+    setSettingMemoryNeedsRefresh(false);
     try {
       await retryJob(visibleJob.id);
       await client.invalidateQueries({ queryKey: ["jobs"] });
@@ -382,6 +380,7 @@ export function StoryPlanningWorkbench(props: {
       });
       setForm((current) => ({ ...current, storyState: saved.storyState }));
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
+      setSettingMemoryNeedsRefresh(form.storyState !== storedSelected.storyState);
       setNotice(`当前节点状态已保存为“${planningStoryStateLabels[saved.storyState]}”`);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -425,7 +424,8 @@ export function StoryPlanningWorkbench(props: {
       setEditorTab("formal");
       setShowEditor(true);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
-      setNotice("已将候选内容设为正式设定");
+      setSettingMemoryNeedsRefresh(true);
+      setNotice("已将候选内容设为正式设定，后续 AI 会直接读取最新内容");
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -433,23 +433,19 @@ export function StoryPlanningWorkbench(props: {
     }
   }
 
-  async function createEmbedding() {
-    if (!embeddingProfile || !form.content.trim()) return;
+  async function refreshSettingMemory() {
+    setRefreshingSettingMemory(true);
     setError(null);
-    setNotice(null);
     try {
-      await generatePlanningEmbedding(embeddingProfile.id, selectedId);
-      await client.invalidateQueries({ queryKey: ["planning-embeddings"] });
-      setNotice("当前正式设定的向量已生成，可用于后续混合检索");
-    } catch (cause) { setError(errorMessage(cause)); }
-  }
-
-  async function removeEmbedding() {
-    try {
-      await clearPlanningEmbedding(selectedId);
-      await client.invalidateQueries({ queryKey: ["planning-embeddings"] });
-      setNotice("当前节点的向量索引已清除，正式设定内容未被删除");
-    } catch (cause) { setError(errorMessage(cause)); }
+      await enqueueProjectSettingSummaryRefresh();
+      await client.invalidateQueries({ queryKey: ["jobs"] });
+      setSettingMemoryNeedsRefresh(false);
+      setNotice("设定记忆已加入后台队列");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setRefreshingSettingMemory(false);
+    }
   }
 
   return (
@@ -492,9 +488,10 @@ export function StoryPlanningWorkbench(props: {
             {visibleJob ? <div className="story-planning-job-status" data-status={visibleJob.status.toLowerCase()}><div><strong>{visibleJob.jobType === "AI_PLANNING_EXTRACT" ? "文件处理任务" : "AI 推导任务"}</strong><span>{visibleJob.status === "QUEUED" ? "等待后台执行" : visibleJob.status === "RUNNING" ? "后台执行中，可安全切换页面" : visibleJob.status === "FAILED" ? `${visibleFailure?.label ?? "执行失败"}：${visibleJob.errorSummary ?? "未提供错误信息"} ${visibleFailure?.hint ?? ""}` : "任务已取消，可重新提交当前任务"}</span></div><div className="story-planning-job-progress"><span style={{ width: `${visibleJob.progress}%` }} /></div><small>{visibleJob.progress}%</small><div className="story-planning-job-actions"><a href="/jobs">查看任务日志</a>{activeJob ? <button type="button" onClick={() => void cancelActiveJob()}>取消任务</button> : null}{visibleJob.status === "FAILED" ? <button type="button" onClick={() => void retryVisibleJob()} disabled={retrying}><RotateCcw size={12} />{retrying ? "重试中…" : "重试原任务"}</button> : null}</div></div> : null}
           </div>
           {!chatProfile ? <p className="story-planning-ai-hint">请先在设置中配置一个可用的聊天模型。</p> : null}
-          {showEditor ? <div className="story-planning-content-editor"><div className="story-planning-state-control"><label><span>故事状态</span><select value={form.storyState} onChange={(event) => setForm((current) => ({ ...current, storyState: event.target.value as PlanningStoryState }))}>{(Object.keys(planningStoryStateLabels) as PlanningStoryState[]).map((state) => <option key={state} value={state} disabled={(state === "CONFIRMED" || state === "LOCKED") && !form.content.trim() || state === "AI_SUGGESTED" && !form.pendingContent.trim()}>{planningStoryStateLabels[state]}</option>)}</select></label><small>状态会单独保存；“AI 建议”永远不会自动成为正式设定。</small><button type="button" className="secondary-action" onClick={() => void saveStoryState()} disabled={saving || !storyStateDirty}><Save size={14} />保存状态</button></div><div className="story-planning-content-tabs" role="tablist" aria-label="设定内容区域"><button type="button" role="tab" aria-selected={editorTab === "formal"} data-active={editorTab === "formal" || undefined} onClick={() => switchEditorTab("formal")}><span>正式设定</span><small>{form.content.trim() ? "已建立" : "未填写"}</small></button><button type="button" role="tab" aria-selected={editorTab === "pending"} data-active={editorTab === "pending" || undefined} onClick={() => switchEditorTab("pending")}><span>待定区</span><small>{form.pendingContent.trim() ? "有候选内容" : "暂无内容"}</small></button></div><label><span>{editorTab === "pending" ? "待定内容" : "正式设定"}</span><small>{editorTab === "pending" ? "AI 生成后会自动保存；手动修改后需点击“保存待定内容”，否则切换操作会恢复到已保存版本" : "正式设定只读。如需修改，请先转为待定内容，修改后再设为正式设定"}</small><textarea rows={12} autoFocus readOnly={editorTab === "formal"} value={editorTab === "pending" ? form.pendingContent : form.content} onChange={(event) => setForm((current) => ({ ...current, pendingContent: event.target.value }))} placeholder={editorTab === "pending" ? `等待生成或填写${selectedDefinition.label}的候选内容…` : `尚未建立${selectedDefinition.label}…`} /></label><div className="story-planning-actions">{editorTab === "pending" ? <><button type="button" className="primary-action" onClick={() => void confirmPending()} disabled={saving || !form.pendingContent.trim()}><Check size={15} />{saving ? "同步中…" : "设为正式设定"}</button><button type="button" className="secondary-action" onClick={() => void save()} disabled={saving || !pendingDirty && !storyStateDirty}><Save size={14} />保存待定内容</button></> : <><button type="button" className="primary-action" onClick={() => { setForm((current) => ({ ...current, pendingContent: current.content })); setEditorTab("pending"); setNotice("已转为待定内容，请修改后保存"); }} disabled={!form.content.trim()}>转为待定内容</button><button type="button" className="secondary-action" onClick={() => void createEmbedding()} disabled={!form.content.trim() || !embeddingProfile}><DatabaseZap size={14} />{embeddingState === "已生成" ? "重新生成向量" : "生成向量"}</button><button type="button" className="secondary-action destructive-action" onClick={() => void removeEmbedding()} disabled={!currentEmbedding}><Trash2 size={14} />清除向量</button></>}{previousForm ? <button type="button" className="secondary-action" onClick={restoreContent}><RotateCcw size={14} />还原本次操作</button> : null}{editorTab === "pending" ? <button type="button" className="secondary-action destructive-action" onClick={clearContent} disabled={!form.pendingContent.trim()}><Trash2 size={14} />清除内容</button> : null}</div><div className="story-planning-state"><strong>向量状态：{embeddingState}</strong><span>{!embeddingProfile ? "请先配置带密钥的 Embedding 模型" : "正式设定优先复用持久向量，文件片段在任务执行时临时向量化，用于混合检索"}</span></div></div> : null}
+          {showEditor ? <div className="story-planning-content-editor"><div className="story-planning-state-control"><label><span>故事状态</span><select value={form.storyState} onChange={(event) => setForm((current) => ({ ...current, storyState: event.target.value as PlanningStoryState }))}>{(Object.keys(planningStoryStateLabels) as PlanningStoryState[]).map((state) => <option key={state} value={state} disabled={(state === "CONFIRMED" || state === "LOCKED") && !form.content.trim() || state === "AI_SUGGESTED" && !form.pendingContent.trim()}>{planningStoryStateLabels[state]}</option>)}</select></label><small>状态会单独保存；“AI 建议”永远不会自动成为正式设定。</small><button type="button" className="secondary-action" onClick={() => void saveStoryState()} disabled={saving || !storyStateDirty}><Save size={14} />保存状态</button></div><div className="story-planning-content-tabs" role="tablist" aria-label="设定内容区域"><button type="button" role="tab" aria-selected={editorTab === "formal"} data-active={editorTab === "formal" || undefined} onClick={() => switchEditorTab("formal")}><span>正式设定</span><small>{form.content.trim() ? "已建立" : "未填写"}</small></button><button type="button" role="tab" aria-selected={editorTab === "pending"} data-active={editorTab === "pending" || undefined} onClick={() => switchEditorTab("pending")}><span>待定区</span><small>{form.pendingContent.trim() ? "有候选内容" : "暂无内容"}</small></button></div><label><span>{editorTab === "pending" ? "待定内容" : "正式设定"}</span><small>{editorTab === "pending" ? "AI 生成后会自动保存；手动修改后需点击“保存待定内容”，否则切换操作会恢复到已保存版本" : "正式设定只读。如需修改，请先转为待定内容，修改后再设为正式设定"}</small><textarea rows={12} autoFocus readOnly={editorTab === "formal"} value={editorTab === "pending" ? form.pendingContent : form.content} onChange={(event) => setForm((current) => ({ ...current, pendingContent: event.target.value }))} placeholder={editorTab === "pending" ? `等待生成或填写${selectedDefinition.label}的候选内容…` : `尚未建立${selectedDefinition.label}…`} /></label><div className="story-planning-actions">{editorTab === "pending" ? <><button type="button" className="primary-action" onClick={() => void confirmPending()} disabled={saving || !form.pendingContent.trim()}><Check size={15} />{saving ? "同步中…" : "设为正式设定"}</button><button type="button" className="secondary-action" onClick={() => void save()} disabled={saving || !pendingDirty && !storyStateDirty}><Save size={14} />保存待定内容</button></> : <button type="button" className="primary-action" onClick={() => { setForm((current) => ({ ...current, pendingContent: current.content })); setEditorTab("pending"); setNotice("已转为待定内容，请修改后保存"); }} disabled={!form.content.trim()}>转为待定内容</button>}{previousForm ? <button type="button" className="secondary-action" onClick={restoreContent}><RotateCcw size={14} />还原本次操作</button> : null}{editorTab === "pending" ? <button type="button" className="secondary-action destructive-action" onClick={clearContent} disabled={!form.pendingContent.trim()}><Trash2 size={14} />清除内容</button> : null}</div><div className="story-planning-state"><strong>语义检索由 AI 任务按需维护</strong><span>系统会在需要时生成或复用正式设定分块缓存；它只用于定位相关内容，不会改变正式设定。</span></div></div> : null}
           <div className="story-planning-state" data-dirty={pendingDirty || undefined}><strong>{sectionStatus.label}</strong><span>{sectionStatus.hint}</span></div>
           {notice ? <p className="project-notice story-planning-status">{notice}</p> : null}
+          {settingMemoryNeedsRefresh ? <div className="story-planning-state"><strong>跨章节任务前建议更新设定记忆</strong><span>当前 AI 已会读取这次保存的正式设定；只有需要摘要导航或跨章节上下文时，才更新设定记忆。</span><button type="button" className="secondary-action" onClick={() => void refreshSettingMemory()} disabled={refreshingSettingMemory}>{refreshingSettingMemory ? "提交中…" : "更新设定记忆"}</button></div> : null}
           {error ? <p className="project-error story-planning-status" role="alert">{error}</p> : null}
         </div>
       </div>
