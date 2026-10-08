@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookmarkPlus, CheckCircle2, ChevronDown, ChevronUp, MessageSquareText, Plus, RefreshCw, Save, Send, X } from "lucide-react";
+import { ArrowUpRight, BookmarkPlus, CheckCircle2, ChevronUp, Cpu, Lightbulb, MapPin, MessageSquareText, Plus, RefreshCw, Save, Send, Sparkles, UserRound, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
@@ -32,6 +32,13 @@ import { DiscussionDesignPanel, discussionTopics } from "./discussion-design-pan
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 const planningOptions = planningSectionGroups.flatMap((group) => group.children);
+
+const discussionStarters = [
+  { label: "塑造一个角色", prompt: "我想设计一个角色。请先和我一起确定他的目标、矛盾和独特之处。", icon: UserRound },
+  { label: "设计一件物品", prompt: "我想设计一件有独特能力的物品。请和我一起构思它的用途、限制与代价。", icon: Sparkles },
+  { label: "构思一个地点", prompt: "我想构思一个让人印象深刻的地点。请和我一起探索它的氛围、规则和隐藏的秘密。", icon: MapPin },
+  { label: "推敲一段剧情", prompt: "我想推敲一段剧情。请先帮我梳理人物动机、冲突和可能的转折。", icon: ArrowUpRight },
+];
 
 const candidateKindLabels: Record<DiscussionCandidateKind, string> = {
   NOTE: "临时笔记",
@@ -75,7 +82,7 @@ export function DiscussionView() {
   const preference = resolveTaskPreference(aiPreferences.data, "workDesign");
   const [sessionId, setSessionId] = useState<string | null>(() => window.location.hash.slice(1) || null);
   const [topicKind, setTopicKind] = useState<DiscussionTopicKind>("FREE");
-  const [showSessionForm, setShowSessionForm] = useState(() => window.innerWidth > 900);
+  const [showSessionForm, setShowSessionForm] = useState(false);
   const [scopeKind, setScopeKind] = useState<DiscussionScopeKind>("PROJECT");
   const [scopeId, setScopeId] = useState("");
   const [scopeText, setScopeText] = useState("");
@@ -87,6 +94,7 @@ export function DiscussionView() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [designPending, setDesignPending] = useState(false);
   const [mobileView, setMobileView] = useState<"chat" | "draft">("chat");
+  const [draftFocus, setDraftFocus] = useState<{ field: "chosen" | "alternatives" } | null>(null);
   const [candidateTargetId, setCandidateTargetId] = useState("seed-premise");
   const [candidateKinds, setCandidateKinds] = useState<Record<string, DiscussionCandidateKind>>({});
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({});
@@ -96,6 +104,9 @@ export function DiscussionView() {
   const [error, setError] = useState<string | null>(null);
   const creatingDefault = useRef(false);
   const initialSessionSelected = useRef(false);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const autoScroll = useRef(true);
   const activeSession = sessions.data?.find((session) => session.id === sessionId) ?? null;
   const messages = useQuery({
     queryKey: ["discussion-messages", sessionId],
@@ -113,12 +124,19 @@ export function DiscussionView() {
     setOlderMessages([]);
     setHasMoreHistory(true);
     setLoadingHistory(false);
+    autoScroll.current = true;
     if (!sessionId) return;
     try {
       const stored = localStorage.getItem(`discussion-composer:${sessionId}`);
       if (stored) setComposerDrafts((current) => sessionId in current ? current : { ...current, [sessionId]: stored });
     } catch { /* In-memory drafts remain available when browser storage is disabled. */ }
   }, [sessionId]);
+
+  useEffect(() => {
+    if (autoScroll.current && messages.data?.length && messagesRef.current) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+    }
+  }, [messages.data, sessionId, busy]);
 
   function setMessage(value: string) {
     if (!sessionId) return;
@@ -132,6 +150,8 @@ export function DiscussionView() {
   function selectSession(id: string | null) {
     if (designPending && !window.confirm("构思草稿仍有未保存内容，确定切换讨论吗？")) return;
     setSessionId(id);
+    setDraftFocus(null);
+    setMobileView("chat");
     window.history.replaceState(null, "", id ? `#${id}` : window.location.pathname);
   }
 
@@ -162,6 +182,8 @@ export function DiscussionView() {
       const next = await saveDiscussionWorkspace({ ...workspace, draft });
       client.setQueryData(["discussion-workspace", sessionId], next);
       await client.invalidateQueries({ queryKey: ["discussion-draft-revisions", sessionId] });
+      setDraftFocus({ field });
+      setMobileView("draft");
       setNotice(field === "chosen" ? "已记入选定内容。" : "已记入备选方向。");
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
@@ -178,6 +200,10 @@ export function DiscussionView() {
       topicKind: "FREE",
     }).then(async (session) => {
       setSessionId(session.id);
+      window.history.replaceState(null, "", `#${session.id}`);
+      setShowSessionForm(false);
+      setDraftFocus(null);
+      setMobileView("chat");
       await client.invalidateQueries({ queryKey: ["discussion-sessions"] });
     }).catch((cause) => {
       setError(errorMessage(cause));
@@ -204,6 +230,7 @@ export function DiscussionView() {
     : [];
 
   async function createSession() {
+    if (busy || designPending) return;
     if (!sessionTitle.trim()) {
       setError("请填写讨论标题。");
       return;
@@ -228,6 +255,10 @@ export function DiscussionView() {
         topicKind,
       });
       setSessionId(session.id);
+      setDraftFocus(null);
+      setMobileView("chat");
+      window.history.replaceState(null, "", `#${session.id}`);
+      setShowSessionForm(false);
       await client.invalidateQueries({ queryKey: ["discussion-sessions"] });
       setNotice("已建立新的讨论会话。");
     } catch (cause) {
@@ -238,7 +269,9 @@ export function DiscussionView() {
   }
 
   async function send() {
-    if (!sessionId || !profile || !message.trim()) return;
+    if (!sessionId || !profile?.hasSecret || !message.trim() || busy || designPending
+      || Array.from(message).length > DISCUSSION_LIMITS.messageChars) return;
+    autoScroll.current = true;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -363,29 +396,41 @@ export function DiscussionView() {
       <h1>灵感共创</h1>
     </div>
     <div className="discussion-layout">
-      <aside className="discussion-sidebar">
-        <section>
-          <div className="section-heading"><h2>讨论会话</h2><span>{sessions.data?.length ?? 0} 个</span></div>
+      <section className="discussion-sidebar" aria-label="讨论会话">
+        <div className="discussion-session-toolbar">
+          <label className="discussion-session-picker"><MessageSquareText size={16} /><span>当前讨论</span>
           <select value={sessionId ?? ""} onChange={(event) => selectSession(event.target.value || null)} aria-label="选择讨论会话" disabled={busy || loadingHistory}>
             {(sessions.data ?? []).map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}
           </select>
-        </section>
-        <section className="discussion-session-create">
-          <button type="button" className="discussion-create-toggle" onClick={() => setShowSessionForm((current) => !current)}
-            aria-expanded={showSessionForm}><Plus size={14} />新建讨论<ChevronDown size={14} /></button>
-          {showSessionForm ? <div className="discussion-session-fields">
-          <label><span>标题</span><input value={sessionTitle} maxLength={200} onChange={(event) => setSessionTitle(event.target.value)} /></label>
-          <label><span>构思类型</span><select value={topicKind} onChange={(event) => setTopicKind(event.target.value as DiscussionTopicKind)}>
+          </label>
+          <span className="discussion-session-count">{sessions.data?.length ?? 0} 个讨论</span>
+          <button type="button" className="secondary-action discussion-create-toggle" onClick={() => {
+            setShowSessionForm((current) => !current);
+            setError(null);
+          }}
+            disabled={busy} aria-expanded={showSessionForm} aria-controls="discussion-session-form">
+            {showSessionForm ? <X size={14} /> : <Plus size={14} />}{showSessionForm ? "取消新建" : "新建讨论"}
+          </button>
+        </div>
+        {sessions.isError ? <p className="project-error" role="alert">{errorMessage(sessions.error)}
+          <button type="button" className="secondary-action" onClick={() => void sessions.refetch()}>重试</button>
+        </p> : null}
+        {showSessionForm ? <section className="discussion-session-create" id="discussion-session-form">
+          <div className="discussion-session-fields">
+          <label><span>标题</span><input aria-label="标题" value={sessionTitle} maxLength={200} onChange={(event) => setSessionTitle(event.target.value)} /></label>
+          <label><span>构思类型</span><select aria-label="构思类型" value={topicKind} onChange={(event) => setTopicKind(event.target.value as DiscussionTopicKind)}>
             {discussionTopics.map((topic) => <option key={topic.id} value={topic.id}>{topic.label}</option>)}
           </select></label>
-          <label><span>范围</span><select value={scopeKind} onChange={(event) => { setScopeKind(event.target.value as DiscussionScopeKind); setScopeId(""); setScopeText(""); }}><option value="PROJECT">全书</option><option value="VOLUME">当前卷</option><option value="CHAPTER">当前章节</option><option value="SCENE">当前场景</option><option value="SELECTION">当前选区</option></select></label>
+          <label><span>范围</span><select aria-label="范围" value={scopeKind} onChange={(event) => { setScopeKind(event.target.value as DiscussionScopeKind); setScopeId(""); setScopeText(""); }}><option value="PROJECT">全书</option><option value="VOLUME">当前卷</option><option value="CHAPTER">当前章节</option><option value="SCENE">当前场景</option><option value="SELECTION">当前选区</option></select></label>
           {scopeKind !== "PROJECT" ? <label><span>{scopeKind === "VOLUME" ? "分卷" : scopeKind === "SCENE" ? "场景" : "章节"}</span><select value={scopeId} onChange={(event) => setScopeId(event.target.value)}><option value="" disabled>请选择</option>{scopeNodes.map((node) => <option key={node.id} value={node.id}>{node.title}</option>)}</select></label> : null}
           {scopeKind === "SELECTION" ? <label><span>选区内容</span><textarea rows={3} value={scopeText} onChange={(event) => setScopeText(event.target.value)} placeholder="粘贴当前选中的正文片段…" /></label> : null}
           <button type="button" className="secondary-action" onClick={() => void createSession()} disabled={busy || designPending || scopeKind !== "PROJECT" && (!scopeId || scopeKind === "SELECTION" && !scopeText.trim())}><Plus size={13} />建立会话</button>
-          </div> : null}
-        </section>
-        {candidates.data?.length ? <section>
-          <div className="section-heading"><h2>候选内容</h2><span>{candidates.data?.length ?? 0} 条</span></div>
+          </div>
+          {error ? <p className="project-error" role="alert">{error}</p> : null}
+        </section> : null}
+        {candidates.isError ? <p className="project-error" role="alert">{errorMessage(candidates.error)}</p> : null}
+        {candidates.data?.length ? <details className="discussion-candidate-drawer">
+          <summary>候选内容 <span>{candidates.data.length} 条</span></summary>
           <div className="discussion-candidate-list">
             {(candidates.data ?? []).map((candidate) => <article className="discussion-candidate" data-status={candidate.status.toLowerCase()} key={candidate.id}>
               <div><strong>{candidateKindLabels[candidate.kind]}</strong><small>{candidateTarget(candidate)}</small></div>
@@ -401,21 +446,29 @@ export function DiscussionView() {
             </article>)}
             {!candidates.data?.length ? <p className="plan-empty">从一条 AI 回复中保存笔记或候选内容。</p> : null}
           </div>
-        </section> : null}
-      </aside>
+        </details> : null}
+      </section>
       <div className="discussion-mobile-tabs" role="tablist" aria-label="共创视图">
         <button type="button" role="tab" aria-selected={mobileView === "chat"} onClick={() => setMobileView("chat")}>讨论</button>
         <button type="button" role="tab" aria-selected={mobileView === "draft"} onClick={() => setMobileView("draft")}>构思草稿</button>
       </div>
-      <main className="discussion-thread">
+      <section className="discussion-thread" aria-label="讨论消息">
         <section className="discussion-thread-heading">
-          <div><MessageSquareText size={17} /><div><strong>{activeSession?.title ?? "正在准备讨论"}</strong><span>{activeSession ? discussionScopeLabel(activeSession.scopeKind) : "会话加载中"}</span></div></div>
-          <button type="button" className="secondary-action" onClick={() => void Promise.all([messages.refetch(), sections.refetch()])} disabled={messages.isFetching}><RefreshCw size={13} />刷新</button>
+          <div><MessageSquareText size={17} /><div><strong>{activeSession?.title ?? "正在准备讨论"}</strong><span>{activeSession ? `${discussionScopeLabel(activeSession.scopeKind)} · ${visibleMessages.length} 条消息` : "会话加载中"}</span></div></div>
+          <button type="button" className="secondary-action discussion-icon-button" aria-label="刷新讨论" title="刷新讨论"
+            onClick={() => void Promise.all([messages.refetch(), sections.refetch()])} disabled={!sessionId || busy || messages.isFetching}><RefreshCw size={15} /></button>
         </section>
-        <AiModelNote taskLabel="共创讨论（当前使用作品设定模型）" taskKey="workDesign" profile={profile} preference={preference} />
+        <details className="discussion-model-details">
+          <summary><Cpu size={13} /><span>{profile?.hasSecret ? profile.modelId : "模型未就绪"}</span><span>模型与费用</span></summary>
+          <AiModelNote taskLabel="共创讨论" taskKey="workDesign" profile={profile} preference={preference} />
+        </details>
         {notice ? <p className="project-notice" role="status">{notice}</p> : null}
-        {error ? <p className="project-error" role="alert">{error}</p> : null}
-        <div className="discussion-messages">
+        {error && !showSessionForm ? <p className="project-error" role="alert">{error}</p> : null}
+        <div className="discussion-messages" ref={messagesRef} aria-busy={busy || messages.isFetching}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            autoScroll.current = element.scrollHeight - element.scrollTop - element.clientHeight < 60;
+          }}>
           {(messages.data?.length === DISCUSSION_LIMITS.pageSize || olderMessages.length > 0) && hasMoreHistory
             ? <button type="button" className="secondary-action discussion-load-earlier" disabled={loadingHistory}
               onClick={() => void loadEarlier()}><ChevronUp size={13} />{loadingHistory ? "加载中…" : "更早讨论"}</button> : null}
@@ -440,17 +493,36 @@ export function DiscussionView() {
               </details>;
             })() : null}
           </article>)}
-          {!messages.isPending && !messages.data?.length ? <p className="plan-empty">这个角色、物品或地方，最让你感兴趣的是什么？</p> : null}
+          {!messages.isPending && !messages.isError && !visibleMessages.length ? <div className="discussion-empty">
+            <Lightbulb size={28} strokeWidth={1.5} />
+            <h2>这次想构思什么？</h2>
+            <div className="discussion-starters">
+              {discussionStarters.map(({ label, prompt, icon: Icon }) => <button key={label} type="button"
+                disabled={!sessionId || busy} onClick={() => {
+                  setMessage(message.trim() ? `${message}\n\n${prompt}` : prompt);
+                  composerRef.current?.focus();
+                }}><Icon size={17} /><span>{label}</span><ArrowUpRight size={14} /></button>)}
+            </div>
+          </div> : null}
+          {busy ? <p className="discussion-processing" role="status"><span />正在处理…</p> : null}
         </div>
         <section className="discussion-composer">
-          <textarea rows={4} value={message} onChange={(event) => setMessage(event.target.value)} aria-label="讨论内容"
-            placeholder="我有一个灵感：一盏能吞噬声音的灯。它的能力和代价可以怎样设计？" disabled={!sessionId || busy} />
+          <textarea ref={composerRef} rows={3} value={message} onChange={(event) => setMessage(event.target.value)} aria-label="讨论内容"
+            placeholder="一个灵感、一个疑问，或一段想推敲的剧情…" disabled={!sessionId || busy}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                void send();
+              }
+            }} />
           <div><span>{Array.from(message).length.toLocaleString()} / 20,000 字</span><button type="button" className="primary-action" onClick={() => void send()} disabled={!sessionId || !profile?.hasSecret || !message.trim() || busy || designPending || Array.from(message).length > DISCUSSION_LIMITS.messageChars}><Send size={14} />{busy ? "处理中…" : "发送讨论"}</button></div>
+          {designPending ? <p className="discussion-composer-status" role="status">构思草稿尚未保存或正在处理，暂不能发送。</p> : null}
         </section>
         {!profile?.hasSecret ? <p className="project-error" role="alert">请先在设置中配置可用的作品设定模型。</p> : null}
-      </main>
+      </section>
       {sessionId ? <DiscussionDesignPanel key={sessionId} sessionId={sessionId} profile={profile}
-        preference={preference} onPendingChange={setDesignPending} /> : null}
+        preference={preference} hasDiscussion={visibleMessages.length > 0} conversationBusy={busy}
+        draftFocus={draftFocus} onPendingChange={setDesignPending} /> : null}
     </div>
   </div>;
 }

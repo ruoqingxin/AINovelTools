@@ -222,6 +222,7 @@ describe("DiscussionView", () => {
   it("creates a scoped discussion session from the sidebar", async () => {
     renderView();
 
+    fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
     const title = await screen.findByDisplayValue("作品共创讨论");
     fireEvent.change(title, { target: { value: "第二卷剧情讨论" } });
     fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
@@ -235,6 +236,8 @@ describe("DiscussionView", () => {
         topicKind: "FREE",
       }),
     );
+    expect(screen.queryByLabelText("标题")).not.toBeInTheDocument();
+    expect(window.location.hash).toBe("#session-created");
   });
 
   it("creates a discussion session for the selected manuscript text", async () => {
@@ -251,6 +254,7 @@ describe("DiscussionView", () => {
     ]);
     renderView();
 
+    fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
     const scopeSelect = await screen.findByLabelText("范围");
     fireEvent.change(scopeSelect, { target: { value: "SELECTION" } });
     fireEvent.change(await screen.findByLabelText("章节"), {
@@ -341,6 +345,7 @@ describe("DiscussionView", () => {
     ]);
     renderView();
 
+    fireEvent.click(await screen.findByText(/候选内容/));
     fireEvent.click(await screen.findByRole("button", { name: "写入规划待定区" }));
     await waitFor(() =>
       expect(mocks.promoteDiscussionCandidate).toHaveBeenCalledWith({
@@ -371,6 +376,7 @@ describe("DiscussionView", () => {
 
   it("creates an item discussion without requiring a name or chapter", async () => {
     renderView();
+    fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
     fireEvent.change(await screen.findByLabelText("构思类型"), { target: { value: "ITEM" } });
     fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
     await waitFor(() => expect(mocks.createDiscussionSession).toHaveBeenCalledWith(
@@ -427,7 +433,7 @@ describe("DiscussionView", () => {
     await waitFor(() => expect(mocks.saveDiscussionWorkspace).toHaveBeenCalledWith(
       expect.objectContaining({ draft: { chosen: "", alternatives: assistantMessage.content, questions: "" } }),
     ));
-    expect(await screen.findByLabelText("备选方向")).toHaveValue(assistantMessage.content);
+    expect(await screen.findByRole("textbox", { name: "备选方向" })).toHaveValue(assistantMessage.content);
     expect(mocks.confirmDiscussionDesign).not.toHaveBeenCalled();
   });
 
@@ -444,6 +450,7 @@ describe("DiscussionView", () => {
   });
 
   it("summarizes the saved workspace and confirms edited entities only on author approval", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([userMessage, assistantMessage]);
     const proposal: DiscussionDesignProposal = {
       id: "proposal-1", sessionId: session.id, workspaceVersion: 0,
       entities: [{
@@ -465,10 +472,86 @@ describe("DiscussionView", () => {
     ));
     expect(await screen.findByText(/未纳入较早的 50 条消息/)).toBeInTheDocument();
     expect(mocks.confirmDiscussionDesign).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "整理结果" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "已选定内容" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "静语灯" } });
+    fireEvent.click(screen.getByRole("button", { name: "返回构思草稿" }));
+    expect(await screen.findByRole("textbox", { name: "已选定内容" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /查看整理结果/ }));
+    expect(screen.getByLabelText("名称")).toHaveValue("静语灯");
     fireEvent.click(screen.getByRole("button", { name: "确认选中内容入库" }));
     await waitFor(() => expect(mocks.confirmDiscussionDesign).toHaveBeenCalledWith(
       proposal.id, [expect.objectContaining({ name: "静语灯", settings: ["只能储存三句话。"] })],
     ));
+  });
+
+  it("starts with a compact session toolbar and requires content before organizing", async () => {
+    renderView();
+    await screen.findByRole("heading", { name: "这次想构思什么？" });
+    expect(screen.queryByLabelText("标题")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "整理为实体与设定" })).toBeDisabled();
+    expect(screen.getByText("暂无可整理内容")).toBeInTheDocument();
+    expect(screen.getByText("模型与费用").closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
+    expect(screen.getByLabelText("标题")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "取消新建" }));
+    expect(screen.queryByLabelText("标题")).not.toBeInTheDocument();
+  });
+
+  it("puts starter prompts into the composer without sending or replacing an existing idea", async () => {
+    renderView();
+    const composer = await screen.findByRole("textbox", { name: "讨论内容" });
+    await waitFor(() => expect(composer).toBeEnabled());
+    fireEvent.click(await screen.findByRole("button", { name: "设计一件物品" }));
+    expect((composer as HTMLTextAreaElement).value).toContain("独特能力的物品");
+    expect(composer).toHaveFocus();
+    expect(mocks.askProjectDiscussion).not.toHaveBeenCalled();
+    fireEvent.change(composer, { target: { value: "我的灵感是吞声灯。" } });
+    fireEvent.click(screen.getByRole("button", { name: "塑造一个角色" }));
+    expect((composer as HTMLTextAreaElement).value).toMatch(/^我的灵感是吞声灯。\n\n/);
+    expect(mocks.askProjectDiscussion).not.toHaveBeenCalled();
+  });
+
+  it("switches draft fields accessibly while preserving edits", async () => {
+    renderView();
+    const chosen = await screen.findByRole("textbox", { name: "已选定内容" });
+    fireEvent.change(chosen, { target: { value: "最多储存三句话。" } });
+    const tablist = screen.getByRole("tablist", { name: "构思内容" });
+    fireEvent.click(within(tablist).getByRole("tab", { name: "备选方向" }));
+    expect(screen.queryByRole("textbox", { name: "已选定内容" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "备选方向" }), { target: { value: "也许交换一段记忆。" } });
+    fireEvent.keyDown(within(tablist).getByRole("tab", { name: /备选方向/ }), { key: "ArrowLeft" });
+    expect(screen.getByRole("textbox", { name: "已选定内容" })).toHaveValue("最多储存三句话。");
+    expect(within(tablist).getByRole("tab", { name: /已选定/ })).toHaveFocus();
+    await waitFor(() => expect(mocks.saveDiscussionWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ draft: { chosen: "最多储存三句话。", alternatives: "也许交换一段记忆。", questions: "" } }),
+    ), { timeout: 3000 });
+  });
+
+  it("sends with Ctrl+Enter but does not bypass message length validation", async () => {
+    renderView();
+    const composer = await screen.findByRole("textbox", { name: "讨论内容" });
+    await waitFor(() => expect(composer).toBeEnabled());
+    fireEvent.change(composer, { target: { value: "字".repeat(20001) } });
+    fireEvent.keyDown(composer, { key: "Enter", ctrlKey: true });
+    expect(mocks.askProjectDiscussion).not.toHaveBeenCalled();
+    fireEvent.change(composer, { target: { value: "灯的代价是什么？" } });
+    fireEvent.keyDown(composer, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(mocks.askProjectDiscussion).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "灯的代价是什么？" }),
+    ));
+  });
+
+  it("returns to alternatives each time an idea is recorded, even after another field was selected", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    renderView();
+    const record = await screen.findByRole("button", { name: "记入备选方向" });
+    await waitFor(() => expect(record).toBeEnabled());
+    fireEvent.click(record);
+    expect(await screen.findByRole("textbox", { name: "备选方向" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "未决问题" }));
+    await waitFor(() => expect(record).toBeEnabled());
+    fireEvent.click(record);
+    expect(await screen.findByRole("textbox", { name: "备选方向" })).toBeInTheDocument();
   });
 });

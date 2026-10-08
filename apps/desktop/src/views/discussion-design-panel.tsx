@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, History, Save, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, FilePenLine, History, Save, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   confirmDiscussionDesign, DISCUSSION_LIMITS, errorMessage, getDiscussionWorkspace,
@@ -22,6 +22,11 @@ const entityLabels: Record<EntityType, string> = {
   CHARACTER: "角色", ITEM: "物品", LOCATION: "地点", FACTION: "势力", CONCEPT: "概念",
 };
 const chars = (value: string) => Array.from(value).length;
+const draftFields = [
+  { id: "chosen", label: "已选定内容", shortLabel: "已选定", placeholder: "已确定的角色特征、能力规则或剧情走向…" },
+  { id: "alternatives", label: "备选方向", shortLabel: "备选方向", placeholder: "值得保留、还未决定采用的想法…" },
+  { id: "questions", label: "未决问题", shortLabel: "未决问题", placeholder: "尚待推敲的动机、逻辑或设定冲突…" },
+] as const;
 
 function proposalEdits(proposal: DiscussionDesignProposal) {
   const fallback = {
@@ -194,8 +199,11 @@ function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, 
   </section>;
 }
 
-export function DiscussionDesignPanel({ sessionId, profile, preference, onPendingChange }: {
+export function DiscussionDesignPanel({ sessionId, profile, preference, hasDiscussion, conversationBusy, draftFocus, onPendingChange }: {
   sessionId: string; profile: ModelProfile | undefined; preference: AiTaskPreference;
+  hasDiscussion: boolean;
+  conversationBusy: boolean;
+  draftFocus: { field: "chosen" | "alternatives" } | null;
   onPendingChange: (pending: boolean) => void;
 }) {
   const client = useQueryClient();
@@ -212,6 +220,8 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, onPendin
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [activeField, setActiveField] = useState<typeof draftFields[number]["id"]>("chosen");
   const [olderVersions, setOlderVersions] = useState<DiscussionWorkspace[]>([]);
   const [olderProposals, setOlderProposals] = useState<DiscussionDesignProposal[]>([]);
   const [historyBusy, setHistoryBusy] = useState(false);
@@ -230,6 +240,13 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, onPendin
   const totalChars = workspace
     ? chars(workspace.draft.chosen) + chars(workspace.draft.alternatives) + chars(workspace.draft.questions)
     : 0;
+  const hasContent = hasDiscussion || Boolean(workspace && Object.values(workspace.draft).some((value) => value.trim()));
+
+  useEffect(() => {
+    if (!draftFocus) return;
+    setActiveField(draftFocus.field);
+    setShowResults(false);
+  }, [draftFocus]);
 
   useEffect(() => {
     if (workspaceQuery.data && (!initialized.current || !dirty && workspaceQuery.data.version > (saved?.version ?? -1))) {
@@ -297,7 +314,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, onPendin
   }, [busy, dirty, error, save, totalChars]);
 
   async function summarize() {
-    if (!workspace || !profile?.hasSecret) return;
+    if (!workspace || !profile?.hasSecret || busy || conversationBusy || !hasContent) return;
     const snapshot = dirty ? await save() : workspace;
     if (!snapshot || JSON.stringify(latestWorkspace.current?.draft) !== JSON.stringify(snapshot.draft)) return;
     setBusy(true);
@@ -310,6 +327,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, onPendin
         maxOutputTokens: Math.min(preference.maxOutputTokens ?? 8192, 16384),
       });
       await client.invalidateQueries({ queryKey: ["discussion-design-proposals", sessionId] });
+      setShowResults(true);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -359,11 +377,16 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, onPendin
   }
 
   return <aside className="discussion-design-panel" aria-label="构思草稿">
-    <div className="section-heading"><h2>构思草稿</h2><span>{busy ? "处理中…" : dirty ? "待保存" : `v${saved?.version ?? 0}`}</span></div>
+    <div className="section-heading"><h2><FilePenLine size={17} />{showResults ? "整理结果" : "构思草稿"}</h2>
+      {showResults ? <button type="button" className="secondary-action discussion-icon-button"
+        aria-label="返回构思草稿" title="返回构思草稿" onClick={() => setShowResults(false)}><ArrowLeft size={15} /></button>
+        : <span className="discussion-save-state" data-dirty={dirty || undefined}>
+          {busy ? "处理中…" : dirty ? "待保存" : workspace ? `已保存 · v${saved?.version ?? 0}` : "加载中…"}
+        </span>}</div>
     {workspaceQuery.isError ? <p className="project-error" role="alert">{errorMessage(workspaceQuery.error)}
       <button type="button" onClick={() => void workspaceQuery.refetch()}>重试</button></p> : null}
     {!workspace && workspaceQuery.isPending ? <p>正在加载草稿…</p> : null}
-    {workspace ? <>
+    {workspace && !showResults ? <>
       {recovery ? <section className="discussion-local-recovery">
         <p>发现未保存的本机草稿，保存版本已变化。</p>
         <button type="button" className="secondary-action" disabled={busy} onClick={() => {
@@ -373,33 +396,59 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, onPendin
           setError(null);
         }}><History size={13} />载入本机草稿</button>
       </section> : null}
-      <label>构思主题<select value={workspace.topicKind} disabled={busy} onChange={(event) => {
+      <label>构思主题<select aria-label="构思主题" value={workspace.topicKind} disabled={busy} onChange={(event) => {
         setWorkspace({ ...workspace, topicKind: event.target.value as DiscussionWorkspace["topicKind"] });
         setError(null);
       }}>{discussionTopics.map((topic) => <option key={topic.id} value={topic.id}>{topic.label}</option>)}</select></label>
-      {(["chosen", "alternatives", "questions"] as const).map((field) => <label key={field}>
-        {{ chosen: "已选定内容", alternatives: "备选方向", questions: "未决问题" }[field]}
-        <textarea aria-label={{ chosen: "已选定内容", alternatives: "备选方向", questions: "未决问题" }[field]}
-          rows={field === "chosen" ? 7 : 3} disabled={busy} value={workspace.draft[field]}
+      <div className="discussion-draft-tabs" role="tablist" aria-label="构思内容">
+        {draftFields.map((field) => <button key={field.id} type="button" role="tab"
+          id={`draft-tab-${sessionId}-${field.id}`} aria-controls={`draft-field-${sessionId}-${field.id}`}
+          aria-selected={activeField === field.id} tabIndex={activeField === field.id ? 0 : -1}
+          onClick={() => setActiveField(field.id)} onKeyDown={(event) => {
+            const index = draftFields.findIndex((item) => item.id === activeField);
+            const next = event.key === "ArrowRight" ? (index + 1) % draftFields.length
+              : event.key === "ArrowLeft" ? (index + draftFields.length - 1) % draftFields.length
+                : event.key === "Home" ? 0 : event.key === "End" ? draftFields.length - 1 : null;
+            if (next === null) return;
+            event.preventDefault();
+            setActiveField(draftFields[next].id);
+            document.getElementById(`draft-tab-${sessionId}-${draftFields[next].id}`)?.focus();
+          }}>
+          {field.shortLabel}{workspace.draft[field.id].trim() ? <span className="discussion-draft-dot" aria-label="有内容" /> : null}
+        </button>)}
+      </div>
+      {draftFields.map((field) => <div key={field.id} role="tabpanel" className="discussion-draft-field"
+        id={`draft-field-${sessionId}-${field.id}`} aria-labelledby={`draft-tab-${sessionId}-${field.id}`}
+        hidden={activeField !== field.id}>
+        <label>{field.label}
+        <textarea aria-label={field.label} placeholder={field.placeholder}
+          rows={10} disabled={busy} value={workspace.draft[field.id]}
           onChange={(event) => {
-            setWorkspace({ ...workspace, draft: { ...workspace.draft, [field]: event.target.value } });
+            setWorkspace({ ...workspace, draft: { ...workspace.draft, [field.id]: event.target.value } });
             setError(null); setNotice(null);
           }} />
-      </label>)}
+        </label>
+      </div>)}
       <div className="discussion-draft-toolbar"><span>{totalChars.toLocaleString()} / 50,000 字</span>
-        <button type="button" className="secondary-action" onClick={() => void save()} disabled={busy || !dirty}>
-          <Save size={13} />保存草稿</button>
-        <button type="button" className="secondary-action" onClick={() => setShowHistory((current) => !current)} aria-expanded={showHistory}>
-          <History size={13} />历史版本</button>
+        <button type="button" className="secondary-action discussion-icon-button" aria-label="保存草稿" title="保存草稿"
+          onClick={() => void save()} disabled={busy || !dirty}>
+          <Save size={15} /></button>
+        <button type="button" className="secondary-action discussion-icon-button" aria-label="历史版本" title="历史版本"
+          onClick={() => setShowHistory((current) => !current)} aria-expanded={showHistory}>
+          <History size={15} /></button>
       </div>
       <button type="button" className="primary-action" onClick={() => void summarize()}
-        disabled={busy || !profile?.hasSecret || totalChars > DISCUSSION_LIMITS.draftChars}>
+        disabled={busy || conversationBusy || !profile?.hasSecret || !hasContent || totalChars > DISCUSSION_LIMITS.draftChars}>
         <Sparkles size={14} />{busy ? "处理中…" : "整理为实体与设定"}
       </button>
+      {!profile?.hasSecret ? <p className="discussion-panel-state">模型未就绪</p>
+        : !hasContent ? <p className="discussion-panel-state">暂无可整理内容</p> : null}
     </> : null}
+    {!showResults && proposals.data?.length ? <button type="button" className="secondary-action"
+      onClick={() => setShowResults(true)}><Check size={14} />查看整理结果 · {proposals.data.length}</button> : null}
     {notice ? <p className="project-notice" role="status">{notice}</p> : null}
     {error ? <p className="project-error" role="alert">{error}</p> : null}
-    {showHistory ? <section className="discussion-draft-history">
+    {showHistory && !showResults ? <section className="discussion-draft-history">
       {history.isError ? <p role="alert">{errorMessage(history.error)}</p> : null}
       {[...(history.data ?? []), ...olderVersions].map((version) =>
         <details key={version.version}><summary>草稿 v{version.version}</summary>
@@ -412,12 +461,12 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, onPendin
         ? <button type="button" className="secondary-action" disabled={historyBusy} onClick={() => void olderHistory()}>更早版本</button> : null}
     </section> : null}
     {proposals.isError ? <p className="project-error" role="alert">{errorMessage(proposals.error)}</p> : null}
-    {[...(proposals.data ?? []), ...olderProposals].map((proposal, index) => index === 0
+    {showResults ? [...(proposals.data ?? []), ...olderProposals].map((proposal, index) => index === 0
       ? <EntityProposalEditor key={proposal.id} proposal={proposal} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={onPendingChange} />
       : <details className="discussion-older-proposal" key={proposal.id}><summary>
         {proposal.status === "CONFIRMED" ? "已确认" : "待确认"} · {proposal.entities.map((entity) => entity.name).join("、")}
-      </summary><EntityProposalEditor proposal={proposal} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={onPendingChange} /></details>)}
-    {hasMoreProposals.current && (olderProposals.length ? olderProposals.length % 20 === 0 : proposals.data?.length === 20)
+      </summary><EntityProposalEditor proposal={proposal} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={onPendingChange} /></details>) : null}
+    {showResults && hasMoreProposals.current && (olderProposals.length ? olderProposals.length % 20 === 0 : proposals.data?.length === 20)
       ? <button type="button" className="secondary-action" disabled={historyBusy} onClick={() => void loadOlderProposals()}>更早整理结果</button> : null}
   </aside>;
 }
