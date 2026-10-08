@@ -32,31 +32,27 @@ impl ProjectManager {
         object_ids: &[Uuid],
     ) -> Vec<ContextCandidate> {
         let mut candidates = Vec::new();
-        let draft_query = novel_application::document_text(&input.document_json)
-            .unwrap_or_default()
-            .chars()
-            .rev()
-            .take(8_000)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>();
+        let draft_text = novel_application::document_text(&input.document_json).unwrap_or_default();
+        let draft_query = tail_chars(&draft_text, 8_000);
         let query_text = [
             input.chapter_title.as_str(),
             input.chapter_plan.as_str(),
             input.volume_plan.as_str(),
             input.instruction.as_deref().unwrap_or_default(),
             input.selection.as_deref().unwrap_or_default(),
-            draft_query.as_str(),
+            draft_query,
         ]
         .join("\n");
         let normalized_query = normalize_for_match(&query_text);
         let planning_sections = self.list_planning_sections().unwrap_or_default();
-        let has_character_card = self
-            .list_entities(false)
-            .unwrap_or_default()
+        let entity_records = self.list_current_entity_revisions().unwrap_or_default();
+        let selected_object_ids = object_ids
             .iter()
-            .any(|entity| entity.entity_type == EntityType::Character);
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        let has_character_card = entity_records
+            .iter()
+            .any(|(entity, _)| entity.entity_type == EntityType::Character);
         let setting_context = build_writing_setting_context(&planning_sections, has_character_card);
         let setting_source_revision = source_revision("planning:writing-context", &setting_context);
         candidates.push(build_candidate(
@@ -104,7 +100,7 @@ impl ProjectManager {
                 format!("fact:{}:v{}", fact.knowledge_id, fact.knowledge_version),
                 RetrievalMethod::Structured,
                 ContextAuthority::AuthoritativeFact,
-                score.max(7_000),
+                relevance_with_floor(score, 7_000),
             ));
         }
 
@@ -134,7 +130,7 @@ impl ProjectManager {
                     ),
                     RetrievalMethod::Structured,
                     ContextAuthority::TaskMaterial,
-                    score.max(6_500),
+                    relevance_with_floor(score, 6_500),
                 ));
             }
         }
@@ -165,7 +161,7 @@ impl ProjectManager {
                 format!("relation:{}:v{}", item.id, item.relation_version),
                 RetrievalMethod::Structured,
                 ContextAuthority::TaskMaterial,
-                score.max(5_400),
+                relevance_with_floor(score, 5_400),
             ));
         }
 
@@ -192,20 +188,13 @@ impl ProjectManager {
                 format!("belief:{}:v{}", item.id, item.belief_version),
                 RetrievalMethod::Structured,
                 ContextAuthority::TaskMaterial,
-                score.max(5_200),
+                relevance_with_floor(score, 5_200),
             ));
         }
 
-        let mut entities = self
-            .list_entities(false)
-            .unwrap_or_default()
+        let mut entities = entity_records
             .into_iter()
-            .filter_map(|entity| {
-                let revision = self
-                    .list_entity_revisions(entity.id)
-                    .ok()?
-                    .into_iter()
-                    .next()?;
+            .map(|(entity, revision)| {
                 let score = [
                     score_values(&normalized_query, &[&revision.name]),
                     score_values(
@@ -220,8 +209,9 @@ impl ProjectManager {
                 ]
                 .into_iter()
                 .max()
-                .unwrap_or_default();
-                Some((score, entity, revision))
+                .unwrap_or_default()
+                .saturating_add(u16::from(selected_object_ids.contains(&entity.id)) * 5_000);
+                (score, entity, revision)
             })
             .collect::<Vec<_>>();
         entities.sort_by_key(|left| std::cmp::Reverse(left.0));
@@ -252,7 +242,7 @@ impl ProjectManager {
                 }),
                 RetrievalMethod::Structured,
                 ContextAuthority::TaskMaterial,
-                score.max(6_000),
+                relevance_with_floor(score, 6_000),
             ));
         }
 
@@ -282,7 +272,7 @@ impl ProjectManager {
                 format!("foreshadowing:{}:v{}", item.id, item.foreshadowing_version),
                 RetrievalMethod::Structured,
                 ContextAuthority::TaskMaterial,
-                score.max(5_500),
+                relevance_with_floor(score, 5_500),
             ));
         }
 
@@ -332,7 +322,7 @@ impl ProjectManager {
                     .unwrap_or_else(|| format!("summary:{}", item.id)),
                 RetrievalMethod::Structured,
                 ContextAuthority::Reference,
-                score.max(4_000),
+                relevance_with_floor(score, 4_000),
             ));
         }
 
@@ -365,7 +355,7 @@ impl ProjectManager {
                 format!("event:{}:v{}", item.id, item.event_version),
                 RetrievalMethod::Structured,
                 ContextAuthority::Reference,
-                score.max(3_500),
+                relevance_with_floor(score, 3_500),
             ));
         }
 
@@ -441,8 +431,9 @@ fn input_search_query(input: &novel_application::AssembleContextInput) -> String
     input
         .instruction
         .as_deref()
-        .unwrap_or(input.chapter_title.as_str())
-        .trim()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| input.chapter_title.trim())
         .to_owned()
 }
 
@@ -450,7 +441,8 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
     let formal_by_id = sections
         .iter()
         .filter(|section| {
-            !section.content.trim().is_empty()
+            is_writing_setting_section(&section.id)
+                && !section.content.trim().is_empty()
                 && matches!(
                     section.story_state,
                     PlanningStoryState::Confirmed | PlanningStoryState::Locked
@@ -532,12 +524,13 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
     let restrictions = sections
         .iter()
         .filter(|section| {
-            matches!(
-                section.story_state,
-                PlanningStoryState::Unknown
-                    | PlanningStoryState::Deferred
-                    | PlanningStoryState::AuthorReserved
-            )
+            is_writing_setting_section(&section.id)
+                && matches!(
+                    section.story_state,
+                    PlanningStoryState::Unknown
+                        | PlanningStoryState::Deferred
+                        | PlanningStoryState::AuthorReserved
+                )
         })
         .map(|section| {
             let label = WRITING_SETTING_SECTIONS
@@ -572,7 +565,8 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
     let suggestions = sections
         .iter()
         .filter(|section| {
-            section.story_state == PlanningStoryState::AiSuggested
+            is_writing_setting_section(&section.id)
+                && section.story_state == PlanningStoryState::AiSuggested
                 && !section.pending_content.trim().is_empty()
         })
         .map(|section| {
@@ -704,6 +698,30 @@ fn normalize_for_match(value: &str) -> String {
         .collect()
 }
 
+fn is_writing_setting_section(id: &str) -> bool {
+    WRITING_SETTING_SECTIONS
+        .iter()
+        .any(|(section_id, _)| *section_id == id)
+}
+
+fn tail_chars(value: &str, limit: usize) -> &str {
+    if limit == 0 {
+        return "";
+    }
+    let start = value
+        .char_indices()
+        .rev()
+        .nth(limit - 1)
+        .map_or(0, |(index, _)| index);
+    &value[start..]
+}
+
+fn relevance_with_floor(score: u16, floor: u16) -> u16 {
+    let floor = u32::from(floor);
+    let score = u32::from(score.min(10_000));
+    u16::try_from(floor + (10_000 - floor) * score / 10_000).unwrap_or(10_000)
+}
+
 fn score_values(query: &str, values: &[&str]) -> u16 {
     if query.is_empty() {
         return 0;
@@ -759,5 +777,164 @@ fn summary_precision_label(value: SummaryPrecision) -> &'static str {
         SummaryPrecision::L3 => "L3",
         SummaryPrecision::L4 => "L4",
         SummaryPrecision::L5 => "L5",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn section(
+        id: &str,
+        state: PlanningStoryState,
+        content: &str,
+        pending: &str,
+    ) -> PlanningSection {
+        PlanningSection {
+            id: id.into(),
+            story_state: state,
+            content: content.into(),
+            pending_content: pending.into(),
+            rationale: String::new(),
+            consequence: String::new(),
+            references: Vec::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn relevance_keeps_weak_matches_ordered_and_respects_the_evidence_contract() {
+        let absent = relevance_with_floor(0, 6_000);
+        let weak = relevance_with_floor(200, 6_000);
+        let strong = relevance_with_floor(5_000, 6_000);
+        assert!(absent < weak && weak < strong);
+        for score in [0, 200, 5_000, 10_000, u16::MAX] {
+            let candidate = build_candidate(
+                ContextCandidateKind::Entity,
+                "test evidence".into(),
+                Uuid::new_v4(),
+                "test:1".into(),
+                RetrievalMethod::Structured,
+                ContextAuthority::TaskMaterial,
+                relevance_with_floor(score, 6_000),
+            );
+            candidate.evidence.validate().expect("normalized relevance");
+        }
+        assert_eq!(relevance_with_floor(u16::MAX, 6_000), 10_000);
+    }
+
+    #[test]
+    fn setting_context_excludes_unrelated_node_candidates_and_keeps_author_boundaries() {
+        let sections = [
+            section(
+                "node-plan:chapter",
+                PlanningStoryState::Confirmed,
+                "unrelated chapter plan",
+                "",
+            ),
+            section(
+                "chapter-split-volume",
+                PlanningStoryState::AiSuggested,
+                "",
+                "unrelated chapter candidates",
+            ),
+            section(
+                "node-plan:volume",
+                PlanningStoryState::AuthorReserved,
+                "unrelated volume boundary",
+                "",
+            ),
+            section(
+                "seed-premise",
+                PlanningStoryState::Confirmed,
+                "formal premise",
+                "",
+            ),
+            section(
+                "engine-ending",
+                PlanningStoryState::AuthorReserved,
+                "keep the ending undecided",
+                "",
+            ),
+            section(
+                "seed-hook",
+                PlanningStoryState::AiSuggested,
+                "",
+                "suggested hook",
+            ),
+        ];
+        let context = build_writing_setting_context(&sections, false);
+        assert!(context.contains("formal premise"));
+        assert!(context.contains("keep the ending undecided"));
+        assert!(context.contains("suggested hook"));
+        assert!(!context.contains("unrelated"));
+        let without_settings = build_writing_setting_context(&sections[..1], false);
+        assert!(without_settings.contains("尚未建立任何正式作品设定"));
+    }
+
+    #[test]
+    fn draft_tail_slices_unicode_without_reversing_or_splitting_characters() {
+        assert_eq!(tail_chars("第一段🌟结尾", 3), "🌟结尾");
+        assert_eq!(tail_chars("short", 8_000), "short");
+        assert_eq!(tail_chars("text", 0), "");
+        assert_eq!(tail_chars("", 8_000), "");
+    }
+
+    #[test]
+    fn explicitly_selected_entities_survive_candidate_limits_and_keep_current_revisions() {
+        let root =
+            std::path::PathBuf::from("target").join(format!("selected-context-{}", Uuid::new_v4()));
+        let mut manager = ProjectManager::new();
+        manager.create(&root, "selected context").expect("project");
+        let mut entity_ids = Vec::new();
+        for index in 0..12 {
+            let entity = manager
+                .upsert_entity(EntityInput {
+                    id: None,
+                    entity_type: EntityType::Concept,
+                    name: format!("Concept{index}"),
+                    aliases: Vec::new(),
+                    description: format!("Unrelated reference {index}"),
+                    fixed_attributes_json: "{}".into(),
+                    tags: Vec::new(),
+                    base_revision_id: None,
+                    source_version: Some(format!("entity:{index}:current")),
+                    expected_version: None,
+                })
+                .expect("entity");
+            entity_ids.push(entity.id);
+        }
+        let input = novel_application::AssembleContextInput {
+            chapter_id: Uuid::nil(),
+            target_revision_id: None,
+            action: AiAction::Draft,
+            chapter_title: "调查失踪案".into(),
+            chapter_plan: String::new(),
+            volume_plan: String::new(),
+            document_json: r#"{"type":"doc","content":[]}"#.into(),
+            selection: None,
+            instruction: Some("调查".into()),
+            input_token_budget: 4_096,
+        };
+        let selected_ids = [entity_ids[0], entity_ids[11]];
+        let package = manager
+            .assemble_context_with_project_knowledge_and_objects(&input, &selected_ids)
+            .expect("context");
+        for id in selected_ids {
+            assert!(
+                package
+                    .retrieval_evidence
+                    .iter()
+                    .any(|evidence| evidence.source_id == id)
+            );
+        }
+        let candidates = manager.collect_context_candidates(&input, &selected_ids);
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| candidate.evidence.validate().is_ok())
+        );
+        drop(manager);
+        std::fs::remove_dir_all(root).expect("remove test project");
     }
 }

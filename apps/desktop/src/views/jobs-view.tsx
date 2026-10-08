@@ -3,7 +3,8 @@ import { BellOff, ChartNoAxesCombined, ClipboardList, History, Info, Play, Refre
 import { useEffect, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { formatCost } from "../lib/ai-cost-estimate";
-import { acknowledgeFailedJobs, cancelJob, enqueueJob, errorMessage, getAiRunRequest, getPlanningAiJobRequest, listAiRuns, listJobEvents, listJobs, retryJob, runNextJob, type AiRun, type Job, type JobType, type PlanningAiJobInput } from "../lib/tauri-client";
+import { taskPollingInterval, useJobs } from "../lib/jobs-query";
+import { acknowledgeFailedJobs, cancelJob, enqueueJob, errorMessage, getAiRunRequest, getPlanningAiJobRequest, listAiRuns, listJobEvents, retryJob, runNextJob, type AiRun, type Job, type JobType, type PlanningAiJobInput } from "../lib/tauri-client";
 import { AiQualityReview, QUALITY_DAYS, QUALITY_GROUP_LIMIT } from "./ai-quality-review";
 
 const JOB_HISTORY_LIMIT = 100;
@@ -115,7 +116,7 @@ function AiRunsHistory() {
   const runs = useQuery({
     queryKey: ["ai-runs", "ALL"],
     queryFn: () => listAiRuns(),
-    refetchInterval: 3_000,
+    refetchInterval: (query) => taskPollingInterval(query.state.data),
   });
   const filteredRuns = (runs.data ?? []).filter((run) => source === "ALL" || run.source === source);
   const displayedRuns = filteredRuns.slice(0, AI_RUN_HISTORY_LIMIT);
@@ -188,7 +189,7 @@ function AiRunsHistory() {
 
 export function JobsView() {
   const client = useQueryClient();
-  const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
+  const jobs = useJobs();
   const [recordView, setRecordView] = useState<RecordView>(recordViewFromHash);
   const [filter, setFilter] = useState<"ALL" | "AI" | "SYSTEM">("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);

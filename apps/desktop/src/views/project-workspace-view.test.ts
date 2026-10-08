@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildVolumePlanTargetGuidance, diffLines, parseChapterPlanCandidates, parseVolumePlanCandidates, resolveDefaultWritingChapter } from "./project-workspace-utils";
+import { buildVolumePlanTargetGuidance, diffLines, documentCharacterCount, documentToText, parseChapterPlanCandidates, parseVolumePlanCandidates, resolveDefaultWritingChapter } from "./project-workspace-utils";
 
 describe("parseVolumePlanCandidates", () => {
   it("parses numbered, Chinese-numbered, and duplicate volume candidates", () => {
@@ -149,5 +149,31 @@ describe("diffLines", () => {
       { kind: "added", text: "after" },
       { kind: "added", text: "added" },
     ]);
+  });
+});
+
+describe("document text", () => {
+  it("includes nested lists, block quotes and hard breaks without losing words", () => {
+    const documentJson = JSON.stringify({
+      type: "doc",
+      content: [
+        { type: "heading", content: [{ type: "text", text: "Title" }] },
+        { type: "bulletList", content: [
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "First" }] }] },
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Second" }] }] },
+        ] },
+        { type: "blockquote", content: [{ type: "paragraph", content: [
+          { type: "text", text: "Quoted" }, { type: "hardBreak" }, { type: "text", text: "text" },
+        ] }] },
+      ],
+    });
+    expect(documentToText(documentJson)).toBe("Title\nFirst\nSecond\nQuoted\ntext");
+    expect(documentCharacterCount(documentJson)).toBe(26);
+  });
+
+  it("preserves plain-text and JSON-looking legacy text", () => {
+    for (const value of ["plain\ntext", "null", "42", "\"quoted\"", "{}"]) {
+      expect(documentToText(value)).toBe(value);
+    }
   });
 });

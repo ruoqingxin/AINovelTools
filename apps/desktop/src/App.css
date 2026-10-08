@@ -3151,18 +3151,6 @@ textarea:focus-visible,
   }
 }
 
-@media (max-width: 1400px) {
-  .plan-create-row { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
-  .plan-create-copy, .plan-create-row input, .plan-create-row .primary-action { grid-column: 1 / -1; }
-  .plan-create-row .primary-action { justify-self: start; }
-}
-
-@media (max-width: 780px) {
-  .plan-create-row { grid-template-columns: 1fr; }
-  .plan-create-copy, .plan-create-row input, .plan-create-row .primary-action { grid-column: auto; }
-  .plan-create-row .primary-action { width: 100%; justify-content: center; }
-}
-
 /* Mobile keeps every primary destination reachable from a bottom navigation rail. */
 @media (max-width: 780px) {
   .workspace {

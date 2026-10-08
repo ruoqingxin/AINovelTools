@@ -1,17 +1,20 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArchiveRestore, ArrowRight, BookOpen, Check, ChevronRight, Plus, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
+import { useEffect, useMemo, useState } from "react";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
-import { cancelJob, clearRecoveryLogs, createPlanNode, currentManuscript, enqueueChapterSummaryRefresh, enqueuePlanningAiJob, errorMessage, getAuditFlowSettings, getCurrentProject, listJobs, listManuscriptRevisions, listModelProfiles, listPlanningSections, listPlanNodes, listRecoveryLogs, mergeManuscript, movePlanNode, saveManuscriptChecked, savePlanningSection, saveRecoveryLog, updatePlanNodeChecked, type ManuscriptRevision, type MergeResult, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
+import { cancelJob, createPlanNode, enqueuePlanningAiJob, errorMessage, getAuditFlowSettings, getCurrentProject, listModelProfiles, listPlanningSections, listPlanNodes, movePlanNode, savePlanningSection, updatePlanNodeChecked, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
+import { useJobs } from "../lib/jobs-query";
 import { AiWritingPanel } from "./ai-writing-panel";
 import { AiModelNote } from "./ai-model-note";
 import { ChapterExtractionPanel } from "./chapter-extraction-panel";
 import { ChapterFocusHeader } from "./chapter-focus-header";
 import { ChapterWorkspaceTabs, type ChapterWorkspaceTab } from "./chapter-workspace-tabs";
 import { ManuscriptVersionsPanel } from "./manuscript-versions-panel";
-import { ManuscriptWorkspaceTabs, type ManuscriptWorkspaceTab } from "./manuscript-workspace-tabs";
+import { ManuscriptWorkspaceTabs } from "./manuscript-workspace-tabs";
+import { ManuscriptReader } from "./manuscript-reader";
+import { ManuscriptCandidateEditor } from "./manuscript-candidate-editor";
+import { useChapterManuscript } from "./use-chapter-manuscript";
+import { buildWorkspaceNodeIndex } from "./project-workspace-index";
 import { PlanningDashboard } from "./planning-dashboard";
 import { ProjectPlanTree } from "./project-plan-tree";
 import { essentialPlanningSectionIds, planningSectionGroups, StoryPlanningWorkbench } from "./story-planning-workbench";
@@ -20,9 +23,7 @@ import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 import {
   buildVolumePlanTargetGuidance,
-  candidateReviewTransferKey,
   documentCharacterCount,
-  documentToJson,
   formatSavedAt,
   isRootKind,
   isValidParentKind,
@@ -34,8 +35,9 @@ import {
   parseVolumePlanCandidates,
   resolveDefaultWritingChapter,
   rootDefinitions,
-  writingCandidateTransferKey,
 } from "./project-workspace-utils";
+
+const planningDefinitionsById = new Map(planningSectionGroups.flatMap((group) => group.children).map((item) => [item.id, item]));
 
 export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "writing" } = {}) {
   const workspaceMode = props.mode ?? "planning";
@@ -44,7 +46,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes });
   const currentProject = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
-  const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
+  const jobs = useJobs();
   const auditFlow = useQuery({ queryKey: ["audit-flow-settings"], queryFn: getAuditFlowSettings });
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
@@ -57,7 +59,6 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const [expandedPlanningGroups, setExpandedPlanningGroups] = useState<Set<string>>(() => new Set(["story-seed"]));
   const [editTitle, setEditTitle] = useState("");
   const [moveParentId, setMoveParentId] = useState("");
-  const [draft, setDraft] = useState("");
   const [nodePlanDraft, setNodePlanDraft] = useState("");
   const [nodePlanTab, setNodePlanTab] = useState<"formal" | "pending">("formal");
   const [nodePlanPendingDraft, setNodePlanPendingDraft] = useState("");
@@ -72,32 +73,11 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const [savingNodePlan, setSavingNodePlan] = useState(false);
   const [generatingNodePlan, setGeneratingNodePlan] = useState(false);
   const [generatingChapterSplit, setGeneratingChapterSplit] = useState(false);
-  const [savingDraft, setSavingDraft] = useState(false);
-  const [clearingRecovery, setClearingRecovery] = useState(false);
-  const [transferringCandidate, setTransferringCandidate] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [manuscriptMemoryNeedsRefresh, setManuscriptMemoryNeedsRefresh] = useState(false);
-  const [refreshingChapterMemory, setRefreshingChapterMemory] = useState(false);
-  const [compareLeftId, setCompareLeftId] = useState<string | null>(null);
-  const [compareRightId, setCompareRightId] = useState<string | null>(null);
-  const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
   const [chapterTab, setChapterTab] = useState<ChapterWorkspaceTab>("plan");
-  const [manuscriptTab, setManuscriptTab] = useState<ManuscriptWorkspaceTab>("manuscript");
   const [showArchived, setShowArchived] = useState(false);
   const [chapterListCollapsed, setChapterListCollapsed] = useState(false);
   const [chapterSearch, setChapterSearch] = useState("");
-  const editor = useEditor({
-    extensions: [StarterKit],
-    content: documentToJson(""),
-    editorProps: { attributes: { class: "tiptap-editor" } },
-    onUpdate: ({ editor: currentEditor }) => setDraft(JSON.stringify(currentEditor.getJSON())),
-  });
-  const manuscriptViewer = useEditor({
-    extensions: [StarterKit],
-    content: documentToJson(""),
-    editable: false,
-    editorProps: { attributes: { class: "tiptap-editor manuscript-reader-body", "aria-label": "已保存正文" } },
-  });
 
   async function addNode() {
     if (!title.trim()) return;
@@ -173,10 +153,26 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     window.requestAnimationFrame(() => document.getElementById("volume-chapter-splitter")?.scrollIntoView({ behavior: "smooth", block: "center" }));
   }
 
-  const selected = nodes.data?.find((node) => node.id === selectedId) ?? null;
-  const activeNodes = (nodes.data ?? []).filter((node) => !node.archived);
-  const visibleNodes = (nodes.data ?? []).filter((node) => !node.archived || showArchived);
-  const rootNodeFor = (kind: PlanNodeKind) => activeNodes.find((node) => node.parentId === null && node.kind === kind);
+  const nodeIndex = useMemo(() => buildWorkspaceNodeIndex(nodes.data ?? []), [nodes.data]);
+  const sectionsById = useMemo(() => new Map((planningSections.data ?? []).map((section) => [section.id, section])), [planningSections.data]);
+  const selected = selectedId ? nodeIndex.nodesById.get(selectedId) ?? null : null;
+  const {
+    manuscript, history, recovery, draft, editor, chapterDirty,
+    manuscriptTab, setManuscriptTab, savingDraft, clearingRecovery, transferringCandidate,
+    manuscriptMemoryNeedsRefresh, refreshingChapterMemory, compareLeftId, setCompareLeftId,
+    compareRightId, setCompareRightId, mergeResult, saveDraft, refreshChapterMemory,
+    recoverLatest, openWritingCandidate, openCandidateReview, discardRecoveryLogs,
+    mergeDraft, restoreRevision, loadCandidate,
+  } = useChapterManuscript({
+    chapterId: selected?.kind === "CHAPTER" ? selected.id : undefined,
+    projectId: currentProject.data?.projectId,
+    mode: workspaceMode,
+    onError: setError,
+  });
+  const manuscriptCharacterCount = useMemo(() => manuscript.data ? documentCharacterCount(manuscript.data.documentJson) : 0, [manuscript.data?.documentJson]);
+  const activeNodes = nodeIndex.activeNodes;
+  const visibleNodes = showArchived ? nodes.data ?? [] : activeNodes;
+  const rootNodeFor = (kind: PlanNodeKind) => nodeIndex.rootsByKind.get(kind);
   const primaryRootIds = new Set(rootDefinitions.map(({ kind }) => rootNodeFor(kind)?.id).filter((id): id is string => Boolean(id)));
   const unorganizedRoots = visibleNodes.filter((node) => node.parentId === null && !primaryRootIds.has(node.id));
   const parentCandidates = activeNodes.filter((node) => isValidParentKind(node.kind, kind));
@@ -186,27 +182,27 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     ? activeNodes.filter((node) => node.id !== selected.id && isValidParentKind(node.kind, selected.kind))
     : [];
   const canMoveToRoot = Boolean(selected && isRootKind(selected.kind) && !activeNodes.some((node) => node.id !== selected.id && node.parentId === null && node.kind === selected.kind));
-  const workDesignNode = activeNodes.find((node) => node.kind === "WORK_DESIGN");
-  const outlineNode = activeNodes.find((node) => node.kind === "OUTLINE");
-  const volumeManagerNode = activeNodes.find((node) => node.kind === "VOLUME_MANAGER");
-  const volumeNodes = activeNodes.filter((node) => node.kind === "VOLUME");
-  const chapterNodes = activeNodes.filter((node) => node.kind === "CHAPTER");
-  const completedPlanningSectionIds = new Set((planningSections.data ?? []).filter(isPlanningSectionSettled).map((section) => section.id));
+  const workDesignNode = nodeIndex.nodesByKind.WORK_DESIGN[0];
+  const outlineNode = nodeIndex.nodesByKind.OUTLINE[0];
+  const volumeManagerNode = nodeIndex.nodesByKind.VOLUME_MANAGER[0];
+  const volumeNodes = nodeIndex.nodesByKind.VOLUME;
+  const chapterNodes = nodeIndex.nodesByKind.CHAPTER;
+  const completedPlanningSectionIds = useMemo(() => new Set((planningSections.data ?? []).filter(isPlanningSectionSettled).map((section) => section.id)), [planningSections.data]);
   const essentialCompletedCount = essentialPlanningSectionIds.filter((id) => completedPlanningSectionIds.has(id)).length;
   const nextEssentialSectionId = essentialPlanningSectionIds.find((id) => !completedPlanningSectionIds.has(id)) ?? essentialPlanningSectionIds[0];
-  const coreSettingItems = essentialPlanningSectionIds.map((id) => ({ id, definition: planningSectionGroups.flatMap((group) => group.children).find((item) => item.id === id), section: planningSections.data?.find((item) => item.id === id) })).filter((item) => item.definition);
+  const coreSettingItems = essentialPlanningSectionIds.map((id) => ({ id, definition: planningDefinitionsById.get(id), section: sectionsById.get(id) })).filter((item) => item.definition);
   const workDesignReady = essentialCompletedCount === essentialPlanningSectionIds.length;
-  const outlinePlan = outlineNode ? planningSections.data?.find((section) => section.id === nodePlanId(outlineNode.id)) : undefined;
-  const chaptersWithPlan = chapterNodes.filter((node) => isPlanningSectionSettled(planningSections.data?.find((section) => section.id === nodePlanId(node.id)))).length;
-  const chapterWithoutPlan = chapterNodes.find((node) => !isPlanningSectionSettled(planningSections.data?.find((section) => section.id === nodePlanId(node.id))));
-  const volumesWithoutChapters = volumeNodes.filter((volume) => !chapterNodes.some((chapter) => chapter.parentId === volume.id));
+  const outlinePlan = outlineNode ? sectionsById.get(nodePlanId(outlineNode.id)) : undefined;
+  const chaptersWithPlan = chapterNodes.filter((node) => isPlanningSectionSettled(sectionsById.get(nodePlanId(node.id)))).length;
+  const chapterWithoutPlan = chapterNodes.find((node) => !isPlanningSectionSettled(sectionsById.get(nodePlanId(node.id))));
+  const volumesWithoutChapters = useMemo(() => volumeNodes.filter((volume) => !nodeIndex.chaptersByVolume.has(volume.id)), [nodeIndex, volumeNodes]);
   const volumePlanReady = volumeNodes.length > 0;
   const creatableNodeKinds = Object.entries(kindLabels).filter(([value]) => value !== "VOLUME_MANAGER" && value !== "OUTLINE" && value !== "WORK_DESIGN" && (!volumePlanReady || showVolumePlanning || value === "CHAPTER"));
   const chapterSplitVolume = volumeNodes.find((volume) => volume.id === chapterSplitVolumeId) ?? volumeNodes[0];
   const chapterSplitSectionId = chapterSplitVolume ? `chapter-split-${chapterSplitVolume.id}` : "";
-  const chapterSplitStoredPlan = chapterSplitSectionId ? planningSections.data?.find((section) => section.id === chapterSplitSectionId) : undefined;
-  const chapterSplitCandidates = parseChapterPlanCandidates(chapterSplitPendingDraft);
-  const chapterSplitExistingCount = chapterSplitVolume ? chapterNodes.filter((chapter) => chapter.parentId === chapterSplitVolume.id).length : 0;
+  const chapterSplitStoredPlan = sectionsById.get(chapterSplitSectionId);
+  const chapterSplitCandidates = useMemo(() => parseChapterPlanCandidates(chapterSplitPendingDraft), [chapterSplitPendingDraft]);
+  const chapterSplitExistingCount = chapterSplitVolume ? nodeIndex.chaptersByVolume.get(chapterSplitVolume.id)?.length ?? 0 : 0;
   const chapterSplitTotalTarget = Number.parseInt(volumePlanTargets.chapterCount, 10);
   const chapterSplitVolumeIndex = chapterSplitVolume ? volumeNodes.findIndex((volume) => volume.id === chapterSplitVolume.id) : -1;
   const chapterSplitTargetCount = volumeNodes.length && Number.isFinite(chapterSplitTotalTarget) && chapterSplitTotalTarget > 0
@@ -220,17 +216,18 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     })
     : undefined;
   const chapterSplitBusy = generatingChapterSplit || Boolean(chapterSplitJob?.status === "QUEUED" || chapterSplitJob?.status === "RUNNING");
-  const selectedStoredPlan = selected ? planningSections.data?.find((section) => section.id === nodePlanId(selected.id)) : undefined;
+  const selectedStoredPlan = selected ? sectionsById.get(nodePlanId(selected.id)) : undefined;
   const showNodePlanAiBar = selected?.kind === "VOLUME" || (selected?.kind === "OUTLINE" && Boolean(nodePlanDraft.trim()));
-  const selectedVolume = selected?.kind === "CHAPTER" ? activeNodes.find((node) => node.id === selected.parentId && node.kind === "VOLUME") : undefined;
-  const selectedVolumePlan = selectedVolume ? planningSections.data?.find((section) => section.id === nodePlanId(selectedVolume.id)) : undefined;
+  const parent = selected?.parentId ? nodeIndex.nodesById.get(selected.parentId) : undefined;
+  const selectedVolume = parent?.kind === "VOLUME" && !parent.archived ? parent : undefined;
+  const selectedVolumePlan = selectedVolume ? sectionsById.get(nodePlanId(selectedVolume.id)) : undefined;
   const nodePlanJob = selected && selected.kind !== "WORK_DESIGN"
     ? (jobs.data ?? []).find((job) => {
       if (job.jobType !== "AI_PLANNING_GENERATE") return false;
       try { return (JSON.parse(job.payload) as { sectionId?: string }).sectionId === nodePlanId(selected.id); } catch { return false; }
     })
     : undefined;
-  const volumeManagerCandidates = selected?.kind === "VOLUME_MANAGER" ? parseVolumePlanCandidates(nodePlanPendingDraft) : [];
+  const volumeManagerCandidates = useMemo(() => selected?.kind === "VOLUME_MANAGER" ? parseVolumePlanCandidates(nodePlanPendingDraft) : [], [selected?.kind, nodePlanPendingDraft]);
   const outlineProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "outline");
   const volumeProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "volumePlanning");
   const chapterSplitProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "chapterSplit");
@@ -262,18 +259,6 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
             : chapterWithoutPlan
               ? `补充「${chapterWithoutPlan.title}」执行卡`
               : "规划已能支撑正文写作";
-  const manuscript = useQuery({
-    queryKey: ["manuscript", selected?.id],
-    queryFn: () => currentManuscript(selected!.id),
-    enabled: selected?.kind === "CHAPTER",
-  });
-  const history = useQuery({
-    queryKey: ["manuscript-history", selected?.id],
-    queryFn: () => listManuscriptRevisions(selected!.id),
-    enabled: selected?.kind === "CHAPTER",
-  });
-  const recovery = useQuery({ queryKey: ["recovery-logs", selected?.id], queryFn: () => listRecoveryLogs(selected!.id), enabled: selected?.kind === "CHAPTER" });
-  const chapterDirty = Boolean(selected?.kind === "CHAPTER" && draft !== (manuscript.data?.documentJson ?? ""));
   const nodePlanDirty = Boolean(
     selected
     && selected.kind !== "WORK_DESIGN"
@@ -283,10 +268,8 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     ),
   );
   const titleDirty = Boolean(selected && editTitle !== selected.title);
-  const workspaceDirty = (!transferringCandidate && chapterDirty) || nodePlanDirty || titleDirty || planningSectionDirty;
-  const unsavedMessage = chapterDirty
-    ? "当前章节正文有未保存修改。"
-    : nodePlanDirty
+  const workspaceDirty = nodePlanDirty || titleDirty || planningSectionDirty;
+  const unsavedMessage = nodePlanDirty
       ? "当前规划有未保存修改。"
       : titleDirty
         ? "当前结构节点名称有未保存修改。"
@@ -294,19 +277,14 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   useUnsavedChangesGuard(workspaceDirty, unsavedMessage);
 
   useEffect(() => {
-    const plan = selected ? planningSections.data?.find((section) => section.id === nodePlanId(selected.id)) : undefined;
-    setNodePlanDraft(plan?.content ?? "");
-    setNodePlanPendingDraft(plan?.pendingContent ?? "");
-    setNodePlanTab(plan?.pendingContent?.trim() ? "pending" : "formal");
+    setNodePlanDraft(selectedStoredPlan?.content ?? "");
+    setNodePlanPendingDraft(selectedStoredPlan?.pendingContent ?? "");
+    setNodePlanTab(selectedStoredPlan?.pendingContent?.trim() ? "pending" : "formal");
     setNodePlanGuidance("");
-  }, [planningSections.data, selected?.id]);
+  }, [selectedStoredPlan?.content, selectedStoredPlan?.pendingContent, selected?.id]);
 
   useEffect(() => {
     setShowVolumePlanning(false);
-  }, [selected?.id]);
-
-  useEffect(() => {
-    setManuscriptMemoryNeedsRefresh(false);
   }, [selected?.id]);
 
   useEffect(() => {
@@ -375,44 +353,6 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     void client.invalidateQueries({ queryKey: ["planning-sections"] });
   }, [client, nodePlanJob?.id, nodePlanJob?.status]);
 
-  useEffect(() => {
-    if (selected?.kind === "CHAPTER") {
-      const next = manuscript.data?.documentJson ?? "";
-      setDraft(next);
-      if (editor && next !== JSON.stringify(editor.getJSON())) editor.commands.setContent(documentToJson(next), { emitUpdate: false });
-      if (manuscriptViewer && next !== JSON.stringify(manuscriptViewer.getJSON())) manuscriptViewer.commands.setContent(documentToJson(next), { emitUpdate: false });
-    }
-  }, [editor, manuscript.data, manuscriptViewer, selected?.kind, selected?.id]);
-
-  useEffect(() => {
-    if (workspaceMode !== "writing" || selected?.kind !== "CHAPTER" || manuscript.isPending || !editor) return;
-    try {
-      const stored = window.sessionStorage.getItem(writingCandidateTransferKey);
-      if (!stored) return;
-      const transfer = JSON.parse(stored) as { projectId?: string; chapterId?: string; documentJson?: string };
-      if (transfer.projectId !== (currentProject.data?.projectId ?? "current") || transfer.chapterId !== selected.id || !transfer.documentJson?.trim()) return;
-      setDraft(transfer.documentJson);
-      editor.commands.setContent(documentToJson(transfer.documentJson), { emitUpdate: false });
-      setManuscriptTab("candidate");
-      window.sessionStorage.removeItem(writingCandidateTransferKey);
-    } catch {
-      window.sessionStorage.removeItem(writingCandidateTransferKey);
-    }
-  }, [currentProject.data?.projectId, editor, manuscript.isPending, selected?.id, selected?.kind, workspaceMode]);
-
-  useEffect(() => {
-    if (history.data && history.data!.length >= 2 && (!compareLeftId || !compareRightId)) {
-      setCompareLeftId(history.data[1].id);
-      setCompareRightId(history.data[0].id);
-    }
-  }, [history.data, compareLeftId, compareRightId]);
-
-  useEffect(() => {
-    if (!selected || selected.kind !== "CHAPTER" || !draft.trim() || draft === (manuscript.data?.documentJson ?? "")) return;
-    const timer = window.setTimeout(() => { void saveRecoveryLog({ chapterId: selected.id, documentJson: draft }); }, 1_000);
-    return () => window.clearTimeout(timer);
-  }, [draft, manuscript.data?.documentJson, selected]);
-
   async function saveSelected() {
     if (!selected || !editTitle.trim()) return;
     setError(null);
@@ -445,41 +385,6 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     await toggleArchived(selected);
   }
 
-  async function saveDraft(showManuscriptAfterSave = false) {
-    if (!selected || selected.kind !== "CHAPTER" || !draft.trim()) return;
-    setSavingDraft(true);
-    setError(null);
-    try {
-      await saveManuscriptChecked({ chapterId: selected.id, baseRevisionId: manuscript.data?.id, documentJson: draft, creationReason: "MANUAL_SAVE" });
-      await clearRecoveryLogs(selected.id);
-      await client.invalidateQueries({ queryKey: ["manuscript", selected.id] });
-      await client.invalidateQueries({ queryKey: ["manuscript-history", selected.id] });
-      await client.invalidateQueries({ queryKey: ["recovery-logs", selected.id] });
-      await client.invalidateQueries({ queryKey: ["recovery-all"] });
-      setManuscriptMemoryNeedsRefresh(true);
-      if (showManuscriptAfterSave && workspaceMode === "writing") setManuscriptTab("manuscript");
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setSavingDraft(false);
-    }
-  }
-
-  async function refreshChapterMemory() {
-    if (!selected || selected.kind !== "CHAPTER") return;
-    setRefreshingChapterMemory(true);
-    setError(null);
-    try {
-      await enqueueChapterSummaryRefresh(selected.id);
-      await client.invalidateQueries({ queryKey: ["jobs"] });
-      setManuscriptMemoryNeedsRefresh(false);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setRefreshingChapterMemory(false);
-    }
-  }
-
   async function saveNodePlan() {
     if (!selected || selected.kind === "WORK_DESIGN") return;
     const value = selected.kind === "OUTLINE" && nodePlanTab === "pending" ? nodePlanPendingDraft : nodePlanDraft;
@@ -487,7 +392,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     setSavingNodePlan(true);
     setError(null);
     try {
-      const existing = planningSections.data?.find((section) => section.id === nodePlanId(selected.id));
+      const existing = sectionsById.get(nodePlanId(selected.id));
       const section: PlanningSection = existing ?? { id: nodePlanId(selected.id), content: "", pendingContent: "", storyState: "UNSET", rationale: "", consequence: "", references: [], updatedAt: "" };
       await savePlanningSection({ ...section, ...(selected.kind === "OUTLINE" && nodePlanTab === "pending" ? { pendingContent: nodePlanPendingDraft.trim(), storyState: "AI_SUGGESTED" as const } : { content: nodePlanDraft.trim(), storyState: "CONFIRMED" as const }) });
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
@@ -517,7 +422,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     setGeneratingChapterSplit(true);
     setError(null);
     try {
-      const volumePlan = planningSections.data?.find((section) => section.id === nodePlanId(chapterSplitVolume.id))?.content.trim() ?? "";
+      const volumePlan = sectionsById.get(nodePlanId(chapterSplitVolume.id))?.content.trim() ?? "";
       const existing = (planningSections.data ?? []).filter((item) => item.content.trim()).map((item) => `${item.id}: ${item.content}`).join("\n");
       const startChapterNumber = chapterNodes.length + 1;
       const targetGuidance = [
@@ -679,101 +584,13 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     }
   }
 
-  function recoverLatest() {
-    const latest = recovery.data?.[0];
-    if (!latest || !selected) return;
-    if (chapterDirty && !window.confirm("当前编辑器有未保存修改。载入异常草稿会替换这些修改，确定继续吗？")) return;
-    setDraft(latest.documentJson);
-    if (editor) editor.commands.setContent(documentToJson(latest.documentJson), { emitUpdate: false });
-    setManuscriptTab("candidate");
-  }
-
-  function openWritingCandidate() {
-    if (!selected || selected.kind !== "CHAPTER" || !draft.trim()) return;
-    setTransferringCandidate(true);
-    try {
-      window.sessionStorage.setItem(writingCandidateTransferKey, JSON.stringify({
-        projectId: currentProject.data?.projectId ?? "current",
-        chapterId: selected.id,
-        documentJson: draft,
-      }));
-    } catch {
-      setTransferringCandidate(false);
-      setError("无法暂存正文候选，请留在当前页面并重试。");
-      return;
-    }
-    window.setTimeout(() => { window.location.href = `/writing#${selected.id}`; }, 0);
-  }
-
-  function openCandidateReview() {
-    if (!selected || selected.kind !== "CHAPTER" || !draft.trim()) return;
-    const documentJson = editor ? JSON.stringify(editor.getJSON()) : draft;
-    let changedSinceReview = true;
-    try {
-      const stored = window.sessionStorage.getItem(candidateReviewTransferKey);
-      const snapshot = stored ? JSON.parse(stored) as { chapterId?: string; documentJson?: string } : null;
-      changedSinceReview = snapshot?.chapterId !== selected.id || snapshot.documentJson !== documentJson;
-    } catch {
-      // A fresh snapshot is the safe fallback when storage cannot be read.
-    }
-    if (chapterDirty && changedSinceReview && !window.confirm("当前候选有未同步修改。将以当前版本作为审核快照，前往审核吗？")) return;
-    setTransferringCandidate(true);
-    try {
-      window.sessionStorage.setItem(writingCandidateTransferKey, JSON.stringify({
-        projectId: currentProject.data?.projectId ?? "current",
-        chapterId: selected.id,
-        documentJson,
-      }));
-      window.sessionStorage.setItem(candidateReviewTransferKey, JSON.stringify({
-        chapterId: selected.id,
-        documentJson,
-      }));
-      window.setTimeout(() => { window.location.href = `/review?tab=manuscript&chapterId=${encodeURIComponent(selected.id)}`; }, 0);
-    } catch {
-      setTransferringCandidate(false);
-      setError("无法暂存当前候选，暂时不能前往审核。");
-    }
-  }
-
-  async function discardRecoveryLogs() {
-    if (!selected || selected.kind !== "CHAPTER" || !recovery.data?.length) return;
-    if (!window.confirm(`确认不需要恢复这 ${recovery.data.length} 次自动保护记录吗？删除记录不会修改当前正文或已保存版本。`)) return;
-    setClearingRecovery(true);
-    setError(null);
-    try {
-      await clearRecoveryLogs(selected.id);
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["recovery-logs", selected.id] }),
-        client.invalidateQueries({ queryKey: ["recovery-all"] }),
-      ]);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setClearingRecovery(false);
-    }
-  }
-
-  async function mergeDraft() {
-    if (!selected || !manuscript.data || !draft.trim()) return;
-    const base = history.data?.find((item) => item.id === manuscript.data?.parentRevisionId);
-    if (!base) { setError("缺少合并基线版本"); return; }
-    try { setMergeResult(await mergeManuscript({ base: base.documentJson, current: manuscript.data.documentJson, draft })); }
-    catch (cause) { setError(errorMessage(cause)); }
-  }
-
-  function restoreRevision(revision: ManuscriptRevision) {
-    if (!selected || selected.kind !== "CHAPTER") return;
-    if (chapterDirty && !window.confirm("当前编辑器有未保存修改。载入历史版本会替换这些修改，确定继续吗？")) return;
-    setDraft(revision.documentJson);
-    if (editor) editor.commands.setContent(documentToJson(revision.documentJson), { emitUpdate: false });
-    setError(null);
-    setManuscriptTab("candidate");
-  }
-
   function selectNode(node: PlanNode) {
-    if (selected?.kind === "CHAPTER" && draft !== (manuscript.data?.documentJson ?? "") && !window.confirm("当前正文有未保存修改，确定切换吗？")) return false;
-    if (selected?.kind === "WORK_DESIGN" && planningSectionDirty && selected.id !== node.id && !window.confirm("当前设定有未保存修改，确定切换吗？")) return false;
-    if (selected && selected.kind !== "WORK_DESIGN" && selected.id !== node.id && nodePlanDraft !== (selectedStoredPlan?.content ?? "") && !window.confirm("当前规划有未保存修改，确定切换吗？")) return false;
+    if (selected?.id === node.id) return true;
+    if (savingDraft) {
+      setError("正文正在同步，请稍后切换章节。");
+      return false;
+    }
+    if ((chapterDirty || workspaceDirty) && !window.confirm(`${chapterDirty ? "当前正文有未保存修改。" : unsavedMessage}确定切换吗？`)) return false;
     setSelectedId(node.id);
     setEditTitle(node.title);
     setMoveParentId(node.parentId ?? "");
@@ -841,7 +658,11 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
         onCreateStarterNode={createStarterNode}
         onExpandChapterList={() => setChapterListCollapsed(false)}
         onSelectNode={selectNode}
-        onSelectOverview={() => setSelectedId(null)}
+        onSelectOverview={() => {
+          if (savingDraft) { setError("正文正在同步，请稍后返回总览。"); return; }
+          if ((chapterDirty || workspaceDirty) && !window.confirm("当前内容有未保存修改，确定返回总览吗？")) return;
+          setSelectedId(null);
+        }}
         onSelectPlanningSection={selectPlanningSection}
         onToggleArchived={() => setShowArchived((value) => !value)}
         onTogglePlanningGroup={(groupId) => setExpandedPlanningGroups((current) => {
@@ -930,7 +751,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
             {selected.archived ? <button type="button" className="secondary-action" onClick={() => void toggleArchived(selected)}><ArchiveRestore size={15} />恢复</button> : <button type="button" className="secondary-action destructive-action" onClick={() => void deleteSelected()}><Trash2 size={15} />删除</button>}
           </div>
           <div className="inspector-move-row"><label>归属<select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="" disabled={!canMoveToRoot}>{canMoveToRoot ? "顶层" : "选择父节点"}</option>{moveCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select></label><button type="button" className="secondary-action" onClick={() => void moveSelected()} disabled={!canMoveToRoot && !moveParentId}>移动</button></div>
-        </div> : null}{selected.kind === "VOLUME_MANAGER" ? <div className="volume-manager-panel"><div className="section-heading"><div><h3>{volumePlanReady ? "拆分章节" : "分卷管理"}</h3><span>{volumePlanReady ? "分卷结构已确认，接下来为每卷建立章节并补齐执行卡。" : "分卷是主线确定后的阶段容器，章节必须挂在具体分卷下。"}</span></div><small>{volumePlanReady ? `${volumeNodes.length} 卷 · ${chapterNodes.length} 章` : "尚未创建分卷"}</small></div><div className="outline-structure-strip"><div><strong>{volumeNodes.length}</strong><span>个分卷</span></div><div><strong>{chapterNodes.length}</strong><span>个章节</span></div><div><strong>{chaptersWithPlan}</strong><span>张执行卡</span></div><small>{volumePlanReady ? `${volumesWithoutChapters.length} 个分卷尚未拆章节` : "分卷用于控制阶段目标，章节负责落地执行"}</small></div>{outlinePlan?.content.trim() && (!volumePlanReady || showVolumePlanning) ? <div className="volume-manager-ai-panel">{volumePlanReady ? <div className="volume-planning-notice"><span>分卷已建立，可继续生成并追加分卷。</span><button type="button" className="secondary-action" onClick={() => { setShowVolumePlanning(false); setKind("CHAPTER"); }}>返回拆章节</button></div> : null}<div className="volume-manager-targets"><label><span>本书字数（万字）</span><input type="number" min="1" inputMode="numeric" value={volumePlanTargets.wordCount} onChange={(event) => setVolumePlanTargets((current) => ({ ...current, wordCount: event.target.value }))} placeholder="例如 120" /></label><label><span>分卷数（卷）</span><input type="number" min="1" inputMode="numeric" value={volumePlanTargets.volumeCount} onChange={(event) => setVolumePlanTargets((current) => ({ ...current, volumeCount: event.target.value }))} placeholder="例如 4" /></label><label><span>章节数（章）</span><input type="number" min="1" inputMode="numeric" value={volumePlanTargets.chapterCount} onChange={(event) => setVolumePlanTargets((current) => ({ ...current, chapterCount: event.target.value }))} placeholder="例如 400" /></label></div><AiModelNote taskLabel="分卷规划" taskKey="volumePlanning" profile={volumeProfile} preference={volumePreference} /><label className="node-plan-guidance"><span>给 AI 的补充意见（可选）</span><textarea rows={2} value={nodePlanGuidance} onChange={(event) => setNodePlanGuidance(event.target.value)} placeholder="例如：第一卷尽快进入冲突，卷末必须有不可逆变化" /></label><div className="node-plan-ai-bar"><div><Sparkles size={15} /><span><strong>{volumePlanReady ? "AI 补充分卷" : "AI 生成分卷"}</strong><small>根据作品设定、正式主线与规模目标生成分卷结构候选</small></span></div><button type="button" className="secondary-action" onClick={() => void generateNodePlan()} disabled={!volumeProfile?.hasSecret || generatingNodePlan || Boolean(nodePlanJob?.status === "QUEUED" || nodePlanJob?.status === "RUNNING")}><Sparkles size={14} />{nodePlanJob?.status === "RUNNING" ? "生成中…" : volumePlanReady ? "生成补充候选" : "生成分卷候选"}</button></div>{nodePlanJob && (nodePlanJob.status === "QUEUED" || nodePlanJob.status === "RUNNING") ? <div className="node-plan-job"><span>AI 正在规划分卷结构，完成后候选会出现在这里</span><div><i style={{ width: `${nodePlanJob.progress}%` }} /></div><button type="button" onClick={() => void cancelJob(nodePlanJob.id)}>取消</button></div> : null}{nodePlanPendingDraft.trim() ? <div className="node-plan-candidate volume-manager-candidate"><div><strong>AI 分卷候选</strong><small>{volumeManagerCandidates.length ? `已识别 ${volumeManagerCandidates.length} 个分卷，可修改后采用` : "未识别到分卷，请检查格式"}</small></div><textarea rows={6} value={nodePlanPendingDraft} onChange={(event) => setNodePlanPendingDraft(event.target.value)} aria-label="分卷候选" /><div className="node-plan-actions"><button type="button" className="primary-action" onClick={() => void adoptVolumeManagerPlan()} disabled={savingNodePlan || !volumeManagerCandidates.length}><Check size={14} />采用并创建 {volumeManagerCandidates.length || 0} 个分卷</button></div></div> : null}</div> : null}{outlinePlan?.content.trim() && volumePlanReady && !showVolumePlanning ? <div className="volume-split-next-step"><div className="outline-next-copy"><span className="outline-next-kicker">分卷规划已完成</span><strong>下一步：拆章节</strong><small>{volumesWithoutChapters.length ? `还有 ${volumesWithoutChapters.length} 个分卷尚未拆章节。先选择分卷，再添加章节标题。` : `已为所有分卷建立章节，共 ${chapterNodes.length} 章，可继续补充或进入执行卡规划。`}</small></div><div className="outline-next-actions"><button type="button" className="primary-action" onClick={() => beginChapterSplit()}><ArrowRight size={15} />继续拆章节</button><button type="button" className="secondary-action" onClick={() => setShowVolumePlanning(true)}>重新调整分卷</button></div></div> : null}{outlinePlan?.content.trim() && volumePlanReady && !showVolumePlanning ? <section className="chapter-split-ai-panel"><div className="chapter-split-ai-heading"><div><span className="outline-next-kicker">AI 拆章节</span><h3>按分卷生成章节候选</h3><p>AI 根据本卷规划和全书章节目标生成候选，确认后才创建章节。</p></div><small>{chapterSplitTargetCount ? `本卷目标约 ${chapterSplitTargetCount} 章` : "未设置本卷章节目标"}</small></div><div className="chapter-split-controls"><label><span>目标分卷</span><select value={chapterSplitVolume?.id ?? ""} onChange={(event) => { setChapterSplitVolumeId(event.target.value); setChapterSplitGuidance(""); }} aria-label="拆章节目标分卷">{volumeNodes.map((volume, index) => <option key={volume.id} value={volume.id}>{String(index + 1).padStart(2, "0")} · {volume.title}</option>)}</select></label><label><span>本批章节数</span><input type="number" min="1" max="50" inputMode="numeric" value={chapterSplitBatchCount} onChange={(event) => setChapterSplitBatchCount(event.target.value)} aria-label="本批章节数" /></label><div className="chapter-split-progress"><span>本卷进度</span><strong>{chapterSplitExistingCount}{chapterSplitTargetCount ? ` / ${chapterSplitTargetCount}` : ""} 章</strong><small>下一批从第 {chapterNodes.length + 1} 章开始</small></div></div><AiModelNote taskLabel="章节拆分" taskKey="chapterSplit" profile={chapterSplitProfile} preference={chapterSplitPreference} runMultiplier={Number(chapterSplitBatchCount) || 1} /><label className="node-plan-guidance"><span>本章拆分补充要求（可选）</span><textarea rows={2} value={chapterSplitGuidance} onChange={(event) => setChapterSplitGuidance(event.target.value)} placeholder="例如：每章只推进一个主要事件，前 5 章节奏要快，保留卷末三章做连续反转" /></label><div className="node-plan-ai-bar"><div><Sparkles size={15} /><span><strong>AI 拆分本卷</strong><small>分批生成，避免一次输出过多章节被截断</small></span></div><button type="button" className="secondary-action" onClick={() => void generateChapterSplit()} disabled={!chapterSplitProfile?.hasSecret || chapterSplitBusy || !chapterSplitSectionId}><Sparkles size={14} />{chapterSplitBusy ? "生成中…" : "生成章节候选"}</button></div>{chapterSplitJob && (chapterSplitJob.status === "QUEUED" || chapterSplitJob.status === "RUNNING") ? <div className="node-plan-job"><span>AI 正在拆分「{chapterSplitVolume?.title}」，完成后候选会出现在这里</span><div><i style={{ width: `${chapterSplitJob.progress}%` }} /></div><button type="button" onClick={() => void cancelJob(chapterSplitJob.id)}>取消</button></div> : null}{chapterSplitPendingDraft.trim() ? <div className="node-plan-candidate chapter-split-candidate"><div><strong>章节拆分候选</strong><small>{chapterSplitCandidates.length ? `已识别 ${chapterSplitCandidates.length} 章，可修改后采用` : "未识别到章节，请检查格式"}</small></div><textarea rows={8} value={chapterSplitPendingDraft} onChange={(event) => setChapterSplitPendingDraft(event.target.value)} aria-label="章节拆分候选" /><div className="node-plan-actions"><button type="button" className="secondary-action" onClick={() => setChapterSplitPendingDraft("")}>清空候选</button><button type="button" className="primary-action" onClick={() => void adoptChapterSplitPlan()} disabled={savingNodePlan || !chapterSplitCandidates.length}><Check size={14} />采用并创建 {chapterSplitCandidates.length || 0} 章</button></div></div> : null}</section> : null}<div className="outline-volume-list"><div className="outline-volume-heading"><strong>{volumePlanReady ? "各卷章节拆分进度" : "分卷规划"}</strong><span>{!outlinePlan?.content.trim() ? "完成故事大纲后开放" : volumePlanReady ? "点击分卷查看规划；在下方添加章节" : "请使用下方“添加结构节点”创建分卷"}</span></div>{!outlinePlan?.content.trim() ? <div className="outline-volume-empty"><strong>分卷规划暂未开启</strong><span>完成故事大纲后开放分卷管理。</span><button type="button" className="secondary-action" onClick={() => outlineNode && selectNode(outlineNode)}>返回故事结构</button></div> : volumeNodes.length ? volumeNodes.map((volume, index) => { const plan = planningSections.data?.find((item) => item.id === nodePlanId(volume.id)); const volumeChapters = chapterNodes.filter((chapter) => chapter.parentId === volume.id); return <button type="button" className="outline-volume-row" key={volume.id} onClick={() => selectNode(volume)}><span className="outline-volume-index">{String(index + 1).padStart(2, "0")}</span><span className="outline-volume-copy"><strong>{volume.title}</strong><small>{volumeChapters.length ? `${volumeChapters.length} 个章节` : "尚未拆章节"} · {plan?.content.trim() ? "已写分卷规划" : "待补分卷规划"}</small></span><ChevronRight size={15} /></button>; }) : <div className="outline-volume-empty"><strong>还没有分卷</strong><span>请使用下方“添加结构节点”创建第一个分卷，再继续添加章节和场景。</span></div>}</div></div> : null}{selected.kind === "OUTLINE" && !workDesignReady ? <div className="node-plan-locked"><strong>故事大纲尚未开放</strong><span>还需补齐 {essentialPlanningSectionIds.length - essentialCompletedCount} 个核心设定，完成后开放故事大纲。</span><button type="button" className="secondary-action" onClick={() => { if (workDesignNode) { selectNode(workDesignNode); setSelectedPlanningSectionId(nextEssentialSectionId); } else setSelectedId(null); }}>{workDesignNode ? "去作品设定" : "回到项目总览"}</button></div> : null}{(selected.kind !== "CHAPTER" && selected.kind !== "VOLUME_MANAGER" && !(selected.kind === "OUTLINE" && !workDesignReady)) || (selected.kind === "CHAPTER" && workspaceMode === "chapters" && chapterTab === "plan") ? <div className={`node-plan-editor${selected.kind === "OUTLINE" ? " outline-plan-editor" : ""}${selected.kind === "CHAPTER" ? " chapter-plan-panel" : ""}`} id={selected.kind === "CHAPTER" ? "chapter-panel-plan" : undefined} role={selected.kind === "CHAPTER" ? "tabpanel" : undefined} aria-labelledby={selected.kind === "CHAPTER" ? "chapter-tab-plan" : undefined}><div className="section-heading"><div><h3>{selected.kind === "OUTLINE" ? "主线规划" : selected.kind === "VOLUME" ? "分卷规划" : selected.kind === "CHAPTER" ? "章节执行卡" : "场景执行卡"}</h3><span>{nodePlanPrompt(selected.kind)}</span></div><small>{nodePlanDraft.trim() ? "已填写" : "待填写"}</small></div>
+        </div> : null}{selected.kind === "VOLUME_MANAGER" ? <div className="volume-manager-panel"><div className="section-heading"><div><h3>{volumePlanReady ? "拆分章节" : "分卷管理"}</h3><span>{volumePlanReady ? "分卷结构已确认，接下来为每卷建立章节并补齐执行卡。" : "分卷是主线确定后的阶段容器，章节必须挂在具体分卷下。"}</span></div><small>{volumePlanReady ? `${volumeNodes.length} 卷 · ${chapterNodes.length} 章` : "尚未创建分卷"}</small></div><div className="outline-structure-strip"><div><strong>{volumeNodes.length}</strong><span>个分卷</span></div><div><strong>{chapterNodes.length}</strong><span>个章节</span></div><div><strong>{chaptersWithPlan}</strong><span>张执行卡</span></div><small>{volumePlanReady ? `${volumesWithoutChapters.length} 个分卷尚未拆章节` : "分卷用于控制阶段目标，章节负责落地执行"}</small></div>{outlinePlan?.content.trim() && (!volumePlanReady || showVolumePlanning) ? <div className="volume-manager-ai-panel">{volumePlanReady ? <div className="volume-planning-notice"><span>分卷已建立，可继续生成并追加分卷。</span><button type="button" className="secondary-action" onClick={() => { setShowVolumePlanning(false); setKind("CHAPTER"); }}>返回拆章节</button></div> : null}<div className="volume-manager-targets"><label><span>本书字数（万字）</span><input type="number" min="1" inputMode="numeric" value={volumePlanTargets.wordCount} onChange={(event) => setVolumePlanTargets((current) => ({ ...current, wordCount: event.target.value }))} placeholder="例如 120" /></label><label><span>分卷数（卷）</span><input type="number" min="1" inputMode="numeric" value={volumePlanTargets.volumeCount} onChange={(event) => setVolumePlanTargets((current) => ({ ...current, volumeCount: event.target.value }))} placeholder="例如 4" /></label><label><span>章节数（章）</span><input type="number" min="1" inputMode="numeric" value={volumePlanTargets.chapterCount} onChange={(event) => setVolumePlanTargets((current) => ({ ...current, chapterCount: event.target.value }))} placeholder="例如 400" /></label></div><AiModelNote taskLabel="分卷规划" taskKey="volumePlanning" profile={volumeProfile} preference={volumePreference} /><label className="node-plan-guidance"><span>给 AI 的补充意见（可选）</span><textarea rows={2} value={nodePlanGuidance} onChange={(event) => setNodePlanGuidance(event.target.value)} placeholder="例如：第一卷尽快进入冲突，卷末必须有不可逆变化" /></label><div className="node-plan-ai-bar"><div><Sparkles size={15} /><span><strong>{volumePlanReady ? "AI 补充分卷" : "AI 生成分卷"}</strong><small>根据作品设定、正式主线与规模目标生成分卷结构候选</small></span></div><button type="button" className="secondary-action" onClick={() => void generateNodePlan()} disabled={!volumeProfile?.hasSecret || generatingNodePlan || Boolean(nodePlanJob?.status === "QUEUED" || nodePlanJob?.status === "RUNNING")}><Sparkles size={14} />{nodePlanJob?.status === "RUNNING" ? "生成中…" : volumePlanReady ? "生成补充候选" : "生成分卷候选"}</button></div>{nodePlanJob && (nodePlanJob.status === "QUEUED" || nodePlanJob.status === "RUNNING") ? <div className="node-plan-job"><span>AI 正在规划分卷结构，完成后候选会出现在这里</span><div><i style={{ width: `${nodePlanJob.progress}%` }} /></div><button type="button" onClick={() => void cancelJob(nodePlanJob.id)}>取消</button></div> : null}{nodePlanPendingDraft.trim() ? <div className="node-plan-candidate volume-manager-candidate"><div><strong>AI 分卷候选</strong><small>{volumeManagerCandidates.length ? `已识别 ${volumeManagerCandidates.length} 个分卷，可修改后采用` : "未识别到分卷，请检查格式"}</small></div><textarea rows={6} value={nodePlanPendingDraft} onChange={(event) => setNodePlanPendingDraft(event.target.value)} aria-label="分卷候选" /><div className="node-plan-actions"><button type="button" className="primary-action" onClick={() => void adoptVolumeManagerPlan()} disabled={savingNodePlan || !volumeManagerCandidates.length}><Check size={14} />采用并创建 {volumeManagerCandidates.length || 0} 个分卷</button></div></div> : null}</div> : null}{outlinePlan?.content.trim() && volumePlanReady && !showVolumePlanning ? <div className="volume-split-next-step"><div className="outline-next-copy"><span className="outline-next-kicker">分卷规划已完成</span><strong>下一步：拆章节</strong><small>{volumesWithoutChapters.length ? `还有 ${volumesWithoutChapters.length} 个分卷尚未拆章节。先选择分卷，再添加章节标题。` : `已为所有分卷建立章节，共 ${chapterNodes.length} 章，可继续补充或进入执行卡规划。`}</small></div><div className="outline-next-actions"><button type="button" className="primary-action" onClick={() => beginChapterSplit()}><ArrowRight size={15} />继续拆章节</button><button type="button" className="secondary-action" onClick={() => setShowVolumePlanning(true)}>重新调整分卷</button></div></div> : null}{outlinePlan?.content.trim() && volumePlanReady && !showVolumePlanning ? <section className="chapter-split-ai-panel"><div className="chapter-split-ai-heading"><div><span className="outline-next-kicker">AI 拆章节</span><h3>按分卷生成章节候选</h3><p>AI 根据本卷规划和全书章节目标生成候选，确认后才创建章节。</p></div><small>{chapterSplitTargetCount ? `本卷目标约 ${chapterSplitTargetCount} 章` : "未设置本卷章节目标"}</small></div><div className="chapter-split-controls"><label><span>目标分卷</span><select value={chapterSplitVolume?.id ?? ""} onChange={(event) => { setChapterSplitVolumeId(event.target.value); setChapterSplitGuidance(""); }} aria-label="拆章节目标分卷">{volumeNodes.map((volume, index) => <option key={volume.id} value={volume.id}>{String(index + 1).padStart(2, "0")} · {volume.title}</option>)}</select></label><label><span>本批章节数</span><input type="number" min="1" max="50" inputMode="numeric" value={chapterSplitBatchCount} onChange={(event) => setChapterSplitBatchCount(event.target.value)} aria-label="本批章节数" /></label><div className="chapter-split-progress"><span>本卷进度</span><strong>{chapterSplitExistingCount}{chapterSplitTargetCount ? ` / ${chapterSplitTargetCount}` : ""} 章</strong><small>下一批从第 {chapterNodes.length + 1} 章开始</small></div></div><AiModelNote taskLabel="章节拆分" taskKey="chapterSplit" profile={chapterSplitProfile} preference={chapterSplitPreference} runMultiplier={Number(chapterSplitBatchCount) || 1} /><label className="node-plan-guidance"><span>本章拆分补充要求（可选）</span><textarea rows={2} value={chapterSplitGuidance} onChange={(event) => setChapterSplitGuidance(event.target.value)} placeholder="例如：每章只推进一个主要事件，前 5 章节奏要快，保留卷末三章做连续反转" /></label><div className="node-plan-ai-bar"><div><Sparkles size={15} /><span><strong>AI 拆分本卷</strong><small>分批生成，避免一次输出过多章节被截断</small></span></div><button type="button" className="secondary-action" onClick={() => void generateChapterSplit()} disabled={!chapterSplitProfile?.hasSecret || chapterSplitBusy || !chapterSplitSectionId}><Sparkles size={14} />{chapterSplitBusy ? "生成中…" : "生成章节候选"}</button></div>{chapterSplitJob && (chapterSplitJob.status === "QUEUED" || chapterSplitJob.status === "RUNNING") ? <div className="node-plan-job"><span>AI 正在拆分「{chapterSplitVolume?.title}」，完成后候选会出现在这里</span><div><i style={{ width: `${chapterSplitJob.progress}%` }} /></div><button type="button" onClick={() => void cancelJob(chapterSplitJob.id)}>取消</button></div> : null}{chapterSplitPendingDraft.trim() ? <div className="node-plan-candidate chapter-split-candidate"><div><strong>章节拆分候选</strong><small>{chapterSplitCandidates.length ? `已识别 ${chapterSplitCandidates.length} 章，可修改后采用` : "未识别到章节，请检查格式"}</small></div><textarea rows={8} value={chapterSplitPendingDraft} onChange={(event) => setChapterSplitPendingDraft(event.target.value)} aria-label="章节拆分候选" /><div className="node-plan-actions"><button type="button" className="secondary-action" onClick={() => setChapterSplitPendingDraft("")}>清空候选</button><button type="button" className="primary-action" onClick={() => void adoptChapterSplitPlan()} disabled={savingNodePlan || !chapterSplitCandidates.length}><Check size={14} />采用并创建 {chapterSplitCandidates.length || 0} 章</button></div></div> : null}</section> : null}<div className="outline-volume-list"><div className="outline-volume-heading"><strong>{volumePlanReady ? "各卷章节拆分进度" : "分卷规划"}</strong><span>{!outlinePlan?.content.trim() ? "完成故事大纲后开放" : volumePlanReady ? "点击分卷查看规划；在下方添加章节" : "请使用下方“添加结构节点”创建分卷"}</span></div>{!outlinePlan?.content.trim() ? <div className="outline-volume-empty"><strong>分卷规划暂未开启</strong><span>完成故事大纲后开放分卷管理。</span><button type="button" className="secondary-action" onClick={() => outlineNode && selectNode(outlineNode)}>返回故事结构</button></div> : volumeNodes.length ? volumeNodes.map((volume, index) => { const plan = sectionsById.get(nodePlanId(volume.id)); const volumeChapters = chapterNodes.filter((chapter) => chapter.parentId === volume.id); return <button type="button" className="outline-volume-row" key={volume.id} onClick={() => selectNode(volume)}><span className="outline-volume-index">{String(index + 1).padStart(2, "0")}</span><span className="outline-volume-copy"><strong>{volume.title}</strong><small>{volumeChapters.length ? `${volumeChapters.length} 个章节` : "尚未拆章节"} · {plan?.content.trim() ? "已写分卷规划" : "待补分卷规划"}</small></span><ChevronRight size={15} /></button>; }) : <div className="outline-volume-empty"><strong>还没有分卷</strong><span>请使用下方“添加结构节点”创建第一个分卷，再继续添加章节和场景。</span></div>}</div></div> : null}{selected.kind === "OUTLINE" && !workDesignReady ? <div className="node-plan-locked"><strong>故事大纲尚未开放</strong><span>还需补齐 {essentialPlanningSectionIds.length - essentialCompletedCount} 个核心设定，完成后开放故事大纲。</span><button type="button" className="secondary-action" onClick={() => { if (workDesignNode) { selectNode(workDesignNode); setSelectedPlanningSectionId(nextEssentialSectionId); } else setSelectedId(null); }}>{workDesignNode ? "去作品设定" : "回到项目总览"}</button></div> : null}{(selected.kind !== "CHAPTER" && selected.kind !== "VOLUME_MANAGER" && !(selected.kind === "OUTLINE" && !workDesignReady)) || (selected.kind === "CHAPTER" && workspaceMode === "chapters" && chapterTab === "plan") ? <div className={`node-plan-editor${selected.kind === "OUTLINE" ? " outline-plan-editor" : ""}${selected.kind === "CHAPTER" ? " chapter-plan-panel" : ""}`} id={selected.kind === "CHAPTER" ? "chapter-panel-plan" : undefined} role={selected.kind === "CHAPTER" ? "tabpanel" : undefined} aria-labelledby={selected.kind === "CHAPTER" ? "chapter-tab-plan" : undefined}><div className="section-heading"><div><h3>{selected.kind === "OUTLINE" ? "主线规划" : selected.kind === "VOLUME" ? "分卷规划" : selected.kind === "CHAPTER" ? "章节执行卡" : "场景执行卡"}</h3><span>{nodePlanPrompt(selected.kind)}</span></div><small>{nodePlanDraft.trim() ? "已填写" : "待填写"}</small></div>
           {selected.kind === "CHAPTER" && selectedVolume ? <div className="chapter-plan-context"><span>来自分卷：{selectedVolume.title}</span><p>{selectedVolumePlan?.content?.trim() || "该分卷还没有正式规划，请先补充分卷目标和阶段转折。"}</p></div> : null}
           {selected.kind === "OUTLINE" ? <div className="outline-context-panel"><div className="outline-context-heading"><div><span>上游依据</span><strong>作品设定</strong></div><small>{coreSettingItems.filter((item) => item.section?.content.trim()).length}/{coreSettingItems.length} 个核心设定</small></div>{coreSettingItems.some((item) => item.section?.content.trim()) ? <div className="outline-context-summary">{coreSettingItems.filter((item) => item.section?.content.trim()).map(({ definition, section }) => <span key={definition?.id}><b>{definition?.label}</b>{section?.content.trim()?.slice(0, 34)}</span>)}</div> : <div className="outline-context-empty"><strong>还没有可供主线使用的作品设定</strong><span>先完成故事前提、主角、对抗力量、赌注和结局，AI 才能生成贴合你作品的主线。</span></div>}{!workDesignReady ? <button type="button" className="secondary-action" onClick={() => { if (workDesignNode) { selectNode(workDesignNode); setSelectedPlanningSectionId(nextEssentialSectionId); } else setSelectedId(null); }}>{workDesignNode ? "先补齐作品设定" : "回到项目总览创建作品设定"}</button> : null}</div> : null}
           {selected.kind === "OUTLINE" ? <div className="outline-next-step"><div className="outline-next-copy"><span className="outline-next-kicker">现在先做这一步</span><strong>{nodePlanDraft.trim() ? "主线已确认，进入分卷规划" : "基于作品设定生成故事主线"}</strong><small>{nodePlanDraft.trim() ? "在分卷规划中建立阶段目标、卷末转折和章节归属。" : "AI 会参考人物目标、主题命题、核心冲突、赌注和结局落点，先生成一版可修改的主线候选。"}</small></div><div className="outline-next-actions"><button type="button" className="primary-action" onClick={() => nodePlanDraft.trim() ? (volumeManagerNode ? selectNode(volumeManagerNode) : void createStarterNode("VOLUME_MANAGER", "分卷管理")) : void generateNodePlan()} disabled={!nodePlanDraft.trim() && (!outlineProfile?.hasSecret || generatingNodePlan || !workDesignReady)}>{nodePlanDraft.trim() ? "进入分卷规划" : "基于设定生成主线"}</button>{nodePlanDraft.trim() ? <button type="button" className="secondary-action" onClick={() => setNodePlanDraft("")}>重新开始</button> : null}</div></div> : null}
@@ -943,21 +764,14 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
         {selected.kind === "CHAPTER" && isChapterMode ? <div className="chapter-editor">
           {manuscriptMemoryNeedsRefresh ? <div className="project-notice"><span>正文已同步，当前章节 AI 会读取最新版本。需要跨章节续写或回顾时，请更新章节记忆。</span><button type="button" className="secondary-action" onClick={() => void refreshChapterMemory()} disabled={refreshingChapterMemory}>{refreshingChapterMemory ? "提交中…" : "更新章节记忆"}</button></div> : null}
           {workspaceMode === "writing" && manuscriptTab === "manuscript" ? <div className="chapter-tab-panel focused-manuscript-panel" id="manuscript-panel-manuscript" role="tabpanel" aria-labelledby="manuscript-tab-manuscript">
-            <div className="manuscript-stage-heading"><div><h2>已保存正文</h2><p>这里展示当前正式版本，只供阅读。需要修改时请进入候选区。</p></div><span>{manuscript.data ? `${formatSavedAt(manuscript.data.createdAt)} · 约 ${documentCharacterCount(manuscript.data.documentJson)} 字` : "尚无正式正文"}</span></div>
-            {manuscript.data ? manuscriptViewer ? <EditorContent editor={manuscriptViewer} /> : <p className="plan-empty">正在加载正文…</p> : <div className="manuscript-stage-gate"><strong>当前还没有正式正文</strong><span>请先在候选区写作或载入候选，再同步生成第一个正文版本。</span><button type="button" className="primary-action" onClick={() => setManuscriptTab("candidate")}>进入候选区</button></div>}
+            <div className="manuscript-stage-heading"><div><h2>已保存正文</h2><p>这里展示当前正式版本，只供阅读。需要修改时请进入候选区。</p></div><span>{manuscript.data ? `${formatSavedAt(manuscript.data.createdAt)} · 约 ${manuscriptCharacterCount} 字` : "尚无正式正文"}</span></div>
+            {manuscript.data ? <ManuscriptReader documentJson={manuscript.data.documentJson} /> : <div className="manuscript-stage-gate"><strong>当前还没有正式正文</strong><span>请先在候选区写作或载入候选，再同步生成第一个正文版本。</span><button type="button" className="primary-action" onClick={() => setManuscriptTab("candidate")}>进入候选区</button></div>}
           </div> : null}
           {workspaceMode === "writing" && manuscriptTab === "candidate" ? <div className="chapter-tab-panel focused-writing-panel" id="manuscript-panel-candidate" role="tabpanel" aria-labelledby="manuscript-tab-candidate">
             <div className="manuscript-stage-heading"><div><h2>正文候选区</h2><p>手写、修改、异常草稿和历史版本都在这里整理；需要时审核，再决定是否同步为正式正文。</p></div><span>{chapterDirty ? "有内容待同步" : "与正式正文一致"}</span></div>
-            {editor ? <>
-              <div className="editor-toolbar" aria-label="编辑器工具栏">
-                <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} data-active={editor.isActive("bold") || undefined} aria-label="粗体">B</button>
-                <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} data-active={editor.isActive("italic") || undefined} aria-label="斜体"><em>I</em></button>
-                <button type="button" onClick={() => editor.chain().focus().toggleBulletList().run()} data-active={editor.isActive("bulletList") || undefined} aria-label="项目列表">•</button>
-              </div>
-              <EditorContent editor={editor} />
-            </> : <p className="plan-empty">正在加载编辑器…</p>}
+            {editor ? <ManuscriptCandidateEditor editor={editor} /> : <p className="plan-empty">正在加载编辑器…</p>}
             {chapterDirty && manuscript.data ? <div className="manuscript-version-tools"><div><strong>同步前冲突检查</strong><span>如果正式正文可能在其他位置发生过变化，可在同步前检查并合并冲突。</span></div><button type="button" className="secondary-action" onClick={() => void mergeDraft()}>检查同步冲突</button></div> : null}
-            {mergeResult ? <div className="merge-panel"><div className="section-heading"><h3>{mergeResult.conflicts.length ? `发现 ${mergeResult.conflicts.length} 个冲突块` : "没有发现冲突"}</h3>{!mergeResult.conflicts.length ? <button type="button" className="secondary-action" onClick={() => { setDraft(mergeResult.documentJson); if (editor) editor.commands.setContent(documentToJson(mergeResult.documentJson), { emitUpdate: false }); }}>应用到候选</button> : null}</div>{mergeResult.conflicts.map((conflict) => <div className="merge-conflict" key={conflict.blockId}><code>{conflict.blockId}</code><span>正式正文与候选都修改了该段，请在候选区中手工确认后再同步。</span></div>)}</div> : null}
+            {mergeResult ? <div className="merge-panel"><div className="section-heading"><h3>{mergeResult.conflicts.length ? `发现 ${mergeResult.conflicts.length} 个冲突块` : "没有发现冲突"}</h3>{!mergeResult.conflicts.length ? <button type="button" className="secondary-action" onClick={() => loadCandidate(mergeResult.documentJson)}>应用到候选</button> : null}</div>{mergeResult.conflicts.map((conflict) => <div className="merge-conflict" key={conflict.blockId}><code>{conflict.blockId}</code><span>正式正文与候选都修改了该段，请在候选区中手工确认后再同步。</span></div>)}</div> : null}
             {auditFlow.data?.manuscript !== false ? <div className="candidate-review-entry"><div><strong><ShieldCheck size={14} />候选审核</strong><span>需要时检查当前候选；审核不会自动触发，也不会阻止同步。</span></div><button type="button" className="secondary-action" onClick={openCandidateReview} disabled={!draft.trim()}><ShieldCheck size={14} />审核当前候选</button></div> : null}
             <div className="candidate-sync-bar" data-dirty={chapterDirty || undefined}><div><strong>{chapterDirty ? "候选内容尚未同步" : "候选内容与正式正文一致"}</strong><span>{chapterDirty ? "同步后会生成新的正式正文版本。" : "继续修改后，才会开放同步操作。"}</span></div><button type="button" className="primary-action" onClick={() => void saveDraft(true)} disabled={savingDraft || !chapterDirty || !draft.trim()}>{savingDraft ? "同步中…" : "同步为正文"}</button></div>
           </div> : null}

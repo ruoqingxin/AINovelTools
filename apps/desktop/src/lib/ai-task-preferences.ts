@@ -78,13 +78,13 @@ export function resolveTaskChatProfile(
   task: AiTaskKey,
 ) {
   const preference = resolveTaskPreference(preferences, task);
-  const chatProfiles = profiles?.filter((profile) => profile.capability === "CHAT") ?? [];
   const preferredId = preference.profileId;
   if (preferredId) {
-    const preferred = chatProfiles.find((profile) => profile.id === preferredId);
+    const preferred = profiles?.find((profile) => profile.capability === "CHAT" && profile.id === preferredId);
     if (preferred) return preferred;
   }
-  return chatProfiles.find((profile) => profile.hasSecret) ?? chatProfiles[0];
+  return profiles?.find((profile) => profile.capability === "CHAT" && profile.hasSecret)
+    ?? profiles?.find((profile) => profile.capability === "CHAT");
 }
 
 export function resolveTaskPreference(

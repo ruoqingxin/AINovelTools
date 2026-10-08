@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, FileUp, PenLine, RotateCcw, Save, Sparkles, Trash2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useJobs } from "../lib/jobs-query";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
@@ -8,7 +9,6 @@ import {
   cancelJob,
   enqueueProjectSettingSummaryRefresh,
   enqueuePlanningAiJob,
-  listJobs,
   listPlanningSections,
   listModelProfiles,
   retryJob,
@@ -120,7 +120,7 @@ export function StoryPlanningWorkbench(props: {
     queryKey: ["planning-sections"],
     queryFn: listPlanningSections,
   });
-  const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
+  const jobs = useJobs();
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
   const selectedId = props.selectedSectionId ?? "seed-premise";
@@ -143,7 +143,7 @@ export function StoryPlanningWorkbench(props: {
   const [previousForm, setPreviousForm] = useState<PlanningSection | null>(null);
   const selectedDefinition = sections.find((section) => section.id === selectedId) ?? sections[0];
   const selectedGroup = planningSectionGroups.find((group) => group.children.some((item) => item.id === selectedId));
-  const storedSelected = storedSections.data?.find((section) => section.id === selectedId) ?? emptySection(selectedId);
+  const storedSelected = useMemo(() => storedSections.data?.find((section) => section.id === selectedId) ?? emptySection(selectedId), [storedSections.data, selectedId]);
   const pendingDirty = form.pendingContent !== storedSelected.pendingContent;
   const storyStateDirty = form.storyState !== storedSelected.storyState;
   const sectionStatus = pendingDirty
@@ -176,7 +176,7 @@ export function StoryPlanningWorkbench(props: {
   const phaseDescriptions = ["先确定故事入口", "建立持续推进的引擎", "连载中逐步补齐"];
   const chatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "workDesign");
   const chatPreference = resolveTaskPreference(aiPreferences.data, "workDesign");
-  const sectionJobs = (jobs.data ?? []).filter((job) => planningJobInput(job)?.sectionId === selectedId);
+  const sectionJobs = useMemo(() => (jobs.data ?? []).filter((job) => planningJobInput(job)?.sectionId === selectedId), [jobs.data, selectedId]);
   const activeJob = sectionJobs.find((job) => job.status === "QUEUED" || job.status === "RUNNING");
   const latestJob = sectionJobs[0];
   const aiBusy = generating || importing || Boolean(activeJob);
@@ -184,14 +184,13 @@ export function StoryPlanningWorkbench(props: {
   const visibleFailure = visibleJob?.status === "FAILED"
     ? classifyAiFailure(visibleJob.errorSummary)
     : null;
-  const existingFormalContext = (storedSections.data ?? [])
+  const existingFormalContext = useMemo(() => (storedSections.data ?? [])
     .filter((item) => sectionIds.has(item.id) && item.content.trim() && item.id !== selectedId)
     .map((item) => `${item.id}: ${item.content}`)
-    .join("\n");
+    .join("\n"), [storedSections.data, selectedId]);
   const selectedAiPrompt = `当前节点“${selectedDefinition.label}”：${selectedDefinition.prompt}。填写参考：${selectedDefinition.guidance}`;
   useEffect(() => {
-    const stored = storedSections.data?.find((section) => section.id === selectedId);
-    const next = stored ?? emptySection(selectedId);
+    const next = storedSelected;
     setForm(next);
     setError(null);
     setNotice(null);
@@ -203,7 +202,7 @@ export function StoryPlanningWorkbench(props: {
     setOperationGuidance("");
     setAllowImportRewrite(false);
     setPreviousForm(null);
-  }, [selectedId, storedSections.data]);
+  }, [selectedId, storedSelected]);
 
   useEffect(() => {
     if (latestJob?.status === "SUCCEEDED") {

@@ -1,5 +1,6 @@
+import { useMemo } from "react";
 import type { ManuscriptRevision, RecoveryLog } from "../lib/tauri-client";
-import { diffLines, documentCharacterCount, documentToText, formatSavedAt, revisionReasonLabel } from "./project-workspace-utils";
+import { diffLines, documentCharacterCount, formatSavedAt, revisionReasonLabel } from "./project-workspace-utils";
 
 type ManuscriptVersionsPanelProps = {
   clearingRecovery: boolean;
@@ -15,6 +16,12 @@ type ManuscriptVersionsPanelProps = {
 };
 
 export function ManuscriptVersionsPanel(props: ManuscriptVersionsPanelProps) {
+  const revisionsById = useMemo(() => new Map(props.history.map((revision) => [revision.id, revision])), [props.history]);
+  const revisionCharacterCounts = useMemo(() => new Map(props.history.map((revision) => [revision.id, documentCharacterCount(revision.documentJson)])), [props.history]);
+  const comparisonRows = useMemo(() => props.compareLeftId && props.compareRightId ? diffLines(
+    revisionsById.get(props.compareLeftId)?.documentJson ?? "",
+    revisionsById.get(props.compareRightId)?.documentJson ?? "",
+  ) : [], [props.compareLeftId, props.compareRightId, revisionsById]);
   return <div className="chapter-tab-panel manuscript-versions-panel" id="manuscript-panel-versions" role="tabpanel" aria-labelledby="manuscript-tab-versions">
     <div className="manuscript-stage-heading"><div><h2>草稿与版本</h2><p>异常草稿和历史版本都先载入候选区，由你确认内容后再同步为正文。</p></div><span>{props.history.length} 个已保存版本</span></div>
     <section className="recovery-section" data-empty={!props.recovery.length || undefined}>
@@ -23,7 +30,7 @@ export function ManuscriptVersionsPanel(props: ManuscriptVersionsPanelProps) {
     </section>
     <div className="revision-history">
       <div className="section-heading"><div><h2>已保存版本</h2><span className="section-subtitle">载入旧版本不会改变正文，可以先在候选区检查。</span></div><span>{props.history.length} 个</span></div>
-      {props.history.map((revision, index) => <div className="revision-row" key={revision.id}><div className="revision-row-copy"><strong>版本 {props.history.length - index}{index === 0 ? <small>当前</small> : null}</strong><span>{formatSavedAt(revision.createdAt)} · 约 {documentCharacterCount(revision.documentJson)} 字 · {revisionReasonLabel(revision.creationReason)}</span></div>{index === 0 ? <span className="revision-current">正在使用</span> : <button type="button" className="secondary-action" onClick={() => props.onRestoreRevision(revision)}>载入候选区</button>}</div>)}
+      {props.history.map((revision, index) => <div className="revision-row" key={revision.id}><div className="revision-row-copy"><strong>版本 {props.history.length - index}{index === 0 ? <small>当前</small> : null}</strong><span>{formatSavedAt(revision.createdAt)} · 约 {revisionCharacterCounts.get(revision.id)} 字 · {revisionReasonLabel(revision.creationReason)}</span></div>{index === 0 ? <span className="revision-current">正在使用</span> : <button type="button" className="secondary-action" onClick={() => props.onRestoreRevision(revision)}>载入候选区</button>}</div>)}
       {props.history.length < 2 ? <p className="revision-hint">保存两次正文后，可以在这里选择两个版本进行差异对比。</p> : (
         <div className="revision-compare">
           <div className="compare-selects">
@@ -31,7 +38,7 @@ export function ManuscriptVersionsPanel(props: ManuscriptVersionsPanelProps) {
             <span>对比</span>
             <select value={props.compareRightId ?? ""} onChange={(event) => props.onCompareRightChange(event.target.value)} aria-label="较新版本"><option value="">选择较新版本</option>{props.history.map((revision, index) => <option key={revision.id} value={revision.id}>版本 {props.history.length - index}</option>)}</select>
           </div>
-          {props.compareLeftId && props.compareRightId ? <div className="diff-view">{diffLines(documentToText(props.history.find((revision) => revision.id === props.compareLeftId)?.documentJson ?? ""), documentToText(props.history.find((revision) => revision.id === props.compareRightId)?.documentJson ?? "")).map((row, index) => <div className={`diff-line diff-${row.kind}`} key={`${index}-${row.kind}`}><span>{row.kind === "added" ? "+" : row.kind === "removed" ? "−" : " "}</span><code>{row.text || " "}</code></div>)}</div> : null}
+          {props.compareLeftId && props.compareRightId ? <div className="diff-view">{comparisonRows.map((row, index) => <div className={`diff-line diff-${row.kind}`} key={`${index}-${row.kind}`}><span>{row.kind === "added" ? "+" : row.kind === "removed" ? "−" : " "}</span><code>{row.text || " "}</code></div>)}</div> : null}
         </div>
       )}
     </div>

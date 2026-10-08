@@ -37,8 +37,8 @@ impl ProjectManager {
         claims: &[ReviewClaim],
         locked_rules: &str,
     ) -> Result<(Vec<ReviewEvidence>, Vec<ReviewOmittedItem>), ReviewStoreError> {
-        let entities = self
-            .list_entities(false)
+        let entity_records = self
+            .list_current_entity_revisions()
             .map_err(|error| ReviewStoreError::Evidence(error.to_string()))?;
         let facts = self
             .list_current_facts()
@@ -60,15 +60,6 @@ impl ProjectManager {
         let foreshadowings = self
             .list_foreshadowings()
             .map_err(|error| ReviewStoreError::Evidence(error.to_string()))?;
-        let entity_revisions = entities
-            .iter()
-            .filter_map(|entity| {
-                self.list_entity_revisions(entity.id)
-                    .ok()
-                    .and_then(|mut revisions| revisions.drain(..).next())
-                    .map(|revision| (entity.id, revision))
-            })
-            .collect::<HashMap<_, _>>();
         let fact_labels = facts
             .iter()
             .map(|fact| {
@@ -89,10 +80,7 @@ impl ProjectManager {
         for claim in claims {
             let mut claim_evidence = Vec::new();
 
-            for entity in &entities {
-                let Some(revision) = entity_revisions.get(&entity.id) else {
-                    continue;
-                };
+            for (entity, revision) in &entity_records {
                 let content = format!(
                     "{}：{}\n状态：{}\n别名：{}\n固定属性：{}",
                     revision.name,

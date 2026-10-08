@@ -13,7 +13,8 @@ import {
   ListChecks,
   MessageSquareText,
 } from "lucide-react";
-import { getBootstrapStatus, getCurrentProject, getHealth, listAllRecoveryLogs, listJobs } from "../lib/tauri-client";
+import { getBootstrapStatus, getCurrentProject, getHealth, listAllRecoveryLogs } from "../lib/tauri-client";
+import { useJobs } from "../lib/jobs-query";
 import { UnsavedChangesProvider } from "./unsaved-changes-provider";
 
 const navigation = [
@@ -43,12 +44,7 @@ export function AppShell() {
     queryFn: getCurrentProject,
   });
   const recovery = useQuery({ queryKey: ["recovery-all"], queryFn: listAllRecoveryLogs, enabled: Boolean(currentProject.data) });
-  const jobs = useQuery({
-    queryKey: ["jobs"],
-    queryFn: listJobs,
-    enabled: Boolean(currentProject.data),
-    refetchInterval: 3_000,
-  });
+  const jobs = useJobs({ enabled: Boolean(currentProject.data), poll: true });
 
   const serviceLabel = health.isSuccess
     ? "本地数据正常"

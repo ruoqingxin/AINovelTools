@@ -15,7 +15,6 @@ import {
   listAiRuns,
   listAiProposals,
   listEntities,
-  listJobs,
   listModelProfiles,
   listPlanningSections,
   listSummaryMaterials,
@@ -33,6 +32,7 @@ import {
   type WritingReviewPolicy,
 } from "../lib/tauri-client";
 import { classifyAiFailure } from "../lib/ai-failure";
+import { useJobs } from "../lib/jobs-query";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import { assessWritingReadiness, findWritingGapTargets } from "../lib/writing-readiness";
 import { AiModelNote } from "./ai-model-note";
@@ -272,11 +272,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
   const entities = useQuery({ queryKey: ["entities", false], queryFn: () => listEntities(false) });
   const chapterSummaries = useQuery({ queryKey: ["summary-materials"], queryFn: listSummaryMaterials });
-  const summaryJobs = useQuery({
-    queryKey: ["jobs", 100],
-    queryFn: listJobs,
-    refetchInterval: (query) => query.state.data?.some((job) => isChapterSummaryJobFor(job, props.chapterId) && (job.status === "QUEUED" || job.status === "RUNNING")) ? 1_000 : false,
-  });
+  const summaryJobs = useJobs();
   const [instruction, setInstruction] = useState("");
   const deferredInstruction = useDeferredValue(instruction);
   const currentDocumentJson = reviewingManuscript && props.editor

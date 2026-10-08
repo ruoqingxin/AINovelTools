@@ -44,6 +44,15 @@ impl ProjectManager {
         session.database.list_entity_revisions(entity_id)
     }
 
+    pub(crate) fn list_current_entity_revisions(
+        &self,
+    ) -> Result<Vec<(Entity, EntityRevision)>, EntityStoreError> {
+        let session = self.current.as_ref().ok_or(EntityStoreError::NoProject)?;
+        session
+            .database
+            .list_current_entity_revisions(session.manifest.project_id)
+    }
+
     pub fn set_entity_archived(
         &mut self,
         id: Uuid,
@@ -125,7 +134,15 @@ fn map_entity(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entity> {
 }
 
 fn map_entity_revision(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntityRevision> {
+    map_entity_revision_at(row, 0)
+}
+
+fn map_entity_revision_at(
+    row: &rusqlite::Row<'_>,
+    offset: usize,
+) -> rusqlite::Result<EntityRevision> {
     let parse_uuid = |index: usize| -> rusqlite::Result<Uuid> {
+        let index = index + offset;
         Uuid::parse_str(&row.get::<_, String>(index)?).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
                 index,
@@ -137,41 +154,58 @@ fn map_entity_revision(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntityRevisi
     Ok(EntityRevision {
         id: parse_uuid(0)?,
         entity_id: parse_uuid(1)?,
-        revision: row.get(2)?,
-        name: row.get(3)?,
-        aliases: serde_json::from_str(&row.get::<_, String>(4)?).map_err(|error| {
+        revision: row.get(2 + offset)?,
+        name: row.get(3 + offset)?,
+        aliases: serde_json::from_str(&row.get::<_, String>(4 + offset)?).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                4,
+                4 + offset,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )
         })?,
-        description: row.get(5)?,
-        fixed_attributes_json: row.get(6)?,
-        tags: serde_json::from_str(&row.get::<_, String>(7)?).map_err(|error| {
+        description: row.get(5 + offset)?,
+        fixed_attributes_json: row.get(6 + offset)?,
+        tags: serde_json::from_str(&row.get::<_, String>(7 + offset)?).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                7,
+                7 + offset,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )
         })?,
         base_revision_id: row
-            .get::<_, Option<String>>(8)?
+            .get::<_, Option<String>>(8 + offset)?
             .map(|value| Uuid::parse_str(&value))
             .transpose()
             .map_err(|error| {
                 rusqlite::Error::FromSqlConversionFailure(
-                    8,
+                    8 + offset,
                     rusqlite::types::Type::Text,
                     Box::new(error),
                 )
             })?,
-        source_version: row.get(9)?,
-        created_at: row.get(10)?,
+        source_version: row.get(9 + offset)?,
+        created_at: row.get(10 + offset)?,
     })
 }
 
 impl Database {
+    fn list_current_entity_revisions(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<(Entity, EntityRevision)>, EntityStoreError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT e.id, e.project_id, e.entity_type, e.lifecycle_status, e.current_revision_id, e.version, e.created_at, e.updated_at,
+                    r.id, r.entity_id, r.revision, r.name, r.aliases_json, r.description, r.fixed_attributes_json, r.tags_json, r.base_revision_id, r.source_version, r.created_at
+             FROM entities e JOIN entity_revisions r ON r.id = e.current_revision_id AND r.entity_id = e.id
+             WHERE e.project_id = ?1 AND e.lifecycle_status = 'ACTIVE'
+             ORDER BY e.updated_at DESC, e.created_at DESC",
+        )?;
+        let rows = statement.query_map([project_id.to_string()], |row| {
+            Ok((map_entity(row)?, map_entity_revision_at(row, 8)?))
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     fn list_entities(
         &self,
         project_id: Uuid,
@@ -321,5 +355,65 @@ impl Database {
             }));
         }
         self.get_entity(project_id, id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(name: &str) -> EntityInput {
+        EntityInput {
+            id: None,
+            entity_type: EntityType::Character,
+            name: name.into(),
+            aliases: vec!["alias".into()],
+            description: format!("{name} description"),
+            fixed_attributes_json: r#"{"role":"main"}"#.into(),
+            tags: vec!["tag".into()],
+            base_revision_id: None,
+            source_version: Some("test:1".into()),
+            expected_version: None,
+        }
+    }
+
+    #[test]
+    fn current_entity_lookup_includes_only_active_current_revisions_in_the_project() {
+        let mut database = Database::in_memory().expect("database");
+        let project_id = Uuid::new_v4();
+        let first = database
+            .upsert_entity(project_id, input("old name"))
+            .expect("entity");
+        let mut update = input("current name");
+        update.id = Some(first.id);
+        update.expected_version = Some(first.version);
+        update.base_revision_id = Some(first.current_revision_id);
+        update.source_version = Some("test:2".into());
+        let current = database.upsert_entity(project_id, update).expect("update");
+        let archived = database
+            .upsert_entity(project_id, input("archived"))
+            .expect("archived entity");
+        database
+            .set_entity_archived(project_id, archived.id, true, archived.version)
+            .expect("archive");
+        database
+            .upsert_entity(Uuid::new_v4(), input("other project"))
+            .expect("other entity");
+
+        let records = database
+            .list_current_entity_revisions(project_id)
+            .expect("current records");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, current);
+        let revision = &records[0].1;
+        assert_eq!(
+            revision,
+            &database.list_entity_revisions(first.id).expect("history")[0]
+        );
+        assert_eq!(revision.name, "current name");
+        assert_eq!(revision.source_version.as_deref(), Some("test:2"));
+        assert_eq!(revision.aliases, vec!["alias"]);
+        assert_eq!(revision.tags, vec!["tag"]);
+        assert_eq!(revision.base_revision_id, Some(first.current_revision_id));
     }
 }

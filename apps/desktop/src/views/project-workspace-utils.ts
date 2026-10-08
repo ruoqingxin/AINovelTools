@@ -119,10 +119,19 @@ export function documentToJson(value: string) {
   };
 }
 
+type DocumentNode = { type?: string; text?: string; content?: DocumentNode[] };
+
+function documentNodeText(node: DocumentNode): string {
+  if (typeof node.text === "string") return node.text;
+  if (node.type === "hardBreak") return "\n";
+  const separator = node.type === "paragraph" || node.type === "heading" ? "" : "\n";
+  return (node.content ?? []).map(documentNodeText).join(separator);
+}
+
 export function documentToText(value: string) {
   try {
-    const document = JSON.parse(value) as { content?: Array<{ content?: Array<{ text?: string }> }> };
-    return (document.content ?? []).map((block) => (block.content ?? []).map((item) => item.text ?? "").join("" )).join("\n");
+    const document = JSON.parse(value) as DocumentNode | null;
+    return document?.type === "doc" ? documentNodeText(document) : value;
   } catch {
     return value;
   }
@@ -145,12 +154,13 @@ export function revisionReasonLabel(reason: string) {
 export function diffLines(left: string, right: string) {
   try {
     const parse = (value: string) => {
-      const doc = JSON.parse(value) as { content?: Array<{ attrs?: { blockId?: string }; content?: Array<{ text?: string }> }> };
+      const doc = JSON.parse(value) as { type?: string; content?: Array<DocumentNode & { attrs?: { blockId?: string } }> } | null;
+      if (doc?.type !== "doc") throw new Error("Legacy text revision");
       const blocks = new Map<string, string>();
       for (const [index, block] of (doc.content ?? []).entries()) {
         const id = block.attrs?.blockId ?? `legacy-${index}`;
         if (!blocks.has(id)) {
-          blocks.set(id, (block.content ?? []).map((item) => item.text ?? "").join(""));
+          blocks.set(id, documentNodeText(block));
         }
       }
       return blocks;
