@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildVolumePlanTargetGuidance, parseChapterPlanCandidates, parseVolumePlanCandidates, resolveDefaultWritingChapter } from "./project-workspace-utils";
+import { buildVolumePlanTargetGuidance, diffLines, parseChapterPlanCandidates, parseVolumePlanCandidates, resolveDefaultWritingChapter } from "./project-workspace-utils";
 
 describe("parseVolumePlanCandidates", () => {
   it("parses numbered, Chinese-numbered, and duplicate volume candidates", () => {
@@ -110,6 +110,44 @@ describe("parseChapterPlanCandidates", () => {
       "第1章·入城",
       "第2章·夜探",
       "第3章·真相",
+    ]);
+  });
+});
+
+describe("diffLines", () => {
+  const document = (blocks: Array<[string, string]>) => JSON.stringify({
+    type: "doc",
+    content: blocks.map(([blockId, text]) => ({
+      type: "paragraph",
+      attrs: { blockId },
+      content: [{ type: "text", text }],
+    })),
+  });
+
+  it("preserves block ordering and reports unchanged, edited, removed and added blocks", () => {
+    expect(diffLines(
+      document([["a", "same"], ["b", "before"], ["c", "removed"]]),
+      document([["b", "after"], ["a", "same"], ["d", "added"]]),
+    )).toEqual([
+      { kind: "same", text: "same" },
+      { kind: "removed", text: "before" },
+      { kind: "added", text: "after" },
+      { kind: "removed", text: "removed" },
+      { kind: "added", text: "added" },
+    ]);
+  });
+
+  it("keeps the first occurrence of duplicate legacy block IDs", () => {
+    expect(diffLines(document([["a", "first"], ["a", "duplicate"]]), document([["a", "first"]])))
+      .toEqual([{ kind: "same", text: "first" }]);
+  });
+
+  it("compares plain-text legacy revisions", () => {
+    expect(diffLines("same\nbefore", "same\nafter\nadded")).toEqual([
+      { kind: "same", text: "same" },
+      { kind: "removed", text: "before" },
+      { kind: "added", text: "after" },
+      { kind: "added", text: "added" },
     ]);
   });
 });

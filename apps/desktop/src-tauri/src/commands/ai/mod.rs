@@ -231,8 +231,7 @@ pub(crate) fn effective_task_input_budget(
         .context
         .input_token_budget
         .map_or(model_budget, |budget| model_budget.min(budget))
-        .min(MAX_SAFE_INPUT_TOKENS)
-        .max(256)
+        .clamp(256, MAX_SAFE_INPUT_TOKENS)
 }
 
 fn context_option(value: Option<bool>, default: bool) -> bool {

@@ -161,7 +161,7 @@ impl ContextPlanner {
                 .collect::<String>()
                 .to_lowercase();
             if seen.insert((candidate.evidence.chunk.source_id, normalized_content)) {
-                grouped[usize::from(candidate.kind.priority())].push(candidate.clone());
+                grouped[usize::from(candidate.kind.priority())].push(candidate);
             }
         }
         for group in &mut grouped {
@@ -175,29 +175,28 @@ impl ContextPlanner {
         }
 
         // Keep every available evidence kind visible before filling extra slots by priority.
-        let mut ordered = Vec::with_capacity(candidates.len());
-        for group in &grouped {
-            if let Some(candidate) = group.first() {
-                ordered.push(candidate.clone());
-            }
-        }
-        for group in &grouped {
-            ordered.extend(group.iter().skip(1).cloned());
-        }
-        ordered.truncate(candidate_limit);
+        let ordered = grouped
+            .iter()
+            .filter_map(|group| group.first().copied())
+            .chain(
+                grouped
+                    .iter()
+                    .flat_map(|group| group.iter().skip(1).copied()),
+            )
+            .take(candidate_limit);
 
         let mut selected = Vec::with_capacity(attachment_limit);
-        let mut kind_counts = std::collections::HashMap::new();
+        let mut kind_counts = [0usize; 10];
         for candidate in ordered {
             if selected.len() == attachment_limit {
                 break;
             }
-            let count = kind_counts.entry(candidate.kind).or_insert(0usize);
+            let count = &mut kind_counts[usize::from(candidate.kind.priority())];
             if *count >= candidate.kind.max_attached() {
                 continue;
             }
             *count += 1;
-            selected.push(candidate.evidence);
+            selected.push(candidate.evidence.clone());
         }
         selected
     }
@@ -427,7 +426,7 @@ impl ContextAssembler {
         let mut sections = build_prompt_sections(
             input,
             selection,
-            document,
+            &document,
             &task_contract,
             &compiled_retrieval,
         );
@@ -680,11 +679,11 @@ struct CompiledRetrieval {
 fn build_prompt_sections(
     input: &AssembleContextInput,
     selection: &str,
-    document: String,
+    document: &str,
     task_contract: &AiTaskContract,
     retrieval: &CompiledRetrieval,
 ) -> Vec<PromptSection> {
-    let document = compact_document_for_context(&document, 16_000);
+    let document = compact_document_for_context(document, 16_000);
     let user_material = format!(
         "用户要求：{}\n处理选区：{}",
         input.instruction.as_deref().unwrap_or("无").trim(),

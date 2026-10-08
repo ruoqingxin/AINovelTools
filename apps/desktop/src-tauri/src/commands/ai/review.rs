@@ -1,4 +1,12 @@
-use super::*;
+use super::{
+    AiStreamChunk, AiTaskAttempt, AiTaskStarted, ApiError, Arc, AtomicBool, Emitter,
+    HashMap, HashSet, ProjectState, ReviewClaimExtractionResponse, SemanticReviewResponse,
+    assemble_task_context, context_option, current_consistency_review_context_version,
+    effective_max_output_tokens, effective_task_input_budget, generate_with_task_fallback,
+    incomplete_generation_failure, load_ai_task_preference, locate_quote, manuscript_blocks,
+    normalized_document_json, persist_ai_run_request, sync_model_profile, task_generation_options,
+    truncate_text_to_char_budget,
+};
 
 fn parse_json_object<T: serde::de::DeserializeOwned>(output: &str) -> Result<T, ()> {
     let cleaned = output
@@ -1212,18 +1220,11 @@ pub(crate) async fn generate_ai_proposal(
                 .manager
                 .lock()
                 .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-            if !manager
+            if manager
                 .get_audit_flow_settings()
                 .map_err(ApiError::from)?
                 .admission
             {
-                novel_infrastructure::WritingAdmission {
-                    allowed: true,
-                    blocker_count: 0,
-                    reason: None,
-                    review_freshness: novel_infrastructure::ConsistencyReviewFreshness::Missing,
-                }
-            } else {
                 let policy = manager
                     .get_writing_review_policy()
                     .map_err(ApiError::from)?;
@@ -1234,6 +1235,13 @@ pub(crate) async fn generate_ai_proposal(
                         policy,
                     )
                     .map_err(ApiError::from)?
+            } else {
+                novel_infrastructure::WritingAdmission {
+                    allowed: true,
+                    blocker_count: 0,
+                    reason: None,
+                    review_freshness: novel_infrastructure::ConsistencyReviewFreshness::Missing,
+                }
             }
         };
         if !admission.allowed {

@@ -10,6 +10,20 @@ pub struct SearchResult {
     pub snippet: String,
 }
 
+fn search_result_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchResult> {
+    let object_id: String = row.get(1)?;
+    let object_id = Uuid::parse_str(&object_id).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    Ok(SearchResult {
+        object_type: row.get(0)?,
+        object_id,
+        block_id: None,
+        source_version: row.get(2)?,
+        snippet: row.get(3)?,
+    })
+}
+
 #[derive(Debug, Error)]
 pub enum SearchStoreError {
     #[error("no project is open")]
@@ -86,27 +100,30 @@ impl Database {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<SearchResult>, DatabaseError> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
         let limit = i64::from(limit.clamp(1, 100));
         let offset = i64::from(offset);
-        let sql = if query.chars().count() < 3 {
-            "SELECT object_type, object_id, NULL, source_version, substr(content,1,180) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND content LIKE '%' || ?3 || '%' LIMIT ?4 OFFSET ?5"
+        let short_query = query.chars().take(3).count() < 3;
+        let sql = if short_query {
+            "SELECT object_type, object_id, source_version, substr(content,1,180) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND content LIKE '%' || ?3 || '%' ESCAPE '\\' ORDER BY rowid LIMIT ?4 OFFSET ?5"
         } else {
-            "SELECT object_type, object_id, NULL, source_version, snippet(search_index, 4, '[', ']', '…', 12) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND search_index MATCH ?3 LIMIT ?4 OFFSET ?5"
+            "SELECT object_type, object_id, source_version, snippet(search_index, 4, '[', ']', '…', 12) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND search_index MATCH ?3 ORDER BY rank, rowid LIMIT ?4 OFFSET ?5"
         };
-        let mut stmt = self.connection.prepare(sql)?;
+        let query = if short_query {
+            query
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        } else {
+            format!("\"{}\"", query.replace('"', "\"\""))
+        };
+        let mut stmt = self.connection.prepare_cached(sql)?;
         let rows = stmt.query_map(
             rusqlite::params![project_id.to_string(), object_type, query, limit, offset],
-            |row| {
-                Ok(SearchResult {
-                    object_type: row.get(0)?,
-                    object_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
-                    block_id: row
-                        .get::<_, Option<String>>(2)?
-                        .and_then(|value| Uuid::parse_str(&value).ok()),
-                    source_version: row.get(3)?,
-                    snippet: row.get(4)?,
-                })
-            },
+            search_result_from_row,
         )?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
@@ -116,23 +133,161 @@ impl Database {
         project_id: Uuid,
         object_ids: &[Uuid],
     ) -> Result<Vec<SearchResult>, DatabaseError> {
-        let mut output = Vec::new();
-        let mut stmt = self.connection.prepare("SELECT object_type, object_id, NULL, source_version, substr(content,1,180) FROM search_index WHERE project_id = ?1 AND object_id = ?2")?;
-        for object_id in object_ids {
-            let mut rows = stmt.query(rusqlite::params![
-                project_id.to_string(),
-                object_id.to_string()
-            ])?;
-            while let Some(row) = rows.next()? {
-                output.push(SearchResult {
-                    object_type: row.get(0)?,
-                    object_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
-                    block_id: None,
-                    source_version: row.get(3)?,
-                    snippet: row.get(4)?,
-                });
-            }
+        if object_ids.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(output)
+        let ids = serde_json::to_string(object_ids)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let mut stmt = self.connection.prepare_cached(
+            "SELECT s.object_type, s.object_id, s.source_version, substr(s.content,1,180)
+             FROM json_each(?2) requested JOIN search_index s ON s.object_id = requested.value
+             WHERE s.project_id = ?1 ORDER BY CAST(requested.key AS INTEGER), s.rowid",
+        )?;
+        let rows = stmt.query_map(
+            rusqlite::params![project_id.to_string(), ids],
+            search_result_from_row,
+        )?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn insert(database: &Database, project_id: Uuid, object_id: &str, content: &str) {
+        database.connection.execute(
+            "INSERT INTO search_index (object_type, object_id, project_id, source_version, content) VALUES ('ENTITY', ?1, ?2, 'test:1', ?3)",
+            rusqlite::params![object_id, project_id.to_string(), content],
+        ).expect("insert search result");
+    }
+
+    #[test]
+    fn literal_search_handles_punctuation_wildcards_and_blank_input() {
+        let database = Database::in_memory().expect("database");
+        let project_id = Uuid::new_v4();
+        let object_id = Uuid::new_v4();
+        insert(
+            &database,
+            project_id,
+            &object_id.to_string(),
+            "调查者说\"北境\"，进度50%，编号A_B，路径C:\\。",
+        );
+
+        for query in ["调查者", "\"北境\"", "50%", "%", "_", "\\", " 北境 "] {
+            let results = database
+                .search_project(project_id, query, None, 50, 0)
+                .expect("literal search");
+            assert_eq!(results.len(), 1, "query: {query}");
+            assert_eq!(results[0].object_id, object_id);
+        }
+        for query in ["", "   ", "调查者 OR 南境", "调查者*", "调查者!"] {
+            assert!(
+                database
+                    .search_project(project_id, query, None, 50, 0)
+                    .expect("literal search")
+                    .is_empty(),
+                "query: {query}"
+            );
+        }
+        insert(
+            &database,
+            project_id,
+            &Uuid::new_v4().to_string(),
+            "不含通配符",
+        );
+        for query in ["%", "_"] {
+            assert_eq!(
+                database
+                    .search_project(project_id, query, None, 50, 0)
+                    .expect("escaped wildcard")
+                    .len(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn search_pages_have_stable_order_and_respect_project_and_type_filters() {
+        let database = Database::in_memory().expect("database");
+        let project_id = Uuid::new_v4();
+        let ids = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+        for id in ids {
+            insert(&database, project_id, &id.to_string(), "北境调查者");
+        }
+        insert(
+            &database,
+            Uuid::new_v4(),
+            &Uuid::new_v4().to_string(),
+            "北境调查者",
+        );
+        for query in ["北", "调查者"] {
+            let actual: Vec<_> = (0..3)
+                .map(|offset| {
+                    database
+                        .search_project(project_id, query, Some("ENTITY"), 1, offset)
+                        .expect("page")[0]
+                        .object_id
+                })
+                .collect();
+            assert_eq!(actual, ids);
+            assert!(
+                database
+                    .search_project(project_id, query, Some("CARD"), 50, 0)
+                    .expect("filter")
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn object_lookup_preserves_requested_order_and_duplicate_ids() {
+        let database = Database::in_memory().expect("database");
+        let project_id = Uuid::new_v4();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let other_project = Uuid::new_v4();
+        insert(&database, project_id, &first.to_string(), "first");
+        insert(&database, project_id, &second.to_string(), "second");
+        insert(
+            &database,
+            Uuid::new_v4(),
+            &other_project.to_string(),
+            "other project",
+        );
+        let results = database
+            .search_project_objects(
+                project_id,
+                &[second, other_project, Uuid::new_v4(), first, second],
+            )
+            .expect("object lookup");
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.object_id)
+                .collect::<Vec<_>>(),
+            vec![second, first, second]
+        );
+        assert_eq!(results[0].source_version.as_deref(), Some("test:1"));
+        assert_eq!(results[0].snippet, "second");
+        assert!(
+            database
+                .search_project_objects(project_id, &[])
+                .expect("empty lookup")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn malformed_search_ids_return_conversion_errors_instead_of_panicking() {
+        let database = Database::in_memory().expect("database");
+        let project_id = Uuid::new_v4();
+        insert(&database, project_id, "invalid-uuid", "调查者");
+        assert!(matches!(
+            database.search_project(project_id, "调查者", None, 50, 0),
+            Err(DatabaseError::Sqlite(
+                rusqlite::Error::FromSqlConversionFailure(..)
+            ))
+        ));
     }
 }

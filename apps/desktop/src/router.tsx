@@ -2,20 +2,23 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
 } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 import { AppShell } from "./shell/app-shell";
 import { EmptyProjectView } from "./views/empty-project-view";
-import { ProjectWorkspaceView } from "./views/project-workspace-view";
-import { StoryBibleView } from "./views/story-bible-view";
-import { MaterialsView } from "./views/materials-view";
-import { SearchView } from "./views/search-view";
-import { JobsView } from "./views/jobs-view";
-import { SettingsView } from "./views/settings-view";
-import { DiscussionView } from "./views/discussion-view";
-import { ReviewCenterView } from "./views/review-center-view";
-import { KnowledgeRecordsView } from "./views/knowledge-records-view";
 import { useQuery } from "@tanstack/react-query";
 import { getCurrentProject } from "./lib/tauri-client";
+
+const ProjectWorkspaceView = lazyRouteComponent(() => import("./views/project-workspace-view"), "ProjectWorkspaceView");
+const StoryBibleView = lazyRouteComponent(() => import("./views/story-bible-view"), "StoryBibleView");
+const MaterialsView = lazyRouteComponent(() => import("./views/materials-view"), "MaterialsView");
+const SearchView = lazyRouteComponent(() => import("./views/search-view"), "SearchView");
+const JobsView = lazyRouteComponent(() => import("./views/jobs-view"), "JobsView");
+const SettingsView = lazyRouteComponent(() => import("./views/settings-view"), "SettingsView");
+const DiscussionView = lazyRouteComponent(() => import("./views/discussion-view"), "DiscussionView");
+const ReviewCenterView = lazyRouteComponent(() => import("./views/review-center-view"), "ReviewCenterView");
+const KnowledgeRecordsView = lazyRouteComponent(() => import("./views/knowledge-records-view"), "KnowledgeRecordsView");
 
 function RouteErrorView({ error, reset }: { error: Error; reset: () => void }) {
   const goBack = () => {
@@ -36,50 +39,44 @@ function RouteErrorView({ error, reset }: { error: Error; reset: () => void }) {
   );
 }
 
-function ProjectEntryView() {
-  return <EmptyProjectView />;
+function ProjectGate({ children }: { children: ReactNode }) {
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
+  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
+  if (project.isError) throw project.error;
+  return project.data ? children : <EmptyProjectView />;
 }
 
 function PlanningEntryView() {
-  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
-  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
-  return project.data ? <ProjectWorkspaceView /> : <EmptyProjectView />;
+  return <ProjectGate><ProjectWorkspaceView /></ProjectGate>;
 }
 
 function WritingEntryView() {
-  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
-  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
-  return project.data ? <ProjectWorkspaceView mode="writing" /> : <EmptyProjectView />;
+  return <ProjectGate><ProjectWorkspaceView mode="writing" /></ProjectGate>;
 }
 
 function ChaptersEntryView() {
-  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
-  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
-  return project.data ? <ProjectWorkspaceView mode="chapters" /> : <EmptyProjectView />;
+  return <ProjectGate><ProjectWorkspaceView mode="chapters" /></ProjectGate>;
 }
 
 function DiscussionEntryView() {
-  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
-  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
-  return project.data ? <DiscussionView /> : <EmptyProjectView />;
+  return <ProjectGate><DiscussionView /></ProjectGate>;
 }
 
 function ReviewEntryView() {
-  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
-  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
-  return project.data ? <ReviewCenterView /> : <EmptyProjectView />;
+  return <ProjectGate><ReviewCenterView /></ProjectGate>;
 }
 
 const rootRoute = createRootRoute({
   component: AppShell,
   notFoundComponent: EmptyProjectView,
   errorComponent: RouteErrorView,
+  pendingComponent: () => <p className="route-loading">正在加载页面…</p>,
 });
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: ProjectEntryView,
+  component: EmptyProjectView,
 });
 
 const planningRoute = createRoute({

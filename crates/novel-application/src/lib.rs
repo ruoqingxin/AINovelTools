@@ -364,6 +364,21 @@ mod tests {
         assert_eq!(selected[6].chunk.content, "历史事件");
         assert_eq!(selected[7].chunk.content, "高相关关键词");
         assert!(selected.iter().all(|item| item.chunk.content != "参考片段"));
+
+        let mut duplicate = candidates[0].clone();
+        duplicate.evidence.chunk.content = " 高相关关键词 ".into();
+        let mut with_duplicate = candidates.clone();
+        with_duplicate.push(duplicate);
+        assert_eq!(
+            super::ContextPlanner::plan(&with_duplicate, 24, 8),
+            selected
+        );
+        assert!(super::ContextPlanner::plan(&candidates, 0, 8).is_empty());
+        assert!(super::ContextPlanner::plan(&candidates, 24, 0).is_empty());
+        assert_eq!(
+            super::ContextPlanner::plan(&candidates, 2, 8),
+            selected[..2]
+        );
     }
 
     #[test]

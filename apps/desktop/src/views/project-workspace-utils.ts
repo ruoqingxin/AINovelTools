@@ -51,7 +51,12 @@ export function parsePlanCandidates(value: string, unit: "卷" | "章") {
       content,
     };
   });
-  return candidates.filter((candidate, index) => candidates.findIndex((item) => item.title === candidate.title) === index);
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    if (seen.has(candidate.title)) return false;
+    seen.add(candidate.title);
+    return true;
+  });
 }
 
 export function parseVolumePlanCandidates(value: string) {
@@ -141,13 +146,21 @@ export function diffLines(left: string, right: string) {
   try {
     const parse = (value: string) => {
       const doc = JSON.parse(value) as { content?: Array<{ attrs?: { blockId?: string }; content?: Array<{ text?: string }> }> };
-      return (doc.content ?? []).map((block, index) => ({ id: block.attrs?.blockId ?? `legacy-${index}`, text: (block.content ?? []).map((item) => item.text ?? "").join("") }));
+      const blocks = new Map<string, string>();
+      for (const [index, block] of (doc.content ?? []).entries()) {
+        const id = block.attrs?.blockId ?? `legacy-${index}`;
+        if (!blocks.has(id)) {
+          blocks.set(id, (block.content ?? []).map((item) => item.text ?? "").join(""));
+        }
+      }
+      return blocks;
     };
-    const aBlocks = parse(left); const bBlocks = parse(right);
+    const aBlocks = parse(left);
+    const bBlocks = parse(right);
     const rows: Array<{ kind: "same" | "added" | "removed"; text: string }> = [];
-    const ids = [...new Set([...aBlocks.map((x) => x.id), ...bBlocks.map((x) => x.id)])];
+    const ids = new Set([...aBlocks.keys(), ...bBlocks.keys()]);
     for (const id of ids) {
-      const a = aBlocks.find((x) => x.id === id)?.text; const b = bBlocks.find((x) => x.id === id)?.text;
+      const a = aBlocks.get(id); const b = bBlocks.get(id);
       if (a === b) rows.push({ kind: "same", text: a ?? "" }); else { if (a !== undefined) rows.push({ kind: "removed", text: a }); if (b !== undefined) rows.push({ kind: "added", text: b }); }
     }
     return rows;

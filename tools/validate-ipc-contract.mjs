@@ -1,28 +1,49 @@
-import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const rustRoot = "apps/desktop/src-tauri/src";
-const rustFiles = ["lib.rs"];
-for (const entry of await readdir(rustRoot, { withFileTypes: true })) {
-  if (entry.isFile() && entry.name.endsWith(".rs") && entry.name !== "lib.rs") {
-    rustFiles.push(entry.name);
-  }
-  if (entry.isDirectory() && entry.name === "commands") {
-    for (const command of await readdir(join(rustRoot, entry.name))) {
-      if (command.endsWith(".rs")) rustFiles.push(join(entry.name, command));
+const require = createRequire(new URL("../apps/desktop/package.json", import.meta.url));
+const ts = require("typescript");
+
+export function findClientCommands(source) {
+  const file = ts.createSourceFile("tauri-client.ts", source, ts.ScriptTarget.Latest, true);
+  const commands = new Set();
+  function visit(node) {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "invoke") {
+      const command = node.arguments[0];
+      if (!command || !ts.isStringLiteral(command)) {
+        throw new Error("IPC command names must be string literals");
+      }
+      commands.add(command.text);
     }
+    ts.forEachChild(node, visit);
   }
+  visit(file);
+  return commands;
 }
-const rust = (await Promise.all(rustFiles.map((file) => readFile(join(rustRoot, file), "utf8")))).join("\n");
-const ts = await readFile("apps/desktop/src/lib/tauri-client.ts", "utf8");
-const commands = [...rust.matchAll(/fn\s+([a-z][a-z0-9_]*)\s*\(/g)].map((m) => m[1]);
-const clientCommands = [...ts.matchAll(/invoke<[^>]*>\("([a-z][a-z0-9_]*)"/g)].map((m) => m[1]);
-const missing = clientCommands.filter((name) => !commands.includes(name));
-if (missing.length) {
-  console.error(`IPC contract mismatch: ${missing.join(", ")}`);
-  process.exit(1);
+
+export function findRegisteredCommands(source) {
+  const handler = source.match(/tauri::generate_handler!\s*\[([\s\S]*?)\]/);
+  if (!handler) throw new Error("Missing Tauri command registration");
+  return new Set(handler[1].split(",").map((name) => name.trim()).filter(Boolean));
 }
-for (const field of ["documentSchemaVersion", "baseRevisionId", "createdAt"]) {
-  if (!ts.includes(field)) throw new Error(`Missing generated contract field: ${field}`);
+
+export async function validateIpcContract() {
+  const [rust, client] = await Promise.all([
+    readFile(new URL("../apps/desktop/src-tauri/src/lib.rs", import.meta.url), "utf8"),
+    readFile(new URL("../apps/desktop/src/lib/tauri-client.ts", import.meta.url), "utf8"),
+  ]);
+  const registered = findRegisteredCommands(rust);
+  const commands = findClientCommands(client);
+  const missing = [...commands].filter((name) => !registered.has(name));
+  if (missing.length) throw new Error(`IPC contract mismatch: ${missing.join(", ")}`);
+  for (const field of ["documentSchemaVersion", "baseRevisionId", "createdAt"]) {
+    if (!client.includes(field)) throw new Error(`Missing generated contract field: ${field}`);
+  }
+  console.log(`IPC contract validated (${commands.size} client commands)`);
 }
-console.log(`IPC contract validated (${clientCommands.length} client calls)`);
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await validateIpcContract();
+}

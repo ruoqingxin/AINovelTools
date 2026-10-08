@@ -28,13 +28,10 @@ export const AI_TASK_DEFINITIONS: Array<{
 ];
 
 function recommendedContext(task: AiTaskKey): AiTaskContextPreference {
-  const projectPlanningTasks = new Set<AiTaskKey>(["workDesign", "outline", "volumePlanning", "chapterSplit", "chapterPlan", "consistencyReview"]);
-  const referenceTasks = new Set<AiTaskKey>(["workDesign", "knowledgeExtraction"]);
-  const knowledgeTasks = new Set<AiTaskKey>(["workDesign", "outline", "volumePlanning", "chapterSplit", "chapterPlan", "consistencyReview", "writing"]);
   return {
-    includeProjectContext: projectPlanningTasks.has(task),
-    includeReferenceContent: referenceTasks.has(task),
-    includeProjectKnowledge: knowledgeTasks.has(task),
+    includeProjectContext: task !== "writing" && task !== "knowledgeExtraction",
+    includeReferenceContent: task === "workDesign" || task === "knowledgeExtraction",
+    includeProjectKnowledge: task !== "knowledgeExtraction",
     includeCurrentDraft: task === "writing" || task === "consistencyReview",
     includeChapterPlan: task === "writing" || task === "consistencyReview",
     inputTokenBudget: task === "writing" ? 49_152 : task === "workDesign" || task === "chapterSplit" || task === "chapterPlan" ? 24_576 : 32_768,
