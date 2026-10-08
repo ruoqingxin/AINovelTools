@@ -26,10 +26,12 @@ use commands::ai::{
 };
 use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::discussion::{
-    ask_project_discussion, create_discussion_candidate, create_discussion_session,
-    dismiss_discussion_candidate, list_discussion_candidates, list_discussion_messages,
-    list_discussion_sessions, promote_discussion_candidate,
-    promote_discussion_candidate_to_foreshadowing_review,
+    ask_project_discussion, confirm_discussion_design, create_discussion_candidate,
+    create_discussion_session, dismiss_discussion_candidate, get_discussion_workspace,
+    list_author_settings, list_discussion_candidates, list_discussion_design_proposals,
+    list_discussion_draft_revisions, list_discussion_messages, list_discussion_sessions,
+    promote_discussion_candidate, promote_discussion_candidate_to_foreshadowing_review,
+    save_discussion_workspace, summarize_discussion_design,
 };
 use commands::entities::{
     list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
@@ -47,9 +49,9 @@ use commands::knowledge::{
     update_foreshadowing, update_relation,
 };
 use commands::manuscript::{
-    clear_recovery_logs, current_manuscript, list_all_recovery_logs, list_manuscript_revisions,
-    list_recovery_logs, merge_manuscript, enqueue_chapter_summary_refresh, save_manuscript, save_manuscript_checked,
-    save_recovery_log,
+    clear_recovery_logs, current_manuscript, enqueue_chapter_summary_refresh,
+    list_all_recovery_logs, list_manuscript_revisions, list_recovery_logs, merge_manuscript,
+    save_manuscript, save_manuscript_checked, save_recovery_log,
 };
 use commands::materials::{
     list_summary_materials, list_writing_cards, rebuild_summary_material,
@@ -57,9 +59,9 @@ use commands::materials::{
     upsert_writing_card,
 };
 use commands::planning::{
-    clear_planning_embedding, create_plan_node, generate_planning_embedding, list_plan_nodes,
-    list_planning_embeddings, list_planning_sections, move_plan_node, enqueue_project_setting_summary_refresh, save_planning_section,
-    update_plan_node, update_plan_node_checked,
+    clear_planning_embedding, create_plan_node, enqueue_project_setting_summary_refresh,
+    generate_planning_embedding, list_plan_nodes, list_planning_embeddings, list_planning_sections,
+    move_plan_node, save_planning_section, update_plan_node, update_plan_node_checked,
 };
 use commands::project::{
     close_project, create_project, current_project, list_recent_projects, open_project,
@@ -197,6 +199,13 @@ pub fn run() {
             promote_discussion_candidate,
             promote_discussion_candidate_to_foreshadowing_review,
             ask_project_discussion,
+            get_discussion_workspace,
+            save_discussion_workspace,
+            list_discussion_draft_revisions,
+            list_discussion_design_proposals,
+            summarize_discussion_design,
+            confirm_discussion_design,
+            list_author_settings,
             list_summary_materials,
             upsert_summary_material,
             list_writing_cards,

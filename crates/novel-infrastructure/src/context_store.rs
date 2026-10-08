@@ -24,6 +24,12 @@ const MAX_WRITING_SETTING_SECTION_CHARS: usize = 1_400;
 const MAX_WRITING_SETTINGS_CHARS: usize = 10_000;
 const SETTING_TRUNCATION_MARKER: &str = "\n[正式设定片段已按上下文预算截断]";
 const MAX_SUMMARY_CONTEXT_CHARS: usize = 1_200;
+const DISCUSSION_BACKGROUND_SECTIONS: [(&str, &str); 4] = [
+    ("seed-genre-promise", "题材与阅读体验"),
+    ("seed-tone", "基调与尺度"),
+    ("frame-setting", "世界背景与重要规则"),
+    ("seed-premise", "核心前提"),
+];
 
 impl ProjectManager {
     pub(crate) fn collect_context_candidates(
@@ -66,6 +72,33 @@ impl ProjectManager {
         ));
 
         let current_facts = self.list_current_facts().unwrap_or_default();
+        let mut author_settings = self
+            .list_author_settings()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|setting| {
+                let score =
+                    score_values(&normalized_query, &[&setting.entity_name, &setting.content])
+                        .saturating_add(
+                            u16::from(selected_object_ids.contains(&setting.entity_id)) * 5_000,
+                        );
+                (score, setting)
+            })
+            .collect::<Vec<_>>();
+        author_settings.sort_by_key(|item| std::cmp::Reverse(item.0));
+        author_settings.truncate(12);
+        for (score, setting) in author_settings {
+            candidates.push(build_candidate(
+                ContextCandidateKind::AuthorSetting,
+                format!("作者确认设定「{}」：{}\n公开状态：{}。这是作者设计依据，不代表已在正文发生；不得自动赋予角色相关知识。",
+                    setting.entity_name, setting.content,
+                    if setting.visibility == "AUTHOR_ONLY" { "作者保留／尚未揭示" } else { "可向读者揭示，仍须遵守角色知识边界" }),
+                setting.id,
+                format!("author-setting:{}:revision:{}", setting.id, setting.entity_revision_id),
+                RetrievalMethod::Structured, ContextAuthority::ProjectSetting,
+                relevance_with_floor(score, 6_800),
+            ));
+        }
         let fact_labels = current_facts
             .iter()
             .map(|fact| {
@@ -437,6 +470,36 @@ fn input_search_query(input: &novel_application::AssembleContextInput) -> String
         .to_owned()
 }
 
+pub(super) fn build_discussion_setting_context(sections: &[PlanningSection]) -> String {
+    let formal = sections
+        .iter()
+        .filter(|section| {
+            is_writing_setting_section(&section.id)
+                && !section.content.trim().is_empty()
+                && matches!(
+                    section.story_state,
+                    PlanningStoryState::Confirmed | PlanningStoryState::Locked
+                )
+        })
+        .map(|section| (section.id.as_str(), section))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut output =
+        String::from("本书已确认背景，供构思参考；新的方向仍可探索，由作者决定是否采用。\n");
+    // Compact anchors precede detailed material so genre, tone and world
+    // background remain visible when the discussion window is limited.
+    for (id, label) in DISCUSSION_BACKGROUND_SECTIONS {
+        let content = formal.get(id).map_or_else(
+            || "尚未确认，不预设。".to_owned(),
+            |section| truncate_setting_content(section.content.trim(), 200),
+        );
+        let _ = writeln!(output, "{label}：{content}");
+    }
+    if formal.is_empty() {
+        output.push_str("尚无已确认作品设定，可围绕作者本轮灵感继续构思。\n");
+    }
+    output.trim_end().to_owned()
+}
+
 fn build_writing_setting_context(sections: &[PlanningSection], has_character_card: bool) -> String {
     let formal_by_id = sections
         .iter()
@@ -590,7 +653,7 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
     output.trim_end().to_owned()
 }
 
-fn source_revision(prefix: &str, content: &str) -> String {
+pub(super) fn source_revision(prefix: &str, content: &str) -> String {
     let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
     format!("{prefix}:{}", &hash[..16])
 }
@@ -660,7 +723,7 @@ fn search_result_candidate(
     )
 }
 
-fn build_candidate(
+pub(super) fn build_candidate(
     kind: ContextCandidateKind,
     content: String,
     source_id: Uuid,
@@ -870,6 +933,146 @@ mod tests {
         assert!(!context.contains("unrelated"));
         let without_settings = build_writing_setting_context(&sections[..1], false);
         assert!(without_settings.contains("尚未建立任何正式作品设定"));
+    }
+
+    #[test]
+    fn discussion_background_is_lightweight_and_keeps_unconfirmed_ideas_separate() {
+        let sections = [
+            section(
+                "seed-genre-promise",
+                PlanningStoryState::Confirmed,
+                "玄幻冒险",
+                "",
+            ),
+            section(
+                "seed-tone",
+                PlanningStoryState::Confirmed,
+                "轻松但有代价",
+                "",
+            ),
+            section(
+                "frame-setting",
+                PlanningStoryState::Locked,
+                "灵力驱动法宝",
+                "未确认的蒸汽机器",
+            ),
+            section(
+                "frame-narrative",
+                PlanningStoryState::Confirmed,
+                "第三人称有限视角",
+                "",
+            ),
+            section(
+                "engine-ending",
+                PlanningStoryState::AuthorReserved,
+                "结局秘密",
+                "",
+            ),
+            section(
+                "cast-arcs",
+                PlanningStoryState::Deferred,
+                "人物弧光暂不决定",
+                "",
+            ),
+            section(
+                "seed-hook",
+                PlanningStoryState::AiSuggested,
+                "",
+                "未选定的历史宫斗",
+            ),
+            section(
+                "node-plan:chapter",
+                PlanningStoryState::Confirmed,
+                "无关章节卡",
+                "",
+            ),
+        ];
+        let background = build_discussion_setting_context(&sections);
+        for anchor in ["玄幻冒险", "轻松但有代价", "灵力驱动法宝"] {
+            assert!(background.contains(anchor), "missing {anchor}");
+        }
+        assert!(background.contains("新的方向仍可探索"));
+        assert!(!background.contains("叙述视角硬约束"));
+        assert!(!background.contains("人物卡状态"));
+        assert!(!background.contains("未确认的蒸汽机器"));
+        assert!(!background.contains("未选定的历史宫斗"));
+        assert!(!background.contains("无关章节卡"));
+        let empty = build_discussion_setting_context(&[]);
+        assert!(empty.contains("尚无已确认作品设定"));
+        assert!(empty.contains("继续构思"));
+        assert!(!empty.contains("玄幻"));
+    }
+
+    #[test]
+    fn project_discussion_keeps_book_anchors_with_long_material_without_changing_writing_rules() {
+        let root = std::path::PathBuf::from("target")
+            .join(format!("discussion-background-{}", Uuid::new_v4()));
+        let mut manager = ProjectManager::new();
+        manager.create(&root, "玄幻灵感").expect("project");
+        for (id, content) in [
+            (
+                "seed-genre-promise",
+                format!("玄幻冒险。{}", "题材细节".repeat(500)),
+            ),
+            ("seed-tone", format!("轻松温暖。{}", "基调细节".repeat(500))),
+            (
+                "frame-setting",
+                format!("灵力驱动法宝。{}", "世界细节".repeat(500)),
+            ),
+            ("seed-premise", "少年寻找失落的器灵。".to_owned()),
+            ("frame-narrative", "第三人称有限视角。".to_owned()),
+        ] {
+            manager
+                .save_planning_section(section(id, PlanningStoryState::Confirmed, &content, ""))
+                .expect("save setting");
+        }
+        let package = manager
+            .assemble_discussion_context(&novel_application::DiscussionContextInput {
+                scope_label: "构思法宝".into(),
+                scope_content: "构思细节".repeat(12_500),
+                history: "之前的讨论".repeat(5_000),
+                user_message: "我想要一盏可以储存魂魄的灯。".into(),
+                input_token_budget: 4_096,
+                focus: None,
+            })
+            .expect("discussion");
+        for anchor in [
+            "玄幻冒险",
+            "轻松温暖",
+            "灵力驱动法宝",
+            "少年寻找失落的器灵",
+            "储存魂魄的灯",
+        ] {
+            assert!(package.user_prompt.contains(anchor), "missing {anchor}");
+        }
+        assert!(!package.user_prompt.contains("叙述视角硬约束"));
+        assert!(package.section_audit.iter().any(|item| item.kind
+            == novel_application::ContextSectionKind::ChapterPlan
+            && item.truncated));
+        let writing_input = novel_application::AssembleContextInput {
+            chapter_id: Uuid::nil(),
+            target_revision_id: None,
+            action: AiAction::Draft,
+            chapter_title: "第一章".into(),
+            chapter_plan: String::new(),
+            volume_plan: String::new(),
+            document_json: r#"{"type":"doc","content":[]}"#.into(),
+            selection: None,
+            instruction: None,
+            input_token_budget: 4_096,
+        };
+        let writing_candidates = manager.collect_context_candidates(&writing_input, &[]);
+        let setting = writing_candidates
+            .iter()
+            .find(|candidate| candidate.kind == ContextCandidateKind::ProjectSetting)
+            .expect("writing settings");
+        assert!(setting.evidence.chunk.content.contains("叙述视角硬约束"));
+        assert!(package.retrieval_evidence.iter().any(|item| {
+            item.source_revision
+                .starts_with("planning:discussion-background:")
+        }));
+        drop(manager);
+        std::fs::remove_dir_all(root).expect("remove test project");
     }
 
     #[test]

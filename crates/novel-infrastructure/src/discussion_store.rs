@@ -178,12 +178,16 @@ pub enum DiscussionStoreError {
     MissingCandidate(Uuid),
     #[error("discussion evidence anchor does not exist: {0}")]
     MissingEvidenceAnchor(Uuid),
-    #[error("discussion candidate status conflict")]
+    #[error("讨论或候选版本已变化，请重新载入并整理；已保存内容不会被覆盖。")]
     Conflict,
     #[error("discussion candidate cannot be promoted to this target")]
     InvalidPromotion,
     #[error("discussion scope is invalid")]
     InvalidScope,
+    #[error("{0}")]
+    LimitExceeded(String),
+    #[error(transparent)]
+    Entity(#[from] EntityStoreError),
     #[error("discussion database operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("discussion database operation failed: {0}")]
@@ -266,29 +270,27 @@ impl Database {
             return Err(DatabaseError::Sqlite(rusqlite::Error::InvalidQuery));
         }
         let tx = self.connection.transaction()?;
+        let previous_summary: String = tx.query_row(
+            "SELECT summary FROM discussion_sessions WHERE id=?1",
+            [user_message.session_id.to_string()],
+            |row| row.get(0),
+        )?;
         insert_discussion_message(&tx, user_message)?;
         insert_discussion_message(&tx, assistant_message)?;
         tx.execute(
             "UPDATE discussion_sessions
-             SET updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+             SET updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now')), summary=?2
              WHERE id = ?1",
-            [user_message.session_id.to_string()],
+            rusqlite::params![
+                user_message.session_id.to_string(),
+                compact_discussion_memory(
+                    &previous_summary,
+                    &user_message.content,
+                    &assistant_message.content,
+                )
+            ],
         )?;
         tx.commit()?;
-        Ok(())
-    }
-
-    pub(super) fn update_discussion_summary(
-        &self,
-        session_id: Uuid,
-        summary: &str,
-    ) -> Result<(), DatabaseError> {
-        self.connection.execute(
-            "UPDATE discussion_sessions
-             SET summary=?1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-             WHERE id=?2",
-            rusqlite::params![summary, session_id.to_string()],
-        )?;
         Ok(())
     }
 
@@ -565,6 +567,16 @@ impl ProjectManager {
         scope_id: Option<Uuid>,
         scope_text: Option<String>,
     ) -> Result<DiscussionSession, DiscussionStoreError> {
+        super::discussion_design_store::validate_discussion_text(&title, 200)?;
+        if title.trim().is_empty() {
+            return Err(DiscussionStoreError::InvalidScope);
+        }
+        if let Some(text) = &scope_text {
+            super::discussion_design_store::validate_discussion_text(
+                text,
+                DISCUSSION_MESSAGE_MAX_CHARS,
+            )?;
+        }
         let project_id = self
             .current
             .as_ref()
@@ -637,6 +649,14 @@ impl ProjectManager {
         context_version: Option<String>,
         context_summary: Option<String>,
     ) -> Result<DiscussionMessage, DiscussionStoreError> {
+        super::discussion_design_store::validate_discussion_text(
+            &content,
+            if role == DiscussionMessageRole::User {
+                DISCUSSION_MESSAGE_MAX_CHARS
+            } else {
+                100_000
+            },
+        )?;
         let message = DiscussionMessage {
             id: Uuid::new_v4(),
             session_id,
@@ -674,6 +694,11 @@ impl ProjectManager {
         user_context_summary: Option<String>,
         assistant_context_summary: Option<String>,
     ) -> Result<(DiscussionMessage, DiscussionMessage), DiscussionStoreError> {
+        super::discussion_design_store::validate_discussion_text(
+            &user_content,
+            DISCUSSION_MESSAGE_MAX_CHARS,
+        )?;
+        super::discussion_design_store::validate_discussion_text(&assistant_content, 100_000)?;
         let user_message = DiscussionMessage {
             id: Uuid::new_v4(),
             session_id,
@@ -698,11 +723,6 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(DiscussionStoreError::NoProject)?;
-        let previous_summary = session
-            .database
-            .get_discussion_session(session_id)?
-            .ok_or(DiscussionStoreError::MissingSession(session_id))?
-            .summary;
         session
             .database
             .append_discussion_exchange(&user_message, &assistant_message)
@@ -712,14 +732,6 @@ impl ProjectManager {
                 }
                 other => DiscussionStoreError::Database(other),
             })?;
-        session.database.update_discussion_summary(
-            session_id,
-            &compact_discussion_memory(
-                &previous_summary,
-                &user_message.content,
-                &assistant_message.content,
-            ),
-        )?;
         Ok((user_message, assistant_message))
     }
 
@@ -741,6 +753,46 @@ impl ProjectManager {
             .list_discussion_messages(session_id, limit)?)
     }
 
+    pub fn list_discussion_messages_before(
+        &self,
+        session_id: Uuid,
+        limit: u32,
+        before_message_id: Option<Uuid>,
+    ) -> Result<Vec<DiscussionMessage>, DiscussionStoreError> {
+        self.get_discussion_session(session_id)?;
+        let session = self
+            .current
+            .as_ref()
+            .ok_or(DiscussionStoreError::NoProject)?;
+        if let Some(id) = before_message_id {
+            let belongs: bool = session.database.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM discussion_messages WHERE id=?1 AND session_id=?2)",
+                rusqlite::params![id.to_string(), session_id.to_string()],
+                |row| row.get(0),
+            )?;
+            if !belongs {
+                return Err(DiscussionStoreError::MissingMessage(id));
+            }
+        }
+        let mut statement = session.database.connection.prepare(
+            "SELECT id,session_id,role,content,profile_id,context_version,context_summary,created_at
+             FROM (SELECT id,session_id,role,content,profile_id,context_version,context_summary,created_at,rowid
+                 FROM discussion_messages WHERE session_id=?1
+                   AND (?2 IS NULL OR rowid < (SELECT rowid FROM discussion_messages WHERE id=?2))
+                 ORDER BY rowid DESC LIMIT ?3)
+             ORDER BY rowid",
+        )?;
+        let rows = statement.query_map(
+            rusqlite::params![
+                session_id.to_string(),
+                before_message_id.map(|id| id.to_string()),
+                limit.clamp(1, 200)
+            ],
+            map_discussion_message,
+        )?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     pub fn create_discussion_candidate(
         &mut self,
         session_id: Uuid,
@@ -749,6 +801,10 @@ impl ProjectManager {
         content: String,
         target_section_id: Option<String>,
     ) -> Result<DiscussionCandidate, DiscussionStoreError> {
+        super::discussion_design_store::validate_discussion_text(
+            &content,
+            DISCUSSION_DRAFT_MAX_CHARS,
+        )?;
         let candidate = DiscussionCandidate {
             id: Uuid::new_v4(),
             session_id,
@@ -854,7 +910,7 @@ impl ProjectManager {
 }
 
 fn compact_discussion_memory(previous: &str, user: &str, assistant: &str) -> String {
-    const MAX_CHARS: usize = 4_000;
+    const MAX_CHARS: usize = 12_000;
     let addition = format!(
         "{}\n作者：{}\nAI：{}",
         if previous.trim().is_empty() {

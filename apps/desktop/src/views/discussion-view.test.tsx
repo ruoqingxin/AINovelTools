@@ -9,6 +9,8 @@ import type {
   DiscussionMessage,
   DiscussionSession,
   ModelProfile,
+  DiscussionWorkspace,
+  DiscussionDesignProposal,
 } from "../lib/tauri-client";
 import { DiscussionView } from "./discussion-view";
 
@@ -27,6 +29,12 @@ const mocks = vi.hoisted(() => ({
   listPlanningSections: vi.fn(),
   promoteDiscussionCandidate: vi.fn(),
   promoteDiscussionCandidateToForeshadowingReview: vi.fn(),
+  getDiscussionWorkspace: vi.fn(),
+  saveDiscussionWorkspace: vi.fn(),
+  listDiscussionDesignProposals: vi.fn(),
+  listDiscussionDraftRevisions: vi.fn(),
+  summarizeDiscussionDesign: vi.fn(),
+  confirmDiscussionDesign: vi.fn(),
 }));
 
 vi.mock("../lib/tauri-client", async () => {
@@ -48,6 +56,12 @@ vi.mock("../lib/tauri-client", async () => {
     promoteDiscussionCandidate: mocks.promoteDiscussionCandidate,
     promoteDiscussionCandidateToForeshadowingReview:
       mocks.promoteDiscussionCandidateToForeshadowingReview,
+    getDiscussionWorkspace: mocks.getDiscussionWorkspace,
+    saveDiscussionWorkspace: mocks.saveDiscussionWorkspace,
+    listDiscussionDesignProposals: mocks.listDiscussionDesignProposals,
+    listDiscussionDraftRevisions: mocks.listDiscussionDraftRevisions,
+    summarizeDiscussionDesign: mocks.summarizeDiscussionDesign,
+    confirmDiscussionDesign: mocks.confirmDiscussionDesign,
   };
 });
 
@@ -121,6 +135,8 @@ describe("DiscussionView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState(null, "", "/discussion");
     const preferences = structuredClone(emptyAiTaskPreferences);
     preferences.workDesign.profileId = profile.id;
     mocks.askProjectDiscussion.mockResolvedValue(exchange);
@@ -167,6 +183,16 @@ describe("DiscussionView", () => {
     mocks.listModelProfiles.mockResolvedValue([profile]);
     mocks.listPlanNodes.mockResolvedValue([]);
     mocks.listPlanningSections.mockResolvedValue([]);
+    mocks.getDiscussionWorkspace.mockImplementation(async (sessionId): Promise<DiscussionWorkspace> => ({
+      sessionId, topicKind: "FREE", linkedEntityId: null,
+      draft: { chosen: "", alternatives: "", questions: "" }, version: 0,
+    }));
+    mocks.saveDiscussionWorkspace.mockImplementation(async (workspace) => ({
+      ...workspace, version: workspace.version + 1,
+    }));
+    mocks.listDiscussionDesignProposals.mockResolvedValue([]);
+    mocks.listDiscussionDraftRevisions.mockResolvedValue([]);
+    mocks.confirmDiscussionDesign.mockResolvedValue(["entity-new"]);
     mocks.promoteDiscussionCandidate.mockImplementation(async ({ id }) => ({
       id,
       sessionId: session.id,
@@ -206,6 +232,7 @@ describe("DiscussionView", () => {
         scopeKind: "PROJECT",
         scopeId: null,
         scopeText: null,
+        topicKind: "FREE",
       }),
     );
   });
@@ -240,6 +267,7 @@ describe("DiscussionView", () => {
         scopeKind: "SELECTION",
         scopeId: "chapter-1",
         scopeText: "城门在午夜后没有影子。",
+        topicKind: "FREE",
       }),
     );
   });
@@ -248,7 +276,8 @@ describe("DiscussionView", () => {
     mocks.listDiscussionMessages.mockResolvedValue([userMessage, assistantMessage]);
     renderView();
 
-    const composer = await screen.findByPlaceholderText(/如果主角在第二卷提前知道真相/);
+    const composer = await screen.findByLabelText("讨论内容");
+    await waitFor(() => expect(composer).toBeEnabled());
     fireEvent.change(composer, { target: { value: userMessage.content } });
     fireEvent.click(screen.getByRole("button", { name: "发送讨论" }));
 
@@ -266,6 +295,7 @@ describe("DiscussionView", () => {
       selector: ".discussion-message-content",
     })).closest("article");
     expect(reply).not.toBeNull();
+    fireEvent.click(within(reply!).getByText("保存片段为候选"));
     fireEvent.change(within(reply!).getByLabelText("保存类型"), {
       target: { value: "PLANNING" },
     });
@@ -337,5 +367,108 @@ describe("DiscussionView", () => {
         evidenceAnchorId: "anchor-1",
       }),
     );
+  });
+
+  it("creates an item discussion without requiring a name or chapter", async () => {
+    renderView();
+    fireEvent.change(await screen.findByLabelText("构思类型"), { target: { value: "ITEM" } });
+    fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
+    await waitFor(() => expect(mocks.createDiscussionSession).toHaveBeenCalledWith(
+      expect.objectContaining({ topicKind: "ITEM", scopeKind: "PROJECT", scopeId: null }),
+    ));
+  });
+
+  it("autosaves selected ideas and preserves over-limit drafts without truncation", async () => {
+    renderView();
+    const chosen = await screen.findByLabelText("已选定内容");
+    fireEvent.change(chosen, { target: { value: "灯只能储存三句话。" } });
+    await waitFor(() => expect(mocks.saveDiscussionWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ draft: expect.objectContaining({ chosen: "灯只能储存三句话。" }) }),
+    ), { timeout: 3000 });
+    await screen.findByText(/草稿已保存/);
+    const oversized = "甲".repeat(50001);
+    fireEvent.change(chosen, { target: { value: oversized } });
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("合计最多 50000 字");
+    expect(chosen).toHaveValue(oversized);
+    expect(screen.getByRole("button", { name: "整理为实体与设定" })).toBeDisabled();
+  });
+
+  it("keeps unsent input locally and refuses messages above the limit", async () => {
+    renderView();
+    const composer = await screen.findByLabelText("讨论内容");
+    await waitFor(() => expect(composer).toBeEnabled());
+    const content = "字".repeat(20001);
+    fireEvent.change(composer, { target: { value: content } });
+    expect(screen.getByRole("button", { name: "发送讨论" })).toBeDisabled();
+    expect(localStorage.getItem(`discussion-composer:${session.id}`)).toBe(content);
+    expect(mocks.askProjectDiscussion).not.toHaveBeenCalled();
+  });
+
+  it("loads older messages with a stable cursor without deleting the latest page", async () => {
+    const messages = Array.from({ length: 100 }, (_, index) => ({
+      ...userMessage, id: `message-${index}`, content: `讨论 ${index}`,
+    }));
+    mocks.listDiscussionMessages.mockImplementation(async (_sessionId, _limit, beforeId) =>
+      beforeId ? [{ ...userMessage, id: "earliest", content: "最早的灵感" }] : messages);
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "更早讨论" }));
+    expect(await screen.findByText("最早的灵感")).toBeInTheDocument();
+    expect(screen.getByText("讨论 99")).toBeInTheDocument();
+    expect(mocks.listDiscussionMessages).toHaveBeenCalledWith(session.id, 100, "message-0");
+  });
+
+  it("records an AI suggestion as an alternative without confirming it", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([userMessage, assistantMessage]);
+    renderView();
+    const button = await screen.findByRole("button", { name: "记入备选方向" });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(mocks.saveDiscussionWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ draft: { chosen: "", alternatives: assistantMessage.content, questions: "" } }),
+    ));
+    expect(await screen.findByLabelText("备选方向")).toHaveValue(assistantMessage.content);
+    expect(mocks.confirmDiscussionDesign).not.toHaveBeenCalled();
+  });
+
+  it("restores an unsaved local workspace after reopening the same discussion", async () => {
+    localStorage.setItem(`discussion-workspace:${session.id}`, JSON.stringify({
+      sessionId: session.id, topicKind: "ITEM", linkedEntityId: null, version: 0,
+      draft: { chosen: "关闭前未保存的能力规则。", alternatives: "", questions: "" },
+    }));
+    renderView();
+    expect(await screen.findByLabelText("已选定内容")).toHaveValue("关闭前未保存的能力规则。");
+    await waitFor(() => expect(mocks.saveDiscussionWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ draft: expect.objectContaining({ chosen: "关闭前未保存的能力规则。" }) }),
+    ), { timeout: 3000 });
+  });
+
+  it("summarizes the saved workspace and confirms edited entities only on author approval", async () => {
+    const proposal: DiscussionDesignProposal = {
+      id: "proposal-1", sessionId: session.id, workspaceVersion: 0,
+      entities: [{
+        entityType: "ITEM", name: "吞声灯", description: "一盏储存声音的灯。",
+        aliases: [], tags: [], attributes: { capacity: 3 }, settings: ["只能储存三句话。"],
+        visibility: "AUTHOR_ONLY", targetEntityId: null, expectedEntityVersion: null,
+      }],
+      sourceMessageIds: [userMessage.id, assistantMessage.id], contextVersion: "context-design",
+      omittedMessageCount: 50, status: "PENDING", promotedEntityIds: [], createdAt: "",
+    };
+    mocks.summarizeDiscussionDesign.mockImplementation(async () => {
+      mocks.listDiscussionDesignProposals.mockResolvedValue([proposal]);
+      return proposal;
+    });
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "整理为实体与设定" }));
+    await waitFor(() => expect(mocks.summarizeDiscussionDesign).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: session.id, expectedWorkspaceVersion: 0 }),
+    ));
+    expect(await screen.findByText(/未纳入较早的 50 条消息/)).toBeInTheDocument();
+    expect(mocks.confirmDiscussionDesign).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "静语灯" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认选中内容入库" }));
+    await waitFor(() => expect(mocks.confirmDiscussionDesign).toHaveBeenCalledWith(
+      proposal.id, [expect.objectContaining({ name: "静语灯", settings: ["只能储存三句话。"] })],
+    ));
   });
 });

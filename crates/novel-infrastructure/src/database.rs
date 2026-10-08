@@ -1109,6 +1109,58 @@ impl Database {
                 PRAGMA foreign_keys=ON;",
             )?;
         }
+        if applied.unwrap_or(0) < 48 {
+            self.connection.execute_batch(
+                "BEGIN;
+                CREATE TABLE IF NOT EXISTS discussion_workspaces (
+                    session_id TEXT PRIMARY KEY NOT NULL REFERENCES discussion_sessions(id),
+                    topic_kind TEXT NOT NULL DEFAULT 'FREE'
+                        CHECK(topic_kind IN ('FREE','CHARACTER','ITEM','LOCATION','PLOT')),
+                    linked_entity_id TEXT REFERENCES entities(id),
+                    draft_json TEXT NOT NULL DEFAULT '{\"chosen\":\"\",\"alternatives\":\"\",\"questions\":\"\"}'
+                        CHECK(json_valid(draft_json)),
+                    version INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE TABLE IF NOT EXISTS discussion_draft_revisions (
+                    session_id TEXT NOT NULL REFERENCES discussion_sessions(id),
+                    version INTEGER NOT NULL,
+                    topic_kind TEXT NOT NULL,
+                    linked_entity_id TEXT,
+                    draft_json TEXT NOT NULL CHECK(json_valid(draft_json)),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    PRIMARY KEY(session_id, version)
+                );
+                CREATE TABLE IF NOT EXISTS discussion_design_proposals (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    session_id TEXT NOT NULL REFERENCES discussion_sessions(id),
+                    workspace_version INTEGER NOT NULL,
+                    entities_json TEXT NOT NULL CHECK(json_valid(entities_json)),
+                    source_message_ids_json TEXT NOT NULL CHECK(json_valid(source_message_ids_json)),
+                    context_version TEXT NOT NULL,
+                    omitted_message_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','CONFIRMED')),
+                    promoted_entity_ids_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(promoted_entity_ids_json)),
+                    confirmed_entities_json TEXT CHECK(confirmed_entities_json IS NULL OR json_valid(confirmed_entities_json)),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_discussion_design_proposals_session
+                    ON discussion_design_proposals(session_id, created_at DESC);
+                CREATE TABLE IF NOT EXISTS author_settings (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    project_id TEXT NOT NULL,
+                    entity_id TEXT NOT NULL REFERENCES entities(id),
+                    entity_revision_id TEXT NOT NULL REFERENCES entity_revisions(id),
+                    content TEXT NOT NULL,
+                    visibility TEXT NOT NULL CHECK(visibility IN ('AUTHOR_ONLY','PUBLIC')),
+                    source_proposal_id TEXT NOT NULL REFERENCES discussion_design_proposals(id),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_author_settings_entity ON author_settings(entity_id, entity_revision_id);
+                INSERT INTO schema_migrations (version, name) VALUES (48, 'idea_discussion_and_author_settings');
+                COMMIT;",
+            )?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }

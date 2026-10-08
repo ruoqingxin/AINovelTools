@@ -1,10 +1,11 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, FileUp, Plus, RotateCcw, Save, Search, Trash2 } from "lucide-react";
+import { Archive, Check, FileUp, MessageSquareText, Plus, RotateCcw, Save, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
   errorMessage,
+  createDiscussionSession,
   extractEntitiesFromText,
   listEntities,
   listEntityRevisions,
@@ -139,6 +140,19 @@ export function StoryBibleView() {
 
   const entityDirty = entitySignature(form, summaryText, scopeText) !== savedSignature;
   useUnsavedChangesGuard(entityDirty, selected ? "当前实体详情有未保存修改。" : "当前新实体有未保存内容。");
+
+  async function discussEntity() {
+    if (!selected || entityDirty) return;
+    try {
+      const session = await createDiscussionSession({
+        title: `${form.name} · 设定讨论`, scopeKind: "PROJECT", scopeId: null, scopeText: null,
+        topicKind: selected.entityType === "CHARACTER" || selected.entityType === "ITEM" || selected.entityType === "LOCATION"
+          ? selected.entityType : "FREE",
+        linkedEntityId: selected.id,
+      });
+      window.location.assign(`/discussion#${session.id}`);
+    } catch (cause) { setError(errorMessage(cause)); }
+  }
 
   function startNew() {
     if (entityDirty && selectedId && !window.confirm("当前实体有未保存修改，确定新建并放弃这些修改吗？")) return;
@@ -307,6 +321,8 @@ export function StoryBibleView() {
 
         <div className="story-bible-editor">
           <div className="section-heading"><h2>{selected ? "实体详情" : "新建实体"}</h2>{selected ? <span>版本 {selected.version}</span> : <span>尚未保存</span>}</div>
+          {selected?.lifecycleStatus === "ACTIVE" ? <button type="button" className="secondary-action"
+            onClick={() => void discussEntity()} disabled={entityDirty || busy !== null}><MessageSquareText size={14} />继续讨论这个实体</button> : null}
           <div className="entity-form-grid">
             <label>类型<select value={form.entityType} onChange={(event) => setForm((current) => ({ ...current, entityType: event.target.value as EntityType }))}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>名称<input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：林澈" /></label>

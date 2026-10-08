@@ -169,7 +169,9 @@ impl From<novel_infrastructure::DiscussionStoreError> for ApiError {
             | novel_infrastructure::DiscussionStoreError::MissingEvidenceAnchor(_) => "NOT_FOUND",
             novel_infrastructure::DiscussionStoreError::Conflict => "VERSION_CONFLICT",
             novel_infrastructure::DiscussionStoreError::InvalidPromotion
-            | novel_infrastructure::DiscussionStoreError::InvalidScope => "INVALID_INPUT",
+            | novel_infrastructure::DiscussionStoreError::InvalidScope
+            | novel_infrastructure::DiscussionStoreError::LimitExceeded(_) => "INVALID_INPUT",
+            novel_infrastructure::DiscussionStoreError::Entity(error) => return error.into(),
             novel_infrastructure::DiscussionStoreError::Sqlite(_)
             | novel_infrastructure::DiscussionStoreError::Database(_) => "DATABASE_ERROR",
         };

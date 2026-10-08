@@ -2,6 +2,7 @@ import { BookMarked, Files, UsersRound } from "lucide-react";
 
 const sections = [
   { label: "实体库", href: "/knowledge", icon: UsersRound, exact: true },
+  { label: "作者设定", href: "/knowledge/settings", icon: BookMarked },
   { label: "知识记录", href: "/knowledge/records", icon: BookMarked },
   { label: "摘要与卡片", href: "/knowledge/materials", icon: Files },
 ];

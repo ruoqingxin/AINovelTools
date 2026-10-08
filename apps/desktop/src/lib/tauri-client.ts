@@ -187,6 +187,31 @@ export type DiscussionCandidate = {
 export type DiscussionExchange = {
   userMessage: DiscussionMessage; assistantMessage: DiscussionMessage;
 };
+export type DiscussionTopicKind = "FREE" | "CHARACTER" | "ITEM" | "LOCATION" | "PLOT";
+export type DiscussionDraft = { chosen: string; alternatives: string; questions: string };
+export type DiscussionWorkspace = {
+  sessionId: string; topicKind: DiscussionTopicKind; linkedEntityId: string | null;
+  draft: DiscussionDraft; version: number;
+};
+export type DiscussionDesignEntity = {
+  entityType: EntityType; name: string; description: string; aliases: string[]; tags: string[];
+  attributes: Record<string, unknown>; settings: string[]; visibility: "AUTHOR_ONLY" | "PUBLIC";
+  targetEntityId: string | null; expectedEntityVersion: number | null;
+};
+export type DiscussionDesignProposal = {
+  id: string; sessionId: string; workspaceVersion: number; entities: DiscussionDesignEntity[];
+  sourceMessageIds: string[]; contextVersion: string; omittedMessageCount: number;
+  status: "PENDING" | "CONFIRMED"; promotedEntityIds: string[]; createdAt: string;
+};
+export type AuthorSetting = {
+  id: string; entityId: string; entityRevisionId: string; entityName: string;
+  content: string; visibility: "AUTHOR_ONLY" | "PUBLIC"; sourceProposalId: string;
+  sessionId: string; createdAt: string;
+};
+export const DISCUSSION_LIMITS = {
+  messageChars: 20_000, draftChars: 50_000, proposalChars: 100_000,
+  pageSize: 100, proposalEntities: 20,
+} as const;
 export type ChangeSet = {
   id: string; projectId: string; chapterId: string; sourceRevisionId: string;
   status: ChangeSetStatus; candidateIds: string[]; createdBy: string; createdAt: string; updatedAt: string;
@@ -559,12 +584,38 @@ export function listDiscussionSessions() {
 
 export function createDiscussionSession(input: {
   title: string; scopeKind: DiscussionScopeKind; scopeId: string | null; scopeText: string | null;
+  topicKind?: DiscussionTopicKind; linkedEntityId?: string | null;
 }) {
   return invoke<DiscussionSession>("create_discussion_session", input);
 }
 
-export function listDiscussionMessages(sessionId: string, limit = 100) {
-  return invoke<DiscussionMessage[]>("list_discussion_messages", { sessionId, limit });
+export function listDiscussionMessages(sessionId: string, limit = 100, beforeMessageId?: string) {
+  return invoke<DiscussionMessage[]>("list_discussion_messages", { sessionId, limit, beforeMessageId });
+}
+
+export function getDiscussionWorkspace(sessionId: string) {
+  return invoke<DiscussionWorkspace>("get_discussion_workspace", { sessionId });
+}
+export function saveDiscussionWorkspace(workspace: DiscussionWorkspace) {
+  return invoke<DiscussionWorkspace>("save_discussion_workspace", { workspace });
+}
+export function listDiscussionDraftRevisions(sessionId: string, beforeVersion?: number) {
+  return invoke<DiscussionWorkspace[]>("list_discussion_draft_revisions", { sessionId, beforeVersion });
+}
+export function listDiscussionDesignProposals(sessionId: string, beforeId?: string) {
+  return invoke<DiscussionDesignProposal[]>("list_discussion_design_proposals", { sessionId, beforeId });
+}
+export function summarizeDiscussionDesign(input: {
+  sessionId: string; profileId: string; expectedWorkspaceVersion: number;
+  temperature?: number; maxOutputTokens?: number;
+}) {
+  return invoke<DiscussionDesignProposal>("summarize_discussion_design", { input });
+}
+export function confirmDiscussionDesign(id: string, entities: DiscussionDesignEntity[]) {
+  return invoke<string[]>("confirm_discussion_design", { id, entities });
+}
+export function listAuthorSettings() {
+  return invoke<AuthorSetting[]>("list_author_settings");
 }
 
 export function listDiscussionCandidates(sessionId: string) {

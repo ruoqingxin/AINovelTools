@@ -35,6 +35,21 @@ impl ProjectManager {
         &self,
         input: &novel_application::DiscussionContextInput,
     ) -> Result<novel_application::ContextPackage, novel_application::ContextError> {
+        self.assemble_discussion_context_with_mode(input, false)
+    }
+
+    pub fn assemble_discussion_design_context(
+        &self,
+        input: &novel_application::DiscussionContextInput,
+    ) -> Result<novel_application::ContextPackage, novel_application::ContextError> {
+        self.assemble_discussion_context_with_mode(input, true)
+    }
+
+    fn assemble_discussion_context_with_mode(
+        &self,
+        input: &novel_application::DiscussionContextInput,
+        design: bool,
+    ) -> Result<novel_application::ContextPackage, novel_application::ContextError> {
         let retrieval_input = novel_application::AssembleContextInput {
             chapter_id: Uuid::nil(),
             target_revision_id: None,
@@ -44,11 +59,24 @@ impl ProjectManager {
             volume_plan: String::new(),
             document_json: r#"{"type":"doc","content":[]}"#.to_owned(),
             selection: None,
-            instruction: Some(format!("{}\n{}", input.user_message, input.history)),
+            instruction: Some(if design {
+                format!("{}\n{}", input.user_message, input.history)
+            } else {
+                input.user_message.clone()
+            }),
             input_token_budget: input.input_token_budget,
         };
-        let candidates = self.collect_context_candidates(&retrieval_input, &[]);
-        let evidence = novel_application::ContextPlanner::plan(&candidates, 24, 10);
-        novel_application::ContextAssembler::assemble_discussion(input, &evidence)
+        let candidates = if design {
+            self.collect_context_candidates(&retrieval_input, &[])
+        } else {
+            self.collect_discussion_context_candidates(input)
+        };
+        let evidence =
+            novel_application::ContextPlanner::plan(&candidates, 24, if design { 10 } else { 8 });
+        if design {
+            novel_application::ContextAssembler::assemble_discussion_design(input, &evidence)
+        } else {
+            novel_application::ContextAssembler::assemble_discussion(input, &evidence)
+        }
     }
 }

@@ -2,10 +2,12 @@
 
 mod ai_evaluation;
 mod context;
+mod discussion_context;
 mod planning_context;
 mod review;
 pub use ai_evaluation::*;
 pub use context::*;
+pub use discussion_context::*;
 pub use planning_context::*;
 pub use review::*;
 
@@ -389,6 +391,7 @@ mod tests {
             history: "作者：先比较三种方案。\nAI：方案甲推进更快。".into(),
             user_message: "如果推迟到第三卷会怎样？".into(),
             input_token_budget: 4_096,
+            focus: None,
         };
         let evidence = novel_domain::RetrievalEvidence {
             chunk: novel_domain::KnowledgeChunk {
@@ -411,7 +414,7 @@ mod tests {
             package.task_contract.role,
             super::AiTaskRole::DiscussionFacilitator
         );
-        assert_eq!(package.prompt_version, "r5.1-discussion-v1");
+        assert_eq!(package.prompt_version, "r5.1-discussion-v3");
         assert!(package.user_prompt.contains("[P0 作者本次问题]"));
         assert!(package.user_prompt.contains("如果推迟到第三卷会怎样？"));
         assert!(package.user_prompt.contains("林澈还不知道使者已经死亡。"));
@@ -429,6 +432,267 @@ mod tests {
                 .output_contract
                 .contains("不输出修改后的正式对象")
         );
+    }
+
+    #[test]
+    fn discussion_invites_creativity_without_treating_suggestions_as_formal_settings() {
+        let input = super::DiscussionContextInput {
+            scope_label: "法宝构思".into(),
+            scope_content: String::new(),
+            history: String::new(),
+            user_message: "借鉴科幻的意识存储，做一个玄幻法宝。".into(),
+            input_token_budget: 4_096,
+            focus: None,
+        };
+        let package =
+            super::ContextAssembler::assemble_discussion(&input, &[]).expect("creative discussion");
+        assert!(package.system_prompt.contains("允许大胆发散和跨题材借鉴"));
+        assert!(package.system_prompt.contains("转化为适合本书的表达"));
+        assert!(package.system_prompt.contains("不反复警告"));
+        assert!(package.system_prompt.contains("背景未定也能开始"));
+        assert!(
+            package
+                .task_contract
+                .uncertainty_policy
+                .contains("可以自由提出新想法")
+        );
+        assert!(
+            package
+                .task_contract
+                .forbidden_actions
+                .iter()
+                .any(|item| item.contains("不得修改"))
+        );
+        assert!(
+            package
+                .task_contract
+                .forbidden_actions
+                .iter()
+                .any(|item| item.contains("新建议写成已批准事实"))
+        );
+
+        let summary = super::ContextAssembler::assemble_discussion_design(&input, &[])
+            .expect("candidate summary");
+        assert!(summary.system_prompt.contains("不继续发散或追问"));
+        assert!(summary.system_prompt.contains("作者审核确认"));
+        assert!(summary.task_contract.output_contract.contains("严格 JSON"));
+        assert!(
+            summary
+                .task_contract
+                .output_contract
+                .contains("未决定的字段省略")
+        );
+        assert!(!summary.system_prompt.contains("允许大胆发散"));
+    }
+
+    #[test]
+    fn discussion_reserves_background_before_oversized_questions_drafts_and_history() {
+        let input = super::DiscussionContextInput {
+            scope_label: "本书灵感".into(),
+            scope_content: "构思细节".repeat(12_500),
+            history: "以前的讨论".repeat(5_000),
+            user_message: "本轮想法：魂灯。".into(),
+            input_token_budget: 4_096,
+            focus: None,
+        };
+        let evidence = novel_domain::RetrievalEvidence {
+            chunk: novel_domain::KnowledgeChunk {
+                id: uuid::Uuid::new_v4(),
+                source_id: uuid::Uuid::nil(),
+                source_revision: "planning:discussion-background:test".into(),
+                source_hash: "sha256:test".into(),
+                chunk_index: 0,
+                chunking_version: "test-v1".into(),
+                content: format!(
+                    "题材：玄幻。\n基调：轻松冒险。\n世界：魂魄可寄存在法宝中。\n{}",
+                    "其他正式设定".repeat(3_000)
+                ),
+                embedding: None,
+            },
+            method: novel_domain::RetrievalMethod::Structured,
+            authority: novel_domain::ContextAuthority::ProjectSetting,
+            relevance: 10_000,
+        };
+        let package = super::ContextAssembler::assemble_discussion(&input, &[evidence])
+            .expect("bounded discussion");
+        for anchor in [
+            "题材：玄幻",
+            "基调：轻松冒险",
+            "世界：魂魄可寄存在法宝中",
+            "本轮想法：魂灯",
+        ] {
+            assert!(package.user_prompt.contains(anchor), "missing {anchor}");
+        }
+        let background = package
+            .user_prompt
+            .find("[P0 本书背景与相关设定]")
+            .expect("background");
+        let question = package
+            .user_prompt
+            .find("[P0 作者本次问题]")
+            .expect("question");
+        assert!(background < question);
+        let audit = package
+            .section_audit
+            .iter()
+            .find(|item| item.kind == super::ContextSectionKind::ProjectSettings)
+            .expect("background audit");
+        assert!(audit.truncated);
+        assert!(audit.included_chars <= 1_400);
+        assert!(package.truncated);
+        assert!(package.estimated_input_tokens <= input.input_token_budget);
+    }
+
+    #[test]
+    fn discussion_balances_decisions_related_rules_and_recent_history_under_a_long_scope() {
+        let input = super::DiscussionContextInput {
+            scope_label: "本书".into(),
+            scope_content: "很长的章节规划".repeat(5_000),
+            history: format!("{}最新回复：代价只能由本人承担。", "旧消息".repeat(5_000)),
+            user_message: "魂灯的寿元代价应该怎么完善？".into(),
+            input_token_budget: 8_192,
+            focus: Some(super::DiscussionFocus {
+                topic_kind: "ITEM".into(),
+                chosen: format!(
+                    "作者已决定：魂灯以寿元为燃料。{}",
+                    "草稿细节".repeat(10_000)
+                ),
+                alternatives: "备选：吞噬别人的魂魄。".into(),
+                questions: "寿元能否由他人支付？".into(),
+                ..Default::default()
+            }),
+        };
+        let rule = novel_domain::RetrievalEvidence {
+            chunk: novel_domain::KnowledgeChunk {
+                id: uuid::Uuid::new_v4(),
+                source_id: uuid::Uuid::new_v4(),
+                source_revision: "author-setting:test:revision:current".into(),
+                source_hash: "sha256:test".into(),
+                chunk_index: 0,
+                chunking_version: "test-v1".into(),
+                content: "重要规则：寿元不可转嫁。".into(),
+                embedding: None,
+            },
+            method: novel_domain::RetrievalMethod::Structured,
+            authority: novel_domain::ContextAuthority::ProjectSetting,
+            relevance: 9_000,
+        };
+        let package =
+            super::ContextAssembler::assemble_discussion(&input, std::slice::from_ref(&rule))
+                .expect("balanced context");
+        for anchor in [
+            "魂灯以寿元为燃料",
+            "寿元不可转嫁",
+            "最新回复：代价只能由本人承担",
+        ] {
+            assert!(package.user_prompt.contains(anchor), "missing {anchor}");
+        }
+        assert!(package.user_prompt.contains("备选（不是选定结论）"));
+        assert!(
+            package.system_prompt.chars().count() + package.user_prompt.chars().count() <= 8_192
+        );
+        assert_eq!(
+            package.retrieval_evidence[0].authority,
+            novel_domain::ContextAuthority::ProjectSetting
+        );
+        for kind in [
+            super::ContextSectionKind::CurrentState,
+            super::ContextSectionKind::AuthoritativeFacts,
+            super::ContextSectionKind::CurrentDraft,
+        ] {
+            assert!(
+                package
+                    .section_audit
+                    .iter()
+                    .any(|item| item.kind == kind && item.included_chars > 0)
+            );
+        }
+        let mut changed = input;
+        changed.focus.as_mut().expect("focus").chosen = "改用灵力，不再消耗寿元。".into();
+        let changed =
+            super::ContextAssembler::assemble_discussion(&changed, &[rule]).expect("new memory");
+        assert_ne!(package.context_version, changed.context_version);
+        assert!(!changed.user_prompt.contains("魂灯以寿元为燃料"));
+    }
+
+    #[test]
+    fn oversized_discussion_questions_are_rejected_instead_of_silently_truncated() {
+        let mut input = super::DiscussionContextInput {
+            scope_label: "本书".into(),
+            scope_content: String::new(),
+            history: String::new(),
+            user_message: "玄".repeat(20_000),
+            input_token_budget: 4_096,
+            focus: None,
+        };
+        assert!(matches!(
+            super::ContextAssembler::assemble_discussion(&input, &[]),
+            Err(super::ContextError::DiscussionQuestionTooLong)
+        ));
+        input.input_token_budget = 120_000;
+        let package =
+            super::ContextAssembler::assemble_discussion(&input, &[]).expect("large enough");
+        assert!(package.user_prompt.contains(&input.user_message));
+        assert!(
+            package.system_prompt.chars().count() + package.user_prompt.chars().count() <= 24_000
+        );
+        assert!(
+            !package
+                .section_audit
+                .iter()
+                .find(|item| item.kind == super::ContextSectionKind::UserInstruction)
+                .expect("question")
+                .truncated
+        );
+    }
+
+    #[test]
+    fn discussion_keeps_author_design_before_large_manuscript_fact_excerpts() {
+        let input = super::DiscussionContextInput {
+            scope_label: "法宝".into(),
+            scope_content: String::new(),
+            history: String::new(),
+            user_message: "魂灯有哪些能力？".into(),
+            input_token_budget: 4_096,
+            focus: None,
+        };
+        let evidence = [
+            (
+                novel_domain::ContextAuthority::AuthoritativeFact,
+                "正文旧事件".repeat(5_000),
+                10_000,
+            ),
+            (
+                novel_domain::ContextAuthority::ProjectSetting,
+                "作者确认能力：魂灯可保存记忆。".into(),
+                7_000,
+            ),
+        ]
+        .into_iter()
+        .map(
+            |(authority, content, relevance)| novel_domain::RetrievalEvidence {
+                chunk: novel_domain::KnowledgeChunk {
+                    id: uuid::Uuid::new_v4(),
+                    source_id: uuid::Uuid::new_v4(),
+                    source_revision: "test:current".into(),
+                    source_hash: "sha256:test".into(),
+                    chunk_index: 0,
+                    chunking_version: "test-v1".into(),
+                    content,
+                    embedding: None,
+                },
+                method: novel_domain::RetrievalMethod::Structured,
+                authority,
+                relevance,
+            },
+        )
+        .collect::<Vec<_>>();
+        let package =
+            super::ContextAssembler::assemble_discussion(&input, &evidence).expect("context");
+        assert!(package.user_prompt.contains("魂灯可保存记忆"));
+        assert!(package.section_audit.iter().any(|item| item.kind
+            == super::ContextSectionKind::AuthoritativeFacts
+            && item.truncated));
     }
 
     #[test]
@@ -451,6 +715,10 @@ mod tests {
         let package = super::ContextAssembler::assemble(&input).expect("assemble");
         assert!(package.user_prompt.contains("开场锚点"));
         assert!(package.user_prompt.contains("结尾锚点"));
-        assert!(package.user_prompt.contains("正文中段已移入章节摘要或按需检索"));
+        assert!(
+            package
+                .user_prompt
+                .contains("正文中段已移入章节摘要或按需检索")
+        );
     }
 }

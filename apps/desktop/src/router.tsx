@@ -19,6 +19,7 @@ const SettingsView = lazyRouteComponent(() => import("./views/settings-view"), "
 const DiscussionView = lazyRouteComponent(() => import("./views/discussion-view"), "DiscussionView");
 const ReviewCenterView = lazyRouteComponent(() => import("./views/review-center-view"), "ReviewCenterView");
 const KnowledgeRecordsView = lazyRouteComponent(() => import("./views/knowledge-records-view"), "KnowledgeRecordsView");
+const AuthorSettingsView = lazyRouteComponent(() => import("./views/author-settings-view"), "AuthorSettingsView");
 
 function RouteErrorView({ error, reset }: { error: Error; reset: () => void }) {
   const goBack = () => {
@@ -111,12 +112,13 @@ const knowledgeRoute = createRoute({
 const reviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/review", component: ReviewEntryView });
 const knowledgeReviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/review", component: ReviewEntryView });
 const knowledgeRecordsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/records", component: KnowledgeRecordsView });
+const authorSettingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/settings", component: AuthorSettingsView });
 const materialsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/materials", component: MaterialsView });
 const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", component: SearchView });
 const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: JobsView });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsView });
 
-const routeTree = rootRoute.addChildren([indexRoute, planningRoute, chaptersRoute, writingRoute, discussionRoute, knowledgeRoute, reviewRoute, knowledgeReviewRoute, knowledgeRecordsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, planningRoute, chaptersRoute, writingRoute, discussionRoute, knowledgeRoute, reviewRoute, knowledgeReviewRoute, knowledgeRecordsRoute, authorSettingsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);
 
 export const router = createRouter({ routeTree });
 

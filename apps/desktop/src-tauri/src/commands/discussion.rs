@@ -41,6 +41,8 @@ pub(crate) fn create_discussion_session(
     scope_kind: novel_infrastructure::DiscussionScopeKind,
     scope_id: Option<uuid::Uuid>,
     scope_text: Option<String>,
+    topic_kind: Option<novel_infrastructure::DiscussionTopicKind>,
+    linked_entity_id: Option<uuid::Uuid>,
 ) -> Result<novel_infrastructure::DiscussionSession, ApiError> {
     if title.trim().is_empty() {
         return Err(ApiError {
@@ -52,9 +54,33 @@ pub(crate) fn create_discussion_session(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
+    if let Some(id) = linked_entity_id
+        && !manager
+            .list_entities(false)
+            .map_err(ApiError::from)?
+            .iter()
+            .any(|entity| entity.id == id)
+    {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "关联实体不存在或已归档".into(),
+        });
+    }
+    let session = manager
         .create_discussion_session(title, scope_kind, scope_id, scope_text)
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    if topic_kind.is_some() || linked_entity_id.is_some() {
+        manager
+            .save_discussion_workspace(novel_infrastructure::DiscussionWorkspace {
+                session_id: session.id,
+                topic_kind: topic_kind.unwrap_or_default(),
+                linked_entity_id,
+                draft: novel_infrastructure::DiscussionDraft::default(),
+                version: 0,
+            })
+            .map_err(ApiError::from)?;
+    }
+    Ok(session)
 }
 
 #[tauri::command]
@@ -62,13 +88,14 @@ pub(crate) fn list_discussion_messages(
     state: tauri::State<'_, ProjectState>,
     session_id: uuid::Uuid,
     limit: Option<u32>,
+    before_message_id: Option<uuid::Uuid>,
 ) -> Result<Vec<novel_infrastructure::DiscussionMessage>, ApiError> {
     let manager = state
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
-        .list_discussion_messages(session_id, limit.unwrap_or(100).clamp(1, 200))
+        .list_discussion_messages_before(session_id, limit.unwrap_or(100), before_message_id)
         .map_err(ApiError::from)
 }
 
@@ -84,6 +111,354 @@ pub(crate) fn list_discussion_candidates(
     manager
         .list_discussion_candidates(session_id)
         .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn get_discussion_workspace(
+    state: tauri::State<'_, ProjectState>,
+    session_id: uuid::Uuid,
+) -> Result<novel_infrastructure::DiscussionWorkspace, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .get_discussion_workspace(session_id)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn save_discussion_workspace(
+    state: tauri::State<'_, ProjectState>,
+    workspace: novel_infrastructure::DiscussionWorkspace,
+) -> Result<novel_infrastructure::DiscussionWorkspace, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .save_discussion_workspace(workspace)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn list_discussion_draft_revisions(
+    state: tauri::State<'_, ProjectState>,
+    session_id: uuid::Uuid,
+    before_version: Option<i64>,
+) -> Result<Vec<novel_infrastructure::DiscussionWorkspace>, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_discussion_draft_revisions(session_id, before_version)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn list_discussion_design_proposals(
+    state: tauri::State<'_, ProjectState>,
+    session_id: uuid::Uuid,
+    before_id: Option<uuid::Uuid>,
+) -> Result<Vec<novel_infrastructure::DiscussionDesignProposal>, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_discussion_design_proposals(session_id, before_id)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn confirm_discussion_design(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    entities: Vec<novel_infrastructure::DiscussionDesignEntity>,
+) -> Result<Vec<uuid::Uuid>, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .confirm_discussion_design(id, entities)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn list_author_settings(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<Vec<novel_infrastructure::AuthorSetting>, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_author_settings()
+        .map_err(ApiError::from)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SummarizeDiscussionDesignInput {
+    pub(crate) session_id: uuid::Uuid,
+    pub(crate) profile_id: uuid::Uuid,
+    pub(crate) expected_workspace_version: i64,
+    pub(crate) temperature: Option<f64>,
+    pub(crate) max_output_tokens: Option<u32>,
+}
+
+#[tauri::command]
+pub(crate) async fn summarize_discussion_design(
+    state: tauri::State<'_, ProjectState>,
+    input: SummarizeDiscussionDesignInput,
+) -> Result<novel_infrastructure::DiscussionDesignProposal, ApiError> {
+    let profile = state
+        .model_profiles
+        .lock()
+        .map_err(|_| ApiError::internal("model settings mutex poisoned"))?
+        .get(input.profile_id)
+        .map_err(ApiError::from)?;
+    if profile.capability != novel_infrastructure::ModelCapability::Chat {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "整理构思需要聊天模型。".into(),
+        });
+    }
+    if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
+        return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
+    }
+    let preference =
+        super::ai::load_ai_task_preference(&state, novel_infrastructure::AiTaskKind::WorkDesign)?;
+    let options = super::ai::task_generation_options(
+        Some(novel_infrastructure::AiTaskKind::WorkDesign),
+        input.temperature,
+        Some(input.max_output_tokens.unwrap_or(8_192).min(16_384)),
+    )?;
+    let budget = super::ai::effective_task_input_budget(
+        &profile,
+        super::ai::effective_max_output_tokens(&profile, options),
+        &preference,
+    )
+    .min(120_000);
+    let (workspace, context, source_message_ids, omitted_message_count, linked_snapshot) = {
+        let manager = state
+            .manager
+            .lock()
+            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+        let session = manager
+            .get_discussion_session(input.session_id)
+            .map_err(ApiError::from)?;
+        let workspace = manager
+            .get_discussion_workspace(session.id)
+            .map_err(ApiError::from)?;
+        if workspace.version != input.expected_workspace_version {
+            return Err(ApiError::from(
+                novel_infrastructure::DiscussionStoreError::Conflict,
+            ));
+        }
+        let (label, scope) = discussion_scope(&manager, &session)?;
+        let scope_content = workspace_context(&manager, &workspace, &scope)?;
+        let linked_snapshot = if let Some(id) = workspace.linked_entity_id {
+            manager
+                .list_entities(false)
+                .map_err(ApiError::from)?
+                .into_iter()
+                .find(|entity| entity.id == id)
+                .map(|entity| (entity.id, entity.version))
+        } else {
+            None
+        };
+        let total_count = manager
+            .discussion_message_count(session.id)
+            .map_err(ApiError::from)?;
+        let mut selected = manager
+            .list_discussion_messages(session.id, 500)
+            .map_err(ApiError::from)?;
+        if selected.is_empty() && workspace.draft.chosen.trim().is_empty() {
+            return Err(ApiError {
+                code: "INVALID_INPUT",
+                message: "请先讨论一个灵感或记录已选定内容。".into(),
+            });
+        }
+        let mut history_size = selected
+            .iter()
+            .map(|message| message.content.chars().count() + 10)
+            .sum::<usize>();
+        let history_budget = (budget as usize / 2).min(80_000);
+        let mut offset = 0;
+        while history_size > history_budget && offset < selected.len() {
+            history_size =
+                history_size.saturating_sub(selected[offset].content.chars().count() + 10);
+            offset += 1;
+        }
+        selected.drain(..offset);
+        let context = loop {
+            let history = selected
+                .iter()
+                .map(|message| {
+                    format!(
+                        "{}：{}",
+                        if message.role == novel_infrastructure::DiscussionMessageRole::User {
+                            "作者"
+                        } else {
+                            "AI"
+                        },
+                        message.content
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let context = manager.assemble_discussion_design_context(&novel_application::DiscussionContextInput {
+                scope_label: label.clone(), scope_content: scope_content.clone(), history,
+                user_message: "请根据构思草稿和提供的整段讨论，整理成实体与作者设定候选；只采用作者已选择的方向，不替作者决定未决内容。关联已有实体时保留它已有的属性，仅整理本次作者选择的修改。".into(),
+                input_token_budget: budget,
+                focus: None,
+            }).map_err(|error| ApiError { code: "INVALID_INPUT", message: error.to_string() })?;
+            if context.section_audit.iter().any(|item| {
+                item.kind == novel_application::ContextSectionKind::ChapterPlan && item.truncated
+            }) {
+                return Err(ApiError { code: "INVALID_INPUT", message: "当前模型无法容纳完整构思草稿，请精简草稿或选择更大上下文的模型；草稿原文仍完整保存。".into() });
+            }
+            let history_truncated = context.section_audit.iter().any(|item| {
+                item.kind == novel_application::ContextSectionKind::CurrentDraft && item.truncated
+            });
+            if !history_truncated || selected.is_empty() {
+                break context;
+            }
+            selected.remove(0);
+        };
+        if selected.is_empty() && workspace.draft.chosen.trim().is_empty() {
+            return Err(ApiError { code: "INVALID_INPUT", message: "模型上下文不足以整理本次讨论，请先把选定内容记入构思草稿或使用更大上下文的模型。".into() });
+        }
+        let omitted = total_count.saturating_sub(selected.len());
+        let ids = selected
+            .iter()
+            .map(|message| message.id)
+            .collect::<Vec<_>>();
+        (workspace, context, ids, omitted, linked_snapshot)
+    };
+    let secret = profile
+        .secret_ref
+        .as_deref()
+        .ok_or_else(|| ApiError::from(novel_infrastructure::AiError::MissingSecret))?;
+    let secret = novel_infrastructure::SecretStore::get(secret).map_err(ApiError::from)?;
+    let outcome = super::ai::generate_with_task_fallback(
+        &state,
+        &preference,
+        &profile,
+        Some(&secret),
+        &context,
+        options,
+        false,
+        false,
+        Arc::new(AtomicBool::new(false)),
+        |_| {},
+    )
+    .await
+    .map_err(ApiError::from)?;
+    let entities = parse_design_entities(&outcome.output)?;
+    let proposal = novel_infrastructure::DiscussionDesignProposal {
+        id: uuid::Uuid::new_v4(),
+        session_id: workspace.session_id,
+        workspace_version: workspace.version,
+        entities,
+        source_message_ids,
+        context_version: context.context_version,
+        omitted_message_count,
+        status: "PENDING".into(),
+        promoted_entity_ids: Vec::new(),
+        created_at: String::new(),
+    };
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    if let Some((id, version)) = linked_snapshot
+        && !manager
+            .list_entities(false)
+            .map_err(ApiError::from)?
+            .iter()
+            .any(|entity| entity.id == id && entity.version == version)
+    {
+        return Err(ApiError::from(
+            novel_infrastructure::DiscussionStoreError::Conflict,
+        ));
+    }
+    manager
+        .create_discussion_design_proposal(proposal)
+        .map_err(ApiError::from)
+}
+
+fn parse_design_entities(
+    output: &str,
+) -> Result<Vec<novel_infrastructure::DiscussionDesignEntity>, ApiError> {
+    if output.chars().count() > 100_000 {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "整理结果超过 10 万字，请分主题整理。".into(),
+        });
+    }
+    let text = output.trim();
+    let text = text
+        .strip_prefix("```json")
+        .or_else(|| text.strip_prefix("```"))
+        .and_then(|inner| inner.trim().strip_suffix("```"))
+        .unwrap_or(text)
+        .trim();
+    serde_json::from_str(text).map_err(|_| ApiError {
+        code: "INVALID_AI_RESPONSE",
+        message: "AI 未返回有效的设定结构，请重新整理。讨论和草稿保持不变。".into(),
+    })
+}
+
+fn workspace_context(
+    manager: &novel_infrastructure::ProjectManager,
+    workspace: &novel_infrastructure::DiscussionWorkspace,
+    scope: &str,
+) -> Result<String, ApiError> {
+    let linked = if let Some(id) = workspace.linked_entity_id {
+        let revisions = manager.list_entity_revisions(id).map_err(ApiError::from)?;
+        let entity = manager
+            .list_entities(false)
+            .map_err(ApiError::from)?
+            .into_iter()
+            .find(|entity| entity.id == id);
+        entity
+            .and_then(|entity| {
+                revisions
+                    .into_iter()
+                    .find(|revision| revision.id == entity.current_revision_id)
+            })
+            .map_or_else(
+                || "关联实体已归档或不存在。".into(),
+                |revision| {
+                    format!(
+                        "已有实体「{}」：{}\n已有属性：{}",
+                        revision.name, revision.description, revision.fixed_attributes_json
+                    )
+                },
+            )
+    } else {
+        "未关联已有实体，可自由构思。".into()
+    };
+    let linked_rules = if let Some(id) = workspace.linked_entity_id {
+        manager
+            .list_author_settings()
+            .map_err(ApiError::from)?
+            .into_iter()
+            .filter(|setting| setting.entity_id == id)
+            .map(|setting| format!("{}（{}）", setting.content, setting.visibility))
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        String::new()
+    };
+    Ok(format!(
+        "构思主题：{}\n\n构思草稿（尚未正式入库）：\n作者已选定：\n{}\n备选方案（不能同时当作设定）：\n{}\n未决问题（允许留白）：\n{}\n\n{}\n已有作者规则（除非作者明确选择修改，否则保留）：\n{}\n\n讨论背景：\n{}",
+        workspace.topic_kind.as_str(),
+        workspace.draft.chosen,
+        workspace.draft.alternatives,
+        workspace.draft.questions,
+        linked,
+        linked_rules,
+        scope,
+    ))
 }
 
 #[tauri::command]
@@ -166,6 +541,12 @@ pub(crate) async fn ask_project_discussion(
             message: "讨论内容不能为空".to_owned(),
         });
     }
+    if input.message.chars().count() > novel_infrastructure::DISCUSSION_MESSAGE_MAX_CHARS {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "单条讨论最多 20000 字，请拆分发送。".into(),
+        });
+    }
     let profile = {
         let store = state
             .model_profiles
@@ -202,19 +583,21 @@ pub(crate) async fn ask_project_discussion(
             .get_discussion_session(input.session_id)
             .map_err(ApiError::from)?;
         let (scope_label, scope_content) = discussion_scope(&manager, &session)?;
-        let recent_messages = manager
-            .list_discussion_messages(session.id, 20)
+        let workspace = manager
+            .get_discussion_workspace(session.id)
             .map_err(ApiError::from)?;
-        let recent_history = render_history(&recent_messages, None, 8_192);
-        let history = if session.summary.trim().is_empty() {
-            recent_history
-        } else {
-            format!(
-                "[会话记忆]\n{}\n\n[最近消息]\n{}",
-                session.summary.trim(),
-                recent_history
-            )
-        };
+        let recent_messages = manager
+            .list_discussion_messages(session.id, 12)
+            .map_err(ApiError::from)?;
+        let history = render_history(&recent_messages, None, 5_000);
+        let recent_topic = recent_messages
+            .iter()
+            .rev()
+            .filter(|message| message.role == novel_infrastructure::DiscussionMessageRole::User)
+            .take(2)
+            .map(|message| message.content.chars().take(600).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
         let context = manager
             .assemble_discussion_context(&novel_application::DiscussionContextInput {
                 scope_label: scope_label.clone(),
@@ -222,6 +605,14 @@ pub(crate) async fn ask_project_discussion(
                 history: history.clone(),
                 user_message: input.message.trim().to_owned(),
                 input_token_budget,
+                focus: Some(novel_application::DiscussionFocus {
+                    topic_kind: workspace.topic_kind.as_str().into(),
+                    linked_entity_id: workspace.linked_entity_id,
+                    chosen: workspace.draft.chosen,
+                    alternatives: workspace.draft.alternatives,
+                    questions: workspace.draft.questions,
+                    recent_topic,
+                }),
             })
             .map_err(|error| ApiError {
                 code: "INVALID_INPUT",
@@ -385,7 +776,7 @@ fn render_history(
         .iter()
         .filter(|message| Some(message.id) != excluded_message_id)
         .rev()
-        .take(20)
+        .take(40)
     {
         if used >= max_chars {
             break;
@@ -395,8 +786,18 @@ fn render_history(
             novel_infrastructure::DiscussionMessageRole::Assistant => "AI",
         };
         let content = message.content.trim();
-        let allowance = max_chars.saturating_sub(used).min(1_200);
-        let content = content.chars().take(allowance).collect::<String>();
+        let allowance = max_chars.saturating_sub(used).min(6_000);
+        let content = if content.chars().count() > allowance {
+            format!(
+                "[消息片段，完整原文已保存]{}",
+                content
+                    .chars()
+                    .take(allowance.saturating_sub(20))
+                    .collect::<String>()
+            )
+        } else {
+            content.to_owned()
+        };
         let entry = format!("{role}：{content}");
         used = used.saturating_add(entry.chars().count().saturating_add(2));
         rendered.push(entry);
@@ -412,5 +813,26 @@ fn plan_kind_label(kind: novel_infrastructure::PlanNodeKind) -> &'static str {
         novel_infrastructure::PlanNodeKind::Volume => "分卷",
         novel_infrastructure::PlanNodeKind::Chapter => "章节",
         novel_infrastructure::PlanNodeKind::Scene => "场景",
+    }
+}
+
+#[cfg(test)]
+mod design_tests {
+    use super::*;
+
+    #[test]
+    fn structured_design_parser_accepts_json_and_code_fences_without_inventing_fields() {
+        let json = r#"[{"entityType":"ITEM","name":"吞声灯","description":"储存声音","attributes":{"capacity":3},"settings":["只能储存三句话。"]}]"#;
+        let entities = parse_design_entities(json).expect("json");
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].visibility, "AUTHOR_ONLY");
+        assert!(entities[0].target_entity_id.is_none());
+        assert_eq!(entities[0].attributes["capacity"], 3);
+        assert_eq!(
+            parse_design_entities(&format!("```json\n{json}\n```")).expect("fenced"),
+            entities
+        );
+        assert!(parse_design_entities("我建议再讨论一下。").is_err());
+        assert!(parse_design_entities("[] trailing commentary").is_err());
     }
 }

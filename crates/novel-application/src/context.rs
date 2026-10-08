@@ -6,6 +6,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub const PROMPT_VERSION: &str = "r5.1-writing-v1";
+const DISCUSSION_PROMPT_VERSION: &str = "r5.1-discussion-v3";
 const TRUNCATION_MARKER: &str = "[已按 TokenBudget 截断]";
 
 /// Conservative upper bound used when converting a token budget to text.
@@ -48,6 +49,7 @@ pub struct RetrievalPlan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContextCandidateKind {
     ProjectSetting,
+    AuthorSetting,
     AuthoritativeFact,
     CurrentState,
     Entity,
@@ -63,21 +65,23 @@ impl ContextCandidateKind {
     const fn priority(self) -> u8 {
         match self {
             Self::ProjectSetting => 0,
-            Self::AuthoritativeFact => 1,
-            Self::CurrentState => 2,
-            Self::Entity => 3,
-            Self::Relation => 4,
-            Self::Belief => 5,
-            Self::Foreshadowing => 6,
-            Self::Summary => 7,
-            Self::Event => 8,
-            Self::Keyword => 9,
+            Self::AuthorSetting => 1,
+            Self::AuthoritativeFact => 2,
+            Self::CurrentState => 3,
+            Self::Entity => 4,
+            Self::Relation => 5,
+            Self::Belief => 6,
+            Self::Foreshadowing => 7,
+            Self::Summary => 8,
+            Self::Event => 9,
+            Self::Keyword => 10,
         }
     }
 
     const fn max_attached(self) -> usize {
         match self {
             Self::ProjectSetting | Self::Foreshadowing | Self::Summary | Self::Event => 1,
+            Self::AuthorSetting => 3,
             Self::AuthoritativeFact | Self::Keyword => 4,
             Self::CurrentState | Self::Entity | Self::Relation | Self::Belief => 2,
         }
@@ -151,7 +155,7 @@ impl ContextPlanner {
         }
 
         let mut seen = HashSet::new();
-        let mut grouped = std::array::from_fn::<_, 10, _>(|_| Vec::new());
+        let mut grouped = std::array::from_fn::<_, 11, _>(|_| Vec::new());
         for candidate in candidates {
             let normalized_content = candidate
                 .evidence
@@ -186,7 +190,7 @@ impl ContextPlanner {
             .take(candidate_limit);
 
         let mut selected = Vec::with_capacity(attachment_limit);
-        let mut kind_counts = [0usize; 10];
+        let mut kind_counts = [0usize; 11];
         for candidate in ordered {
             if selected.len() == attachment_limit {
                 break;
@@ -225,6 +229,20 @@ pub struct DiscussionContextInput {
     pub history: String,
     pub user_message: String,
     pub input_token_budget: u32,
+    #[serde(default)]
+    pub focus: Option<DiscussionFocus>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscussionFocus {
+    pub topic_kind: String,
+    pub linked_entity_id: Option<Uuid>,
+    pub chosen: String,
+    pub alternatives: String,
+    pub questions: String,
+    /// Only recent author messages, not old AI proposals.
+    pub recent_topic: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -373,6 +391,10 @@ pub enum ContextError {
     InvalidDocument(String),
     #[error("input token budget must be at least 256")]
     BudgetTooSmall,
+    #[error(
+        "当前模型的输入预算无法容纳完整问题和必要背景，请缩短本条问题或提高输入预算；原文不会被截断发送。"
+    )]
+    DiscussionQuestionTooLong,
 }
 
 pub struct ContextAssembler;
@@ -479,6 +501,26 @@ impl ContextAssembler {
         input: &DiscussionContextInput,
         evidence: &[RetrievalEvidence],
     ) -> Result<ContextPackage, ContextError> {
+        Self::assemble_discussion_with_mode(input, evidence, false)
+    }
+
+    /// Assembles a candidate-only structured design summary.
+    ///
+    /// # Errors
+    /// Returns [`ContextError`] for invalid evidence or an insufficient budget.
+    pub fn assemble_discussion_design(
+        input: &DiscussionContextInput,
+        evidence: &[RetrievalEvidence],
+    ) -> Result<ContextPackage, ContextError> {
+        Self::assemble_discussion_with_mode(input, evidence, true)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn assemble_discussion_with_mode(
+        input: &DiscussionContextInput,
+        evidence: &[RetrievalEvidence],
+        design: bool,
+    ) -> Result<ContextPackage, ContextError> {
         if input.input_token_budget < 256 {
             return Err(ContextError::BudgetTooSmall);
         }
@@ -487,8 +529,11 @@ impl ContextAssembler {
         }
         let task_contract = AiTaskContract {
             role: AiTaskRole::DiscussionFacilitator,
-            goal: "结合作品正式依据和最近讨论，提出剧情方案、影响分析与待作者决定事项。"
-                .to_owned(),
+            goal: if design {
+                "仅将提供的讨论和作者选定的构思整理为可审核的实体与作者设定候选，不补写未决内容。"
+            } else {
+                "以本书背景为出发点，陪作者自由共创角色、物品、环境或剧情；允许探索边界，重大转向由作者决定。"
+            }.to_owned(),
             target_type: "PROJECT_DISCUSSION".to_owned(),
             target_id: Uuid::nil(),
             target_revision_id: None,
@@ -501,23 +546,37 @@ impl ContextAssembler {
                 "不得把讨论假设、模型推测或新建议写成已批准事实。".to_owned(),
                 "不得要求作者先补全未知设定才能继续讨论。".to_owned(),
             ],
-            acceptance_criteria: vec![
+            acceptance_criteria: if design { vec![
                 "明确区分已有正式内容、讨论中的推测、新建议和待作者决定事项。".to_owned(),
                 "提出多个方向时说明核心体验、收益、代价和受影响内容。".to_owned(),
                 "允许结论为暂不决定，并明确哪些内容需要作者确认。".to_owned(),
-            ],
-            uncertainty_policy:
+                "每轮聚焦一两个问题，先回应作者的构思，不要求填写完整角色卡或设定表。".to_owned(),
+                "区分作者已选定内容、备选方案和未决问题；不得把全部备选同时当作设定。".to_owned(),
+            ] } else { vec![
+                "默认贴合本书题材、基调与世界背景；可借鉴其他题材，并自然转化为适合本书的表达。".to_owned(),
+                "先回应作者的灵感，按需给有区别的方向，不固定列清单、追问或要求填设定表。".to_owned(),
+                "仅在明显改变作品方向或推翻重要设定时简短说明影响，继续探索；作者主动要求的转向不反复警告。".to_owned(),
+            ] },
+            uncertainty_policy: if design {
                 "只使用本次提供的正式依据；没有正式依据时明确说明未检索到，不得声称已经读取完整设定。"
-                    .to_owned(),
-            output_contract:
-                "纯文本讨论回复；先给结论，再按需说明方案、影响和待决定项，不输出修改后的正式对象。"
-                    .to_owned(),
+            } else {
+                "可以自由提出新想法，但不把新建议或未记录内容说成已有设定；背景不足也可继续讨论，不猜定本书题材，不声称读过未提供的材料。"
+            }.to_owned(),
+            output_contract: if design {
+                "只输出严格 JSON 数组（1-20 项），不加 Markdown。每项包含 entityType（CHARACTER/LOCATION/ITEM/FACTION/CONCEPT）、name、description、aliases（字符串数组）、tags（字符串数组）、attributes（对象）、settings（字符串数组）、visibility（AUTHOR_ONLY/PUBLIC）。根据整段提供的讨论和构思草稿整理候选实体与能力、限制、关系等作者设定。chosen 中的作者选择优先于聊天备选；未决定的字段省略，不得补写或把废弃方案合并。settings 只收录已选定的规则，不收录待发生事件为已发生事实。秘密默认 AUTHOR_ONLY。没有命名时用明确的暂定名，不编造更多背景。不要输出目标 ID、版本或写入指令；候选须由作者编辑确认后入库。"
+            } else {
+                "自然的纯文本讨论回复，按本轮需要组织内容，不套固定格式；不输出修改后的正式对象。"
+            }.to_owned(),
         };
-        let system_prompt = format!(
-            "你是{}。你负责与作者讨论剧情方向、比较方案和分析影响，不是项目事实数据库，也没有正式对象写权限。严格区分已有正式内容、讨论中的推测、新建议和待作者决定；低优先级讨论建议不得覆盖高优先级正式依据。",
-            role_label(task_contract.role)
-        );
-        let retrieval = compile_retrieval_evidence(evidence);
+        let system_prompt = if design {
+            "你是小说设定整理助手。只根据本次提供的作者选择、草稿、讨论和相关已有设定输出结构化候选，不继续发散或追问。作者已选定内容优先于 AI 曾提出的备选。不得补全未决项、混合互斥方案或把计划事件说成已发生事实。更新已有实体时保留未被作者明确修改的规则和属性。秘密默认作者保留。你没有正式对象写权限，输出须由作者审核确认。".to_owned()
+        } else {
+            format!(
+                "你是{}，是懂这本书的创作伙伴，不是设定审核员。陪作者推敲角色性格与外貌、物品能力与代价、环境氛围与规则以及剧情方向。把本书题材、基调和世界设定当作创作背景，不当作限制新想法的清单。默认贴着本书发挥，允许大胆发散和跨题材借鉴，将借来的灵感自然转化为适合本书的表达，不默默把整本书换成另一种题材。只有明显改变作品方向或推翻重要设定时，用一两句说明变化，再继续探索，由作者决定；作者主动要求转向或已接受变化时顺着讨论，不反复警告。自然回应本轮灵感，按需给少量有区别的方向，不固定追问、列完整表格或做逐项合规检查；背景未定也能开始。尊重草稿中作者已选定的方向，区分已有设定、新建议和正文已发生事件；未公开秘密不能自动成为角色已知信息。你没有正式对象写权限，新想法须由作者选定后再整理确认。",
+                role_label(task_contract.role)
+            )
+        };
+        let retrieval = compile_retrieval_evidence_with_mode(evidence, !design);
         let mut sections = vec![
             PromptSection::new(
                 ContextSectionKind::TaskContract,
@@ -589,9 +648,71 @@ impl ContextAssembler {
                 retrieval.reference_count,
             ),
         ];
-        let character_budget = usize::try_from(input.input_token_budget)
+        let mut character_budget = usize::try_from(input.input_token_budget)
             .unwrap_or(usize::MAX)
             .saturating_mul(CONSERVATIVE_CHARS_PER_TOKEN);
+        if !design {
+            character_budget = character_budget.min(24_000);
+            let fixed = system_prompt.chars().count()
+                + sections[0].content.chars().count()
+                + input.user_message.trim().chars().count()
+                + 400;
+            let available = character_budget
+                .checked_sub(fixed)
+                .filter(|remaining| *remaining >= 256)
+                .ok_or(ContextError::DiscussionQuestionTooLong)?;
+            let background_budget = (available / 4)
+                .max(available.min(1_000))
+                .min(available * 2 / 3)
+                .min(1_200);
+            let flexible = available.saturating_sub(background_budget);
+            let mut background = sections.remove(3);
+            background.priority = 0;
+            background.title = "本书背景与相关设定";
+            background.max_content_chars = Some(background_budget);
+            sections.insert(1, background);
+            for section in &mut sections {
+                section.max_content_chars = match section.kind {
+                    ContextSectionKind::ChapterPlan => Some((flexible * 12 / 100).min(1_200)),
+                    ContextSectionKind::AuthoritativeFacts => {
+                        Some((flexible * 30 / 100).min(4_000))
+                    }
+                    ContextSectionKind::CurrentDraft => Some((flexible * 30 / 100).min(5_000)),
+                    ContextSectionKind::References => Some((flexible * 3 / 100).min(300)),
+                    _ => section.max_content_chars,
+                };
+                if section.kind == ContextSectionKind::AuthoritativeFacts {
+                    section.title = "相关实体、作者设定与正文知识";
+                    section.content = format!(
+                        "{}\n\n{}",
+                        non_empty_or(
+                            retrieval.task_materials.clone(),
+                            "本次没有相关实体或作者设定。"
+                        ),
+                        non_empty_or(
+                            retrieval.authoritative_facts.clone(),
+                            "本次没有相关正文事实。"
+                        ),
+                    );
+                }
+            }
+            if let Some(focus) = &input.focus {
+                sections.insert(
+                    3,
+                    PromptSection::new(
+                        ContextSectionKind::CurrentState,
+                        1,
+                        "本轮构思记忆（尚未正式入库）",
+                        discussion_focus_memory(
+                            focus,
+                            &input.user_message,
+                            (flexible * 25 / 100).min(2_400),
+                        ),
+                        1,
+                    ),
+                );
+            }
+        }
         let (user_prompt, section_audit, truncated) = compile_sections(
             &mut sections,
             character_budget.saturating_sub(system_prompt.chars().count()),
@@ -603,7 +724,8 @@ impl ContextAssembler {
             "scopeContent": input.scope_content,
             "history": input.history,
             "userMessage": input.user_message,
-            "promptVersion": PROMPT_VERSION,
+            "focus": input.focus,
+            "promptVersion": DISCUSSION_PROMPT_VERSION,
             "system": system_prompt,
             "user": user_prompt,
             "retrievalEvidence": retrieval_evidence,
@@ -617,7 +739,7 @@ impl ContextAssembler {
             target_revision_id: None,
             action: AiAction::Summarize,
             context_version,
-            prompt_version: "r5.1-discussion-v1".to_owned(),
+            prompt_version: DISCUSSION_PROMPT_VERSION.to_owned(),
             system_prompt,
             user_prompt,
             estimated_input_tokens,
@@ -637,6 +759,7 @@ struct PromptSection {
     content: String,
     source_count: u16,
     truncate_from_tail: bool,
+    max_content_chars: Option<usize>,
 }
 
 impl PromptSection {
@@ -654,6 +777,7 @@ impl PromptSection {
             content,
             source_count,
             truncate_from_tail: false,
+            max_content_chars: None,
         }
     }
 
@@ -954,22 +1078,25 @@ fn compile_sections(
     let mut audits = Vec::with_capacity(sections.len());
     let mut remaining = character_budget;
     let mut any_truncated = false;
-    for (index, section) in sections.iter().enumerate() {
-        if index > 0 {
-            remaining = remaining.saturating_sub(2);
-        }
+    for section in sections.iter() {
+        let separator = usize::from(!rendered.is_empty()) * 2;
+        let section_budget = remaining.saturating_sub(separator);
         let header = format!("[P{} {}]\n", section.priority, section.title);
         let header_chars = header.chars().count();
-        let content_budget = remaining.saturating_sub(header_chars);
+        let content_budget = section_budget
+            .saturating_sub(header_chars)
+            .min(section.max_content_chars.unwrap_or(usize::MAX));
         let (content, truncated) =
             truncate_content(&section.content, content_budget, section.truncate_from_tail);
-        let text = if remaining >= header_chars {
+        let text = if section_budget >= header_chars {
             format!("{header}{content}")
         } else {
-            header.chars().take(remaining).collect()
+            header.chars().take(section_budget).collect()
         };
         let included_chars = text.chars().count();
-        remaining = remaining.saturating_sub(included_chars);
+        if included_chars > 0 {
+            remaining = remaining.saturating_sub(separator + included_chars);
+        }
         any_truncated |= truncated || included_chars < header_chars;
         audits.push(ContextSectionAudit {
             kind: section.kind,
@@ -978,7 +1105,9 @@ fn compile_sections(
             included_chars: u32::try_from(included_chars).unwrap_or(u32::MAX),
             truncated: truncated || included_chars < header_chars,
         });
-        rendered.push(text);
+        if !text.is_empty() {
+            rendered.push(text);
+        }
     }
     (rendered.join("\n\n"), audits, any_truncated)
 }
@@ -1043,7 +1172,27 @@ fn estimate_input_tokens(system_prompt: &str, user_prompt: &str) -> u32 {
     u32::try_from(tokens).unwrap_or(u32::MAX)
 }
 
+fn discussion_focus_memory(focus: &DiscussionFocus, question: &str, limit: usize) -> String {
+    let query = super::DiscussionRelevance::new(question);
+    let body_budget = limit.saturating_sub(100);
+    let content = format!(
+        "主题：{}\n作者已选定：\n{}\n未决问题：\n{}\n备选（不是选定结论）：\n{}",
+        focus.topic_kind,
+        query.excerpt(&focus.chosen, body_budget * 70 / 100),
+        query.excerpt(&focus.questions, body_budget * 20 / 100),
+        query.excerpt(&focus.alternatives, body_budget * 10 / 100),
+    );
+    truncate_content(&content, limit, false).0
+}
+
 fn compile_retrieval_evidence(evidence: &[RetrievalEvidence]) -> CompiledRetrieval {
+    compile_retrieval_evidence_with_mode(evidence, false)
+}
+
+fn compile_retrieval_evidence_with_mode(
+    evidence: &[RetrievalEvidence],
+    discussion: bool,
+) -> CompiledRetrieval {
     if evidence.is_empty() {
         return CompiledRetrieval {
             project_settings: String::new(),
@@ -1083,6 +1232,11 @@ fn compile_retrieval_evidence(evidence: &[RetrievalEvidence]) -> CompiledRetriev
             item.chunk.content.trim()
         );
         match item.authority {
+            novel_domain::ContextAuthority::ProjectSetting
+                if discussion && !item.chunk.source_id.is_nil() =>
+            {
+                task_materials.push(text);
+            }
             novel_domain::ContextAuthority::ProjectSetting => project_settings.push(text),
             novel_domain::ContextAuthority::AuthoritativeFact => authoritative_facts.push(text),
             novel_domain::ContextAuthority::TaskMaterial => task_materials.push(text),

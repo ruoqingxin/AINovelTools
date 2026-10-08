@@ -261,6 +261,15 @@ impl Database {
             )
             .optional()?;
         let is_existing = existing.is_some();
+        let previous_revision_id: Option<String> = if is_existing {
+            Some(tx.query_row(
+                "SELECT current_revision_id FROM entities WHERE id=?1 AND project_id=?2",
+                rusqlite::params![entity_id.to_string(), project_id.to_string()],
+                |row| row.get(0),
+            )?)
+        } else {
+            None
+        };
         let (version, revision, base_revision_id) = if let Some((version, entity_type)) = existing {
             if input.expected_version != Some(version) {
                 return Err(EntityStoreError::Contract(EntityError::Conflict {
@@ -305,6 +314,36 @@ impl Database {
                 "UPDATE entities SET current_revision_id = ?1, version = ?2, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?3 AND project_id = ?4",
                 rusqlite::params![revision_id.to_string(), version, entity_id.to_string(), project_id.to_string()],
             )?;
+        }
+        // Ordinary entity edits retain author rules; a confirmed discussion supplies a replacement snapshot.
+        if let Some(previous_id) = previous_revision_id
+            && !input
+                .source_version
+                .as_deref()
+                .is_some_and(|value| value.starts_with("discussion:"))
+        {
+            let settings = {
+                let mut statement = tx.prepare(
+                    "SELECT content,visibility,source_proposal_id FROM author_settings WHERE entity_revision_id=?1",
+                )?;
+                let rows = statement.query_map([previous_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+            for (content, visibility, source_id) in settings {
+                tx.execute(
+                    "INSERT INTO author_settings
+                     (id,project_id,entity_id,entity_revision_id,content,visibility,source_proposal_id)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                    rusqlite::params![Uuid::new_v4().to_string(), project_id.to_string(),
+                        entity_id.to_string(), revision_id.to_string(), content, visibility, source_id],
+                )?;
+            }
         }
         Ok(entity_id)
     }

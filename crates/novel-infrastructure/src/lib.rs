@@ -30,6 +30,8 @@ const AI_REQUEST_SNAPSHOT_RETENTION: usize = 100;
 mod ai;
 mod context_store;
 mod database;
+mod discussion_context_store;
+mod discussion_design_store;
 mod discussion_store;
 mod entity_store;
 mod extraction_store;
@@ -49,6 +51,11 @@ pub use ai::{
     GenerationCompletion, GenerationOptions, GenerationOutput, GenerationUsage, ModelGateway,
     ModelProfileStore, ProjectAiTaskOverrides, SecretStore, WritingAdmission,
     apply_task_prompt_preferences, render_prompt_template,
+};
+pub use discussion_design_store::{
+    AuthorSetting, DISCUSSION_DRAFT_MAX_CHARS, DISCUSSION_MESSAGE_MAX_CHARS,
+    DiscussionDesignEntity, DiscussionDesignProposal, DiscussionDraft, DiscussionTopicKind,
+    DiscussionWorkspace,
 };
 pub use discussion_store::{
     DiscussionCandidate, DiscussionCandidateKind, DiscussionCandidateStatus, DiscussionMessage,
@@ -205,7 +212,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 47;
+pub const CURRENT_SCHEMA_VERSION: i64 = 48;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -504,7 +511,7 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
     },
     FeatureDescriptor {
         id: "r5_1_project_discussion",
-        display_name: "R5.1 作品级剧情讨论",
+        display_name: "R5.1 灵感共创与设定整理",
         stage: "R5.1",
         status: FeatureStatus::Implemented,
         unavailable_reason: None,
