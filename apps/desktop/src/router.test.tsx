@@ -41,7 +41,7 @@ describe("project routes", () => {
   it.each([
     ["/planning", "Workspace planning"],
     ["/writing", "Workspace writing"],
-    ["/chapters", "Workspace chapters"],
+    ["/chapters", "Workspace writing"],
     ["/discussion", "Discussion"],
     ["/review", "Review"],
     ["/knowledge/review", "Review"],

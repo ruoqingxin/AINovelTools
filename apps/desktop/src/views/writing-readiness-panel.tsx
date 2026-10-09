@@ -45,6 +45,7 @@ export function WritingReadinessPanel(props: {
   readiness: WritingReadiness;
   loading: boolean;
   sections: PlanningSection[];
+  onOpenChapterPlan?: () => void;
 }) {
   const client = useQueryClient();
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
@@ -206,13 +207,17 @@ export function WritingReadinessPanel(props: {
           : running
             ? <span className="writing-readiness-job"><LoaderCircle size={12} className="spin" />生成中</span>
             : pending
-              ? <a className="primary-action" href={manualHref}>{item.kind === "chapter-plan" && chapterPlanNeedsInput ? "查看缺项" : "确认候选"}<ArrowRight size={12} /></a>
+              ? item.kind === "chapter-plan" && props.onOpenChapterPlan
+                ? <button type="button" className="primary-action" onClick={props.onOpenChapterPlan}>{chapterPlanNeedsInput ? "查看缺项" : "确认候选"}<ArrowRight size={12} /></button>
+                : <a className="primary-action" href={manualHref}>{item.kind === "chapter-plan" && chapterPlanNeedsInput ? "查看缺项" : "确认候选"}<ArrowRight size={12} /></a>
               : failed && job
                 ? <button type="button" className="secondary-action" onClick={() => void retryReadinessJob(job)} disabled={retryingJobId !== null}><RotateCcw size={12} />{retryingJobId === job.id ? "提交中…" : "重新生成"}</button>
                 : itemProfileReady
                     ? <button type="button" className="primary-action" onClick={() => void generateSection(item)} disabled={generatingSectionId !== null}><Sparkles size={12} />{item.kind === "chapter-plan" ? "AI 生成执行卡" : "AI 补这项"}</button>
                     : <a className="primary-action" href={aiTaskSettingsHref(item.kind === "chapter-plan" ? "chapterPlan" : "workDesign")}>配置{item.kind === "chapter-plan" ? "章节规划" : "规划"}模型<ArrowRight size={12} /></a>}
-        {item.kind === "section" || item.kind === "chapter-plan" ? <a className="secondary-action" href={manualHref}>手动填写</a> : null}
+        {item.kind === "chapter-plan" && props.onOpenChapterPlan
+          ? <button type="button" className="secondary-action" onClick={props.onOpenChapterPlan}>手动填写</button>
+          : item.kind === "section" || item.kind === "chapter-plan" ? <a className="secondary-action" href={manualHref}>手动填写</a> : null}
       </div>
     </article>;
   }

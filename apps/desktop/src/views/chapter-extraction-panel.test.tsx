@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyAiTaskPreferences } from "../lib/ai-task-preferences";
 import type { ChapterExtractionItem, ChapterExtractionProposal, Fact, ModelProfile } from "../lib/tauri-client";
@@ -9,6 +9,7 @@ import { ChapterExtractionPanel } from "./chapter-extraction-panel";
 const mocks = vi.hoisted(() => ({
   adoptExtractionItem: vi.fn(),
   currentManuscript: vi.fn(),
+  extractChapterCandidates: vi.fn(),
   getAiTaskPreferences: vi.fn(),
   listChapterExtractions: vi.fn(),
   listCurrentFacts: vi.fn(),
@@ -106,10 +107,10 @@ const proposal: ChapterExtractionProposal = {
   updatedAt: "0",
 };
 
-function renderPanel() {
+function renderPanel(onOpenFactReview?: () => void) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ChapterExtractionPanel chapterId="chapter-1" />
+      <ChapterExtractionPanel chapterId="chapter-1" onOpenFactReview={onOpenFactReview} />
     </QueryClientProvider>,
   );
 }
@@ -122,6 +123,7 @@ describe("ChapterExtractionPanel", () => {
     const preferences = structuredClone(emptyAiTaskPreferences);
     preferences.knowledgeExtraction.profileId = profile.id;
     mocks.currentManuscript.mockResolvedValue({ id: "revision-1" });
+    mocks.extractChapterCandidates.mockResolvedValue(proposal);
     mocks.getAiTaskPreferences.mockResolvedValue(preferences);
     mocks.listChapterExtractions.mockResolvedValue([proposal]);
     mocks.listCurrentFacts.mockResolvedValue(facts);
@@ -163,5 +165,32 @@ describe("ChapterExtractionPanel", () => {
       id: "extraction-1",
       expectedStatus: "PENDING_REVIEW",
     });
+  });
+
+  it("opens the current chapter fact review after converting a fact candidate", async () => {
+    const factItem = {
+      ...item, kind: "FACT", payload: { subject: "沈砚", predicate: "进入", object: "雾城" },
+    };
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [factItem] }]);
+    mocks.adoptExtractionItem.mockResolvedValue({ ...factItem, status: "ACCEPTED" });
+    const openReview = vi.fn();
+    renderPanel(openReview);
+    fireEvent.click(await screen.findByRole("button", { name: "采用" }));
+    await waitFor(() => expect(openReview).toHaveBeenCalledOnce());
+    expect(mocks.adoptExtractionItem).toHaveBeenCalledWith({
+      id: item.id, expectedStatus: "PENDING_REVIEW",
+    });
+  });
+
+  it("extracts from the latest saved revision in the shared manuscript cache", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><ChapterExtractionPanel chapterId="chapter-1" /></QueryClientProvider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "提取本章候选" })).toBeEnabled());
+    act(() => client.setQueryData(["manuscript", "chapter-1"], { id: "revision-2" }));
+    await screen.findByText("基于修订 revision");
+    fireEvent.click(screen.getByRole("button", { name: "提取本章候选" }));
+    await waitFor(() => expect(mocks.extractChapterCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      chapterId: "chapter-1", sourceRevisionId: "revision-2",
+    })));
   });
 });

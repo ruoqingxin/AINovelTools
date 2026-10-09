@@ -4,7 +4,6 @@ import { useState } from "react";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
   adoptExtractionItem,
-  currentManuscript,
   decideExtractionItem,
   errorMessage,
   extractChapterCandidates,
@@ -18,6 +17,7 @@ import {
   type Fact,
 } from "../lib/tauri-client";
 import { AiModelNote } from "./ai-model-note";
+import { manuscriptQuery } from "../lib/manuscript-query";
 
 const kindLabels = {
   ENTITY: "实体",
@@ -67,15 +67,11 @@ function uuidValues(payload: Record<string, unknown>, key: string) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-export function ChapterExtractionPanel(props: { chapterId: string }) {
+export function ChapterExtractionPanel(props: { chapterId: string; onOpenFactReview?: () => void; onOpenManuscript?: () => void }) {
   const client = useQueryClient();
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
-  const revision = useQuery({
-    queryKey: ["current-manuscript", props.chapterId],
-    queryFn: () => currentManuscript(props.chapterId),
-    enabled: Boolean(props.chapterId),
-  });
+  const revision = useQuery(manuscriptQuery(props.chapterId));
   const proposals = useQuery({
     queryKey: ["chapter-extractions", props.chapterId],
     queryFn: () => listChapterExtractions(props.chapterId),
@@ -208,9 +204,10 @@ export function ChapterExtractionPanel(props: { chapterId: string }) {
         client.invalidateQueries({ queryKey: ["foreshadowings"] }),
         client.invalidateQueries({ queryKey: ["relations"] }),
         client.invalidateQueries({ queryKey: ["events"] }),
+        client.invalidateQueries({ queryKey: ["knowledge-conflicts", props.chapterId] }),
       ]);
       setNotice(item.kind === "FACT"
-        ? "已转入事实审核，请在左侧审核中心批准并定稿。"
+        ? "已转入本章事实审核，批准并定稿后才成为正式事实。"
         : item.kind === "ENTITY"
           ? "已创建实体修订，可在实体库继续调整。"
           : item.kind === "RELATION"
@@ -218,6 +215,7 @@ export function ChapterExtractionPanel(props: { chapterId: string }) {
             : item.kind === "EVENT"
               ? `已创建事件记录 ${adopted.finalObjectId?.slice(0, 8) ?? ""}。`
               : `已创建伏笔记录 ${adopted.finalObjectId?.slice(0, 8) ?? ""}。`);
+      if (item.kind === "FACT") props.onOpenFactReview?.();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -268,7 +266,9 @@ export function ChapterExtractionPanel(props: { chapterId: string }) {
           <textarea rows={5} value={drafts[item.id] ?? JSON.stringify(item.payload, null, 2)} readOnly={!editable} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))} aria-label={`${itemTitle(item)} payload`} />
           <footer>
             <span>{anchor ? `${anchor.sourceVersion} · ${anchor.blockId}` : "证据待载入"}</span>
-            <a href={`/writing#${props.chapterId}`}>打开正文</a>
+            {props.onOpenManuscript
+              ? <button type="button" className="secondary-action" onClick={props.onOpenManuscript}>查看已保存正文</button>
+              : <a href={`/writing#${props.chapterId}`}>打开正文</a>}
             {item.finalObjectId ? <code>{item.finalObjectId.slice(0, 8)}</code> : null}
           </footer>
           {editable ? <div className="inspector-actions">

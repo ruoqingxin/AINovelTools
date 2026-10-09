@@ -56,7 +56,7 @@ function WritingEntryView() {
 }
 
 function ChaptersEntryView() {
-  return <ProjectGate><ProjectWorkspaceView mode="chapters" /></ProjectGate>;
+  return <WritingEntryView />;
 }
 
 function DiscussionEntryView() {

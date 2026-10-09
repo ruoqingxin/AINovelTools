@@ -26,12 +26,12 @@ const revision = (id: string, text: string, chapterId = "chapter-1") => ({
   id, chapterId, documentJson: documentJson(text), parentRevisionId: null, createdAt: "", creationReason: "MANUAL_SAVE",
 });
 
-function setup(chapterId = "chapter-1", mode: "planning" | "writing" = "writing") {
+function setup(chapterId = "chapter-1", mode: "planning" | "writing" = "writing", initialTab: "candidate" | "manuscript" = "manuscript") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const onError = vi.fn();
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
   const hook = renderHook(({ chapterId, mode }) => useChapterManuscript({
-    chapterId, projectId: "project-1", mode, onError,
+    chapterId, projectId: "project-1", mode, onError, initialTab,
   }), { wrapper, initialProps: { chapterId, mode } });
   return { ...hook, client, onError };
 }
@@ -58,6 +58,17 @@ describe("useChapterManuscript", () => {
     expect(mocks.currentManuscript).not.toHaveBeenCalled();
     expect(mocks.listManuscriptRevisions).not.toHaveBeenCalled();
     expect(mocks.listRecoveryLogs).not.toHaveBeenCalled();
+  });
+
+  it("opens and changes chapters directly in the shared editing workspace", async () => {
+    const { result, rerender } = setup("chapter-1", "writing", "candidate");
+    await waitFor(() => expect(result.current.draft).toBe(documentJson("saved")));
+    expect(result.current.manuscriptTab).toBe("candidate");
+    act(() => result.current.setManuscriptTab("manuscript"));
+    mocks.currentManuscript.mockResolvedValue(revision("chapter-2-revision", "second", "chapter-2"));
+    rerender({ chapterId: "chapter-2", mode: "writing" });
+    await waitFor(() => expect(result.current.draft).toBe(documentJson("second")));
+    expect(result.current.manuscriptTab).toBe("candidate");
   });
 
   it("preserves unsaved candidates and their original baseline across background refetches", async () => {
@@ -153,5 +164,33 @@ describe("useChapterManuscript", () => {
     });
     expect(result.current.draft).toBe(documentJson("newer edit"));
     expect(result.current.chapterDirty).toBe(true);
+  });
+
+  it("preserves the draft and baseline when the backend rejects a stale save", async () => {
+    const { result, onError } = setup();
+    await waitFor(() => expect(result.current.draft).toBe(documentJson("saved")));
+    act(() => result.current.setDraft(documentJson("local draft")));
+    mocks.saveManuscriptChecked.mockRejectedValueOnce(new Error("正文版本冲突"));
+    await act(() => result.current.saveDraft());
+    expect(onError).toHaveBeenLastCalledWith("正文版本冲突");
+    expect(result.current.draft).toBe(documentJson("local draft"));
+    expect(result.current.chapterDirty).toBe(true);
+    expect(mocks.clearRecoveryLogs).not.toHaveBeenCalled();
+    await act(() => result.current.saveDraft());
+    expect(mocks.saveManuscriptChecked).toHaveBeenLastCalledWith(expect.objectContaining({
+      baseRevisionId: "revision-1", documentJson: documentJson("local draft"),
+    }));
+  });
+
+  it("refreshes linked memory, review and search queries after a checked save", async () => {
+    const { result, client } = setup();
+    await waitFor(() => expect(result.current.draft).toBe(documentJson("saved")));
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    act(() => result.current.setDraft(documentJson("new manuscript")));
+    await act(() => result.current.saveDraft());
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["manuscript", "chapter-1"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["summary-materials"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["ai-proposals", "chapter-1"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project-search"] });
   });
 });

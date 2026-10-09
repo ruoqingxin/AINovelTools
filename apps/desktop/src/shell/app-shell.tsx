@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   BookOpenText,
-  BookOpenCheck,
   Clock3,
   FileSearch,
   LibraryBig,
@@ -20,11 +19,10 @@ import { UnsavedChangesProvider } from "./unsaved-changes-provider";
 const navigation = [
   { label: "项目", icon: LibraryBig, path: "/" as const },
   { label: "规划", icon: ListTree, path: "/planning" as const },
-  { label: "章节", icon: BookOpenCheck, path: "/chapters" as const },
-  { label: "正文", icon: BookOpenText, path: "/writing" as const },
+  { label: "创作", icon: BookOpenText, path: "/writing" as const },
   { label: "讨论", icon: MessageSquareText, path: "/discussion" as const },
-  { label: "知识", icon: FileSearch, path: "/knowledge" as const },
-  { label: "审核", icon: ShieldCheck, path: "/review" as const },
+  { label: "资料", icon: FileSearch, path: "/knowledge" as const },
+  { label: "待处理", icon: ShieldCheck, path: "/review" as const },
   { label: "搜索", icon: Search, path: "/search" as const },
   { label: "任务", icon: ListChecks, path: "/jobs" as const },
 ];
@@ -71,6 +69,7 @@ export function AppShell() {
                 className="activity-button"
                 activeOptions={{ exact: true }}
                 activeProps={{ "data-active": true }}
+                data-active={path === "/writing" && pathname === "/chapters" ? true : undefined}
                 aria-label={label}
                 title={label}
               >
@@ -94,7 +93,7 @@ export function AppShell() {
         </aside>
 
         <main className="workspace">
-          {recovery.data?.length && pathname !== "/writing" ? <div className="global-recovery-banner" role="status"><span>有 {recovery.data.length} 份异常退出草稿尚未确认</span><Link to="/writing">前往正文处理</Link></div> : null}
+          {recovery.data?.length && pathname !== "/writing" && pathname !== "/chapters" ? <div className="global-recovery-banner" role="status"><span>有 {recovery.data.length} 份异常退出草稿尚未确认</span><Link to="/writing">前往创作处理</Link></div> : null}
           <Outlet />
         </main>
 

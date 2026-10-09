@@ -42,6 +42,7 @@ export function KnowledgeReviewView(props: {
   embedded?: boolean;
   chapterId?: string;
   onChapterChange?: (chapterId: string) => void;
+  onOpenManuscript?: () => void;
 } = {}) {
   const client = useQueryClient();
   const chapters = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes });
@@ -90,7 +91,14 @@ export function KnowledgeReviewView(props: {
     setError(null);
     try {
       await finalizeKnowledgeCandidates({ chapterId: selectedChapterId, candidateIds: approved.map((candidate) => candidate.id), actor: "desktop-user" });
-      await client.invalidateQueries({ queryKey: ["knowledge-candidates", selectedChapterId] });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["knowledge-candidates", selectedChapterId] }),
+        client.invalidateQueries({ queryKey: ["knowledge-conflicts", selectedChapterId] }),
+        client.invalidateQueries({ queryKey: ["current-facts"] }),
+        client.invalidateQueries({ queryKey: ["evidence-anchors"] }),
+        client.invalidateQueries({ queryKey: ["ai-proposals", selectedChapterId] }),
+        client.invalidateQueries({ queryKey: ["project-search"] }),
+      ]);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -138,7 +146,11 @@ export function KnowledgeReviewView(props: {
                 const snippet = revision ? extractBlockText(revision.documentJson, anchor.blockId) : "";
                 return <blockquote key={anchor.id}>
                   <p>{snippet ? `${snippet.slice(0, 260)}${snippet.length > 260 ? "…" : ""}` : "原文版本已不可用，请根据来源版本复核。"}</p>
-                  <footer><span>{anchor.sourceVersion}</span><code>{anchor.blockId}</code><a href={`/writing#${anchor.chapterId}`}>打开正文定位</a></footer>
+                  <footer><span>{anchor.sourceVersion}</span><code>{anchor.blockId}</code>
+                    {props.onOpenManuscript && anchor.chapterId === selectedChapterId
+                      ? <button type="button" className="secondary-action" onClick={props.onOpenManuscript}>查看已保存正文</button>
+                      : <a href={`/writing#${anchor.chapterId}`}>打开正文</a>}
+                  </footer>
                 </blockquote>;
               })}</div>
             </details> : <p className="knowledge-candidate-no-evidence">这条候选没有可展示的证据锚点。</p>}

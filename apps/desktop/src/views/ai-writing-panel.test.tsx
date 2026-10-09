@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyAiTaskPreferences } from "../lib/ai-task-preferences";
 import type { AiProposal, AiProposalReview, AiRun, ModelProfile, ReviewTrace } from "../lib/tauri-client";
@@ -463,5 +463,87 @@ describe("AiWritingPanel consistency review", () => {
     expect(screen.queryByRole("button", { name: "章节摘要" })).not.toBeInTheDocument();
     expect(screen.queryByText("按段选择")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "仅采用已选段落" })).not.toBeInTheDocument();
+  });
+
+  it("does not treat a manuscript report as a writing admission blocker", async () => {
+    mocks.listAiProposals.mockReset();
+    mocks.listAiProposals.mockResolvedValue([{
+      ...review, proposal: { ...reviewProposal, reviewPurpose: "MANUSCRIPT" },
+    }]);
+    const editor = {
+      getJSON: () => ({ type: "doc", content: [] }),
+      getText: () => "当前草稿",
+      state: { selection: { empty: true } },
+    } as unknown as NonNullable<Parameters<typeof AiWritingPanel>[0]["editor"]>;
+    render(<QueryClientProvider client={new QueryClient()}>
+      <AiWritingPanel mode="create" chapterId="chapter-1" chapterTitle="入城"
+        chapterPlan="寻找师父" volumeId="volume-1" volumePlan="" draft="当前草稿" editor={editor} />
+    </QueryClientProvider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "生成新版整章" })).toBeEnabled());
+    expect(screen.queryByText(/整章创作与续写已暂停/)).not.toBeInTheDocument();
+  });
+
+  it("keeps creation and admission queries separate when mounted together", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+    const props = {
+      chapterId: "chapter-1", chapterTitle: "入城", chapterPlan: "寻找师父",
+      volumeId: "volume-1", volumePlan: "", draft: "当前草稿", editor: null,
+    };
+    render(<QueryClientProvider client={client}>
+      <AiWritingPanel {...props} mode="create" />
+      <AiWritingPanel {...props} mode="review" />
+    </QueryClientProvider>);
+    await waitFor(() => {
+      expect(mocks.listAiProposals).toHaveBeenCalledWith(expect.objectContaining({ reviewPurpose: "ADMISSION" }));
+      expect(mocks.listAiProposals.mock.calls.some(([input]) => input.reviewPurpose === undefined)).toBe(true);
+    });
+    expect(client.getQueryCache().findAll({ queryKey: ["ai-proposals", "chapter-1"] })).toHaveLength(2);
+  });
+
+  it("ignores streaming events belonging to other mounted panels", async () => {
+    const listeners = new Map<string, (event: { payload: Record<string, unknown> }) => void>();
+    mocks.listen.mockImplementation(async (name, callback) => {
+      listeners.set(name, callback);
+      return () => {};
+    });
+    render(<QueryClientProvider client={new QueryClient()}>
+      <AiWritingPanel mode="create" chapterId="chapter-1" chapterTitle="入城"
+        chapterPlan="寻找师父" volumeId="volume-1" volumePlan="" draft="当前草稿" editor={null} />
+    </QueryClientProvider>);
+    await waitFor(() => expect(listeners.size).toBe(3));
+    act(() => {
+      listeners.get("ai-task-started")!({ payload: { taskId: "other-review" } });
+      listeners.get("ai-task-chunk")!({ payload: { taskId: "other-review", chunk: "其他任务的审核文字" } });
+      listeners.get("ai-task-attempt")!({ payload: { taskId: "other-review", attempt: 2, profileName: "其他模型" } });
+    });
+    expect(screen.queryByText("其他任务的审核文字")).not.toBeInTheDocument();
+    expect(screen.queryByText(/已切换到“其他模型”/)).not.toBeInTheDocument();
+  });
+
+  it("preserves the current task preview when unrelated tasks emit events", async () => {
+    const listeners = new Map<string, (event: { payload: Record<string, unknown> }) => void>();
+    mocks.listen.mockImplementation(async (name, callback) => {
+      listeners.set(name, callback);
+      return () => {};
+    });
+    let finish!: (proposal: AiProposal) => void;
+    mocks.generateAiProposal.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    render(<QueryClientProvider client={new QueryClient()}>
+      <AiWritingPanel mode="review" chapterId="chapter-1" chapterTitle="入城"
+        chapterPlan="寻找师父" volumeId="volume-1" volumePlan="" draft="当前草稿" editor={null} />
+    </QueryClientProvider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "检查创作条件" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "检查创作条件" }));
+    await waitFor(() => expect(mocks.generateAiProposal).toHaveBeenCalledOnce());
+    act(() => {
+      listeners.get("ai-task-started")!({ payload: { taskId: "current-task" } });
+      listeners.get("ai-task-chunk")!({ payload: { taskId: "current-task", chunk: "当前审核流" } });
+      listeners.get("ai-task-started")!({ payload: { taskId: "other-task" } });
+      listeners.get("ai-task-chunk")!({ payload: { taskId: "other-task", chunk: "其他任务内容" } });
+    });
+    expect(screen.getByText("当前审核流")).toBeVisible();
+    expect(screen.queryByText("其他任务内容")).not.toBeInTheDocument();
+    await act(async () => { finish(reviewProposal); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "检查创作条件" })).toBeEnabled());
   });
 });

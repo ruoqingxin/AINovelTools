@@ -3,13 +3,14 @@ import { useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useCallback, useEffect, useState } from "react";
 import {
-  clearRecoveryLogs, currentManuscript, enqueueChapterSummaryRefresh, errorMessage,
+  clearRecoveryLogs, enqueueChapterSummaryRefresh, errorMessage,
   listManuscriptRevisions, listRecoveryLogs, mergeManuscript, saveManuscriptChecked,
   saveRecoveryLog, type ManuscriptRevision, type MergeResult,
 } from "../lib/tauri-client";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import type { ManuscriptWorkspaceTab } from "./manuscript-workspace-tabs";
 import { candidateReviewTransferKey, documentToJson, writingCandidateTransferKey } from "./project-workspace-utils";
+import { manuscriptQuery } from "../lib/manuscript-query";
 
 type DraftSnapshot = {
   chapterId: string;
@@ -23,18 +24,19 @@ export function useChapterManuscript({
   projectId,
   mode,
   onError,
+  initialTab = "manuscript",
 }: {
   chapterId: string | undefined;
   projectId: string | undefined;
   mode: "planning" | "chapters" | "writing";
   onError: (message: string | null) => void;
+  initialTab?: ManuscriptWorkspaceTab;
 }) {
   const client = useQueryClient();
   const enabled = Boolean(chapterId && mode !== "planning");
-  const [manuscriptTab, setManuscriptTab] = useState<ManuscriptWorkspaceTab>("manuscript");
+  const [manuscriptTab, setManuscriptTab] = useState<ManuscriptWorkspaceTab>(initialTab);
   const manuscript = useQuery({
-    queryKey: ["manuscript", chapterId],
-    queryFn: () => currentManuscript(chapterId!),
+    ...manuscriptQuery(chapterId),
     enabled,
   });
   const history = useQuery({
@@ -77,13 +79,13 @@ export function useChapterManuscript({
 
   useEffect(() => {
     setSnapshot({ chapterId: "", documentJson: "", baseDocumentJson: "", baseRevisionId: undefined });
-    setManuscriptTab("manuscript");
+    setManuscriptTab(initialTab);
     setMergeResult(null);
     setCompareLeftId(null);
     setCompareRightId(null);
     setManuscriptMemoryNeedsRefresh(false);
     setTransferringCandidate(false);
-  }, [chapterId]);
+  }, [chapterId, initialTab]);
 
   useEffect(() => {
     if (!enabled || !chapterId || !manuscript.isSuccess || !editor) return;
@@ -132,6 +134,9 @@ export function useChapterManuscript({
       client.invalidateQueries({ queryKey: ["manuscript-history", chapter] }),
       client.invalidateQueries({ queryKey: ["recovery-logs", chapter] }),
       client.invalidateQueries({ queryKey: ["recovery-all"] }),
+      client.invalidateQueries({ queryKey: ["summary-materials"] }),
+      client.invalidateQueries({ queryKey: ["ai-proposals", chapter] }),
+      client.invalidateQueries({ queryKey: ["project-search"] }),
     ]);
   }
 

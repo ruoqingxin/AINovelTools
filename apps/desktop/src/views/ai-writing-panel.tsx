@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import type { Editor } from "@tiptap/react";
 import { Ban, Check, ClipboardCheck, Columns2, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
-import { useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import {
   cancelAiTask,
   decideAiProposal,
@@ -256,7 +256,7 @@ function ReviewTraceDetails(props: { proposalId: string }) {
   </details>;
 }
 
-export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null; onOpenAdmissionReview?: () => void }) {
+export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null; onOpenAdmissionReview?: () => void; onReturnToEditor?: () => void; onOpenChapterPlan?: () => void }) {
   const client = useQueryClient();
   const mode = props.mode ?? "create";
   const isReadinessMode = mode === "readiness";
@@ -280,7 +280,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     : props.draft || (props.editor ? JSON.stringify(props.editor.getJSON()) : "");
   const deferredDocumentJson = useDeferredValue(currentDocumentJson);
   const proposals = useQuery({
-    queryKey: ["ai-proposals", props.chapterId, reviewPurpose, props.chapterPlan, props.volumePlan, deferredDocumentJson, deferredInstruction],
+    queryKey: ["ai-proposals", props.chapterId, mode, reviewPurpose, props.chapterPlan, props.volumePlan, deferredDocumentJson, deferredInstruction],
     queryFn: () => listAiProposals({
       ...(isReviewMode ? { reviewPurpose } : {}),
       chapterId: props.chapterId,
@@ -301,6 +301,9 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [proposalAnchors, setProposalAnchors] = useState<Record<string, ProposalAnchor>>({});
   const [lastApplied, setLastApplied] = useState<{ documentJson: string; label: string } | null>(null);
+  const streamTask = useRef<{ requesting: boolean; taskId: string | null; persistedTaskId: string | null }>({
+    requesting: false, taskId: null, persistedTaskId: null,
+  });
   const runningRuns = useQuery({
     queryKey: ["ai-runs", 80],
     queryFn: () => listAiRuns(80),
@@ -324,8 +327,10 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
       ) ?? null;
   const generationBusy = busy || Boolean(persistedRunning);
   const generationLocked = generationBusy
-    || (!isReadinessMode && (runningRuns.isPending || runningRuns.isFetching));
+    || (!isReadinessMode && (runningRuns.isPending || runningRuns.isFetching))
+    || Boolean(runningRuns.data?.some((run) => run.status === "RUNNING" && run.chapterId === props.chapterId));
   const effectiveTaskId = persistedRunning?.id ?? null;
+  streamTask.current.persistedTaskId = effectiveTaskId;
   const chapterSummary = (chapterSummaries.data ?? []).find((item) => item.sourceId === props.chapterId && item.generationMode === "EXTRACTIVE_AUTO");
   const chapterSummaryJob = (summaryJobs.data ?? []).find((job) => isChapterSummaryJobFor(job, props.chapterId) && (job.status === "QUEUED" || job.status === "RUNNING"));
   const chapterSummaryStatus = chapterSummaryJob?.status === "RUNNING"
@@ -336,17 +341,21 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   useEffect(() => {
     let disposed = false;
     const subscriptions = Promise.all([
-      listen<{ taskId: string }>("ai-task-started", () => {
+      listen<{ taskId: string }>("ai-task-started", ({ payload }) => {
         if (!disposed) {
-          setPreview("");
+          if (streamTask.current.requesting && !streamTask.current.taskId) streamTask.current.taskId = payload.taskId;
+          if (streamTask.current.taskId === payload.taskId || streamTask.current.persistedTaskId === payload.taskId) setPreview("");
           void client.invalidateQueries({ queryKey: ["ai-runs"] });
         }
       }),
       listen<{ taskId: string; chunk: string }>("ai-task-chunk", ({ payload }) => {
-        if (!disposed) setPreview((value) => value + payload.chunk);
+        if (!disposed && (streamTask.current.taskId === payload.taskId || streamTask.current.persistedTaskId === payload.taskId)) {
+          setPreview((value) => value + payload.chunk);
+        }
       }),
       listen<{ taskId: string; attempt: number; profileName: string; fallbackReason?: string }>("ai-task-attempt", ({ payload }) => {
-        if (!disposed && payload.attempt > 1) {
+        if (!disposed && payload.attempt > 1
+            && (streamTask.current.taskId === payload.taskId || streamTask.current.persistedTaskId === payload.taskId)) {
           setPreview("");
           setFallbackNotice(`主模型调用失败（${payload.fallbackReason ?? "未知原因"}），已切换到“${payload.profileName}”继续生成。`);
         }
@@ -362,6 +371,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     setCompareIds([]);
     setProposalAnchors({});
     setLastApplied(null);
+    streamTask.current.taskId = null;
   }, [props.chapterId]);
 
   async function runAction(action: AiAction) {
@@ -394,6 +404,8 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
     setError(null);
     setFallbackNotice(null);
     setPreview("");
+    streamTask.current.requesting = true;
+    streamTask.current.taskId = null;
     try {
       const documentJson = reviewingManuscript && props.editor
         ? JSON.stringify(props.editor.getJSON())
@@ -423,6 +435,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
       await client.invalidateQueries({ queryKey: ["ai-proposals", props.chapterId] });
     } catch (cause) { setError(aiFailureMessage(cause)); }
     finally {
+      streamTask.current.requesting = false;
       void client.invalidateQueries({ queryKey: ["ai-runs"] });
       setBusy(false);
     }
@@ -542,7 +555,8 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   const reviewProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "consistencyReview");
   const reviewPreference = resolveTaskPreference(aiPreferences.data, "consistencyReview");
   const pending = proposals.data?.filter((item) => item.proposal.status === "PENDING") ?? [];
-  const pendingReviews = pending.filter((item) => item.proposal.action === "CONSISTENCY_CHECK");
+  const pendingReviews = pending.filter((item) =>
+    item.proposal.action === "CONSISTENCY_CHECK" && item.proposal.reviewPurpose === reviewPurpose);
   const actionablePending = pending.filter((item) => item.proposal.action !== "CONSISTENCY_CHECK");
   const pendingCandidates = actionablePending.filter((item) => item.validation.status !== "NEEDS_INPUT");
   const needsInputCandidates = actionablePending.filter((item) => item.validation.status === "NEEDS_INPUT");
@@ -581,7 +595,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
   return <section className="ai-panel" aria-label={isReadinessMode ? "创作准备" : isReviewMode ? reviewingManuscript ? "正文候选审核" : "创作准入" : "AI 创作"}>
     {isReadinessMode ? <>
       <div className="section-heading ai-stage-heading"><div><h2><ClipboardCheck size={15} />创作准备</h2><p>集中检查正式设定、人物卡和章节执行卡，缺少的内容可在这里补齐。</p></div><span>生成正文前</span></div>
-      <WritingReadinessPanel chapterId={props.chapterId} chapterTitle={props.chapterTitle} volumeId={props.volumeId} volumePlan={props.volumePlan} readiness={readiness} loading={readinessLoading} sections={planningSections.data ?? []} />
+      <WritingReadinessPanel chapterId={props.chapterId} chapterTitle={props.chapterTitle} volumeId={props.volumeId} volumePlan={props.volumePlan} readiness={readiness} loading={readinessLoading} sections={planningSections.data ?? []} onOpenChapterPlan={props.onOpenChapterPlan} />
     </> : null}
 
     {isCreationMode ? <>
@@ -676,7 +690,24 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; reviewPurpose
           </> : <pre>{text}</pre>}
           {hasReviewTrace ? <ReviewTraceDetails proposalId={proposal.id} /> : null}
           <details className="consistency-raw"><summary>查看原始报告</summary><pre>{text}</pre></details>
-          <div className="ai-actions">{stale ? <button type="button" className="primary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={generationLocked || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />按当前内容重新审核</button> : consistency && (consistency.verdict === "BLOCKED" || consistency.verdict === "REVIEW") ? reviewingManuscript ? <a className="primary-action" href={`/writing#${props.chapterId}`}>返回候选区修改</a> : <a className="primary-action" href={`/chapters#${props.chapterId}`}>查看设定与执行卡</a> : null}{!stale && needsInput && targets.length ? targets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : null}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭审核</button></div>
+          <div className="ai-actions">
+            {stale ? <button type="button" className="primary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={generationLocked || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />按当前内容重新审核</button>
+              : consistency && (consistency.verdict === "BLOCKED" || consistency.verdict === "REVIEW")
+                ? reviewingManuscript
+                  ? props.onReturnToEditor
+                    ? <button type="button" className="primary-action" onClick={props.onReturnToEditor}>返回编辑</button>
+                    : <a className="primary-action" href={`/writing#${props.chapterId}`}>返回候选区修改</a>
+                  : props.onOpenChapterPlan
+                    ? <button type="button" className="primary-action" onClick={props.onOpenChapterPlan}>查看本章计划</button>
+                    : <a className="primary-action" href={`/chapters#${props.chapterId}`}>查看设定与执行卡</a>
+                : null}
+            {!stale && needsInput && targets.length ? targets.map((target) =>
+              target.id === "chapter-plan" && props.onOpenChapterPlan
+                ? <button type="button" className="primary-action" onClick={props.onOpenChapterPlan} key={target.id}>{target.label}</button>
+                : <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>,
+            ) : null}
+            <button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭审核</button>
+          </div>
         </article>;
       })}
     </section> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>{reviewingManuscript ? "当前没有候选审核报告" : "当前没有创作准入报告"}</strong><span>{reviewingManuscript ? "候选区写作或修改后可反复审核；人物状态、规则、时间线和叙述问题会集中显示在这里。" : "检查后会明确当前是否可以生成正文，以及还需要补齐哪些设定。"}</span></div></div> : null}

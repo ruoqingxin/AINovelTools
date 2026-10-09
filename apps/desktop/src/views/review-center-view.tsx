@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { ClipboardCheck, FileCheck2, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { currentManuscript, getAuditFlowSettings, listPlanNodes, listPlanningSections } from "../lib/tauri-client";
+import { getAuditFlowSettings, listPlanNodes, listPlanningSections } from "../lib/tauri-client";
+import { manuscriptQuery } from "../lib/manuscript-query";
 import { AiWritingPanel } from "./ai-writing-panel";
 import { KnowledgeReviewView } from "./knowledge-review-view";
 
@@ -63,11 +64,7 @@ export function ReviewCenterView() {
   const selectedVolume = selectedChapter
     ? (nodes.data ?? []).find((node) => node.id === selectedChapter.parentId && node.kind === "VOLUME")
     : undefined;
-  const manuscript = useQuery({
-    queryKey: ["manuscript", selectedChapterId],
-    queryFn: () => currentManuscript(selectedChapterId),
-    enabled: Boolean(selectedChapterId),
-  });
+  const manuscript = useQuery(manuscriptQuery(selectedChapterId));
   const chapterPlan = planningSections.data?.find((section) => section.id === nodePlanId(selectedChapterId))?.content ?? "";
   const volumePlan = selectedVolume
     ? planningSections.data?.find((section) => section.id === nodePlanId(selectedVolume.id))?.content ?? ""
