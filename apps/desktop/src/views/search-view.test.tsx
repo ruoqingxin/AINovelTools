@@ -7,6 +7,7 @@ import { SearchView } from "./search-view";
 const mocks = vi.hoisted(() => ({
   searchProject: vi.fn(),
   rebuildSearchIndex: vi.fn(),
+  getCurrentProject: vi.fn(),
 }));
 
 vi.mock("../lib/tauri-client", async () => ({
@@ -24,11 +25,12 @@ function result(index: number) {
 }
 
 describe("SearchView", () => {
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); window.history.replaceState(null, "", "/"); });
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.searchProject.mockResolvedValue([]);
     mocks.rebuildSearchIndex.mockResolvedValue(undefined);
+    mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
   });
 
   it("debounces input and searches only the final trimmed keyword", async () => {
@@ -88,5 +90,20 @@ describe("SearchView", () => {
     fireEvent.click(screen.getByRole("button", { name: "重建索引" }));
     expect(await screen.findByText("result-0")).toBeVisible();
     expect(mocks.rebuildSearchIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores query and filter and links an exact manuscript revision with its return context", async () => {
+    window.history.replaceState(null, "", "/search?q=%E9%9B%BE%E5%9F%8E&type=MANUSCRIPT");
+    mocks.searchProject.mockResolvedValue([{ objectType: "MANUSCRIPT", objectId: "old-revision",
+      sourceVersion: "manuscript:old-revision", blockId: "block:1", snippet: "旧原文" }]);
+    renderSearch();
+    expect(screen.getByRole("textbox")).toHaveValue("雾城");
+    expect(screen.getByRole("combobox")).toHaveValue("MANUSCRIPT");
+    const url = new URL((await screen.findByRole("link", { name: "定位原文" })).getAttribute("href")!, window.location.origin);
+    expect(url.searchParams.get("sourceProject")).toBe("project-1");
+    expect(url.searchParams.get("sourceRevision")).toBe("old-revision");
+    expect(url.searchParams.get("sourceBlock")).toBe("block:1");
+    expect(new URL(url.searchParams.get("returnTo")!, window.location.origin).searchParams.get("q")).toBe("雾城");
+    expect(mocks.searchProject).toHaveBeenCalledWith("雾城", "MANUSCRIPT", 50, 0);
   });
 });

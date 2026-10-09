@@ -38,6 +38,7 @@ mod entity_store;
 mod extraction_store;
 mod knowledge_store;
 mod materials_store;
+mod manuscript_source_store;
 mod review_contract;
 mod review_rules;
 mod review_store;
@@ -69,6 +70,9 @@ pub use extraction_store::{
 };
 pub use knowledge_store::KnowledgeStoreError;
 pub use materials_store::MaterialsStoreError;
+pub use manuscript_source_store::{
+    ManuscriptSource, ManuscriptSourceError, ManuscriptSourceRequest,
+};
 pub use novel_domain::{
     AiAction, AiProposal, AiProposalStatus, AiTaskStatus, AuditFlowSettings, Belief,
     CandidateStatus, ChangeSet, ChangeSetStatus, ChapterContract, ContextAuthority, Entity,

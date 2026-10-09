@@ -7,6 +7,7 @@ import { KnowledgeReviewView } from "./knowledge-review-view";
 const mocks = vi.hoisted(() => ({
   listPlanNodes: vi.fn(), listKnowledgeCandidates: vi.fn(), detectCandidateConflicts: vi.fn(),
   listEvidenceAnchors: vi.fn(), listManuscriptRevisions: vi.fn(), reviewKnowledgeCandidate: vi.fn(),
+  getCurrentProject: vi.fn(), getManuscriptSource: vi.fn(),
 }));
 vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
@@ -23,24 +24,42 @@ describe("knowledge evidence query budget", () => {
     }]);
     mocks.detectCandidateConflicts.mockResolvedValue([]);
     mocks.listEvidenceAnchors.mockResolvedValue([{
-      id: "anchor-1", chapterId: "chapter-1", sourceRevisionId: "original-revision", sourceVersion: "manuscript:original-revision", blockId: "original-block",
+      id: "anchor-1", projectId: "project-1", chapterId: "chapter-1", sourceRevisionId: "original-revision", sourceVersion: "manuscript:original-revision", blockId: "original-block",
     }]);
+    mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
+    mocks.getManuscriptSource.mockResolvedValue({ quote: "候选绑定的原修订证据" });
     mocks.listManuscriptRevisions.mockResolvedValue([
       { id: "current-revision", documentJson: JSON.stringify({ content: [{ attrs: { blockId: "original-block" }, content: [{ text: "新修订，不是候选证据" }] }] }) },
       { id: "original-revision", documentJson: JSON.stringify({ content: [{ attrs: { blockId: "original-block" }, content: [{ text: "候选绑定的原修订证据" }] }] }) },
     ]);
   });
 
-  it("fetches history only on expansion and uses the bound revision, not the latest text", async () => {
+  it("verifies the bound evidence only on expansion without loading chapter history", async () => {
     render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <KnowledgeReviewView embedded chapterId="chapter-1" />
     </QueryClientProvider>);
     const summary = await screen.findByText("查看原文证据");
     expect(mocks.listManuscriptRevisions).not.toHaveBeenCalled();
+    expect(mocks.getManuscriptSource).not.toHaveBeenCalled();
     fireEvent.click(summary);
     expect(await screen.findByText("候选绑定的原修订证据")).toBeVisible();
     expect(screen.queryByText("新修订，不是候选证据")).not.toBeInTheDocument();
-    expect(mocks.listManuscriptRevisions).toHaveBeenCalledOnce();
+    expect(mocks.listManuscriptRevisions).not.toHaveBeenCalled();
+    expect(mocks.getManuscriptSource).toHaveBeenCalledWith({ projectId: "project-1", evidenceAnchorId: "anchor-1",
+      revisionId: "original-revision", chapterId: "chapter-1", blockId: "original-block" });
+    expect(screen.getByRole("link", { name: "定位原文" })).toHaveAttribute("href", expect.stringContaining("sourceEvidence=anchor-1"));
+  });
+
+  it("reports mismatched evidence without showing latest text and permits retry", async () => {
+    mocks.getManuscriptSource.mockRejectedValueOnce({ code: "SOURCE_MISMATCH", message: "hash mismatch" });
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <KnowledgeReviewView embedded chapterId="chapter-1" />
+    </QueryClientProvider>);
+    fireEvent.click(await screen.findByText("查看原文证据"));
+    expect(await screen.findByText(/hash mismatch/)).toHaveTextContent("未使用其他修订");
+    expect(mocks.listManuscriptRevisions).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByText("候选绑定的原修订证据")).toBeVisible();
   });
 
   it("suspends all hidden knowledge queries and resumes when shown", async () => {

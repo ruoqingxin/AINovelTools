@@ -88,6 +88,14 @@ export type ManuscriptRevision = {
   createdAt: string;
 };
 
+export type ManuscriptSourceRequest = {
+  projectId?: string; revisionId?: string; evidenceAnchorId?: string; chapterId?: string; blockId?: string;
+};
+export type ManuscriptSource = {
+  revision: ManuscriptRevision; chapterTitle: string; chapterArchived: boolean; isCurrentRevision: boolean;
+  blockId: string | null; blockText: string | null; quote: string | null; evidenceAnchorId: string | null;
+};
+
 export type FeatureDescriptor = { id: string; displayName: string; stage: string; status: "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED"; unavailableReason: string | null };
 export type R4MigrationDescriptor = { version: number; name: string; purpose: string; dependsOn: number[] };
 export type R4ContractDescriptor = { id: string; layer: string; purpose: string; introducedBy: number };
@@ -778,6 +786,10 @@ export function listManuscriptRevisions(chapterId: string) {
   return invoke<ManuscriptRevision[]>("list_manuscript_revisions", { chapterId });
 }
 
+export function getManuscriptSource(request: ManuscriptSourceRequest) {
+  return invoke<ManuscriptSource>("get_manuscript_source", { request });
+}
+
 export function saveRecoveryLog(input: { chapterId: string; documentJson: string }) {
   return invoke<void>("save_recovery_log", input);
 }
@@ -951,7 +963,7 @@ export function invalidateProjectQueries(queryClient: { invalidateQueries: (opti
     ["writing-cards"], ["plan-nodes"], ["planning-sections"], ["current-facts"], ["evidence-anchors"],
     ["relations"], ["events"], ["beliefs"], ["foreshadowings"], ["knowledge-candidates"],
     ["knowledge-conflicts"], ["project-search"], ["jobs"], ["recovery-all"], ["manuscript"],
-    ["manuscript-draft"], ["manuscript-history"], ["recovery-logs"], ["ai-proposals"], ["ai-runs"],
+    ["manuscript-draft"], ["manuscript-history"], ["manuscript-source"], ["recovery-logs"], ["ai-proposals"], ["ai-runs"],
     ["project-ai-task-overrides"], ["writing-review-policy"],
   ];
   return Promise.all([

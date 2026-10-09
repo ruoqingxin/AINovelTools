@@ -157,7 +157,9 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     projectId: currentProject.data?.projectId,
     mode: workspaceMode,
     onError: setError,
-    initialTab: isChapterMode ? "candidate" : "manuscript",
+    initialTab: isChapterMode
+      ? new URLSearchParams(window.location.search).get("tab") === "extraction" ? "extraction" : "candidate"
+      : "manuscript",
   });
   const { manuscript, chapterDirty, savingDraft, setManuscriptTab } = chapterManuscript;
   const activeNodes = nodeIndex.activeNodes;

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Clock3, FilePlus2, LoaderCircle, RefreshCw, Save, X } from "lucide-react";
+import { BookOpenText, Check, Clock3, FilePlus2, LoaderCircle, RefreshCw, Save, X } from "lucide-react";
 import { useState } from "react";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
@@ -19,6 +19,8 @@ import {
 import { AiModelNote } from "./ai-model-note";
 import { manuscriptQuery } from "../lib/manuscript-query";
 import { useCandidateEdits, useCandidateEditGuard } from "./use-candidate-edits";
+import { manuscriptSourceHref } from "../lib/manuscript-source";
+import { evidenceSourceRequest } from "./evidence-source";
 
 const kindLabels = {
   ENTITY: "实体",
@@ -323,6 +325,7 @@ export function ChapterExtractionPanel(props: { chapterId: string; active?: bool
           }}>放弃修改</button></div> : null}
           <footer>
             <span>{anchor ? `${anchor.sourceVersion} · ${anchor.blockId}` : "证据待载入"}</span>
+            {anchor ? <a href={manuscriptSourceHref(evidenceSourceRequest(anchor), `/writing?tab=extraction#${encodeURIComponent(props.chapterId)}`)}><BookOpenText size={14} />定位原文</a> : null}
             {props.onOpenManuscript
               ? <button type="button" className="secondary-action" onClick={props.onOpenManuscript}>查看已保存正文</button>
               : <a href={`/writing#${props.chapterId}`}>打开正文</a>}

@@ -16,6 +16,25 @@ impl ApiError {
     }
 }
 
+impl From<novel_infrastructure::ManuscriptSourceError> for ApiError {
+    fn from(error: novel_infrastructure::ManuscriptSourceError) -> Self {
+        use novel_infrastructure::ManuscriptSourceError;
+        let code = match error {
+            ManuscriptSourceError::NoProject => "NO_PROJECT_OPEN",
+            ManuscriptSourceError::NotFound => "SOURCE_NOT_FOUND",
+            ManuscriptSourceError::Mismatch => "SOURCE_MISMATCH",
+            ManuscriptSourceError::InvalidRequest | ManuscriptSourceError::InvalidDocument => {
+                "INVALID_SOURCE"
+            }
+            ManuscriptSourceError::Database(_) => "DATABASE_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
 impl From<novel_infrastructure::ProjectError> for ApiError {
     fn from(error: novel_infrastructure::ProjectError) -> Self {
         let code = match error {

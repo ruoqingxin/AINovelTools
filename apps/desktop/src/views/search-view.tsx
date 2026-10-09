@@ -1,15 +1,22 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Database, RefreshCw, Search } from "lucide-react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BookOpenText, Database, RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import { errorMessage, rebuildSearchIndex, searchProject } from "../lib/tauri-client";
+import { errorMessage, getCurrentProject, rebuildSearchIndex, searchProject } from "../lib/tauri-client";
+import { manuscriptSourceHref } from "../lib/manuscript-source";
 
 const PAGE_SIZE = 50;
 
 export function SearchView() {
   const client = useQueryClient();
-  const [query, setQuery] = useState("");
-  const [keyword, setKeyword] = useState("");
-  const [objectType, setObjectType] = useState("");
+  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get("q") ?? "");
+  const [keyword, setKeyword] = useState(() => query.trim());
+  const [objectType, setObjectType] = useState(() => {
+    const type = new URLSearchParams(window.location.search).get("type") ?? "";
+    return ["ENTITY", "SUMMARY", "CARD", "PLAN", "MANUSCRIPT"].includes(type) ? type : "";
+  });
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject, staleTime: 30_000 });
+  const returnParams = new URLSearchParams({ q: query, ...(objectType ? { type: objectType } : {}) });
+  const returnTo = `/search?${returnParams.toString()}`;
 
   useEffect(() => {
     const timer = window.setTimeout(() => setKeyword(query.trim()), 250);
@@ -17,12 +24,12 @@ export function SearchView() {
   }, [query]);
 
   const results = useInfiniteQuery({
-    queryKey: ["project-search", keyword, objectType],
+    queryKey: ["project-search", project.data?.projectId, keyword, objectType],
     queryFn: ({ pageParam }) => searchProject(keyword, objectType || undefined, PAGE_SIZE, pageParam),
     initialPageParam: 0,
     getNextPageParam: (lastPage, _pages, lastOffset) =>
       lastPage.length === PAGE_SIZE ? lastOffset + PAGE_SIZE : undefined,
-    enabled: keyword.length > 0,
+    enabled: keyword.length > 0 && Boolean(project.data),
   });
   const rebuild = useMutation({
     mutationFn: rebuildSearchIndex,
@@ -45,7 +52,11 @@ export function SearchView() {
       {hasQuery && (isDebouncing || results.isPending) ? <p className="plan-empty">正在搜索…</p> : null}
       {hasQuery && !isDebouncing && results.isError ? <p className="project-error" role="alert">搜索失败：{errorMessage(results.error)}</p> : null}
       {hasQuery && !isDebouncing && results.isSuccess && items.length === 0 ? <p className="plan-empty"><Database size={16} />没有匹配结果。</p> : null}
-      {hasQuery && !isDebouncing ? items.map((item) => <article className="search-result" key={`${item.objectType}-${item.objectId}`}><div><span className="entity-type-badge">{item.objectType}</span><code>{item.sourceVersion ?? "无来源版本"}{item.blockId ? ` · 块 ${item.blockId}` : ""}</code></div><p>{item.snippet}</p></article>) : null}
+      {hasQuery && !isDebouncing ? items.map((item) => <article className="search-result" key={`${item.objectType}-${item.objectId}`}><div><span className="entity-type-badge">{item.objectType}</span><code>{item.sourceVersion ?? "无来源版本"}{item.blockId ? ` · 块 ${item.blockId}` : ""}</code></div><p>{item.snippet}</p>
+        {item.objectType === "MANUSCRIPT" && project.data ? <a className="secondary-action" href={manuscriptSourceHref({
+          projectId: project.data.projectId, revisionId: item.objectId, ...(item.blockId ? { blockId: item.blockId } : {}),
+        }, returnTo)}><BookOpenText size={14} />定位原文</a> : null}
+      </article>) : null}
       {hasQuery && !isDebouncing && results.hasNextPage ? <button type="button" className="secondary-action search-more" disabled={results.isFetching} onClick={() => void results.fetchNextPage()}>{results.isFetchingNextPage ? "正在加载…" : "加载更多"}</button> : null}
     </div>
   </section>;

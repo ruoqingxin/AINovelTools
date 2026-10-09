@@ -16,6 +16,7 @@ vi.mock("./views/project-workspace-view", () => ({
 vi.mock("./views/discussion-view", () => ({ DiscussionView: () => <p>Discussion</p> }));
 vi.mock("./views/review-center-view", () => ({ ReviewCenterView: () => <p>Review</p> }));
 vi.mock("./views/settings-view", () => ({ SettingsView: () => <p>Settings</p> }));
+vi.mock("./views/manuscript-source-view", () => ({ ManuscriptSourceView: () => <p>Verified source</p> }));
 
 function renderRoute(path: string) {
   const testRouter = createRouter({
@@ -42,6 +43,9 @@ describe("project routes", () => {
     ["/planning", "Workspace planning"],
     ["/writing", "Workspace writing"],
     ["/chapters", "Workspace writing"],
+    ["/writing?sourceRevision=old-revision", "Verified source"],
+    ["/chapters?sourceEvidence=anchor-1", "Verified source"],
+    ["/writing?sourceRevision=", "Verified source"],
     ["/discussion", "Discussion"],
     ["/review", "Review"],
     ["/knowledge/review", "Review"],

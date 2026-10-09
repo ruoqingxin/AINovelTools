@@ -5,7 +5,7 @@ use super::*;
 pub struct SearchResult {
     pub object_type: String,
     pub object_id: Uuid,
-    pub block_id: Option<Uuid>,
+    pub block_id: Option<String>,
     pub source_version: Option<String>,
     pub snippet: String,
 }
@@ -15,11 +15,17 @@ fn search_result_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchRes
     let object_id = Uuid::parse_str(&object_id).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
     })?;
+    let object_type: String = row.get(0)?;
+    let source_version = if object_type == "MANUSCRIPT" {
+        Some(format!("manuscript:{object_id}"))
+    } else {
+        row.get(2)?
+    };
     Ok(SearchResult {
-        object_type: row.get(0)?,
+        object_type,
         object_id,
         block_id: None,
-        source_version: row.get(2)?,
+        source_version,
         snippet: row.get(3)?,
     })
 }
@@ -88,7 +94,7 @@ impl Database {
         tx.execute("INSERT INTO search_index SELECT 'ENTITY', e.id, e.project_id, er.source_version, er.name || char(10) || er.description || char(10) || er.tags_json FROM entities e JOIN entity_revisions er ON er.id = e.current_revision_id WHERE e.project_id = ?1 AND e.lifecycle_status = 'ACTIVE'", [project_id.to_string()])?;
         tx.execute("INSERT INTO search_index SELECT 'SUMMARY', id, project_id, source_version, content FROM summary_materials WHERE project_id = ?1 AND lifecycle_status = 'ACTIVE'", [project_id.to_string()])?;
         tx.execute("INSERT INTO search_index SELECT 'CARD', id, project_id, source_version, title || char(10) || content FROM writing_cards WHERE project_id = ?1 AND enabled = 1", [project_id.to_string()])?;
-        tx.execute("INSERT INTO search_index SELECT 'MANUSCRIPT', id, ?1, CAST(document_schema_version AS TEXT), document_json FROM manuscript_revisions WHERE chapter_id IN (SELECT id FROM chapters)", [project_id.to_string()])?;
+        tx.execute("INSERT INTO search_index SELECT 'MANUSCRIPT', id, ?1, 'manuscript:' || id, document_json FROM manuscript_revisions WHERE chapter_id IN (SELECT id FROM chapters)", [project_id.to_string()])?;
         Ok(())
     }
 
@@ -104,6 +110,7 @@ impl Database {
         if query.is_empty() {
             return Ok(Vec::new());
         }
+        let literal_query = query.to_owned();
         let limit = i64::from(limit.clamp(1, 100));
         let offset = i64::from(offset);
         let short_query = query.chars().take(3).count() < 3;
@@ -125,7 +132,9 @@ impl Database {
             rusqlite::params![project_id.to_string(), object_type, query, limit, offset],
             search_result_from_row,
         )?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        let mut results = rows.collect::<Result<Vec<_>, _>>()?;
+        self.locate_manuscript_results(&mut results, &literal_query)?;
+        Ok(results)
     }
 
     fn search_project_objects(
@@ -148,6 +157,49 @@ impl Database {
             search_result_from_row,
         )?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    fn locate_manuscript_results(
+        &self,
+        results: &mut [SearchResult],
+        query: &str,
+    ) -> Result<(), DatabaseError> {
+        let needle = query.to_lowercase();
+        for result in results
+            .iter_mut()
+            .filter(|result| result.object_type == "MANUSCRIPT")
+        {
+            let json = self
+                .connection
+                .query_row(
+                    "SELECT document_json FROM manuscript_revisions WHERE id = ?1",
+                    [result.object_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let Some(document) =
+                json.and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+            else {
+                continue;
+            };
+            if let Some((block_id, text)) =
+                super::manuscript_source_store::manuscript_blocks(&document)
+                    .into_iter()
+                    .find(|(_, text)| text.to_lowercase().contains(&needle))
+            {
+                let lower = text.to_lowercase();
+                let start = lower
+                    .find(&needle)
+                    .map_or(0, |start| lower[..start].chars().count());
+                result.block_id = Some(block_id);
+                result.snippet = text
+                    .chars()
+                    .skip(start.saturating_sub(50))
+                    .take(180)
+                    .collect();
+            }
+        }
+        Ok(())
     }
 }
 
@@ -231,12 +283,10 @@ mod tests {
                 })
                 .collect();
             assert_eq!(actual, ids);
-            assert!(
-                database
-                    .search_project(project_id, query, Some("CARD"), 50, 0)
-                    .expect("filter")
-                    .is_empty()
-            );
+            assert!(database
+                .search_project(project_id, query, Some("CARD"), 50, 0)
+                .expect("filter")
+                .is_empty());
         }
     }
 
@@ -270,12 +320,10 @@ mod tests {
         );
         assert_eq!(results[0].source_version.as_deref(), Some("test:1"));
         assert_eq!(results[0].snippet, "second");
-        assert!(
-            database
-                .search_project_objects(project_id, &[])
-                .expect("empty lookup")
-                .is_empty()
-        );
+        assert!(database
+            .search_project_objects(project_id, &[])
+            .expect("empty lookup")
+            .is_empty());
     }
 
     #[test]
@@ -289,5 +337,54 @@ mod tests {
                 rusqlite::Error::FromSqlConversionFailure(..)
             ))
         ));
+    }
+
+    #[test]
+    fn manuscript_search_locates_opaque_nested_blocks_and_historical_revisions() {
+        let root = std::env::temp_dir().join(format!("ainovel-search-source-{}", Uuid::new_v4()));
+        let mut manager = ProjectManager::new();
+        manager.create(&root, "search test").unwrap();
+        let chapter = manager
+            .create_plan_node(None, PlanNodeKind::Chapter, "章".into())
+            .unwrap();
+        let old = manager
+            .save_manuscript(
+                chapter.id,
+                serde_json::json!({
+                    "type": "doc", "content": [{"type":"blockquote","attrs":{"blockId":"parent"},
+                        "content":[{"type":"paragraph","attrs":{"blockId":"block:1"},
+                        "content":[{"type":"text","text":"调查者进入北境，进度50%，编号A_B。"}]}]}]
+                })
+                .to_string(),
+                "TEST".into(),
+            )
+            .unwrap();
+        manager.save_manuscript(chapter.id,
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"新正文"}]}]}"#.into(),
+            "NEW".into()).unwrap();
+        for query in ["调查者", "50%", "%", "_", " 北境 "] {
+            let results = manager
+                .search_project(query.into(), Some("MANUSCRIPT".into()), 50, 0)
+                .unwrap();
+            assert_eq!(results.len(), 1, "{query}");
+            assert_eq!(results[0].object_id, old.id);
+            assert_eq!(results[0].block_id.as_deref(), Some("block:1"));
+            assert_eq!(
+                results[0].source_version,
+                Some(format!("manuscript:{}", old.id))
+            );
+            assert!(results[0].snippet.starts_with("调查者"));
+            assert!(!results[0].snippet.contains("\"type\""));
+        }
+        let metadata = manager
+            .search_project("blockquote".into(), Some("MANUSCRIPT".into()), 50, 0)
+            .unwrap();
+        assert!(metadata.iter().all(|hit| hit.block_id.is_none()));
+        assert_eq!(
+            manager.search_project_objects(&[old.id]).unwrap()[0].source_version,
+            Some(format!("manuscript:{}", old.id))
+        );
+        drop(manager);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

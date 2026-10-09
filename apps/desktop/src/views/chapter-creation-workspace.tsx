@@ -54,7 +54,8 @@ export function ChapterCreationWorkspace({
   const [visitedAssistantTabs, setVisitedAssistantTabs] = useState<AssistantTab[]>(["ai"]);
   const [assistantOpen, setAssistantOpen] = useState(true);
   const [reviewPurpose, setReviewPurpose] = useState<"admission" | "manuscript">("manuscript");
-  const [knowledgeTab, setKnowledgeTab] = useState<"extraction" | "facts">("extraction");
+  const [knowledgeTab, setKnowledgeTab] = useState<"extraction" | "facts">(() =>
+    new URLSearchParams(window.location.search).get("knowledge") === "facts" ? "facts" : "extraction");
   const [visitedReviews, setVisitedReviews] = useState<Array<"admission" | "manuscript">>([]);
   const [extractionVisited, setExtractionVisited] = useState(false);
   const [factsVisited, setFactsVisited] = useState(false);

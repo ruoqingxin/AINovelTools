@@ -3,12 +3,14 @@ import {
   createRoute,
   createRouter,
   lazyRouteComponent,
+  useRouterState,
 } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { AppShell } from "./shell/app-shell";
 import { EmptyProjectView } from "./views/empty-project-view";
 import { useQuery } from "@tanstack/react-query";
 import { getCurrentProject } from "./lib/tauri-client";
+import { parseManuscriptSource } from "./lib/manuscript-source";
 
 const ProjectWorkspaceView = lazyRouteComponent(() => import("./views/project-workspace-view"), "ProjectWorkspaceView");
 const StoryBibleView = lazyRouteComponent(() => import("./views/story-bible-view"), "StoryBibleView");
@@ -20,6 +22,7 @@ const DiscussionView = lazyRouteComponent(() => import("./views/discussion-view"
 const ReviewCenterView = lazyRouteComponent(() => import("./views/review-center-view"), "ReviewCenterView");
 const KnowledgeRecordsView = lazyRouteComponent(() => import("./views/knowledge-records-view"), "KnowledgeRecordsView");
 const AuthorSettingsView = lazyRouteComponent(() => import("./views/author-settings-view"), "AuthorSettingsView");
+const ManuscriptSourceView = lazyRouteComponent(() => import("./views/manuscript-source-view"), "ManuscriptSourceView");
 
 function RouteErrorView({ error, reset }: { error: Error; reset: () => void }) {
   const goBack = () => {
@@ -52,7 +55,9 @@ function PlanningEntryView() {
 }
 
 function WritingEntryView() {
-  return <ProjectGate><ProjectWorkspaceView mode="writing" /></ProjectGate>;
+  const search = useRouterState({ select: (state) => state.location.searchStr });
+  return <ProjectGate>{parseManuscriptSource(search) ? <ManuscriptSourceView search={search} />
+    : <ProjectWorkspaceView mode="writing" />}</ProjectGate>;
 }
 
 function ChaptersEntryView() {

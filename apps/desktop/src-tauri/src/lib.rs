@@ -50,7 +50,7 @@ use commands::knowledge::{
 };
 use commands::manuscript::{
     clear_recovery_logs, commit_manuscript_draft, current_manuscript, current_manuscript_draft,
-    discard_manuscript_draft, enqueue_chapter_summary_refresh, list_all_recovery_logs,
+    discard_manuscript_draft, enqueue_chapter_summary_refresh, get_manuscript_source, list_all_recovery_logs,
     list_manuscript_revisions, list_recovery_logs, merge_manuscript, save_manuscript,
     save_manuscript_checked, save_manuscript_draft, save_recovery_log,
 };
@@ -152,6 +152,7 @@ pub fn run() {
             discard_manuscript_draft,
             commit_manuscript_draft,
             list_manuscript_revisions,
+            get_manuscript_source,
             list_recovery_logs,
             list_all_recovery_logs,
             clear_recovery_logs,

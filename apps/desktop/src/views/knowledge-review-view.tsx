@@ -2,13 +2,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, FileCheck2, RefreshCw, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCandidateEditGuard } from "./use-candidate-edits";
+import { EvidenceSource } from "./evidence-source";
 import {
   detectCandidateConflicts,
   errorMessage,
   finalizeKnowledgeCandidates,
   listEvidenceAnchors,
   listKnowledgeCandidates,
-  listManuscriptRevisions,
   listPlanNodes,
   reviewKnowledgeCandidate,
   type CandidateStatus,
@@ -26,18 +26,6 @@ const conflictKindLabels = {
   DUPLICATE_FACT: "重复事实",
   CONTRADICTORY_OBJECT: "结论冲突",
 } as const;
-
-function extractBlockText(documentJson: string, blockId: string) {
-  try {
-    const document = JSON.parse(documentJson) as {
-      content?: Array<{ attrs?: { blockId?: string }; content?: Array<{ text?: string }> }>;
-    };
-    const block = (document.content ?? []).find((item) => item.attrs?.blockId === blockId);
-    return (block?.content ?? []).map((item) => item.text ?? "").join("");
-  } catch {
-    return "";
-  }
-}
 
 export function KnowledgeReviewView(props: {
   embedded?: boolean;
@@ -67,11 +55,9 @@ export function KnowledgeReviewView(props: {
     enabled: active && Boolean(selectedChapterId),
   });
   const anchors = useQuery({ queryKey: ["evidence-anchors"], queryFn: listEvidenceAnchors, enabled: active && Boolean(selectedChapterId) });
-  const revisions = useQuery({
-    queryKey: ["manuscript-history", selectedChapterId],
-    queryFn: () => listManuscriptRevisions(selectedChapterId),
-    enabled: active && Boolean(selectedChapterId) && (candidates.data ?? []).some((candidate) => evidenceOpen[candidate.id]),
-  });
+  const returnTo = props.onOpenManuscript
+    ? `/writing?tab=extraction&knowledge=facts#${encodeURIComponent(selectedChapterId)}`
+    : `/review?${new URLSearchParams({ tab: "facts", chapterId: selectedChapterId })}`;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   useCandidateEditGuard(false, busy !== null, props.onPendingChange);
@@ -150,18 +136,10 @@ export function KnowledgeReviewView(props: {
               setEvidenceOpen((current) => ({ ...current, [candidate.id]: open }));
             }}>
               <summary>查看原文证据<span>{evidence.length} 条</span></summary>
-              <div>{evidence.map((anchor) => {
-                const revision = revisions.data?.find((item) => item.id === anchor.sourceRevisionId);
-                const snippet = revision ? extractBlockText(revision.documentJson, anchor.blockId) : "";
-                return <blockquote key={anchor.id}>
-                  <p>{revisions.isPending ? "正在读取原文版本…" : revisions.isError ? "原文读取失败，请重试或根据来源版本复核。" : snippet ? `${snippet.slice(0, 260)}${snippet.length > 260 ? "…" : ""}` : "原文版本已不可用，请根据来源版本复核。"}</p>
-                  <footer><span>{anchor.sourceVersion}</span><code>{anchor.blockId}</code>
-                    {props.onOpenManuscript && anchor.chapterId === selectedChapterId
-                      ? <button type="button" className="secondary-action" onClick={props.onOpenManuscript}>查看已保存正文</button>
-                      : <a href={`/writing#${anchor.chapterId}`}>打开正文</a>}
-                  </footer>
-                </blockquote>;
-              })}</div>
+              <div>{evidence.map((anchor) => <EvidenceSource key={anchor.id} anchor={anchor}
+                active={active && Boolean(evidenceOpen[candidate.id])} returnTo={returnTo} />)}
+                {props.onOpenManuscript ? <button type="button" className="secondary-action" onClick={props.onOpenManuscript}>查看已保存正文</button> : null}
+              </div>
             </details> : <p className="knowledge-candidate-no-evidence">这条候选没有可展示的证据锚点。</p>}
             {candidate.candidateStatus === "PENDING" || candidate.candidateStatus === "NEEDS_REVIEW" ? <div className="inspector-actions"><button type="button" className="secondary-action" onClick={() => void decide(candidate.id, candidate.candidateStatus, "REJECT")} disabled={busy !== null}><X size={14} />拒绝</button><button type="button" className="primary-action" onClick={() => void decide(candidate.id, candidate.candidateStatus, "APPROVE")} disabled={busy !== null}><Check size={14} />批准</button></div> : null}
           </article>;

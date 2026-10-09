@@ -3820,6 +3820,8 @@ textarea:focus-visible,
 .knowledge-candidate-evidence blockquote footer { display:flex; flex-wrap:wrap; align-items:center; gap:8px; color:#8394ad; font-size:10px; }
 .knowledge-candidate-evidence blockquote code { color:#637997; }
 .knowledge-candidate-evidence blockquote a { margin-left:auto; color:#2f68d1; font-weight:700; text-decoration:none; }
+.knowledge-candidate-evidence blockquote a, .chapter-extraction-item footer a { display:inline-flex; align-items:center; gap:5px; }
+.search-result > a.secondary-action { display:inline-flex; align-items:center; gap:6px; min-height:32px; padding:5px 9px; border-radius:5px; font-size:12px; text-decoration:none; }
 .knowledge-candidate-no-evidence { align-self:flex-start; margin:7px 0 0; color:#9a7960; font-size:11px; }
 .knowledge-conflict-panel { display:grid; gap:11px; margin-top:16px; padding:14px; border:1px solid #e2b75d; border-radius:8px; color:#7a5413; background:#fff8e6; }
 .knowledge-conflict-heading { display:flex; align-items:flex-start; gap:9px; }
