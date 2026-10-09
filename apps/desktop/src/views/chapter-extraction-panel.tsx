@@ -18,6 +18,7 @@ import {
 } from "../lib/tauri-client";
 import { AiModelNote } from "./ai-model-note";
 import { manuscriptQuery } from "../lib/manuscript-query";
+import { useCandidateEdits, useCandidateEditGuard } from "./use-candidate-edits";
 
 const kindLabels = {
   ENTITY: "实体",
@@ -67,50 +68,79 @@ function uuidValues(payload: Record<string, unknown>, key: string) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-export function ChapterExtractionPanel(props: { chapterId: string; onOpenFactReview?: () => void; onOpenManuscript?: () => void }) {
+export function ChapterExtractionPanel(props: { chapterId: string; active?: boolean; onPendingChange?: (pending: boolean) => void; onOpenFactReview?: () => void; onOpenManuscript?: () => void }) {
   const client = useQueryClient();
-  const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
-  const aiPreferences = useAiTaskPreferences();
-  const revision = useQuery(manuscriptQuery(props.chapterId));
+  const active = props.active !== false;
+  const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles, enabled: active });
+  const aiPreferences = useAiTaskPreferences(active);
+  const revision = useQuery({ ...manuscriptQuery(props.chapterId), enabled: active && Boolean(props.chapterId) });
   const proposals = useQuery({
     queryKey: ["chapter-extractions", props.chapterId],
     queryFn: () => listChapterExtractions(props.chapterId),
-    enabled: Boolean(props.chapterId),
+    enabled: active && Boolean(props.chapterId),
   });
   const anchors = useQuery({
     queryKey: ["evidence-anchors"],
     queryFn: listEvidenceAnchors,
-    enabled: Boolean(props.chapterId),
+    enabled: active && Boolean(props.chapterId),
   });
   const facts = useQuery({
     queryKey: ["current-facts"],
     queryFn: listCurrentFacts,
-    enabled: Boolean(props.chapterId),
+    enabled: active && Boolean(props.chapterId),
   });
   const profile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "knowledgeExtraction");
   const preference = resolveTaskPreference(aiPreferences.data, "knowledgeExtraction");
   const [guidance, setGuidance] = useState("");
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [guidanceBaseline, setGuidanceBaseline] = useState("");
+  const edits = useCandidateEdits();
+  const guidanceEdits = useCandidateEdits();
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useCandidateEditGuard(edits.dirty || guidanceEdits.dirty, busy !== null, props.onPendingChange);
+
+  function parsePayload(value: string) {
+    const payload: unknown = JSON.parse(value);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("候选内容必须是 JSON 对象。");
+    }
+    return payload as Record<string, unknown>;
+  }
+
+  function itemDraft(item: ChapterExtractionItem) {
+    const entry = edits.entries[item.id];
+    return entry && (entry.value !== entry.baseline || busy === `save:${item.id}`)
+      ? entry.value : JSON.stringify(item.payload, null, 2);
+  }
+
+  function setItemDraft(item: ChapterExtractionItem, value: string) {
+    edits.edit(item.id, value, JSON.stringify(item.payload, null, 2));
+  }
+
+  function checkedPayload(item: ChapterExtractionItem) {
+    const entry = edits.entries[item.id];
+    if (entry && entry.value !== entry.baseline && entry.baseline !== JSON.stringify(item.payload, null, 2)) {
+      throw new Error("候选已有新内容，本地修改仍保留。请复制需要保留的内容后，放弃修改并重新核对。");
+    }
+    return parsePayload(itemDraft(item));
+  }
 
   function draftPayload(item: ChapterExtractionItem) {
-    const draft = drafts[item.id];
-    if (!draft) return item.payload;
     try {
-      const value = JSON.parse(draft) as unknown;
-      return value && typeof value === "object" && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : item.payload;
+      return parsePayload(itemDraft(item));
     } catch {
       return item.payload;
     }
   }
 
   function updateDraftField(item: ChapterExtractionItem, key: string, value: unknown) {
-    const payload = { ...draftPayload(item), [key]: value };
-    setDrafts((current) => ({ ...current, [item.id]: JSON.stringify(payload, null, 2) }));
+    try {
+      const payload = { ...parsePayload(itemDraft(item)), [key]: value };
+      setItemDraft(item, JSON.stringify(payload, null, 2));
+    } catch {
+      setError("JSON 格式无效，请先修正候选内容，再修改字段。");
+    }
   }
 
   function canAdopt(item: ChapterExtractionItem) {
@@ -137,6 +167,7 @@ export function ChapterExtractionPanel(props: { chapterId: string; onOpenFactRev
     setBusy("extract");
     setError(null);
     setNotice(null);
+    const submittedGuidance = guidance;
     try {
       await extractChapterCandidates({
         profileId: profile.id,
@@ -148,6 +179,8 @@ export function ChapterExtractionPanel(props: { chapterId: string; onOpenFactRev
       });
       await client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] });
       await client.invalidateQueries({ queryKey: ["evidence-anchors"] });
+      guidanceEdits.acknowledge("guidance", submittedGuidance);
+      setGuidanceBaseline(submittedGuidance);
       setNotice("本章候选已提取并绑定正文证据，确认前不会写入正式知识。");
     } catch (cause) {
       setError(errorMessage(cause));
@@ -160,9 +193,11 @@ export function ChapterExtractionPanel(props: { chapterId: string; onOpenFactRev
     setBusy(`save:${item.id}`);
     setError(null);
     try {
-      const payload = JSON.parse(drafts[item.id] ?? JSON.stringify(item.payload)) as Record<string, unknown>;
-      await updateExtractionItem({ id: item.id, payload, expectedStatus: item.status });
+      const submitted = itemDraft(item);
+      const payload = checkedPayload(item);
+      const saved = await updateExtractionItem({ id: item.id, payload, expectedStatus: item.status });
       await client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] });
+      edits.acknowledge(item.id, submitted, JSON.stringify(saved.payload, null, 2));
       setNotice("候选修改已保存。");
     } catch (cause) {
       setError(errorMessage(cause));
@@ -172,10 +207,19 @@ export function ChapterExtractionPanel(props: { chapterId: string; onOpenFactRev
   }
 
   async function decide(item: ChapterExtractionItem, decision: "DEFERRED" | "REJECTED") {
+    const changed = edits.entries[item.id]?.value !== edits.entries[item.id]?.baseline;
+    if (decision === "REJECTED" && changed && !window.confirm("这条候选有未保存修改。拒绝将丢弃这些修改，确定继续吗？")) return;
     setBusy(`decide:${item.id}`);
     setError(null);
     try {
+      if (decision === "DEFERRED" && changed) {
+        const submitted = itemDraft(item);
+        const saved = await updateExtractionItem({ id: item.id, payload: checkedPayload(item), expectedStatus: item.status });
+        await client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] });
+        edits.acknowledge(item.id, submitted, JSON.stringify(saved.payload, null, 2));
+      }
       await decideExtractionItem({ id: item.id, expectedStatus: item.status, decision });
+      edits.discard(item.id);
       await client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] });
       setNotice(decision === "DEFERRED" ? "候选已延期。" : "候选已拒绝。");
     } catch (cause) {
@@ -189,14 +233,19 @@ export function ChapterExtractionPanel(props: { chapterId: string; onOpenFactRev
     setBusy(`adopt:${item.id}`);
     setError(null);
     try {
-      if (drafts[item.id]) {
-        await updateExtractionItem({
+      const payload = checkedPayload(item);
+      if (edits.entries[item.id] && edits.entries[item.id]!.value !== edits.entries[item.id]!.baseline) {
+        const submitted = itemDraft(item);
+        const saved = await updateExtractionItem({
           id: item.id,
-          payload: draftPayload(item),
+          payload,
           expectedStatus: item.status,
         });
+        await client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] });
+        edits.acknowledge(item.id, submitted, JSON.stringify(saved.payload, null, 2));
       }
       const adopted = await adoptExtractionItem({ id: item.id, expectedStatus: item.status });
+      edits.discard(item.id);
       await Promise.all([
         client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] }),
         client.invalidateQueries({ queryKey: ["entities", false] }),
@@ -229,8 +278,8 @@ export function ChapterExtractionPanel(props: { chapterId: string; onOpenFactRev
       <h3><FilePlus2 size={14} />本章候选提取</h3>
       <span>{revision.data ? `基于修订 ${revision.data.id.slice(0, 8)}` : "尚无正文修订"}</span>
     </div>
-    <AiModelNote taskLabel="知识提取" taskKey="knowledgeExtraction" profile={profile} preference={preference} />
-    <label className="chapter-extraction-guidance"><span>提取要求（可选）</span><textarea rows={2} value={guidance} onChange={(event) => setGuidance(event.target.value)} placeholder="例如：优先提取本批新增角色、地点和可验证事实，忽略重复描写" /></label>
+    <AiModelNote active={active} taskLabel="知识提取" taskKey="knowledgeExtraction" profile={profile} preference={preference} />
+    <label className="chapter-extraction-guidance"><span>提取要求（可选）</span><textarea rows={2} value={guidance} onChange={(event) => { setGuidance(event.target.value); guidanceEdits.edit("guidance", event.target.value, guidanceBaseline); }} placeholder="例如：优先提取本批新增角色、地点和可验证事实，忽略重复描写" /></label>
     <div className="chapter-extraction-actions">
       <span>候选保留正文块、修订和原文哈希；只在作者采用后进入后续正式流程。</span>
       <button type="button" className="primary-action" onClick={() => void extract()} disabled={!profile?.hasSecret || !revision.data || busy !== null}>
@@ -247,11 +296,15 @@ export function ChapterExtractionPanel(props: { chapterId: string; onOpenFactRev
         const anchor = anchors.data?.find((candidate) => candidate.id === item.evidenceAnchorId);
         const editable = item.status === "PENDING_REVIEW" || item.status === "DEFERRED";
         const payload = draftPayload(item);
+        const entry = edits.entries[item.id];
+        const dirty = Boolean(entry && entry.value !== entry.baseline);
+        const locked = busy === `adopt:${item.id}` || busy === `decide:${item.id}`;
         return <article className="chapter-extraction-item" data-status={item.status.toLowerCase()} key={item.id}>
           <div className="chapter-extraction-item-heading">
             <div><span>{kindLabels[item.kind]}</span><strong>{itemTitle(item)}</strong></div>
             <small>{statusLabels[item.status]}</small>
           </div>
+          <fieldset disabled={locked} className="chapter-extraction-edit-fields">
           {editable && item.kind === "RELATION" ? <div className="chapter-extraction-fields">
             <label><span>起点事实</span><select aria-label={`${itemTitle(item)}起点事实`} value={stringValue(payload, "fromKnowledgeId")} onChange={(event) => updateDraftField(item, "fromKnowledgeId", event.target.value)}><option value="">选择当前事实</option>{(facts.data ?? []).map((fact) => <option key={fact.knowledgeId} value={fact.knowledgeId}>{factLabel(fact)}</option>)}</select></label>
             <label><span>终点事实</span><select aria-label={`${itemTitle(item)}终点事实`} value={stringValue(payload, "toKnowledgeId")} onChange={(event) => updateDraftField(item, "toKnowledgeId", event.target.value)}><option value="">选择当前事实</option>{(facts.data ?? []).map((fact) => <option key={fact.knowledgeId} value={fact.knowledgeId}>{factLabel(fact)}</option>)}</select></label>
@@ -263,7 +316,11 @@ export function ChapterExtractionPanel(props: { chapterId: string; onOpenFactRev
             <label><span>发生时间</span><input aria-label={`${itemTitle(item)}发生时间`} value={stringValue(payload, "occurredAt")} onChange={(event) => updateDraftField(item, "occurredAt", event.target.value)} placeholder="例如：第三日清晨 / 原文未注明" /></label>
             <fieldset><legend>参与事实（可选）</legend>{(facts.data ?? []).map((fact) => <label key={fact.knowledgeId}><input type="checkbox" checked={uuidValues(payload, "participantFactIds").includes(fact.knowledgeId)} onChange={() => updateDraftField(item, "participantFactIds", uuidValues(payload, "participantFactIds").includes(fact.knowledgeId) ? uuidValues(payload, "participantFactIds").filter((id) => id !== fact.knowledgeId) : [...uuidValues(payload, "participantFactIds"), fact.knowledgeId])} />{factLabel(fact)}</label>)}</fieldset>
           </div> : null}
-          <textarea rows={5} value={drafts[item.id] ?? JSON.stringify(item.payload, null, 2)} readOnly={!editable} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))} aria-label={`${itemTitle(item)} payload`} />
+          <textarea rows={5} value={itemDraft(item)} readOnly={!editable} onChange={(event) => setItemDraft(item, event.target.value)} aria-label={`${itemTitle(item)} payload`} />
+          </fieldset>
+          {dirty ? <div className="inspector-actions candidate-edit-status"><span>{editable ? "候选修改未保存" : "候选状态已变化，本地修改仍保留"}</span><button type="button" className="secondary-action" disabled={busy !== null} onClick={() => {
+            if (window.confirm("放弃这条候选的本地修改吗？")) edits.discard(item.id);
+          }}>放弃修改</button></div> : null}
           <footer>
             <span>{anchor ? `${anchor.sourceVersion} · ${anchor.blockId}` : "证据待载入"}</span>
             {props.onOpenManuscript

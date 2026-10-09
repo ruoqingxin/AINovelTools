@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { ReviewCenterView } from "./review-center-view";
 
 const mocks = vi.hoisted(() => ({
@@ -35,17 +36,22 @@ vi.mock("./ai-writing-panel", () => ({
     chapterPlan: string;
     volumePlan: string;
     draft: string;
-  }) => (
-    <div
+    onPendingChange?: (pending: boolean) => void;
+    active?: boolean;
+  }) => {
+    const [value, setValue] = useState("");
+    return <div
       data-testid="consistency-review"
       data-purpose={props.reviewPurpose}
       data-plan={props.chapterPlan}
       data-volume-plan={props.volumePlan}
       data-draft={props.draft}
+      data-active={String(props.active)}
     >
       {props.chapterId}
-    </div>
-  ),
+      <input aria-label="审核面板输入" value={value} onChange={(event) => { setValue(event.target.value); props.onPendingChange?.(Boolean(event.target.value)); }} />
+    </div>;
+  },
 }));
 
 function renderView() {
@@ -105,5 +111,25 @@ describe("ReviewCenterView", () => {
     const candidateReview = await screen.findByTestId("consistency-review");
     expect(candidateReview).toHaveAttribute("data-purpose", "manuscript");
     expect(candidateReview).toHaveAttribute("data-draft", "候选区尚未同步的正文");
+  });
+
+  it("retains a visited review panel and confirms pending work before changing chapters", async () => {
+    renderView();
+    await screen.findByTestId("consistency-review");
+    fireEvent.change(screen.getByLabelText("审核面板输入"), { target: { value: "未提交输入" } });
+    fireEvent.click(screen.getByRole("tab", { name: "知识审核" }));
+    expect(screen.getByTestId("consistency-review")).not.toBeVisible();
+    expect(screen.getByTestId("consistency-review")).toHaveAttribute("data-active", "false");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    try {
+      fireEvent.change(screen.getByLabelText("章节"), { target: { value: "chapter-2" } });
+      expect(screen.getByLabelText("章节")).toHaveValue("chapter-1");
+      fireEvent.click(screen.getByRole("tab", { name: "创作准入" }));
+      expect(screen.getByLabelText("审核面板输入")).toHaveValue("未提交输入");
+      confirm.mockReturnValue(true);
+      fireEvent.change(screen.getByLabelText("章节"), { target: { value: "chapter-2" } });
+      await waitFor(() => expect(screen.getByTestId("consistency-review")).toHaveTextContent("chapter-2"));
+      expect(screen.getByLabelText("审核面板输入")).toHaveValue("");
+    } finally { confirm.mockRestore(); }
   });
 });

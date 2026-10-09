@@ -5,12 +5,12 @@ import { aiTaskSettingsHref, resolveTaskChatProfile, resolveTaskPreference, useA
 import {
   enqueuePlanningAiJob,
   errorMessage,
-  listJobs,
   listModelProfiles,
   retryJob,
   type Job,
   type PlanningSection,
 } from "../lib/tauri-client";
+import { useJobs } from "../lib/jobs-query";
 import {
   auditChapterPlan,
   buildWritingReadinessItems,
@@ -38,6 +38,7 @@ function latestJobForSection(jobs: Job[], sectionId: string) {
 }
 
 export function WritingReadinessPanel(props: {
+  active?: boolean;
   chapterId: string;
   chapterTitle: string;
   volumeId: string;
@@ -48,9 +49,10 @@ export function WritingReadinessPanel(props: {
   onOpenChapterPlan?: () => void;
 }) {
   const client = useQueryClient();
-  const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
-  const jobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, refetchInterval: 1200 });
-  const aiPreferences = useAiTaskPreferences();
+  const active = props.active !== false;
+  const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles, enabled: active });
+  const jobs = useJobs({ enabled: active });
+  const aiPreferences = useAiTaskPreferences(active);
   const [generatingSectionId, setGeneratingSectionId] = useState<string | null>(null);
   const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -94,6 +96,7 @@ export function WritingReadinessPanel(props: {
   }, [props.chapterId]);
 
   useEffect(() => {
+    if (!active || !jobs.data) return;
     const completed = (jobs.data ?? []).filter(
       (job) => job.jobType === "AI_PLANNING_GENERATE" && job.status === "SUCCEEDED",
     );
@@ -107,7 +110,7 @@ export function WritingReadinessPanel(props: {
     newlyCompleted.forEach((job) => completedJobIds.current.add(job.id));
     setNotice("AI 候选已生成，确认后会立即更新创作准备度。");
     void client.invalidateQueries({ queryKey: ["planning-sections"] });
-  }, [client, jobs.data]);
+  }, [client, jobs.data, active]);
 
   async function generateSection(item: WritingReadinessItem) {
     const definition = item.kind === "chapter-plan"

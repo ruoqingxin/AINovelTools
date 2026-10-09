@@ -31,9 +31,11 @@ vi.mock("./manuscript-versions-panel", () => ({
     <button onClick={props.onRecoverLatest}>恢复草稿</button>,
 }));
 vi.mock("./chapter-extraction-panel", () => ({
-  ChapterExtractionPanel: (props: { onOpenFactReview: () => void; onOpenManuscript: () => void }) => {
+  ChapterExtractionPanel: (props: { onOpenFactReview: () => void; onOpenManuscript: () => void; onPendingChange?: (pending: boolean) => void }) => {
     panels.extraction(props);
+    const [value, setValue] = useState("");
     return <div><button onClick={props.onOpenFactReview}>转入事实审核</button>
+      <input aria-label="提取编辑" value={value} onChange={(event) => { setValue(event.target.value); props.onPendingChange?.(Boolean(event.target.value)); }} />
       <button onClick={props.onOpenManuscript}>查看已保存正文</button></div>;
   },
 }));
@@ -201,5 +203,39 @@ describe("ChapterCreationWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "收起创作助手" }));
     fireEvent.click(screen.getByRole("button", { name: "更新章节记忆" }));
     expect(state.refreshChapterMemory).toHaveBeenCalledOnce();
+  });
+
+  it("keeps extraction edits when opening facts, viewing the manuscript, or dirtying the document", () => {
+    const pending = vi.fn();
+    const props = makeProps(makeState({ manuscriptTab: "extraction" }));
+    const view = render(<ChapterCreationWorkspace {...props} onPendingChange={pending} />);
+    fireEvent.change(screen.getByLabelText("提取编辑"), { target: { value: "还未保存的第二条候选" } });
+    expect(pending).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "转入事实审核" }));
+    expect(screen.getByLabelText("提取编辑")).not.toBeVisible();
+    expect(panels.extraction).toHaveBeenLastCalledWith(expect.objectContaining({ active: false }));
+    fireEvent.click(screen.getByRole("button", { name: "提取候选" }));
+    expect(screen.getByLabelText("提取编辑")).toHaveValue("还未保存的第二条候选");
+    view.rerender(<ChapterCreationWorkspace {...props} onPendingChange={pending} state={{ ...props.state, manuscriptTab: "candidate", chapterDirty: true }} />);
+    expect(screen.getByLabelText("提取编辑")).not.toBeVisible();
+    expect(panels.extraction).toHaveBeenLastCalledWith(expect.objectContaining({ active: false }));
+    expect(pending).toHaveBeenLastCalledWith(true);
+    view.rerender(<ChapterCreationWorkspace {...props} onPendingChange={pending} />);
+    expect(screen.getByLabelText("提取编辑")).toHaveValue("还未保存的第二条候选");
+    expect(panels.extraction).toHaveBeenLastCalledWith(expect.objectContaining({ active: true }));
+  });
+
+  it("deactivates collapsed AI and lazily mounts readiness and review purposes", () => {
+    render(<ChapterCreationWorkspace {...makeProps()} />);
+    fireEvent.click(screen.getByRole("button", { name: "收起创作助手" }));
+    expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "create", active: false }));
+    fireEvent.click(screen.getByRole("button", { name: "展开创作助手" }));
+    fireEvent.click(screen.getByRole("tab", { name: "本章计划" }));
+    expect(panels.ai.mock.calls.some(([props]) => props.mode === "readiness")).toBe(false);
+    fireEvent.click(screen.getByRole("tab", { name: "检查" }));
+    expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "review", reviewPurpose: "manuscript", active: true }));
+    fireEvent.change(screen.getByLabelText("检查对象"), { target: { value: "admission" } });
+    expect(panels.ai.mock.calls.some(([props]) => props.mode === "review" && props.reviewPurpose === "manuscript" && props.active === false)).toBe(true);
+    expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "review", reviewPurpose: "admission", active: true }));
   });
 });

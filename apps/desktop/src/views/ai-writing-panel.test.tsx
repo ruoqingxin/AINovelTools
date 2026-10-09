@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   getAiTaskPreferences: vi.fn(),
   getAiUsageSummary: vi.fn(),
   getWritingReviewPolicy: vi.fn(),
+  getAuditFlowSettings: vi.fn(),
+  listSummaryMaterials: vi.fn(),
   listen: vi.fn(),
   listAiRuns: vi.fn(),
   listAiProposals: vi.fn(),
@@ -39,6 +41,8 @@ vi.mock("../lib/tauri-client", async () => {
     getAiTaskPreferences: mocks.getAiTaskPreferences,
     getAiUsageSummary: mocks.getAiUsageSummary,
     getWritingReviewPolicy: mocks.getWritingReviewPolicy,
+    getAuditFlowSettings: mocks.getAuditFlowSettings,
+    listSummaryMaterials: mocks.listSummaryMaterials,
     listAiRuns: mocks.listAiRuns,
     listAiProposals: mocks.listAiProposals,
     listEntities: mocks.listEntities,
@@ -136,6 +140,8 @@ describe("AiWritingPanel consistency review", () => {
       byTask: [],
     });
     mocks.getWritingReviewPolicy.mockResolvedValue("BALANCED");
+    mocks.getAuditFlowSettings.mockResolvedValue({ admission: true, manuscript: true, knowledge: true });
+    mocks.listSummaryMaterials.mockResolvedValue([]);
     mocks.listAiRuns.mockResolvedValue([]);
     mocks.listAiProposals.mockResolvedValueOnce([]).mockResolvedValue([review]);
     mocks.listEntities.mockResolvedValue([]);
@@ -342,7 +348,9 @@ describe("AiWritingPanel consistency review", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(await screen.findByText("查看声明与依据"));
+    const evidenceToggle = await screen.findByText("查看声明与依据");
+    expect(mocks.getConsistencyReviewTrace).not.toHaveBeenCalled();
+    fireEvent.click(evidenceToggle);
     expect(await screen.findByText("REQUIRED_EVENT")).toBeVisible();
     expect(screen.getByText("本章必须安排守门冲突。")).toBeVisible();
     expect(screen.getByText(/LOCKED_RULE · LOCKED_RULE/)).toBeVisible();
@@ -545,5 +553,144 @@ describe("AiWritingPanel consistency review", () => {
     expect(screen.queryByText("其他任务内容")).not.toBeInTheDocument();
     await act(async () => { finish(reviewProposal); });
     await waitFor(() => expect(screen.getByRole("button", { name: "检查创作条件" })).toBeEnabled());
+  });
+
+  it("suspends hidden queries and listeners even when the manuscript changes", async () => {
+    mocks.listAiProposals.mockReset().mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const props = { mode: "create" as const, chapterId: "chapter-1", chapterTitle: "入城", chapterPlan: "寻找师父", volumeId: "volume-1", volumePlan: "", draft: "当前草稿", editor: null };
+    const view = render(<QueryClientProvider client={client}><AiWritingPanel {...props} active={false} /></QueryClientProvider>);
+    await act(async () => {});
+    expect(mocks.listAiProposals).not.toHaveBeenCalled();
+    expect(mocks.listAiRuns).not.toHaveBeenCalled();
+    expect(mocks.listModelProfiles).not.toHaveBeenCalled();
+    expect(mocks.listen).not.toHaveBeenCalled();
+    view.rerender(<QueryClientProvider client={client}><AiWritingPanel {...props} /></QueryClientProvider>);
+    await waitFor(() => expect(mocks.listAiProposals).toHaveBeenCalledOnce());
+    await waitFor(() => expect(mocks.listAiRuns).toHaveBeenCalledOnce());
+    view.rerender(<QueryClientProvider client={client}><AiWritingPanel {...props} active={false} draft="隐藏期间的新正文" /></QueryClientProvider>);
+    await act(async () => { await client.invalidateQueries(); });
+    expect(mocks.listAiProposals).toHaveBeenCalledOnce();
+    expect(mocks.listAiRuns).toHaveBeenCalledOnce();
+    view.rerender(<QueryClientProvider client={client}><AiWritingPanel {...props} draft="隐藏期间的新正文" /></QueryClientProvider>);
+    await waitFor(() => expect(mocks.listAiProposals).toHaveBeenLastCalledWith(expect.objectContaining({ documentJson: "隐藏期间的新正文" })));
+    expect(mocks.listPlanningSections).not.toHaveBeenCalled();
+    expect(mocks.listEntities).not.toHaveBeenCalled();
+  });
+
+  it("does not poll a persisted task while its panel is hidden", async () => {
+    mocks.listAiProposals.mockReset().mockResolvedValue([]);
+    mocks.listAiRuns.mockReset().mockResolvedValue([{ id: "running", chapterId: "chapter-1", taskKey: "writing", status: "RUNNING" }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const props = { chapterId: "chapter-1", chapterTitle: "入城", chapterPlan: "", volumeId: "", volumePlan: "", draft: "", editor: null };
+    const view = render(<QueryClientProvider client={client}><AiWritingPanel {...props} /></QueryClientProvider>);
+    await screen.findByText("模型正在生成结果…");
+    view.rerender(<QueryClientProvider client={client}><AiWritingPanel {...props} active={false} /></QueryClientProvider>);
+    const count = mocks.listAiRuns.mock.calls.length;
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1250)); });
+    expect(mocks.listAiRuns).toHaveBeenCalledTimes(count);
+  });
+
+  it("keeps its own stream alive when hidden during generation", async () => {
+    mocks.listAiProposals.mockReset().mockResolvedValue([]);
+    let finish!: (proposal: AiProposal) => void;
+    mocks.generateAiProposal.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const listeners = new Map<string, (event: { payload: Record<string, unknown> }) => void>();
+    const unlisten = vi.fn();
+    mocks.listen.mockImplementation(async (name, callback) => { listeners.set(name, callback); return unlisten; });
+    const pending = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const props = { mode: "review" as const, chapterId: "chapter-1", chapterTitle: "入城", chapterPlan: "寻找师父", volumeId: "volume-1", volumePlan: "", draft: "当前草稿", editor: null, onPendingChange: pending };
+    const view = render(<QueryClientProvider client={client}><AiWritingPanel {...props} /></QueryClientProvider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "检查创作条件" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "检查创作条件" }));
+    await waitFor(() => expect(mocks.generateAiProposal).toHaveBeenCalledOnce());
+    act(() => listeners.get("ai-task-started")!({ payload: { taskId: "own-task" } }));
+    view.rerender(<QueryClientProvider client={client}><AiWritingPanel {...props} active={false} /></QueryClientProvider>);
+    act(() => listeners.get("ai-task-chunk")!({ payload: { taskId: "own-task", chunk: "隐藏期间的审核结果" } }));
+    expect(unlisten).not.toHaveBeenCalled();
+    expect(screen.getByText("隐藏期间的审核结果")).toBeInTheDocument();
+    await act(async () => finish(reviewProposal));
+    await waitFor(() => expect(pending).toHaveBeenLastCalledWith(false));
+    await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(3));
+  });
+
+  it("protects edited text before rejection and clears dirty state only after success", async () => {
+    const draft = { ...reviewProposal, id: "draft-1", action: "DRAFT" as const, outputText: "原始候选" };
+    mocks.listAiProposals.mockReset().mockResolvedValue([{ ...review, proposal: draft, consistency: null }]);
+    mocks.decideAiProposal.mockResolvedValue({ ...draft, status: "REJECTED" });
+    const pending = vi.fn();
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AiWritingPanel chapterId="chapter-1" chapterTitle="入城" chapterPlan="" volumeId="" volumePlan="" draft="" editor={null} onPendingChange={pending} />
+    </QueryClientProvider>);
+    fireEvent.change(await screen.findByLabelText("AI 创作整章候选文本"), { target: { value: "编辑后的候选" } });
+    await waitFor(() => expect(pending).toHaveBeenLastCalledWith(true));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "放弃候选" }));
+      expect(mocks.decideAiProposal).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("AI 创作整章候选文本")).toHaveValue("编辑后的候选");
+      confirm.mockReturnValue(true);
+      fireEvent.click(screen.getByRole("button", { name: "放弃候选" }));
+      await waitFor(() => expect(mocks.decideAiProposal).toHaveBeenCalledOnce());
+      await waitFor(() => expect(pending).toHaveBeenLastCalledWith(false));
+    } finally { confirm.mockRestore(); }
+  });
+
+  it("keeps local text accessible when a remote decision removes its pending candidate", async () => {
+    const draft = { ...reviewProposal, id: "draft-remote", action: "DRAFT" as const, outputText: "原始候选" };
+    mocks.listAiProposals.mockReset().mockResolvedValue([{ ...review, proposal: draft, consistency: null }]);
+    const pending = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <AiWritingPanel chapterId="chapter-1" chapterTitle="入城" chapterPlan="" volumeId="" volumePlan="" draft="" editor={null} onPendingChange={pending} />
+    </QueryClientProvider>);
+    fireEvent.change(await screen.findByLabelText("AI 创作整章候选文本"), { target: { value: "远端处理后仍要保留的文本" } });
+    mocks.listAiProposals.mockResolvedValue([]);
+    await act(async () => { await client.invalidateQueries({ queryKey: ["ai-proposals", "chapter-1"] }); });
+    expect(await screen.findByLabelText("保留的候选文本修改")).toHaveValue("远端处理后仍要保留的文本");
+    expect(pending).toHaveBeenLastCalledWith(true);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "放弃保留修改" }));
+      await waitFor(() => expect(pending).toHaveBeenLastCalledWith(false));
+    } finally { confirm.mockRestore(); }
+  });
+
+  it("does not replace newer manuscript typing while candidate acceptance is in flight", async () => {
+    const draft = { ...reviewProposal, id: "draft-apply", action: "DRAFT" as const, outputText: "已经采用的候选" };
+    mocks.listAiProposals.mockReset().mockResolvedValue([{ ...review, proposal: draft, consistency: null }]);
+    let finish!: (proposal: AiProposal) => void;
+    mocks.decideAiProposal.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    let text = "原正文";
+    const setContent = vi.fn();
+    const editor = {
+      getJSON: () => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] }),
+      getText: () => text,
+      state: { selection: { from: 0, to: 0 } },
+      commands: { setContent },
+    } as unknown as NonNullable<Parameters<typeof AiWritingPanel>[0]["editor"]>;
+    const pending = vi.fn();
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AiWritingPanel chapterId="chapter-1" chapterTitle="入城" chapterPlan="" volumeId="" volumePlan="" draft="" editor={editor} onPendingChange={pending} />
+    </QueryClientProvider>);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      fireEvent.click(await screen.findByRole("button", { name: "采用到正文草稿" }));
+      await waitFor(() => expect(mocks.decideAiProposal).toHaveBeenCalledOnce());
+      text = "请求期间的新正文";
+      mocks.listAiProposals.mockResolvedValue([]);
+      await act(async () => finish({ ...draft, status: "ACCEPTED" }));
+      expect(await screen.findByLabelText("暂未写入的候选文本")).toHaveValue("已经采用的候选");
+      expect(setContent).not.toHaveBeenCalled();
+      expect(pending).toHaveBeenLastCalledWith(true);
+      confirm.mockReturnValue(false);
+      fireEvent.click(screen.getByRole("button", { name: "重新应用到草稿" }));
+      expect(setContent).not.toHaveBeenCalled();
+      confirm.mockReturnValue(true);
+      fireEvent.click(screen.getByRole("button", { name: "重新应用到草稿" }));
+      expect(setContent).toHaveBeenCalledOnce();
+      await waitFor(() => expect(pending).toHaveBeenLastCalledWith(false));
+    } finally { confirm.mockRestore(); }
   });
 });

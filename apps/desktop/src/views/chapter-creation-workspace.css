@@ -17,8 +17,22 @@
 }
 
 .creation-assistant[hidden],
-.creation-assistant [role="tabpanel"][hidden] {
+.creation-assistant [hidden],
+.creation-knowledge-panel[hidden],
+.creation-knowledge-panel [hidden] {
   display: none;
+}
+
+.chapter-extraction-edit-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.candidate-edit-status {
+  color: #526459;
+  font-size: 11px;
 }
 
 .creation-memory-status {

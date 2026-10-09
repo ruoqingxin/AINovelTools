@@ -21,16 +21,17 @@ export function AiModelNote(props: {
   profile: ModelProfile | undefined;
   preference?: AiTaskPreference;
   runMultiplier?: number;
+  active?: boolean;
 }) {
   const usage = useQuery({
     queryKey: ["ai-usage-summary", 30],
     queryFn: () => getAiUsageSummary(30),
-    enabled: Boolean(props.taskKey),
+    enabled: props.active !== false && Boolean(props.taskKey),
   });
   const budget = useQuery({
     queryKey: ["ai-budget-settings"],
     queryFn: getAiBudgetSettings,
-    enabled: Boolean(props.taskKey),
+    enabled: props.active !== false && Boolean(props.taskKey),
   });
   const modelState = !props.profile
     ? "missing"

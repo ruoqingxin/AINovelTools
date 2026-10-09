@@ -94,9 +94,10 @@ export function aiTaskSettingsFromHash(hash = window.location.hash) {
   return { task: task ?? "workDesign", scope: params.get("scope") === "PROJECT" ? "PROJECT" as const : "GLOBAL" as const };
 }
 
-export function useAiTaskPreferences() {
+export function useAiTaskPreferences(enabled = true) {
   return useQuery({
     queryKey: ["ai-task-preferences"],
+    enabled,
     queryFn: getAiTaskPreferences,
   });
 }

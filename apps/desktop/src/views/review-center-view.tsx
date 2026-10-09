@@ -50,7 +50,13 @@ function syncReviewLocation(tab: ReviewTab, chapterId: string) {
 export function ReviewCenterView() {
   const [tab, setTab] = useState<ReviewTab>(initialReviewTab);
   const [chapterId, setChapterId] = useState(initialChapterId);
-  const [candidateDraft, setCandidateDraft] = useState("");
+  const [visitedTabs, setVisitedTabs] = useState<ReviewTab[]>([initialReviewTab()]);
+  const [pendingPanels, setPendingPanels] = useState<Record<string, boolean>>({});
+  const pendingCallbacks = useMemo(() => Object.fromEntries(
+    ["facts", "admission", "manuscript"].map((key) => [key, (pending: boolean) => {
+      setPendingPanels((current) => current[key] === pending ? current : { ...current, [key]: pending });
+    }]),
+  ), []);
   const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes });
   const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
   const auditFlow = useQuery({ queryKey: ["audit-flow-settings"], queryFn: getAuditFlowSettings });
@@ -60,6 +66,7 @@ export function ReviewCenterView() {
   }, [enabledTabs, tab]);
   const chapterList = useMemo(() => (nodes.data ?? []).filter((node) => node.kind === "CHAPTER"), [nodes.data]);
   const selectedChapterId = chapterId || chapterList[0]?.id || "";
+  const candidateDraft = useMemo(() => candidateReviewDocument(selectedChapterId), [selectedChapterId]);
   const selectedChapter = chapterList.find((chapter) => chapter.id === selectedChapterId);
   const selectedVolume = selectedChapter
     ? (nodes.data ?? []).find((node) => node.id === selectedChapter.parentId && node.kind === "VOLUME")
@@ -71,8 +78,8 @@ export function ReviewCenterView() {
     : "";
 
   useEffect(() => {
-    setCandidateDraft(candidateReviewDocument(selectedChapterId));
-  }, [selectedChapterId]);
+    setVisitedTabs((current) => current.includes(tab) ? current : [...current, tab]);
+  }, [tab]);
 
   function selectTab(next: ReviewTab) {
     setTab(next);
@@ -80,6 +87,8 @@ export function ReviewCenterView() {
   }
 
   function selectChapter(nextChapterId: string) {
+    if (nextChapterId === selectedChapterId) return;
+    if (Object.values(pendingPanels).some(Boolean) && !window.confirm("当前审核面板有未提交修改或正在处理的操作。确定切换章节吗？")) return;
     setChapterId(nextChapterId);
     syncReviewLocation(tab, nextChapterId);
   }
@@ -121,13 +130,11 @@ export function ReviewCenterView() {
       {selectedChapter ? <span>{selectedVolume ? `${selectedVolume.title} · ` : ""}{selectedChapter.title}</span> : null}
     </div>
 
-    <div
-      className="review-center-panel"
-      id={`review-panel-${tab}`}
-      role="tabpanel"
-      aria-labelledby={`review-tab-${tab}`}
-    >
-      {tab === "admission" ? selectedChapter ? <AiWritingPanel
+    <div className="review-center-panel">
+      <div id="review-panel-admission" role="tabpanel" aria-labelledby="review-tab-admission" hidden={tab !== "admission"}>
+      {visitedTabs.includes("admission") || tab === "admission" ? selectedChapter ? <AiWritingPanel
+        active={tab === "admission" && auditFlow.data?.admission !== false}
+        onPendingChange={pendingCallbacks.admission}
         key={`admission-${selectedChapter.id}`}
         mode="review"
         reviewPurpose="admission"
@@ -139,7 +146,11 @@ export function ReviewCenterView() {
         draft={manuscript.data?.documentJson ?? ""}
         editor={null}
       /> : <div className="proposal-empty review-empty"><ClipboardCheck size={20} /><div><strong>暂无可审核章节</strong><span>建立章节后才能检查创作准入。</span></div></div> : null}
-      {tab === "manuscript" ? selectedChapter && candidateDraft ? <AiWritingPanel
+      </div>
+      <div id="review-panel-manuscript" role="tabpanel" aria-labelledby="review-tab-manuscript" hidden={tab !== "manuscript"}>
+      {visitedTabs.includes("manuscript") || tab === "manuscript" ? selectedChapter && candidateDraft ? <AiWritingPanel
+        active={tab === "manuscript" && auditFlow.data?.manuscript !== false}
+        onPendingChange={pendingCallbacks.manuscript}
         key={`candidate-review-${selectedChapter.id}-${candidateDraft}`}
         mode="review"
         reviewPurpose="manuscript"
@@ -151,7 +162,11 @@ export function ReviewCenterView() {
         draft={candidateDraft}
         editor={null}
       /> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>暂无候选内容可审核</strong><span>请先在正文候选区编辑内容，再选择“审核当前候选”。</span></div></div> : null}
-      {tab === "facts" ? <KnowledgeReviewView embedded chapterId={selectedChapterId} onChapterChange={selectChapter} /> : null}
+      </div>
+      <div id="review-panel-facts" role="tabpanel" aria-labelledby="review-tab-facts" hidden={tab !== "facts"}>
+      {visitedTabs.includes("facts") || tab === "facts" ? <KnowledgeReviewView key={selectedChapterId} embedded chapterId={selectedChapterId} onChapterChange={selectChapter}
+        active={tab === "facts" && auditFlow.data?.knowledge !== false} onPendingChange={pendingCallbacks.facts} /> : null}
+      </div>
     </div>
   </section>;
 }

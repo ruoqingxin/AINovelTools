@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, FileCheck2, RefreshCw, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useCandidateEditGuard } from "./use-candidate-edits";
 import {
   detectCandidateConflicts,
   errorMessage,
@@ -40,35 +41,40 @@ function extractBlockText(documentJson: string, blockId: string) {
 
 export function KnowledgeReviewView(props: {
   embedded?: boolean;
+  active?: boolean;
+  onPendingChange?: (pending: boolean) => void;
   chapterId?: string;
   onChapterChange?: (chapterId: string) => void;
   onOpenManuscript?: () => void;
 } = {}) {
   const client = useQueryClient();
-  const chapters = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes });
+  const active = props.active !== false;
+  const chapters = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes, enabled: active });
   const chapterList = useMemo(() => (chapters.data ?? []).filter((node) => node.kind === "CHAPTER"), [chapters.data]);
   const [internalChapterId, setInternalChapterId] = useState("");
   const chapterId = props.chapterId ?? internalChapterId;
   const setChapterId = props.onChapterChange ?? setInternalChapterId;
   const selectedChapterId = chapterId || chapterList[0]?.id || "";
+  const [evidenceOpen, setEvidenceOpen] = useState<Record<string, boolean>>({});
   const candidates = useQuery({
     queryKey: ["knowledge-candidates", selectedChapterId],
     queryFn: () => listKnowledgeCandidates(selectedChapterId),
-    enabled: Boolean(selectedChapterId),
+    enabled: active && Boolean(selectedChapterId),
   });
   const conflicts = useQuery({
     queryKey: ["knowledge-conflicts", selectedChapterId],
     queryFn: () => detectCandidateConflicts(selectedChapterId),
-    enabled: Boolean(selectedChapterId),
+    enabled: active && Boolean(selectedChapterId),
   });
-  const anchors = useQuery({ queryKey: ["evidence-anchors"], queryFn: listEvidenceAnchors, enabled: Boolean(selectedChapterId) });
+  const anchors = useQuery({ queryKey: ["evidence-anchors"], queryFn: listEvidenceAnchors, enabled: active && Boolean(selectedChapterId) });
   const revisions = useQuery({
     queryKey: ["manuscript-history", selectedChapterId],
     queryFn: () => listManuscriptRevisions(selectedChapterId),
-    enabled: Boolean(selectedChapterId),
+    enabled: active && Boolean(selectedChapterId) && (candidates.data ?? []).some((candidate) => evidenceOpen[candidate.id]),
   });
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useCandidateEditGuard(false, busy !== null, props.onPendingChange);
   const approved = (candidates.data ?? []).filter((candidate) => candidate.candidateStatus === "APPROVED");
 
   async function decide(id: string, expectedStatus: CandidateStatus, decision: "APPROVE" | "REJECT") {
@@ -114,7 +120,7 @@ export function KnowledgeReviewView(props: {
         <p className="workspace-lede">只处理从正文提取的候选事实：核对原文证据、解决冲突，并将已批准内容正式定稿。</p>
       </div> : null}
       <div className="story-bible-toolbar">
-        {!props.embedded ? <label>章节<select value={selectedChapterId} onChange={(event) => setChapterId(event.target.value)} disabled={!chapterList.length}>
+        {!props.embedded ? <label>章节<select value={selectedChapterId} onChange={(event) => setChapterId(event.target.value)} disabled={!chapterList.length || busy !== null}>
           {!chapterList.length ? <option value="">暂无章节</option> : null}
           {chapterList.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapter.title}</option>)}
         </select></label> : null}
@@ -139,13 +145,16 @@ export function KnowledgeReviewView(props: {
             .filter((anchor): anchor is NonNullable<typeof anchor> => Boolean(anchor));
           return <article className="knowledge-candidate-row" id={`candidate-${candidate.id}`} key={candidate.id}>
             <div className="knowledge-candidate-main"><strong>{candidate.fact.subject} · {candidate.fact.predicate} · {candidate.fact.object}</strong><span>证据 {candidate.fact.evidenceAnchorIds.length} 条 · {candidateStatusLabels[candidate.candidateStatus]}</span></div>
-            {evidence.length ? <details className="knowledge-candidate-evidence">
+            {evidence.length ? <details className="knowledge-candidate-evidence" onToggle={(event) => {
+              const open = event.currentTarget.open;
+              setEvidenceOpen((current) => ({ ...current, [candidate.id]: open }));
+            }}>
               <summary>查看原文证据<span>{evidence.length} 条</span></summary>
               <div>{evidence.map((anchor) => {
                 const revision = revisions.data?.find((item) => item.id === anchor.sourceRevisionId);
                 const snippet = revision ? extractBlockText(revision.documentJson, anchor.blockId) : "";
                 return <blockquote key={anchor.id}>
-                  <p>{snippet ? `${snippet.slice(0, 260)}${snippet.length > 260 ? "…" : ""}` : "原文版本已不可用，请根据来源版本复核。"}</p>
+                  <p>{revisions.isPending ? "正在读取原文版本…" : revisions.isError ? "原文读取失败，请重试或根据来源版本复核。" : snippet ? `${snippet.slice(0, 260)}${snippet.length > 260 ? "…" : ""}` : "原文版本已不可用，请根据来源版本复核。"}</p>
                   <footer><span>{anchor.sourceVersion}</span><code>{anchor.blockId}</code>
                     {props.onOpenManuscript && anchor.chapterId === selectedChapterId
                       ? <button type="button" className="secondary-action" onClick={props.onOpenManuscript}>查看已保存正文</button>

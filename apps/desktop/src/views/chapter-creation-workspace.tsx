@@ -1,5 +1,5 @@
 import { BookOpenText, ClipboardList, PanelRightClose, PanelRightOpen, RefreshCw, Save, ShieldCheck, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AuditFlowSettings, PlanNode } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
 import { ChapterExtractionPanel } from "./chapter-extraction-panel";
@@ -34,6 +34,7 @@ export function ChapterCreationWorkspace({
   onAdoptPlan,
   auditFlow,
   state,
+  onPendingChange,
 }: {
   chapter: PlanNode;
   volume?: PlanNode;
@@ -47,22 +48,44 @@ export function ChapterCreationWorkspace({
   onAdoptPlan?: () => Promise<void>;
   auditFlow?: AuditFlowSettings;
   state: ReturnType<typeof useChapterManuscript>;
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("ai");
   const [visitedAssistantTabs, setVisitedAssistantTabs] = useState<AssistantTab[]>(["ai"]);
   const [assistantOpen, setAssistantOpen] = useState(true);
   const [reviewPurpose, setReviewPurpose] = useState<"admission" | "manuscript">("manuscript");
   const [knowledgeTab, setKnowledgeTab] = useState<"extraction" | "facts">("extraction");
+  const [visitedReviews, setVisitedReviews] = useState<Array<"admission" | "manuscript">>([]);
+  const [extractionVisited, setExtractionVisited] = useState(false);
+  const [factsVisited, setFactsVisited] = useState(false);
+  const [readinessOpen, setReadinessOpen] = useState(false);
+  const [pendingPanels, setPendingPanels] = useState<Record<string, boolean>>({});
+  const pendingCallbacks = useMemo(() => Object.fromEntries(
+    ["ai", "extraction", "facts", "admission", "manuscript"].map((key) => [key, (pending: boolean) => {
+      setPendingPanels((current) => current[key] === pending ? current : { ...current, [key]: pending });
+    }]),
+  ), []);
+  const candidatePending = Object.values(pendingPanels).some(Boolean);
+  useEffect(() => { onPendingChange?.(candidatePending); }, [candidatePending, onPendingChange]);
+  useEffect(() => () => { onPendingChange?.(false); }, [onPendingChange]);
   const hasDraft = Boolean(documentToText(state.draft).trim());
   const reviewEnabled = auditFlow?.[reviewPurpose] !== false;
+  const knowledgeActive = state.manuscriptTab === "extraction";
+  const extractionAvailable = state.draftReady && Boolean(state.manuscript.data) && !state.chapterDirty;
+  useEffect(() => {
+    if (knowledgeActive && knowledgeTab === "extraction" && extractionAvailable) setExtractionVisited(true);
+    if (knowledgeActive && knowledgeTab === "facts") setFactsVisited(true);
+  }, [knowledgeActive, knowledgeTab, extractionAvailable]);
 
   function selectAssistantTab(tab: AssistantTab) {
     setAssistantTab(tab);
     setVisitedAssistantTabs((tabs) => tabs.includes(tab) ? tabs : [...tabs, tab]);
+    if (tab === "review") setVisitedReviews((items) => items.includes(reviewPurpose) ? items : [...items, reviewPurpose]);
   }
 
   function openReview(purpose: "admission" | "manuscript") {
     setReviewPurpose(purpose);
+    setVisitedReviews((items) => items.includes(purpose) ? items : [...items, purpose]);
     selectAssistantTab("review");
     setAssistantOpen(true);
   }
@@ -166,27 +189,37 @@ export function ChapterCreationWorkspace({
           recovery={state.recovery.data ?? []}
         /> : null}
       </> : null}
-      {state.manuscriptTab === "extraction" ? <div className="creation-knowledge-panel"
+      {knowledgeActive || extractionVisited || factsVisited ? <div className="creation-knowledge-panel" hidden={!knowledgeActive}
         id="manuscript-panel-extraction" role="tabpanel" aria-labelledby="manuscript-tab-extraction">
         <div className="creation-knowledge-switch" role="group" aria-label="本章知识">
           <button type="button" aria-pressed={knowledgeTab === "extraction"} onClick={() => setKnowledgeTab("extraction")}>提取候选</button>
           <button type="button" aria-pressed={knowledgeTab === "facts"} onClick={() => setKnowledgeTab("facts")}>事实审核</button>
         </div>
-        {knowledgeTab === "extraction" ? state.draftReady && state.manuscript.data && !state.chapterDirty ? <ChapterExtractionPanel
+        <div hidden={knowledgeTab !== "extraction" || !extractionAvailable}>
+        {extractionVisited || (knowledgeActive && knowledgeTab === "extraction" && extractionAvailable) ? <ChapterExtractionPanel
+          active={knowledgeActive && knowledgeTab === "extraction" && extractionAvailable}
+          onPendingChange={pendingCallbacks.extraction}
           chapterId={chapter.id} onOpenFactReview={() => setKnowledgeTab("facts")}
-          onOpenManuscript={() => state.setManuscriptTab("manuscript")} /> : <div className="creation-empty">
+          onOpenManuscript={() => state.setManuscriptTab("manuscript")} /> : null}
+        </div>
+        {knowledgeTab === "extraction" && !extractionAvailable ? <div className="creation-empty">
           <p>{state.chapterDirty ? "请先保存当前正文，再提取本章知识" : "保存正文后即可提取本章知识"}</p>
           <button type="button" className="primary-action" onClick={() => state.setManuscriptTab("candidate")}>返回编辑</button>
-        </div> : auditFlow?.knowledge !== false ? <KnowledgeReviewView embedded chapterId={chapter.id}
-          onOpenManuscript={() => state.setManuscriptTab("manuscript")} /> : <p className="plan-empty">
+        </div> : null}
+        <div hidden={knowledgeTab !== "facts"}>
+        {(factsVisited || (knowledgeActive && knowledgeTab === "facts")) && auditFlow?.knowledge !== false ? <KnowledgeReviewView embedded chapterId={chapter.id}
+          active={knowledgeActive && knowledgeTab === "facts"} onPendingChange={pendingCallbacks.facts}
+          onOpenManuscript={() => state.setManuscriptTab("manuscript")} /> : knowledgeTab === "facts" && auditFlow?.knowledge === false ? <p className="plan-empty">
           知识审核已关闭。<a href="/settings#writing-admission">审核设置</a>
-        </p>}
+        </p> : null}
+        </div>
       </div> : null}
     </div>
     <aside className="creation-assistant" aria-label="创作助手" hidden={!assistantOpen}>
       <WorkspaceTabs prefix="assistant" label="创作助手页签" value={assistantTab} tabs={assistantTabs} onChange={selectAssistantTab} />
       <div id="assistant-panel-ai" role="tabpanel" aria-labelledby="assistant-tab-ai" hidden={assistantTab !== "ai"}>
         {state.draftReady ? <AiWritingPanel {...aiProps}
+          active={assistantOpen && assistantTab === "ai"} onPendingChange={pendingCallbacks.ai}
           mode="create" onOpenAdmissionReview={() => openReview("admission")} /> : <p className="plan-empty">等待正文就绪…</p>}
       </div>
       <div id="assistant-panel-plan" role="tabpanel" aria-labelledby="assistant-tab-plan" hidden={assistantTab !== "plan"}>
@@ -212,22 +245,29 @@ export function ChapterCreationWorkspace({
             </div>
           </div> : null}
           <a href="/planning">全书规划</a>
-          <details>
+          <details onToggle={(event) => setReadinessOpen(event.currentTarget.open)}>
             <summary>写作准备</summary>
-            <AiWritingPanel {...aiProps} mode="readiness" />
+            {readinessOpen ? <AiWritingPanel {...aiProps} mode="readiness" active={assistantOpen && assistantTab === "plan"} /> : null}
           </details>
         </div> : null}
       </div>
       <div id="assistant-panel-review" role="tabpanel" aria-labelledby="assistant-tab-review" hidden={assistantTab !== "review"}>
         {visitedAssistantTabs.includes("review") ? <>
           <label className="creation-review-purpose">检查对象
-            <select value={reviewPurpose} onChange={(event) => setReviewPurpose(event.target.value as "admission" | "manuscript")}>
+            <select value={reviewPurpose} onChange={(event) => {
+              const purpose = event.target.value as "admission" | "manuscript";
+              setReviewPurpose(purpose);
+              setVisitedReviews((items) => items.includes(purpose) ? items : [...items, purpose]);
+            }}>
               <option value="manuscript">当前正文草稿</option><option value="admission">创作准入</option>
             </select>
           </label>
-          {!reviewEnabled ? <p className="plan-empty">此类检查已关闭。<a href="/settings#writing-admission">审核设置</a></p>
-            : state.draftReady ? <AiWritingPanel {...aiProps} key={reviewPurpose} mode="review" reviewPurpose={reviewPurpose} />
-            : <p className="plan-empty">等待正文就绪…</p>}
+          {!reviewEnabled ? <p className="plan-empty">此类检查已关闭。<a href="/settings#writing-admission">审核设置</a></p> : null}
+          {state.draftReady ? visitedReviews.map((purpose) => <div key={purpose} hidden={reviewPurpose !== purpose || auditFlow?.[purpose] === false}>
+            <AiWritingPanel {...aiProps} mode="review" reviewPurpose={purpose}
+              active={assistantOpen && assistantTab === "review" && reviewPurpose === purpose && auditFlow?.[purpose] !== false}
+              onPendingChange={pendingCallbacks[purpose]} />
+          </div>) : <p className="plan-empty">等待正文就绪…</p>}
         </> : null}
       </div>
     </aside>

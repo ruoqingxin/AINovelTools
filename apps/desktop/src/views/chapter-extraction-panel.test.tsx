@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   adoptExtractionItem: vi.fn(),
   currentManuscript: vi.fn(),
   extractChapterCandidates: vi.fn(),
+  decideExtractionItem: vi.fn(),
   getAiTaskPreferences: vi.fn(),
   listChapterExtractions: vi.fn(),
   listCurrentFacts: vi.fn(),
@@ -138,6 +139,7 @@ describe("ChapterExtractionPanel", () => {
       status: "ACCEPTED",
       finalObjectId: "relation-1",
     });
+    mocks.decideExtractionItem.mockResolvedValue({ ...item, status: "REJECTED" });
   });
 
   it("saves selected fact endpoints before adopting a relation", async () => {
@@ -192,5 +194,96 @@ describe("ChapterExtractionPanel", () => {
     await waitFor(() => expect(mocks.extractChapterCandidates).toHaveBeenCalledWith(expect.objectContaining({
       chapterId: "chapter-1", sourceRevisionId: "revision-2",
     })));
+  });
+
+  it.each(["{", "[]", "null", '""'])("does not adopt invalid candidate JSON: %s", async (value) => {
+    const factItem = { ...item, kind: "FACT", payload: { subject: "沈砚", predicate: "进入", object: "雾城" } };
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [factItem] }]);
+    renderPanel();
+    fireEvent.change(await screen.findByLabelText("沈砚 · 进入 · 雾城 payload"), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "采用" }));
+    await screen.findByRole("alert");
+    expect(mocks.updateExtractionItem).not.toHaveBeenCalled();
+    expect(mocks.adoptExtractionItem).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("沈砚 · 进入 · 雾城 payload")).toHaveValue(value);
+  });
+
+  it.each(['{"relationType":"保存中的新修改"}', JSON.stringify(item.payload, null, 2)])("keeps newer typing or a reversion during save: %s", async (newValue) => {
+    let finish!: (saved: ChapterExtractionItem) => void;
+    mocks.updateExtractionItem.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const pending = vi.fn();
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ChapterExtractionPanel chapterId="chapter-1" onPendingChange={pending} />
+    </QueryClientProvider>);
+    const input = await screen.findByLabelText("沈砚 · 盟友 · 顾临 payload");
+    fireEvent.change(input, { target: { value: '{"relationType":"已提交"}' } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    await waitFor(() => expect(mocks.updateExtractionItem).toHaveBeenCalledOnce());
+    fireEvent.change(input, { target: { value: newValue } });
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...item, payload: { relationType: "已提交" } }] }]);
+    await act(async () => finish({ ...item, payload: { relationType: "已提交" } }));
+    await screen.findByText("候选修改已保存。");
+    expect(screen.getByRole("textbox", { name: /payload/ })).toHaveValue(newValue);
+    expect(pending).toHaveBeenLastCalledWith(true);
+    expect(screen.getByText("候选修改未保存")).toBeVisible();
+  });
+
+  it("requires confirmation before rejection and saves edits before deferring", async () => {
+    renderPanel();
+    fireEvent.change(await screen.findByLabelText("沈砚 · 盟友 · 顾临 payload"), { target: { value: '{"relationType":"合作"}' } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "拒绝" }));
+      expect(mocks.decideExtractionItem).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "延期" }));
+      await waitFor(() => expect(mocks.decideExtractionItem).toHaveBeenCalledWith({
+        id: item.id, expectedStatus: item.status, decision: "DEFERRED",
+      }));
+      expect(mocks.updateExtractionItem).toHaveBeenCalledWith(expect.objectContaining({ payload: { relationType: "合作" } }));
+      expect(mocks.updateExtractionItem.mock.invocationCallOrder[0]).toBeLessThan(mocks.decideExtractionItem.mock.invocationCallOrder[0]!);
+    } finally { confirm.mockRestore(); }
+  });
+
+  it("retains edits through a server refetch and refuses to overwrite a known changed payload", async () => {
+    renderPanel();
+    fireEvent.change(await screen.findByLabelText("沈砚 · 盟友 · 顾临 payload"), { target: { value: '{"relationType":"本地"}' } });
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...item, payload: { relationType: "外部更新" } }] }]);
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await screen.findByLabelText("未命名候选 payload");
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("候选已有新内容");
+    expect(mocks.updateExtractionItem).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: /payload/ })).toHaveValue('{"relationType":"本地"}');
+  });
+
+  it("does not load hidden candidates, then resumes queries when shown", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<QueryClientProvider client={client}><ChapterExtractionPanel chapterId="chapter-1" active={false} /></QueryClientProvider>);
+    await act(async () => {});
+    expect(mocks.listChapterExtractions).not.toHaveBeenCalled();
+    expect(mocks.currentManuscript).not.toHaveBeenCalled();
+    expect(mocks.listCurrentFacts).not.toHaveBeenCalled();
+    expect(mocks.listModelProfiles).not.toHaveBeenCalled();
+    view.rerender(<QueryClientProvider client={client}><ChapterExtractionPanel chapterId="chapter-1" /></QueryClientProvider>);
+    await screen.findByLabelText("沈砚 · 盟友 · 顾临 payload");
+    expect(mocks.listChapterExtractions).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the saved payload visible if the subsequent adoption fails", async () => {
+    const factItem = { ...item, kind: "FACT", payload: { subject: "沈砚", predicate: "进入", object: "雾城" } };
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [factItem] }]);
+    mocks.updateExtractionItem.mockImplementation(async (input) => {
+      const saved = { ...factItem, payload: input.payload };
+      mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [saved] }]);
+      return saved;
+    });
+    mocks.adoptExtractionItem.mockRejectedValueOnce(new Error("采用失败"));
+    renderPanel();
+    fireEvent.change(await screen.findByLabelText("沈砚 · 进入 · 雾城 payload"), {
+      target: { value: '{"subject":"沈砚","predicate":"进入","object":"内城"}' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "采用" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("采用失败");
+    expect(JSON.parse((screen.getByRole("textbox", { name: /payload/ }) as HTMLTextAreaElement).value).object).toBe("内城");
   });
 });

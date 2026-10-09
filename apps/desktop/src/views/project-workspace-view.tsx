@@ -253,8 +253,11 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
               : "规划已能支撑正文写作";
   const nodePlanDirty = Boolean(selected && selected.kind !== "WORK_DESIGN" && nodeDraft.dirty);
   const titleDirty = Boolean(selected && editTitle !== selected.title);
-  const workspaceDirty = nodePlanDirty || splitDraft.dirty || titleDirty || planningSectionDirty || savingNodePlan;
-  const unsavedMessage = nodePlanDirty
+  const [candidatePanelsPending, setCandidatePanelsPending] = useState(false);
+  const workspaceDirty = nodePlanDirty || splitDraft.dirty || titleDirty || planningSectionDirty || savingNodePlan || candidatePanelsPending;
+  const unsavedMessage = candidatePanelsPending
+      ? "当前候选面板有未提交修改或正在处理的操作。"
+      : nodePlanDirty
       ? "当前规划有未保存修改。"
       : titleDirty
         ? "当前结构节点名称有未保存修改。"
@@ -769,6 +772,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
           onAdoptPlan={adoptNodePlan}
           auditFlow={auditFlow.data}
           state={chapterManuscript}
+          onPendingChange={setCandidatePanelsPending}
         /> : null}
       </main>}
       </div> : null}
