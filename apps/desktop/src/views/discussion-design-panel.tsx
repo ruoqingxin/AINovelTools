@@ -9,6 +9,8 @@ import {
   type EntityType, type ModelProfile, type AiTaskPreference,
 } from "../lib/tauri-client";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { AiModelNote } from "./ai-model-note";
+import type { AiTaskSettingsScope } from "../lib/ai-task-preferences";
 
 export const discussionTopics = [
   { id: "FREE", label: "自由构思" },
@@ -199,8 +201,9 @@ function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, 
   </section>;
 }
 
-export function DiscussionDesignPanel({ sessionId, profile, preference, hasDiscussion, conversationBusy, draftFocus, onPendingChange }: {
+export function DiscussionDesignPanel({ sessionId, profile, preference, settingsScope, hasDiscussion, conversationBusy, draftFocus, onPendingChange }: {
   sessionId: string; profile: ModelProfile | undefined; preference: AiTaskPreference;
+  settingsScope?: AiTaskSettingsScope;
   hasDiscussion: boolean;
   conversationBusy: boolean;
   draftFocus: { field: "chosen" | "alternatives" } | null;
@@ -437,6 +440,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, hasDiscu
           onClick={() => setShowHistory((current) => !current)} aria-expanded={showHistory}>
           <History size={15} /></button>
       </div>
+      <AiModelNote taskLabel="构思整理" taskKey="discussionDesign" settingsScope={settingsScope} profile={profile} preference={preference} />
       <button type="button" className="primary-action" onClick={() => void summarize()}
         disabled={busy || conversationBusy || !profile?.hasSecret || !hasContent || totalChars > DISCUSSION_LIMITS.draftChars}>
         <Sparkles size={14} />{busy ? "处理中…" : "整理为实体与设定"}

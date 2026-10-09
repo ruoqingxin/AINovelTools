@@ -275,6 +275,8 @@ export type AiTaskContextPreference = {
   inputTokenBudget: number | null;
 };
 export type AiTaskPreferences = {
+  discussion: AiTaskPreference;
+  discussionDesign: AiTaskPreference;
   workDesign: AiTaskPreference;
   outline: AiTaskPreference;
   volumePlanning: AiTaskPreference;
@@ -286,6 +288,8 @@ export type AiTaskPreferences = {
 };
 export type ProjectAiTaskOverrides = {
   available: boolean;
+  discussion: AiTaskPreference | null;
+  discussionDesign: AiTaskPreference | null;
   workDesign: AiTaskPreference | null;
   outline: AiTaskPreference | null;
   volumePlanning: AiTaskPreference | null;

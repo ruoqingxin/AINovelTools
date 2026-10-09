@@ -1,8 +1,8 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { recommendedTaskPreference } from "../lib/ai-task-preferences";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AI_TASK_DEFINITIONS, recommendedTaskPreference, aiTaskSettingsHref } from "../lib/ai-task-preferences";
 import type { ModelProfile } from "../lib/tauri-client";
 import { AiModelNote } from "./ai-model-note";
 
@@ -42,6 +42,7 @@ const profile: ModelProfile = {
 };
 
 describe("AiModelNote", () => {
+  afterEach(cleanup);
   beforeEach(() => {
     mocks.getAiBudgetSettings.mockResolvedValue({
       currency: "USD",
@@ -91,6 +92,14 @@ describe("AiModelNote", () => {
     expect(screen.getByText(/配置差异：温度 0\.7/)).toBeVisible();
     expect(screen.getByText(/自定义系统提示词/)).toBeVisible();
     expect(screen.getByText(/本次后预计超过每日预算/)).toBeVisible();
+  });
+
+  it.each(AI_TASK_DEFINITIONS)("links $label adjustments to the corresponding task and scope", ({ key, label }) => {
+    render(<QueryClientProvider client={new QueryClient()}>
+      <AiModelNote taskLabel={label} taskKey={key} profile={profile}
+        preference={recommendedTaskPreference(key)} settingsScope="PROJECT" />
+    </QueryClientProvider>);
+    expect(screen.getByRole("link", { name: "调整" })).toHaveAttribute("href", aiTaskSettingsHref(key, "PROJECT"));
   });
 });
 

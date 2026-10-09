@@ -17,17 +17,27 @@ export const AI_TASK_DEFINITIONS: Array<{
   defaultMaxOutputTokens: number;
   promptVariables: string[];
 }> = [
+  { key: "discussion", label: "共创讨论", description: "自由讨论角色、物品、地点与剧情灵感", defaultTemperature: 0.45, defaultMaxOutputTokens: 4096, promptVariables: ["scopeLabel", "userMessage", "discussionHistory"] },
+  { key: "discussionDesign", label: "构思整理", description: "把已选定的讨论方向整理为实体与作者设定候选", defaultTemperature: 0.45, defaultMaxOutputTokens: 4096, promptVariables: ["scopeLabel", "discussionHistory"] },
   { key: "workDesign", label: "作品设定", description: "生成设定候选，或从文件提炼设定内容", defaultTemperature: 0.45, defaultMaxOutputTokens: 4096, promptVariables: ["sectionTitle", "sectionPrompt", "userGuidance", "existingContext", "referenceContent"] },
   { key: "outline", label: "大纲主线", description: "根据核心设定生成和补全故事主线", defaultTemperature: 0.6, defaultMaxOutputTokens: 6144, promptVariables: ["sectionTitle", "sectionPrompt", "userGuidance", "existingContext"] },
   { key: "volumePlanning", label: "分卷规划", description: "生成分卷目标、阶段转折和卷末状态", defaultTemperature: 0.55, defaultMaxOutputTokens: 6144, promptVariables: ["sectionTitle", "sectionPrompt", "userGuidance", "existingContext"] },
   { key: "chapterSplit", label: "章节拆分", description: "把单卷规划拆成可独立执行的章节", defaultTemperature: 0.3, defaultMaxOutputTokens: 4096, promptVariables: ["sectionTitle", "sectionPrompt", "userGuidance", "existingContext"] },
-  { key: "chapterPlan", label: "章节规划", description: "为已建立的章节生成可写正文的执行卡", defaultTemperature: 0.35, defaultMaxOutputTokens: 4096, promptVariables: ["sectionTitle", "sectionPrompt", "userGuidance", "existingContext"] },
-  { key: "consistencyReview", label: "一致性审核", description: "检查章节设定、人物能力、世界规则和叙述视角冲突", defaultTemperature: 0.2, defaultMaxOutputTokens: 8192, promptVariables: ["chapterTitle", "chapterPlan", "userInstruction", "currentDraft", "projectKnowledge"] },
+  { key: "chapterPlan", label: "章节规划", description: "生成章节与场景的正文执行卡", defaultTemperature: 0.35, defaultMaxOutputTokens: 4096, promptVariables: ["sectionTitle", "sectionPrompt", "userGuidance", "existingContext"] },
+  { key: "consistencyReview", label: "一致性审核", description: "创作准入、正文候选审核与知识冲突检查", defaultTemperature: 0.2, defaultMaxOutputTokens: 8192, promptVariables: ["chapterTitle", "chapterPlan", "userInstruction", "currentDraft", "projectKnowledge"] },
   { key: "writing", label: "正文书写", description: "整章创作、续写、重写、润色和摘要", defaultTemperature: 0.9, defaultMaxOutputTokens: 8192, promptVariables: ["chapterTitle", "chapterPlan", "userInstruction", "selection", "currentDraft", "projectKnowledge"] },
   { key: "knowledgeExtraction", label: "知识提炼", description: "从导入文件中提炼人物、地点和设定条目", defaultTemperature: 0.1, defaultMaxOutputTokens: 4096, promptVariables: ["entityType", "entityName", "briefSummary", "applicabilityScope", "userGuidance", "sourceText"] },
 ];
 
 function recommendedContext(task: AiTaskKey): AiTaskContextPreference {
+  if (task === "discussion" || task === "discussionDesign") return {
+    includeProjectContext: false,
+    includeReferenceContent: false,
+    includeProjectKnowledge: false,
+    includeCurrentDraft: false,
+    includeChapterPlan: false,
+    inputTokenBudget: 24_576,
+  };
   return {
     includeProjectContext: task !== "writing" && task !== "knowledgeExtraction",
     includeReferenceContent: task === "workDesign" || task === "knowledgeExtraction",
@@ -55,6 +65,8 @@ export function recommendedTaskPreference(task: AiTaskKey): AiTaskPreference {
 }
 
 export const emptyAiTaskPreferences: AiTaskPreferences = {
+  discussion: recommendedTaskPreference("discussion"),
+  discussionDesign: recommendedTaskPreference("discussionDesign"),
   workDesign: recommendedTaskPreference("workDesign"),
   outline: recommendedTaskPreference("outline"),
   volumePlanning: recommendedTaskPreference("volumePlanning"),
@@ -64,6 +76,23 @@ export const emptyAiTaskPreferences: AiTaskPreferences = {
   writing: recommendedTaskPreference("writing"),
   knowledgeExtraction: recommendedTaskPreference("knowledgeExtraction"),
 };
+
+export type AiTaskSettingsScope = "GLOBAL" | "PROJECT";
+
+export function aiTaskSettingsHref(task?: AiTaskKey, scope: AiTaskSettingsScope = "GLOBAL") {
+  const params = new URLSearchParams();
+  if (task) params.set("task", task);
+  if (scope === "PROJECT") params.set("scope", scope);
+  return `/settings#ai-task-models${params.size ? `?${params}` : ""}`;
+}
+
+export function aiTaskSettingsFromHash(hash = window.location.hash) {
+  const [section, query = ""] = hash.split("?");
+  if (section !== "#ai-task-models") return null;
+  const params = new URLSearchParams(query);
+  const task = AI_TASK_DEFINITIONS.find(({ key }) => key === params.get("task"))?.key;
+  return { task: task ?? "workDesign", scope: params.get("scope") === "PROJECT" ? "PROJECT" as const : "GLOBAL" as const };
+}
 
 export function useAiTaskPreferences() {
   return useQuery({

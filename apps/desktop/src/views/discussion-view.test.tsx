@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   createDiscussionSession: vi.fn(),
   dismissDiscussionCandidate: vi.fn(),
   getAiTaskPreferences: vi.fn(),
+  getProjectAiTaskOverrides: vi.fn(),
   listDiscussionCandidates: vi.fn(),
   listDiscussionMessages: vi.fn(),
   listDiscussionSessions: vi.fn(),
@@ -46,6 +47,7 @@ vi.mock("../lib/tauri-client", async () => {
     createDiscussionSession: mocks.createDiscussionSession,
     dismissDiscussionCandidate: mocks.dismissDiscussionCandidate,
     getAiTaskPreferences: mocks.getAiTaskPreferences,
+    getProjectAiTaskOverrides: mocks.getProjectAiTaskOverrides,
     listDiscussionCandidates: mocks.listDiscussionCandidates,
     listDiscussionMessages: mocks.listDiscussionMessages,
     listDiscussionSessions: mocks.listDiscussionSessions,
@@ -138,7 +140,9 @@ describe("DiscussionView", () => {
     localStorage.clear();
     window.history.replaceState(null, "", "/discussion");
     const preferences = structuredClone(emptyAiTaskPreferences);
-    preferences.workDesign.profileId = profile.id;
+    preferences.discussion.profileId = profile.id;
+    preferences.discussionDesign.profileId = profile.id;
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({ available: true, discussion: null, discussionDesign: null });
     mocks.askProjectDiscussion.mockResolvedValue(exchange);
     mocks.createDiscussionCandidate.mockImplementation(async (input) => ({
       id: "candidate-created",
@@ -553,5 +557,45 @@ describe("DiscussionView", () => {
     await waitFor(() => expect(record).toBeEnabled());
     fireEvent.click(record);
     expect(await screen.findByRole("textbox", { name: "备选方向" })).toBeInTheDocument();
+  });
+
+  it.each(["GLOBAL", "PROJECT"] as const)("uses independent discussion and design settings from %s", async (scope) => {
+    const designProfile = { ...profile, id: "design-profile", name: "整理模型" };
+    const preferences = structuredClone(emptyAiTaskPreferences);
+    const discussion = { ...preferences.discussion, profileId: profile.id, temperature: 0.8, maxOutputTokens: 2048 };
+    const discussionDesign = { ...preferences.discussionDesign, profileId: designProfile.id, temperature: 0.2, maxOutputTokens: 3072 };
+    preferences.workDesign = { ...preferences.workDesign, profileId: "unrelated-profile", temperature: 1.5 };
+    if (scope === "GLOBAL") {
+      preferences.discussion = discussion;
+      preferences.discussionDesign = discussionDesign;
+    } else {
+      mocks.getProjectAiTaskOverrides.mockResolvedValue({ available: true, discussion, discussionDesign });
+    }
+    mocks.getAiTaskPreferences.mockResolvedValue(preferences);
+    mocks.listModelProfiles.mockResolvedValue([profile, designProfile]);
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    mocks.summarizeDiscussionDesign.mockResolvedValue({
+      id: "independent-proposal", sessionId: session.id, workspaceVersion: 0,
+      entities: [], sourceMessageIds: [assistantMessage.id], contextVersion: "context",
+      omittedMessageCount: 0, status: "PENDING", promotedEntityIds: [], createdAt: "",
+    });
+    renderView();
+    const composer = await screen.findByLabelText("讨论内容");
+    await waitFor(() => expect(composer).toBeEnabled());
+    const suffix = scope === "PROJECT" ? "&scope=PROJECT" : "";
+    await waitFor(() => expect(document.querySelector(`a[href="/settings#ai-task-models?task=discussion${suffix}"]`)).not.toBeNull());
+    expect(document.querySelector(`a[href="/settings#ai-task-models?task=discussionDesign${suffix}"]`)).not.toBeNull();
+    fireEvent.change(composer, { target: { value: "继续讨论灯的代价。" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送讨论" }));
+    await waitFor(() => expect(mocks.askProjectDiscussion).toHaveBeenCalledWith({
+      sessionId: session.id, message: "继续讨论灯的代价。",
+      profileId: profile.id, temperature: 0.8, maxOutputTokens: 2048,
+    }));
+    const organize = screen.getByRole("button", { name: "整理为实体与设定" });
+    await waitFor(() => expect(organize).toBeEnabled());
+    fireEvent.click(organize);
+    await waitFor(() => expect(mocks.summarizeDiscussionDesign).toHaveBeenCalledWith(expect.objectContaining({
+      profileId: designProfile.id, temperature: 0.2, maxOutputTokens: 3072,
+    })));
   });
 });

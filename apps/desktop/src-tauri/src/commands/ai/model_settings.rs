@@ -198,20 +198,10 @@ pub(crate) fn save_project_ai_task_overrides(
             .map_err(|_| ApiError::internal("model settings mutex poisoned"))?;
         store.list().map_err(ApiError::from)?
     };
-    let required_profile_ids = [
-        preferences.work_design.profile_id,
-        preferences.work_design.fallback_profile_id,
-        preferences.outline.profile_id,
-        preferences.outline.fallback_profile_id,
-        preferences.volume_planning.profile_id,
-        preferences.volume_planning.fallback_profile_id,
-        preferences.chapter_split.profile_id,
-        preferences.chapter_split.fallback_profile_id,
-        preferences.writing.profile_id,
-        preferences.writing.fallback_profile_id,
-        preferences.knowledge_extraction.profile_id,
-        preferences.knowledge_extraction.fallback_profile_id,
-    ];
+    let required_profile_ids = preferences
+        .entries()
+        .into_iter()
+        .flat_map(|preference| [preference.profile_id, preference.fallback_profile_id]);
     let mut manager = state
         .manager
         .lock()

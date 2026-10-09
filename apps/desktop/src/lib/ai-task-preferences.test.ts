@@ -4,8 +4,27 @@ import {
   recommendedTaskPreference,
   resolveTaskChatProfile,
   emptyAiTaskPreferences,
+  AI_TASK_DEFINITIONS,
+  aiTaskSettingsHref,
+  aiTaskSettingsFromHash,
 } from "./ai-task-preferences";
 import type { ModelProfile } from "./tauri-client";
+
+describe("AI task settings links", () => {
+  it.each(AI_TASK_DEFINITIONS)("round-trips $key in both scopes", ({ key }) => {
+    for (const scope of ["GLOBAL", "PROJECT"] as const) {
+      const href = aiTaskSettingsHref(key, scope);
+      expect(aiTaskSettingsFromHash(href.slice("/settings".length))).toEqual({ task: key, scope });
+    }
+  });
+
+  it("safely handles generic, invalid, and unrelated hashes", () => {
+    expect(aiTaskSettingsHref()).toBe("/settings#ai-task-models");
+    expect(aiTaskSettingsFromHash("#ai-task-models")).toEqual({ task: "workDesign", scope: "GLOBAL" });
+    expect(aiTaskSettingsFromHash("#ai-task-models?task=missing&scope=bad")).toEqual({ task: "workDesign", scope: "GLOBAL" });
+    expect(aiTaskSettingsFromHash("#model-api?task=discussion")).toBeNull();
+  });
+});
 
 describe("describeTaskPreferenceDifferences", () => {
   it("reports only settings that differ from the recommended defaults", () => {

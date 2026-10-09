@@ -45,7 +45,20 @@ impl ModelProfileStore {
             .map_err(DatabaseError::from)?;
         let mut preferences = stored.map_or_else(
             || Ok(AiTaskPreferences::default()),
-            |value| serde_json::from_str(&value).map_err(|_| AiError::ContextSerialization),
+            |value| -> Result<AiTaskPreferences, AiError> {
+                let stored: serde_json::Value =
+                    serde_json::from_str(&value).map_err(|_| AiError::ContextSerialization)?;
+                let mut preferences: AiTaskPreferences = serde_json::from_value(stored.clone())
+                    .map_err(|_| AiError::ContextSerialization)?;
+                // Older installations routed both discussion operations through work design.
+                if stored.get("discussion").is_none() {
+                    preferences.discussion = preferences.work_design.clone();
+                }
+                if stored.get("discussionDesign").is_none() {
+                    preferences.discussion_design = preferences.work_design.clone();
+                }
+                Ok(preferences)
+            },
         )?;
         preferences.set_recommended_defaults();
         Ok(preferences)
@@ -148,5 +161,54 @@ impl ModelProfileStore {
             return Err(AiError::MissingProfile(id));
         }
         self.get(id)
+    }
+}
+
+#[cfg(test)]
+mod task_settings_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_discussion_settings_inherit_work_design_without_replacing_explicit_settings() {
+        let mut store = ModelProfileStore::in_memory().expect("store");
+        store.database.connection.execute(
+            "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)",
+            rusqlite::params![AI_TASK_PREFERENCES_KEY, r#"{"workDesign":{"temperature":0.75,"maxOutputTokens":3072},"discussionDesign":{"temperature":0.2,"maxOutputTokens":4096}}"#],
+        ).expect("legacy settings");
+        let mut preferences = store.get_ai_task_preferences().expect("read");
+        assert_eq!(preferences.discussion.temperature, Some(0.75));
+        assert_eq!(preferences.discussion.max_output_tokens, Some(3072));
+        assert_eq!(preferences.discussion_design.temperature, Some(0.2));
+        preferences.discussion.temperature = Some(1.1);
+        store.save_ai_task_preferences(&preferences).expect("save");
+        let saved = store.get_ai_task_preferences().expect("read saved");
+        assert_eq!(saved.discussion.temperature, Some(1.1));
+        assert_eq!(saved.work_design.temperature, Some(0.75));
+        assert_eq!(saved.discussion_design.temperature, Some(0.2));
+    }
+
+    #[test]
+    fn all_ten_task_preferences_are_validated_and_round_trip_independently() {
+        let mut store = ModelProfileStore::in_memory().expect("store");
+        let mut preferences = AiTaskPreferences::default();
+        preferences.discussion.temperature = Some(0.9);
+        preferences.discussion_design.temperature = Some(0.25);
+        assert_eq!(preferences.entries().len(), 10);
+        assert_eq!(
+            preferences.get(AiTaskKind::Discussion).temperature,
+            Some(0.9)
+        );
+        store.save_ai_task_preferences(&preferences).expect("save");
+        assert_eq!(store.get_ai_task_preferences().expect("read"), preferences);
+        preferences.discussion_design.temperature = Some(3.0);
+        assert!(store.save_ai_task_preferences(&preferences).is_err());
+        assert_eq!(
+            store
+                .get_ai_task_preferences()
+                .expect("unchanged")
+                .discussion_design
+                .temperature,
+            Some(0.25)
+        );
     }
 }

@@ -149,6 +149,8 @@ pub struct SecretStore;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum AiTaskKind {
+    Discussion,
+    DiscussionDesign,
     WorkDesign,
     Outline,
     VolumePlanning,
@@ -182,6 +184,8 @@ impl AiTaskKind {
     #[must_use]
     pub const fn storage_key(self) -> &'static str {
         match self {
+            Self::Discussion => "discussion",
+            Self::DiscussionDesign => "discussionDesign",
             Self::WorkDesign => "workDesign",
             Self::Outline => "outline",
             Self::VolumePlanning => "volumePlanning",
@@ -196,7 +200,7 @@ impl AiTaskKind {
     #[must_use]
     pub const fn default_temperature(self) -> f64 {
         match self {
-            Self::WorkDesign => 0.45,
+            Self::WorkDesign | Self::Discussion | Self::DiscussionDesign => 0.45,
             Self::Outline => 0.6,
             Self::VolumePlanning => 0.55,
             Self::ChapterSplit => 0.3,
@@ -211,6 +215,8 @@ impl AiTaskKind {
     pub const fn default_max_output_tokens(self) -> u32 {
         match self {
             Self::WorkDesign
+            | Self::Discussion
+            | Self::DiscussionDesign
             | Self::ChapterSplit
             | Self::ChapterPlan
             | Self::KnowledgeExtraction => 4_096,
@@ -222,7 +228,11 @@ impl AiTaskKind {
     #[must_use]
     pub const fn default_input_token_budget(self) -> u32 {
         match self {
-            Self::WorkDesign | Self::ChapterSplit | Self::ChapterPlan => 24_576,
+            Self::WorkDesign
+            | Self::ChapterSplit
+            | Self::ChapterPlan
+            | Self::Discussion
+            | Self::DiscussionDesign => 24_576,
             Self::Outline
             | Self::VolumePlanning
             | Self::ConsistencyReview
@@ -251,7 +261,10 @@ impl AiTaskKind {
 
     #[must_use]
     pub const fn default_include_project_knowledge(self) -> bool {
-        !matches!(self, Self::KnowledgeExtraction)
+        !matches!(
+            self,
+            Self::KnowledgeExtraction | Self::Discussion | Self::DiscussionDesign
+        )
     }
 
     #[must_use]
@@ -620,6 +633,8 @@ impl<'de> Deserialize<'de> for AiTaskPreference {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiTaskPreferences {
+    pub discussion: AiTaskPreference,
+    pub discussion_design: AiTaskPreference,
     pub work_design: AiTaskPreference,
     pub outline: AiTaskPreference,
     pub volume_planning: AiTaskPreference,
@@ -634,6 +649,8 @@ pub struct AiTaskPreferences {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectAiTaskOverrides {
     pub available: bool,
+    pub discussion: Option<AiTaskPreference>,
+    pub discussion_design: Option<AiTaskPreference>,
     pub work_design: Option<AiTaskPreference>,
     pub outline: Option<AiTaskPreference>,
     pub volume_planning: Option<AiTaskPreference>,
@@ -648,6 +665,8 @@ impl ProjectAiTaskOverrides {
     #[must_use]
     pub fn get(&self, task: AiTaskKind) -> Option<&AiTaskPreference> {
         match task {
+            AiTaskKind::Discussion => self.discussion.as_ref(),
+            AiTaskKind::DiscussionDesign => self.discussion_design.as_ref(),
             AiTaskKind::WorkDesign => self.work_design.as_ref(),
             AiTaskKind::Outline => self.outline.as_ref(),
             AiTaskKind::VolumePlanning => self.volume_planning.as_ref(),
@@ -664,6 +683,8 @@ impl AiTaskPreferences {
     #[must_use]
     pub fn get(&self, task: AiTaskKind) -> &AiTaskPreference {
         match task {
+            AiTaskKind::Discussion => &self.discussion,
+            AiTaskKind::DiscussionDesign => &self.discussion_design,
             AiTaskKind::WorkDesign => &self.work_design,
             AiTaskKind::Outline => &self.outline,
             AiTaskKind::VolumePlanning => &self.volume_planning,
@@ -675,8 +696,11 @@ impl AiTaskPreferences {
         }
     }
 
-    fn entries(&self) -> [&AiTaskPreference; 8] {
+    #[must_use]
+    pub fn entries(&self) -> [&AiTaskPreference; 10] {
         [
+            &self.discussion,
+            &self.discussion_design,
             &self.work_design,
             &self.outline,
             &self.volume_planning,
@@ -689,6 +713,10 @@ impl AiTaskPreferences {
     }
 
     fn set_recommended_defaults(&mut self) {
+        self.discussion
+            .set_recommended_defaults(AiTaskKind::Discussion);
+        self.discussion_design
+            .set_recommended_defaults(AiTaskKind::DiscussionDesign);
         self.work_design
             .set_recommended_defaults(AiTaskKind::WorkDesign);
         self.outline.set_recommended_defaults(AiTaskKind::Outline);
@@ -820,6 +848,8 @@ pub fn apply_task_prompt_preferences(
 impl Default for AiTaskPreferences {
     fn default() -> Self {
         Self {
+            discussion: AiTaskPreference::recommended(AiTaskKind::Discussion),
+            discussion_design: AiTaskPreference::recommended(AiTaskKind::DiscussionDesign),
             work_design: AiTaskPreference::recommended(AiTaskKind::WorkDesign),
             outline: AiTaskPreference::recommended(AiTaskKind::Outline),
             volume_planning: AiTaskPreference::recommended(AiTaskKind::VolumePlanning),

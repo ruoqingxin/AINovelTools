@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   saveProjectAiTaskOverride: vi.fn(),
   saveProjectAiTaskOverrides: vi.fn(),
   removeProjectAiTaskOverride: vi.fn(),
+  upsertModelProfile: vi.fn(),
+  saveModelSecret: vi.fn(),
+  testModelProfile: vi.fn(),
+  deleteModelSecret: vi.fn(),
   saveWritingReviewPolicy: vi.fn(),
   saveAuditFlowSettings: vi.fn(),
 }));
@@ -26,6 +30,21 @@ function recommendedAiTaskPreferenceSnapshot() {
   return Object.fromEntries(
     AI_TASK_DEFINITIONS.map(({ key }) => [key, { ...recommendedAiTaskPreferences[key] }]),
   );
+}
+
+function chatProfile() {
+  return {
+    id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
+    baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000,
+    maxOutputTokens: 8192, privacyLevel: "ALLOW_CLOUD", timeoutSeconds: 120, retryLimit: 1,
+    inputPriceMicrosPerMillion: 2500000, outputPriceMicrosPerMillion: 10000000,
+    priceCurrency: "USD", secretRef: "model-profile:deepseek-profile", hasSecret: true,
+    createdAt: "0", updatedAt: "0",
+  };
+}
+
+function renderSettings() {
+  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SettingsView /></QueryClientProvider>);
 }
 
 vi.mock("../lib/tauri-client", async () => {
@@ -44,6 +63,10 @@ vi.mock("../lib/tauri-client", async () => {
     saveProjectAiTaskOverride: mocks.saveProjectAiTaskOverride,
     saveProjectAiTaskOverrides: mocks.saveProjectAiTaskOverrides,
     removeProjectAiTaskOverride: mocks.removeProjectAiTaskOverride,
+    upsertModelProfile: mocks.upsertModelProfile,
+    saveModelSecret: mocks.saveModelSecret,
+    testModelProfile: mocks.testModelProfile,
+    deleteModelSecret: mocks.deleteModelSecret,
     saveWritingReviewPolicy: mocks.saveWritingReviewPolicy,
     saveAuditFlowSettings: mocks.saveAuditFlowSettings,
   };
@@ -53,10 +76,16 @@ describe("SettingsView", () => {
   afterEach(() => {
     cleanup();
     window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
+    vi.restoreAllMocks();
   });
 
   beforeEach(() => {
+    vi.clearAllMocks();
     mocks.listModelProfiles.mockResolvedValue([]);
+    mocks.upsertModelProfile.mockImplementation(async (profile) => ({ ...profile, id: profile.id ?? "saved-profile" }));
+    mocks.saveModelSecret.mockResolvedValue(undefined);
+    mocks.testModelProfile.mockResolvedValue({ detail: "连接成功", success: true });
+    mocks.deleteModelSecret.mockResolvedValue(undefined);
     mocks.getAiTaskPreferences.mockResolvedValue(recommendedAiTaskPreferenceSnapshot());
     mocks.saveAiTaskPreferences.mockImplementation(async (preferences) => preferences);
     mocks.getAiBudgetSettings.mockResolvedValue({
@@ -122,6 +151,8 @@ describe("SettingsView", () => {
     expect(screen.getByLabelText("新建模型配置")).toBeVisible();
     expect(screen.getByRole("button", { name: "测试连接" })).toBeDisabled();
     expect(screen.getByLabelText("模型 ID")).toHaveValue("deepseek-flash");
+    expect(screen.getByDisplayValue("1000000")).not.toBeVisible();
+    fireEvent.click(screen.getByText("模型限制与计费"));
     expect(screen.getByDisplayValue("1000000")).toBeVisible();
     expect(screen.getByDisplayValue("384000")).toBeVisible();
   });
@@ -201,7 +232,7 @@ describe("SettingsView", () => {
     }));
   });
 
-  it("shows the eight recommended defaults and restores an overridden task", async () => {
+  it("shows all recommended defaults and restores an overridden task", async () => {
     mocks.listModelProfiles.mockResolvedValue([
       {
         id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
@@ -257,7 +288,7 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
     await screen.findByLabelText("作品设定温度");
 
-    fireEvent.click(screen.getByRole("button", { name: "悬疑推理" }));
+    fireEvent.change(screen.getByLabelText("题材参数"), { target: { value: "mystery" } });
     fireEvent.click(screen.getByRole("tab", { name: /大纲主线/ }));
     expect(screen.getByLabelText("大纲主线温度")).toHaveValue(0.45);
     fireEvent.click(screen.getByRole("tab", { name: /章节拆分/ }));
@@ -314,7 +345,7 @@ describe("SettingsView", () => {
     }));
   });
 
-  it("hides advanced prompt controls from routine task configuration", async () => {
+  it("keeps advanced controls collapsed but lets the author expand them", async () => {
     mocks.listModelProfiles.mockResolvedValue([
       {
         id: "deepseek-profile", name: "DeepSeek 写作", provider: "DEEP_SEEK", capability: "CHAT",
@@ -329,9 +360,13 @@ describe("SettingsView", () => {
     await screen.findByRole("heading", { name: "AI 任务模型" });
     await screen.findByLabelText("作品设定温度");
     fireEvent.click(screen.getByRole("tab", { name: /正文书写/ }));
-    expect(screen.getByText("备用模型和高级设置")).not.toBeVisible();
+    expect(screen.getByText("备用模型和高级设置")).toBeVisible();
     expect(screen.getByLabelText(/系统提示词覆盖/)).not.toBeVisible();
     expect(screen.getByLabelText(/输入 Token 预算/)).not.toBeVisible();
+    fireEvent.click(screen.getByText("备用模型和高级设置"));
+    expect(screen.getByLabelText(/系统提示词覆盖/)).toBeVisible();
+    expect(screen.getByLabelText(/输入 Token 预算/)).toBeVisible();
+    expect(screen.getByLabelText("正文书写备用模型")).toBeVisible();
   });
 
   it("saves the selected task as a project-level override", async () => {
@@ -479,10 +514,11 @@ describe("SettingsView", () => {
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
 
-    expect(await screen.findByText(/预估下一次约 CNY .* · 基于近 30 天 2 次记录 · DeepSeek Flash .*按未命中缓存估算/)).toBeVisible();
+    expect(await screen.findByText(/预估下一次约 CNY .* · 基于项目累计 2 次记录 · DeepSeek Flash .*按未命中缓存估算/)).toBeVisible();
   });
 
   it("warns when estimated spend reaches a soft budget", async () => {
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({ available: true });
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     mocks.listModelProfiles.mockResolvedValue([
@@ -542,7 +578,7 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "审核流程" }));
 
     expect(await screen.findByRole("heading", { name: "审核流程" })).toBeVisible();
-    expect(await screen.findByRole("radio", { name: /平衡模式/ })).toHaveAttribute("aria-checked", "true");
+    expect(await screen.findByRole("radio", { name: /平衡模式/ })).toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: /严格模式/ }));
     fireEvent.click(screen.getByRole("button", { name: "保存流程" }));
 
@@ -557,5 +593,261 @@ describe("SettingsView", () => {
 
     expect(await screen.findByText("请先打开或新建作品，审核流程按作品单独保存。")).toBeVisible();
     expect(screen.queryByRole("radiogroup", { name: "写作准入策略" })).not.toBeInTheDocument();
+  });
+
+  it("protects unsaved model changes on both category clicks and hash links", async () => {
+    renderSettings();
+    await screen.findByLabelText("配置名称");
+    fireEvent.change(screen.getByLabelText("配置名称"), { target: { value: "未保存配置" } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    expect(screen.getByLabelText("配置名称")).toHaveValue("未保存配置");
+    window.history.replaceState({}, "", "#ai-task-models");
+    fireEvent(window, new Event("hashchange"));
+    expect(window.location.hash).toBe("#model-api");
+    expect(confirm).toHaveBeenCalledTimes(2);
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    expect(await screen.findByRole("heading", { name: "AI 任务模型" })).toBeVisible();
+    expect(window.location.hash).toBe("#ai-task-models");
+  });
+
+  it("validates the model URL and protects an entered API key", async () => {
+    renderSettings();
+    const key = await screen.findByLabelText("API Key");
+    fireEvent.change(key, { target: { value: "test-secret" } });
+    expect(key).toHaveAttribute("type", "password");
+    fireEvent.click(screen.getByRole("button", { name: "显示 API Key" }));
+    expect(key).toHaveAttribute("type", "text");
+    fireEvent.click(screen.getByRole("button", { name: "隐藏 API Key" }));
+    expect(key).toHaveAttribute("type", "password");
+    fireEvent.change(screen.getByLabelText("API Base URL"), { target: { value: "invalid-url" } });
+    expect(screen.getByRole("button", { name: "保存配置" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "测试连接" })).toBeDisabled();
+    expect(screen.getByText(/API 地址须为有效/)).toBeVisible();
+    expect(mocks.upsertModelProfile).not.toHaveBeenCalled();
+  });
+
+  it("saves the model and credential before testing its connection", async () => {
+    renderSettings();
+    fireEvent.change(await screen.findByLabelText("API Key"), { target: { value: "test-secret" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "测试连接" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText("连接成功")).toBeVisible();
+    expect(mocks.upsertModelProfile).toHaveBeenCalledTimes(1);
+    expect(mocks.saveModelSecret).toHaveBeenCalledWith("saved-profile", "test-secret");
+    expect(mocks.testModelProfile).toHaveBeenCalledWith("saved-profile");
+  });
+
+  it("requires confirmation before removing a saved credential", async () => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    renderSettings();
+    await screen.findByDisplayValue("DeepSeek 写作");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "删除 Key" }));
+    expect(mocks.deleteModelSecret).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "删除 Key" }));
+    await screen.findByText("API Key 已从系统凭据库删除");
+    expect(mocks.deleteModelSecret).toHaveBeenCalledWith("deepseek-profile");
+  });
+
+  it("preserves temperature precision and supports keyboard task selection", async () => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    window.history.replaceState({}, "", "#ai-task-models");
+    renderSettings();
+    await waitFor(() => expect(screen.getByLabelText("作品设定温度")).toHaveValue(0.45));
+    fireEvent.change(screen.getByLabelText("作品设定温度"), { target: { value: "0.35" } });
+    expect(screen.getByLabelText("作品设定温度")).toHaveValue(0.35);
+    fireEvent.keyDown(screen.getByRole("tab", { name: /作品设定/ }), { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: /大纲主线/ })).toHaveFocus();
+    expect(screen.getByLabelText("大纲主线温度")).toBeVisible();
+  });
+
+  it("saves every edited project task while preserving inherited tasks", async () => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    const overrides = Object.fromEntries(AI_TASK_DEFINITIONS.map(({ key }) => [key, null]));
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({ ...overrides, available: true });
+    mocks.saveProjectAiTaskOverride.mockImplementation(async (task, preference) => {
+      overrides[task] = preference;
+      return { ...overrides, available: true };
+    });
+    window.history.replaceState({}, "", "#ai-task-models");
+    renderSettings();
+    await waitFor(() => expect(screen.getByLabelText("作品设定温度")).toHaveValue(0.45));
+    fireEvent.click(screen.getByRole("tab", { name: "项目覆盖" }));
+    fireEvent.change(screen.getByLabelText("作品设定温度"), { target: { value: "0.7" } });
+    fireEvent.click(screen.getByRole("tab", { name: /大纲主线/ }));
+    fireEvent.change(screen.getByLabelText("大纲主线温度"), { target: { value: "0.8" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存为项目覆盖" }));
+    expect(await screen.findByText("已保存全部修改的项目级任务配置")).toBeVisible();
+    expect(mocks.saveProjectAiTaskOverride).toHaveBeenCalledTimes(2);
+    expect(mocks.saveProjectAiTaskOverride).toHaveBeenCalledWith("workDesign", expect.objectContaining({ temperature: 0.7 }));
+    expect(mocks.saveProjectAiTaskOverride).toHaveBeenCalledWith("outline", expect.objectContaining({ temperature: 0.8 }));
+    expect(overrides.writing).toBeNull();
+    expect(screen.getByText("与已保存配置一致")).toBeVisible();
+  });
+
+  it("keeps unsaved global parameters out of the project editing scope", async () => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({ available: true });
+    window.history.replaceState({}, "", "#ai-task-models");
+    renderSettings();
+    await waitFor(() => expect(screen.getByLabelText("作品设定温度")).toHaveValue(0.45));
+    fireEvent.change(screen.getByLabelText("作品设定温度"), { target: { value: "1.3" } });
+    fireEvent.click(screen.getByRole("tab", { name: "项目覆盖" }));
+    expect(screen.getByLabelText("作品设定温度")).toHaveValue(0.45);
+    fireEvent.click(screen.getByRole("tab", { name: "全局配置" }));
+    expect(screen.getByLabelText("作品设定温度")).toHaveValue(1.3);
+  });
+
+  it("persists disabled review stages without losing the saved admission policy", async () => {
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({ available: true });
+    window.history.replaceState({}, "", "#writing-admission");
+    renderSettings();
+    const admission = await screen.findByRole("switch", { name: "创作准入" });
+    fireEvent.click(admission);
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(screen.getByText(/准入策略暂不生效/)).toBeVisible();
+    fireEvent.click(screen.getByRole("switch", { name: "知识审核" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存流程" }));
+    await screen.findByText("审核流程已保存，后续创作会立即按新设置执行。");
+    expect(mocks.saveAuditFlowSettings).toHaveBeenCalledWith({ admission: false, manuscript: true, knowledge: false });
+    expect(mocks.saveWritingReviewPolicy).toHaveBeenCalledWith("BALANCED");
+  });
+
+  it("switches usage periods while keeping task totals explicitly all-time", async () => {
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({ available: true });
+    mocks.getAiUsageSummary.mockImplementation(async (days) => ({
+      days, total: [], daily: [], byTask: [{
+        taskKey: "writing", currency: "USD", runCount: 3, inputTokens: 1000,
+        outputTokens: 2000, estimatedCostMicros: 50000,
+      }],
+    }));
+    window.history.replaceState({}, "", "#ai-usage");
+    renderSettings();
+    expect(await screen.findByRole("cell", { name: "正文书写" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "7 天" }));
+    await waitFor(() => expect(mocks.getAiUsageSummary).toHaveBeenCalledWith(7));
+    expect(await screen.findByText("项目全部历史")).toBeVisible();
+    expect(screen.getByText("近 7 天")).toBeVisible();
+  });
+
+  it("rejects invalid budgets instead of silently turning off the limit", async () => {
+    window.history.replaceState({}, "", "#ai-usage");
+    renderSettings();
+    const daily = await screen.findByLabelText("每日预算上限");
+    await waitFor(() => expect(daily).toBeEnabled());
+    fireEvent.change(daily, { target: { value: "-5" } });
+    expect(daily).toHaveValue(-5);
+    expect(daily).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "保存预算" })).toBeDisabled();
+    expect(screen.getByText(/预算须为大于 0/)).toBeVisible();
+    expect(mocks.saveAiBudgetSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "撤销修改" }));
+    expect(daily).toHaveValue(null);
+    fireEvent.change(screen.getByLabelText("预算币种"), { target: { value: "CNY" } });
+    fireEvent.change(daily, { target: { value: "10.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存预算" }));
+    await screen.findByText("AI 软预算已保存，超出上限时仅提示，不会中断生成");
+    expect(mocks.saveAiBudgetSettings).toHaveBeenCalledWith({ currency: "CNY", dailyLimitMicros: 10500000, projectLimitMicros: null });
+  });
+
+  it("does not replace saved budget warnings with unsaved draft limits", async () => {
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({ available: true });
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const row = { currency: "USD", runCount: 1, inputTokens: 100, outputTokens: 200, estimatedCostMicros: 800000 };
+    mocks.getAiUsageSummary.mockResolvedValue({ days: 30, total: [row], daily: [{ ...row, date: today }], byTask: [] });
+    mocks.getAiBudgetSettings.mockResolvedValue({ currency: "USD", dailyLimitMicros: 1000000, projectLimitMicros: null });
+    window.history.replaceState({}, "", "#ai-usage");
+    renderSettings();
+    await screen.findByText("今日估算费用已达到每日预算的 80%");
+    fireEvent.change(screen.getByLabelText("每日预算上限"), { target: { value: "100" } });
+    expect(screen.getByText("今日估算费用已达到每日预算的 80%")).toBeVisible();
+    expect(screen.getByRole("progressbar", { name: "今日预算" })).toHaveAttribute("value", "80");
+  });
+
+  it("shows actionable query errors and never enables saving unloaded model settings", async () => {
+    mocks.listModelProfiles.mockRejectedValue(new Error("本机配置不可用"));
+    renderSettings();
+    expect(await screen.findByRole("alert")).toHaveTextContent("本机配置不可用");
+    expect(screen.getByRole("button", { name: "保存配置" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "重试" })).toBeVisible();
+  });
+
+  it("clears dirty budget formatting even when the saved amount is unchanged", async () => {
+    mocks.getAiBudgetSettings.mockResolvedValue({ currency: "USD", dailyLimitMicros: 1000000, projectLimitMicros: null });
+    window.history.replaceState({}, "", "#ai-usage");
+    renderSettings();
+    const daily = await screen.findByLabelText("每日预算上限");
+    await waitFor(() => expect(daily).toHaveValue(1));
+    fireEvent.change(daily, { target: { value: "1.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存预算" }));
+    await screen.findByText("AI 软预算已保存，超出上限时仅提示，不会中断生成");
+    expect(screen.getByRole("button", { name: "保存预算" })).toBeDisabled();
+    expect(screen.queryByText("未保存修改")).not.toBeInTheDocument();
+  });
+
+  it.each(AI_TASK_DEFINITIONS)("selects $label from its settings deep link", async ({ key, label }) => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    window.history.replaceState({}, "", `#ai-task-models?task=${key}`);
+    renderSettings();
+    await waitFor(() => expect(screen.getByLabelText(`${label}温度`)).toBeEnabled());
+    expect(screen.getByRole("tab", { name: new RegExp(label) })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tablist", { name: "选择要设置的 AI 任务" }).children).toHaveLength(10);
+  });
+
+  it("changes the selected task on a hash link while preserving drafts", async () => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    window.history.replaceState({}, "", "#ai-task-models?task=discussion");
+    renderSettings();
+    await waitFor(() => expect(screen.getByLabelText("共创讨论温度")).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("共创讨论温度"), { target: { value: "0.75" } });
+    window.history.replaceState({}, "", "#ai-task-models?task=writing");
+    fireEvent(window, new Event("hashchange"));
+    expect(screen.getByLabelText("正文书写温度")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: /共创讨论/ }));
+    expect(screen.getByLabelText("共创讨论温度")).toHaveValue(0.75);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    window.history.replaceState({}, "", "#ai-usage");
+    fireEvent(window, new Event("hashchange"));
+    expect(window.location.hash).toBe("#ai-task-models?task=discussion");
+    expect(screen.getByLabelText("共创讨论温度")).toHaveValue(0.75);
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the requested project task override and protects it on scope changes", async () => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({
+      available: true,
+      discussion: { ...recommendedAiTaskPreferences.discussion, temperature: 1.1 },
+    });
+    window.history.replaceState({}, "", "#ai-task-models?task=discussion&scope=PROJECT");
+    renderSettings();
+    await waitFor(() => expect(screen.getByLabelText("共创讨论温度")).toHaveValue(1.1));
+    expect(screen.getByRole("tab", { name: "项目覆盖" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.change(screen.getByLabelText("共创讨论温度"), { target: { value: "0.8" } });
+    fireEvent.click(screen.getByRole("tab", { name: "项目覆盖" }));
+    expect(screen.getByLabelText("共创讨论温度")).toHaveValue(0.8);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    window.history.replaceState({}, "", "#ai-task-models?task=writing");
+    fireEvent(window, new Event("hashchange"));
+    expect(window.location.hash).toBe("#ai-task-models?task=discussion&scope=PROJECT");
+    expect(screen.getByLabelText("共创讨论温度")).toHaveValue(0.8);
+  });
+
+  it("falls back to global discussion settings when no project is open, including older preference snapshots", async () => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    const legacy = recommendedAiTaskPreferenceSnapshot();
+    delete legacy.discussion;
+    delete legacy.discussionDesign;
+    mocks.getAiTaskPreferences.mockResolvedValue(legacy);
+    window.history.replaceState({}, "", "#ai-task-models?task=discussion&scope=PROJECT");
+    renderSettings();
+    await waitFor(() => expect(screen.getByLabelText("共创讨论温度")).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("tab", { name: "全局配置" })).toHaveAttribute("aria-selected", "true"));
+    fireEvent.click(screen.getByRole("tab", { name: /构思整理/ }));
+    expect(screen.getByLabelText("构思整理温度")).toHaveValue(0.45);
   });
 });

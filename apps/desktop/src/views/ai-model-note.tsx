@@ -3,7 +3,9 @@ import { Cpu } from "lucide-react";
 import { estimateNextRunCost, nextRunCostLabel } from "../lib/ai-cost-estimate";
 import {
   describeTaskPreferenceDifferences,
+  aiTaskSettingsHref,
   type AiTaskKey,
+  type AiTaskSettingsScope,
 } from "../lib/ai-task-preferences";
 import {
   getAiBudgetSettings,
@@ -15,6 +17,7 @@ import {
 export function AiModelNote(props: {
   taskLabel: string;
   taskKey?: AiTaskKey;
+  settingsScope?: AiTaskSettingsScope;
   profile: ModelProfile | undefined;
   preference?: AiTaskPreference;
   runMultiplier?: number;
@@ -65,9 +68,9 @@ export function AiModelNote(props: {
       <small>{props.taskLabel}模型{tuning.length ? ` · ${tuning.join(" · ")}` : ""}</small>
       <strong>{props.profile ? `${props.profile.name} · ${props.profile.modelId}` : "未配置可用聊天模型"}</strong>
     </span>
-    <a href="/settings#ai-task-models">调整</a>
+    <a href={aiTaskSettingsHref(props.taskKey, props.settingsScope)}>调整</a>
     {props.taskKey ? <div className="ai-model-note-preflight">
-      <span>{usage.isPending ? "正在读取历史费用…" : estimate ? nextRunCostLabel(estimate, usage.data?.days, runMultiplier) : "预估样本不足"}</span>
+      <span>{usage.isPending ? "正在读取历史费用…" : estimate ? nextRunCostLabel(estimate, null, runMultiplier) : "预估样本不足"}</span>
       {props.preference?.prompt.context.inputTokenBudget ? <span>输入预算 {props.preference.prompt.context.inputTokenBudget.toLocaleString()} tokens</span> : null}
       <span data-custom={differences.length > 0 || undefined}>{differences.length ? `配置差异：${differences.join("、")}` : "配置差异：使用推荐值"}</span>
       {dailyProjection ? <span data-warning>{dailyProjection}</span> : null}

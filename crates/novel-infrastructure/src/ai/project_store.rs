@@ -1,10 +1,45 @@
 use super::*;
 
+fn migrate_discussion_task_overrides(connection: &rusqlite::Connection) -> Result<(), AiError> {
+    const MARKER: &str = "discussion-task-overrides-v1";
+    let migrated = connection
+        .query_row(
+            "SELECT 1 FROM app_metadata WHERE key = ?1",
+            [MARKER],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(DatabaseError::from)?
+        .is_some();
+    if migrated {
+        return Ok(());
+    }
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(DatabaseError::from)?;
+    for task in ["discussion", "discussionDesign"] {
+        transaction.execute(
+            "INSERT OR IGNORE INTO project_ai_task_overrides (task_key, preference_json)
+             SELECT ?1, preference_json FROM project_ai_task_overrides WHERE task_key = 'workDesign'",
+            [task],
+        ).map_err(DatabaseError::from)?;
+    }
+    transaction
+        .execute(
+            "INSERT OR IGNORE INTO app_metadata (key, value) VALUES (?1, '1')",
+            [MARKER],
+        )
+        .map_err(DatabaseError::from)?;
+    transaction.commit().map_err(DatabaseError::from)?;
+    Ok(())
+}
+
 impl ProjectManager {
     pub fn get_project_ai_task_overrides(&self) -> Result<ProjectAiTaskOverrides, AiError> {
         let Some(session) = self.current.as_ref() else {
             return Ok(ProjectAiTaskOverrides::default());
         };
+        migrate_discussion_task_overrides(&session.database.connection)?;
         let mut overrides = ProjectAiTaskOverrides {
             available: true,
             ..ProjectAiTaskOverrides::default()
@@ -24,6 +59,8 @@ impl ProjectManager {
             let preference = serde_json::from_str::<AiTaskPreference>(&preference_json)
                 .map_err(|_| AiError::ContextSerialization)?;
             match task_key.as_str() {
+                "discussion" => overrides.discussion = Some(preference),
+                "discussionDesign" => overrides.discussion_design = Some(preference),
                 "workDesign" => overrides.work_design = Some(preference),
                 "outline" => overrides.outline = Some(preference),
                 "volumePlanning" => overrides.volume_planning = Some(preference),
@@ -43,6 +80,9 @@ impl ProjectManager {
         task: AiTaskKind,
         preference: &AiTaskPreference,
     ) -> Result<(), AiError> {
+        if let Some(session) = self.current.as_ref() {
+            migrate_discussion_task_overrides(&session.database.connection)?;
+        }
         let profiles = self.list_model_profiles()?;
         validate_ai_task_preference(preference, &profiles)?;
         let preference_json =
@@ -67,8 +107,13 @@ impl ProjectManager {
         &mut self,
         preferences: &AiTaskPreferences,
     ) -> Result<(), AiError> {
+        if let Some(session) = self.current.as_ref() {
+            migrate_discussion_task_overrides(&session.database.connection)?;
+        }
         let profiles = self.list_model_profiles()?;
         let entries = [
+            (AiTaskKind::Discussion, &preferences.discussion),
+            (AiTaskKind::DiscussionDesign, &preferences.discussion_design),
             (AiTaskKind::WorkDesign, &preferences.work_design),
             (AiTaskKind::Outline, &preferences.outline),
             (AiTaskKind::VolumePlanning, &preferences.volume_planning),
@@ -117,6 +162,7 @@ impl ProjectManager {
 
     pub fn remove_project_ai_task_override(&mut self, task: AiTaskKind) -> Result<(), AiError> {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        migrate_discussion_task_overrides(&session.database.connection)?;
         session
             .database
             .connection
@@ -1268,5 +1314,69 @@ impl ProjectManager {
             "SELECT id, task_id, chapter_id, action, review_purpose, target_revision_id, context_version, prompt_version, output_text, accepted_text, status, created_at, decided_at FROM ai_proposals WHERE id=?1",
             [id.to_string()], read_proposal,
         ).optional().map_err(DatabaseError::from)?.ok_or(AiError::MissingProposal(id))
+    }
+}
+
+#[cfg(test)]
+mod task_settings_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_discussion_overrides_split_once_and_do_not_return_after_removal() {
+        let database = crate::Database::in_memory().expect("database");
+        database.connection.execute(
+            "INSERT INTO project_ai_task_overrides (task_key, preference_json) VALUES ('workDesign', ?1), ('discussionDesign', ?2)",
+            [r#"{"temperature":0.8}"#, r#"{"temperature":0.3}"#],
+        ).expect("legacy overrides");
+        migrate_discussion_task_overrides(&database.connection).expect("migrate");
+        let value: String = database.connection.query_row(
+            "SELECT preference_json FROM project_ai_task_overrides WHERE task_key = 'discussion'", [], |row| row.get(0),
+        ).expect("discussion");
+        assert_eq!(
+            serde_json::from_str::<AiTaskPreference>(&value)
+                .expect("preference")
+                .temperature,
+            Some(0.8)
+        );
+        let value: String = database.connection.query_row(
+            "SELECT preference_json FROM project_ai_task_overrides WHERE task_key = 'discussionDesign'", [], |row| row.get(0),
+        ).expect("design");
+        assert_eq!(
+            serde_json::from_str::<AiTaskPreference>(&value)
+                .expect("preference")
+                .temperature,
+            Some(0.3)
+        );
+        database
+            .connection
+            .execute(
+                "DELETE FROM project_ai_task_overrides WHERE task_key = 'discussion'",
+                [],
+            )
+            .expect("remove");
+        migrate_discussion_task_overrides(&database.connection).expect("repeat");
+        let count: i64 = database
+            .connection
+            .query_row(
+                "SELECT count(*) FROM project_ai_task_overrides WHERE task_key = 'discussion'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn new_projects_do_not_couple_future_work_design_settings_to_discussion() {
+        let database = crate::Database::in_memory().expect("database");
+        migrate_discussion_task_overrides(&database.connection).expect("initialize");
+        database.connection.execute(
+            "INSERT INTO project_ai_task_overrides (task_key, preference_json) VALUES ('workDesign', '{}')", [],
+        ).expect("new setting");
+        migrate_discussion_task_overrides(&database.connection).expect("repeat");
+        let count: i64 = database.connection.query_row(
+            "SELECT count(*) FROM project_ai_task_overrides WHERE task_key IN ('discussion', 'discussionDesign')", [], |row| row.get(0),
+        ).expect("count");
+        assert_eq!(count, 0);
     }
 }

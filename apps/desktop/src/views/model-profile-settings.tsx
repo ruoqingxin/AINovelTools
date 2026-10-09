@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeDollarSign, Clock3, KeyRound, PlugZap, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowRight, BadgeDollarSign, Clock3, Eye, EyeOff, KeyRound, PlugZap, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   deleteModelSecret,
@@ -118,6 +118,7 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
   const [form, setForm] = useState<ModelProfileInput>(emptyProfile);
   const [savedSignature, setSavedSignature] = useState(() => modelProfileSignature(emptyProfile));
   const [secret, setSecret] = useState("");
+  const [showSecret, setShowSecret] = useState(false);
   const [busy, setBusy] = useState<"save" | "test" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -127,6 +128,14 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
   const selectedPreset = availablePresets.find((preset) => preset.id === form.modelId);
   const officialFlashPricing = isDeepSeekFlash(form) ? deepSeekFlashPricing() : null;
   const profileDirty = modelProfileSignature(form) !== savedSignature || Boolean(secret.trim());
+  const validationError = !form.name.trim() ? "请填写配置名称"
+    : !form.modelId.trim() ? "请填写服务商提供的模型 ID"
+    : !/^https?:\/\/[^/\s]+(?:\/[^\s]*)?$/i.test(form.baseUrl.trim()) ? "API 地址须为有效的 http:// 或 https:// 地址"
+    : !Number.isInteger(form.contextWindow) || form.contextWindow < 256 ? "上下文上限须为至少 256 的整数"
+    : !Number.isInteger(form.maxOutputTokens) || form.maxOutputTokens < 1 || form.maxOutputTokens > form.contextWindow ? "最大输出须为正整数，且不能超过上下文上限"
+    : !Number.isInteger(form.timeoutSeconds) || form.timeoutSeconds < 1 || form.timeoutSeconds > 600 ? "超时秒数须为 1 至 600 的整数"
+    : !Number.isInteger(form.retryLimit) || form.retryLimit < 0 || form.retryLimit > 3 ? "重试次数须为 0 至 3 的整数"
+    : null;
   useUnsavedChangesGuard(profileDirty, "当前模型 API 配置有未保存修改。");
 
   useEffect(() => {
@@ -184,14 +193,17 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
     setForm(next);
     setSavedSignature(modelProfileSignature(next));
     setSecret("");
+    setShowSecret(false);
     setError(null);
     setNotice("已创建新的配置草稿，填写后保存即可。");
   }
 
   function selectProfile(profile: NonNullable<typeof selectedProfile>) {
+    if (profile.id === editingProfileId) return;
     if (profile.id !== editingProfileId && profileDirty && !window.confirm("当前模型配置有未保存修改，确定切换吗？")) return;
     setEditingProfileId(profile.id);
     setSecret("");
+    setShowSecret(false);
     setError(null);
     setNotice(null);
   }
@@ -201,7 +213,7 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
     setForm({
       ...form,
       provider,
-      baseUrl: providerBaseUrls[provider] || form.baseUrl,
+      baseUrl: providerBaseUrls[provider],
       ...(preset ? presetValues(preset) : { modelId: "" }),
     });
   }
@@ -229,6 +241,7 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
   }
 
   async function persistProfile() {
+    if (validationError) throw new Error(validationError);
     const profileToSave = officialFlashPricing
       ? { ...form, inputPriceMicrosPerMillion: officialFlashPricing.inputCacheMissMicrosPerMillion, outputPriceMicrosPerMillion: officialFlashPricing.outputMicrosPerMillion, priceCurrency: officialFlashPricing.currency }
       : form;
@@ -248,6 +261,7 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
   async function saveProfile() {
     setBusy("save");
     setError(null);
+    setNotice(null);
     try {
       await persistProfile();
       setNotice("模型配置已保存");
@@ -261,6 +275,7 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
   async function testConnection() {
     setBusy("test");
     setError(null);
+    setNotice(null);
     try {
       const saved = await persistProfile();
       const result = await testModelProfile(saved.id);
@@ -274,6 +289,7 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
 
   async function removeSecret() {
     if (!editingProfileId) return;
+    if (!window.confirm("删除此模型的 API Key 后，使用该模型的 AI 任务将无法运行。确定删除吗？")) return;
     setBusy("delete");
     setError(null);
     try {
@@ -289,9 +305,11 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
 
   return <div className="settings-content">
     <div className="settings-content-heading">
-      <div><h2>模型 API</h2><p>配置写作与 Embedding 服务。API Key 仅保存在本机系统凭据库。</p></div>
+      <div><span className="settings-scope-label">本机配置 · 所有作品共用</span><h2>模型 API</h2><p>写作与分析使用聊天模型，知识检索使用向量模型。</p></div>
+      <a href="#ai-task-models" className="settings-text-link">任务模型<ArrowRight size={14} /></a>
     </div>
     {profiles.isPending ? <p className="plan-empty">正在加载模型配置…</p> : null}
+    {profiles.isError ? <p className="project-error" role="alert">读取模型配置失败：{errorMessage(profiles.error)} <button className="settings-text-link" onClick={() => void profiles.refetch()}><RotateCcw size={14} />重试</button></p> : null}
     {error ? <p className="project-error" role="alert">{error}</p> : null}
     {notice ? <p className="project-notice" role="status">{notice}</p> : null}
     <div className="model-profile-workbench">
@@ -314,6 +332,8 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
         </div>
       </aside>
       <div className="model-profile-editor">
+        <div className="settings-section-heading"><h3>连接信息</h3><span className="settings-status" data-dirty={profileDirty || undefined}>{profileDirty ? "未保存修改" : editingProfileId ? "已保存" : "新配置"}</span></div>
+        <fieldset className="settings-fields" disabled={busy !== null || profiles.isPending || profiles.isError}>
         <div className="model-grid">
           <label>配置名称<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
           <label>模型用途<select value={form.capability} onChange={(event) => selectCapability(event.target.value as ModelProfileInput["capability"])}><option value="CHAT">写作与分析</option><option value="EMBEDDING">文本向量化</option></select></label>
@@ -322,7 +342,12 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
           </select></label>
           <label>模型 ID<select value={selectedPreset?.id ?? "__CUSTOM__"} onChange={(event) => selectModel(event.target.value)}><option value="__CUSTOM__">自定义模型 ID</option>{availablePresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
           {!selectedPreset ? <label>自定义模型 ID<input value={form.modelId} onChange={(event) => setForm({ ...form, modelId: event.target.value })} placeholder="输入服务商提供的模型 ID" /></label> : null}
-          <label className="model-wide">API Base URL<input value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} /></label>
+          <label className="model-wide">API Base URL<input aria-label="API Base URL" type="url" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /><small>服务商的接口根地址，不包含 /chat/completions。</small></label>
+          <label className="model-wide">API Key<span className="settings-secret-input"><input aria-label="API Key" type={showSecret ? "text" : "password"} value={secret} onChange={(event) => setSecret(event.target.value)} placeholder={selectedProfile?.hasSecret ? "已保存，留空保持原 Key" : "输入服务商的 API Key"} autoComplete="off" /><button type="button" className="icon-command" aria-label={showSecret ? "隐藏 API Key" : "显示 API Key"} title={showSecret ? "隐藏 API Key" : "显示 API Key"} onClick={() => setShowSecret(!showSecret)}>{showSecret ? <EyeOff size={16} /> : <Eye size={16} />}</button></span><small>仅保存在本机系统凭据库，不写入作品或运行记录。</small></label>
+        </div>
+        <details className="settings-disclosure">
+          <summary>模型限制与计费</summary>
+          <div className="model-grid">
           <label>上下文上限<input type="number" min={256} value={form.contextWindow} onChange={(event) => setForm({ ...form, contextWindow: Number(event.target.value) })} /></label>
           <label>最大输出<input type="number" min={1} value={form.maxOutputTokens} onChange={(event) => setForm({ ...form, maxOutputTokens: Number(event.target.value) })} /></label>
           <label>超时秒数<input type="number" min={1} max={600} value={form.timeoutSeconds} onChange={(event) => setForm({ ...form, timeoutSeconds: Number(event.target.value) })} /></label>
@@ -340,9 +365,11 @@ export function ModelProfileSettings(props: { onDirtyChange?: (dirty: boolean) =
             </div>
             <p><Clock3 size={12} /><span>工作日 09:00-12:00、14:00-18:00 为高峰；未返回缓存用量时按未命中估算。</span></p>
           </div> : <><label>输入单价<span className="model-price-input"><input type="number" min={0} step="0.01" inputMode="decimal" value={displayPrice(form.inputPriceMicrosPerMillion)} onChange={(event) => setForm({ ...form, inputPriceMicrosPerMillion: parsePrice(event.target.value) })} placeholder="例如 2.50" /><select value={form.priceCurrency} onChange={(event) => setForm({ ...form, priceCurrency: event.target.value })}><option value="USD">USD</option><option value="CNY">CNY</option></select></span><small>每 100 万输入 tokens；留空表示不计算费用。</small></label><label>输出单价<span className="model-price-input"><input type="number" min={0} step="0.01" inputMode="decimal" value={displayPrice(form.outputPriceMicrosPerMillion)} onChange={(event) => setForm({ ...form, outputPriceMicrosPerMillion: parsePrice(event.target.value) })} placeholder="例如 10.00" /><select value={form.priceCurrency} onChange={(event) => setForm({ ...form, priceCurrency: event.target.value })}><option value="USD">USD</option><option value="CNY">CNY</option></select></span><small>每 100 万输出 tokens；与输入单价使用同一币种。</small></label></>}
-          <label className="model-wide">API Key<input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder={selectedProfile?.hasSecret ? "已保存在系统凭据库，留空则不修改" : "仅写入系统凭据库"} autoComplete="off" /></label>
-        </div>
-        <div className="ai-actions"><button type="button" className="primary-action" onClick={() => void saveProfile()} disabled={busy !== null || !form.name.trim() || !form.modelId.trim()}><Save size={14} />{busy === "save" ? "保存中…" : "保存配置"}</button><button type="button" className="secondary-action" onClick={() => void testConnection()} disabled={busy !== null || !form.name.trim() || !form.modelId.trim() || (!selectedProfile?.hasSecret && !secret.trim())} title={!selectedProfile?.hasSecret && !secret.trim() ? "请先输入 API Key" : undefined}><PlugZap size={14} />{busy === "test" ? "测试中…" : "测试连接"}</button>{selectedProfile?.hasSecret ? <button type="button" className="secondary-action" onClick={() => void removeSecret()} disabled={busy !== null}><Trash2 size={14} />删除 Key</button> : null}<span className="secret-state"><KeyRound size={13} />{secret.trim() ? "将保存新的 Key" : selectedProfile?.hasSecret ? "Key 已就绪" : "尚未设置 Key"}</span></div>
+          </div>
+        </details>
+        </fieldset>
+        {validationError ? <p className="settings-field-warning">{validationError}</p> : null}
+        <div className="ai-actions settings-save-row"><button type="button" className="primary-action" onClick={() => void saveProfile()} disabled={busy !== null || profiles.isPending || profiles.isError || Boolean(validationError)}><Save size={14} />{busy === "save" ? "保存中…" : "保存配置"}</button><button type="button" className="secondary-action" onClick={() => void testConnection()} disabled={busy !== null || profiles.isPending || profiles.isError || Boolean(validationError) || (!selectedProfile?.hasSecret && !secret.trim())} title={!selectedProfile?.hasSecret && !secret.trim() ? "请先输入 API Key" : "保存当前配置并测试连接"}><PlugZap size={14} />{busy === "test" ? "测试中…" : "测试连接"}</button>{selectedProfile?.hasSecret ? <button type="button" className="secondary-action" onClick={() => void removeSecret()} disabled={busy !== null}><Trash2 size={14} />删除 Key</button> : null}<span className="secret-state"><KeyRound size={13} />{secret.trim() ? "待保存新 Key" : selectedProfile?.hasSecret ? "Key 已就绪" : "缺少 API Key"}</span></div>
       </div>
     </div>
   </div>;

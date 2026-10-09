@@ -3,6 +3,8 @@ import { Check, RotateCcw, Save, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   AI_TASK_DEFINITIONS,
+  aiTaskSettingsFromHash,
+  aiTaskSettingsHref,
   emptyAiTaskPreferences,
   providerLabel,
   recommendedTaskPreference,
@@ -43,6 +45,8 @@ const CONTEXT_OPTIONS: Array<{
 ];
 
 const TASK_MODEL_HINTS: Record<AiTaskKey, string[]> = {
+  discussion: ["flash", "pro", "terra", "sol"],
+  discussionDesign: ["pro", "terra", "sol", "flash"],
   workDesign: ["pro", "terra", "sol", "flash"],
   outline: ["pro", "terra", "sol", "flash"],
   volumePlanning: ["pro", "terra", "sol", "flash"],
@@ -95,7 +99,7 @@ function parseTemperature(value: string) {
   if (!value.trim()) return null;
   const number = Number(value);
   if (!Number.isFinite(number)) return null;
-  return Math.round(Math.min(2, Math.max(0, number)) * 10) / 10;
+  return Math.round(Math.min(2, Math.max(0, number)) * 100) / 100;
 }
 
 function parseMaxOutputTokens(value: string, limit: number) {
@@ -140,7 +144,7 @@ function normalizeAiTaskPreferences(
   const preferredProfile = chatProfiles.find((profile) => profile.hasSecret) ?? chatProfiles[0];
   return Object.fromEntries(
     AI_TASK_DEFINITIONS.map(({ key }) => {
-      const preference = preferences[key];
+      const preference = resolveTaskPreference(preferences, key);
       const defaults = recommendedTaskPreference(key);
       const selectedProfile = preference.profileId
         ? chatProfiles.find((profile) => profile.id === preference.profileId)
@@ -152,7 +156,7 @@ function normalizeAiTaskPreferences(
           : null
         : null;
       const fallbackProfileId = preference.fallbackProfileId
-        && preference.fallbackProfileId !== profileId
+        && preference.fallbackProfileId !== effectiveProfile?.id
         && chatProfiles.some((profile) => profile.id === preference.fallbackProfileId)
         ? preference.fallbackProfileId
         : null;
@@ -168,6 +172,7 @@ function normalizeAiTaskPreferences(
       const effectiveMaxOutputTokens = Math.min(
         maxOutputTokens,
         effectiveProfile?.maxOutputTokens ?? maxOutputTokens,
+        key === "discussionDesign" ? 16_384 : Infinity,
       );
       const prompt = resolveTaskPreference(preferences, key);
       const context = prompt.prompt.context;
@@ -203,7 +208,10 @@ function normalizeAiTaskPreferences(
   ) as AiTaskPreferences;
 }
 
-export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) => void } = {}) {
+export function AiTaskModelSettings(props: {
+  onDirtyChange?: (dirty: boolean) => void;
+  onSelectionChange?: (hash: string) => void;
+} = {}) {
   const client = useQueryClient();
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const usage = useQuery({ queryKey: ["ai-usage-summary", 30], queryFn: () => getAiUsageSummary(30) });
@@ -219,8 +227,8 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
   const [projectSaving, setProjectSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [selectedTask, setSelectedTask] = useState<AiTaskKey>("workDesign");
-  const [scope, setScope] = useState<"GLOBAL" | "PROJECT">("GLOBAL");
+  const [selectedTask, setSelectedTask] = useState<AiTaskKey>(() => aiTaskSettingsFromHash()?.task ?? "workDesign");
+  const [scope, setScope] = useState<"GLOBAL" | "PROJECT">(() => aiTaskSettingsFromHash()?.scope ?? "GLOBAL");
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const instructionRef = useRef<HTMLTextAreaElement>(null);
   const chatProfiles = profiles.data?.filter((profile) => profile.capability === "CHAT") ?? [];
@@ -234,7 +242,7 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
   const comparisonPreferences = preferences.data && profiles.data
     ? normalizeAiTaskPreferences(preferences.data, profiles.data, true)
     : null;
-  const projectBaseline = mergeProjectPreferences(draft, projectOverrides.data);
+  const projectBaseline = mergeProjectPreferences(normalizedPreferences ?? emptyAiTaskPreferences, projectOverrides.data);
   const activeDraft = scope === "PROJECT" ? projectDraft : draft;
   const activeBaseline = scope === "PROJECT" ? projectBaseline : comparisonPreferences;
   const assignedCount = AI_TASK_DEFINITIONS.filter(({ key }) => Boolean(activeDraft[key].profileId)).length;
@@ -246,6 +254,7 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
   const selectedDefinition = AI_TASK_DEFINITIONS.find(({ key }) => key === selectedTask)
     ?? AI_TASK_DEFINITIONS[0];
   const selectedPreference = activeDraft[selectedTask];
+  const discussionTask = selectedTask === "discussion" || selectedTask === "discussionDesign";
   const selectedId = selectedPreference.profileId ?? "";
   const selectedProfile = chatProfiles.find((profile) => profile.id === selectedId);
   const effectiveProfile = selectedProfile ?? preferredProfile;
@@ -262,11 +271,16 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
     return () => props.onDirtyChange?.(false);
   }, [props.onDirtyChange, settingsDirty]);
 
+  useEffect(() => {
+    props.onSelectionChange?.(aiTaskSettingsHref(selectedTask, scope).slice("/settings".length));
+  }, [props.onSelectionChange, selectedTask, scope]);
+
   function maxOutputLimitForTask(task: AiTaskKey) {
     const selected = activeDraft[task].profileId
       ? chatProfiles.find((profile) => profile.id === activeDraft[task].profileId)
       : undefined;
-    return (selected ?? preferredProfile)?.maxOutputTokens ?? 131_072;
+    const limit = (selected ?? preferredProfile)?.maxOutputTokens ?? 131_072;
+    return task === "discussionDesign" ? Math.min(limit, 16_384) : limit;
   }
 
   function maxInputBudgetForTask(task: AiTaskKey) {
@@ -281,12 +295,38 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
   }
 
   useEffect(() => {
-    if (initialized || !preferences.data || !profiles.data) return;
+    if (initialized || !preferences.data || !profiles.data || projectOverrides.isPending) return;
     const normalized = normalizeAiTaskPreferences(preferences.data, profiles.data);
     setDraft(normalized);
     setProjectDraft(mergeProjectPreferences(normalized, projectOverrides.data));
     setInitialized(true);
-  }, [initialized, preferences.data, profiles.data, projectOverrides.data]);
+  }, [initialized, preferences.data, profiles.data, projectOverrides.data, projectOverrides.isPending]);
+
+  useEffect(() => {
+    function syncTask() {
+      const selection = aiTaskSettingsFromHash();
+      if (!selection) return;
+      const nextScope = selection.scope === "PROJECT" && projectOverrides.data?.available ? "PROJECT" : "GLOBAL";
+      if (nextScope !== scope && scope === "PROJECT" && projectDirty && !window.confirm("当前项目级任务配置有未保存修改，确定切换吗？")) {
+        window.history.replaceState(window.history.state, "", aiTaskSettingsHref(selectedTask, scope));
+        return;
+      }
+      if (nextScope === "PROJECT" && scope !== "PROJECT") setProjectDraft(projectBaseline);
+      setScope(nextScope);
+      setSelectedTask(selection.task);
+    }
+    window.addEventListener("hashchange", syncTask);
+    return () => window.removeEventListener("hashchange", syncTask);
+  }, [scope, selectedTask, projectDirty, projectOverrides.data, projectBaseline]);
+
+  useEffect(() => {
+    if (initialized && scope === "PROJECT" && !projectOverrides.data?.available) setScope("GLOBAL");
+  }, [initialized, scope, projectOverrides.data?.available]);
+
+  function selectTask(task: AiTaskKey) {
+    setSelectedTask(task);
+    window.history.replaceState(window.history.state, "", aiTaskSettingsHref(task, scope));
+  }
 
   function updateTask(task: AiTaskKey, patch: Partial<AiTaskPreference>) {
     const update = scope === "PROJECT" ? setProjectDraft : setDraft;
@@ -372,7 +412,8 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
     const nextProfile = chatProfiles.find((profile) => profile.id === profileId);
     const current = activeDraft[task];
     const defaults = recommendedTaskPreference(task);
-    const nextProfileLimit = (nextProfile ?? preferredProfile)?.maxOutputTokens ?? 131_072;
+    const modelLimit = (nextProfile ?? preferredProfile)?.maxOutputTokens ?? 131_072;
+    const nextProfileLimit = task === "discussionDesign" ? Math.min(modelLimit, 16_384) : modelLimit;
     const nextContextWindow = (nextProfile ?? preferredProfile)?.contextWindow ?? 131_072;
     const nextMaxOutputTokens = Math.min(
       current.maxOutputTokens ?? defaults.maxOutputTokens ?? nextProfileLimit,
@@ -380,7 +421,7 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
     );
     updateTask(task, {
       profileId: profileId || null,
-      fallbackProfileId: current.fallbackProfileId === profileId ? null : current.fallbackProfileId,
+      fallbackProfileId: current.fallbackProfileId === (nextProfile ?? preferredProfile)?.id ? null : current.fallbackProfileId,
       maxOutputTokens: nextMaxOutputTokens,
       prompt: {
         ...current.prompt,
@@ -390,6 +431,21 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
             current.prompt.context.inputTokenBudget ?? defaults.prompt.context.inputTokenBudget ?? 32_768,
             Math.max(256, nextContextWindow - nextMaxOutputTokens),
           ),
+        },
+      },
+    });
+  }
+
+  function setTaskOutputLimit(value: string) {
+    const maxOutputTokens = parseMaxOutputTokens(value, selectedMaxOutputLimit);
+    const inputLimit = Math.max(256, (effectiveProfile?.contextWindow ?? 131_072) - (maxOutputTokens ?? selectedDefinition.defaultMaxOutputTokens));
+    updateTask(selectedTask, {
+      maxOutputTokens,
+      prompt: {
+        ...selectedPreference.prompt,
+        context: {
+          ...selectedPreference.prompt.context,
+          inputTokenBudget: Math.min(selectedPreference.prompt.context.inputTokenBudget ?? 32_768, inputLimit),
         },
       },
     });
@@ -409,7 +465,7 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
   async function applyToAll() {
     if (!preferredProfile) return;
     const current = activeDraft;
-    const next = Object.fromEntries(
+    const next = normalizeAiTaskPreferences(Object.fromEntries(
       AI_TASK_DEFINITIONS.map(({ key }) => {
         const defaults = recommendedTaskPreference(key);
         return [
@@ -417,11 +473,12 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
           {
             ...current[key],
             profileId: preferredProfile.id,
+            fallbackProfileId: current[key].fallbackProfileId === preferredProfile.id ? null : current[key].fallbackProfileId,
             maxOutputTokens: Math.min(current[key].maxOutputTokens ?? defaults.maxOutputTokens ?? preferredProfile.maxOutputTokens, preferredProfile.maxOutputTokens),
           },
         ];
       }),
-    ) as AiTaskPreferences;
+    ) as AiTaskPreferences, profiles.data ?? []);
     if (scope === "GLOBAL") {
       setDraft(next);
       setActivePresetId(null);
@@ -434,7 +491,7 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
     setNotice(null);
     try {
       const saved = await saveProjectAiTaskOverrides(next);
-      setProjectDraft(mergeProjectPreferences(draft, saved));
+      setProjectDraft(mergeProjectPreferences(normalizedPreferences ?? emptyAiTaskPreferences, saved));
       setActivePresetId(null);
       client.setQueryData(["project-ai-task-overrides"], saved);
       await client.invalidateQueries({ queryKey: ["ai-task-preferences"] });
@@ -467,10 +524,17 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
     setError(null);
     setNotice(null);
     try {
-      const saved = await saveProjectAiTaskOverride(selectedTask, activeDraft[selectedTask]);
-      setProjectDraft(mergeProjectPreferences(draft, saved));
+      const changedTasks = AI_TASK_DEFINITIONS.filter(({ key }) => !samePreference(projectDraft[key], projectBaseline[key]));
+      const tasksToSave = AI_TASK_DEFINITIONS.filter(({ key }) => key === selectedTask || changedTasks.some((task) => task.key === key));
+      let saved = projectOverrides.data!;
+      for (const { key } of tasksToSave) {
+        saved = await saveProjectAiTaskOverride(key, projectDraft[key]);
+        client.setQueryData(["project-ai-task-overrides"], saved);
+      }
+      client.setQueryData(["project-ai-task-overrides"], saved);
+      setProjectDraft(mergeProjectPreferences(normalizedPreferences ?? emptyAiTaskPreferences, saved));
       setScope("PROJECT");
-      setNotice(`已保存“${selectedDefinition.label}”的项目级覆盖`);
+      setNotice(changedTasks.some(({ key }) => key !== selectedTask) ? "已保存全部修改的项目级任务配置" : `已保存“${selectedDefinition.label}”的项目级覆盖`);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -483,10 +547,10 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
     setError(null);
     setNotice(null);
     try {
-      await removeProjectAiTaskOverride(selectedTask);
-      const remaining = await projectOverrides.refetch();
-      setProjectDraft(draft);
-      if (remaining.data) setProjectDraft(mergeProjectPreferences(draft, remaining.data));
+      if (changed && !window.confirm("移除覆盖会放弃当前未保存的项目任务修改，确定继续吗？")) return;
+      const remaining = await removeProjectAiTaskOverride(selectedTask);
+      client.setQueryData(["project-ai-task-overrides"], remaining);
+      setProjectDraft(mergeProjectPreferences(normalizedPreferences ?? emptyAiTaskPreferences, remaining));
       setNotice(`已移除“${selectedDefinition.label}”的项目级覆盖`);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -496,9 +560,10 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
   }
 
   function switchScope(nextScope: "GLOBAL" | "PROJECT") {
+    if (nextScope === scope) return;
     if (nextScope === "PROJECT") {
       if (!projectOverrides.data?.available) return;
-      setProjectDraft(mergeProjectPreferences(draft, projectOverrides.data));
+      setProjectDraft(projectBaseline);
       setNotice(`正在编辑“${selectedDefinition.label}”的项目覆盖；未覆盖的任务沿用当前全局配置。`);
     } else {
       if (projectDirty && !window.confirm("当前项目级任务配置有未保存修改，确定切换吗？")) return;
@@ -506,67 +571,78 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
     }
     setActivePresetId(null);
     setScope(nextScope);
+    window.history.replaceState(window.history.state, "", aiTaskSettingsHref(selectedTask, nextScope));
   }
 
   return <div className="settings-content">
     <div className="settings-content-heading">
       <div>
+        <span className="settings-scope-label">{scope === "PROJECT" ? "当前作品 · 优先于全局配置" : "全局配置 · 所有作品默认使用"}</span>
         <h2>AI 任务模型</h2>
-        <p>为六类创作任务分别设置模型、生成参数、提示词和上下文来源。留空提示词时使用内置模板。</p>
+        <p>{AI_TASK_DEFINITIONS.length} 类 AI 任务分别使用独立参数，涵盖讨论、规划、正文与知识处理。</p>
       </div>
       {chatProfiles.length ? <button type="button" className="secondary-action" onClick={() => void applyToAll()} disabled={!preferredProfile || saving || projectSaving}><Sparkles size={14} />全部使用首选模型</button> : null}
     </div>
     {error ? <p className="project-error" role="alert">{error}</p> : null}
     {notice ? <p className="project-notice" role="status">{notice}</p> : null}
+    {profiles.isError || preferences.isError || projectOverrides.isError ? <p className="project-error" role="alert">读取任务配置失败：{errorMessage(profiles.error ?? preferences.error ?? projectOverrides.error)} <button type="button" className="settings-text-link" onClick={() => { void profiles.refetch(); void preferences.refetch(); void projectOverrides.refetch(); }}><RotateCcw size={14} />重试</button></p> : null}
     {profiles.isPending || preferences.isPending ? <p className="plan-empty">正在加载模型与任务配置…</p> : null}
     {!profiles.isPending && !chatProfiles.length ? <div className="ai-task-empty">
       <strong>还没有可分配的聊天模型</strong>
       <span>请先在“模型 API”中创建并保存至少一个聊天模型配置。</span>
-      <a href="/settings" className="secondary-action">前往模型 API</a>
+      <a href="#model-api" className="secondary-action">前往模型 API</a>
     </div> : null}
-    {!profiles.isPending && chatProfiles.length ? <div className="ai-task-routing">
+    {!profiles.isPending && chatProfiles.length ? <fieldset className="settings-fields ai-task-routing" disabled={saving || projectSaving || !initialized || preferences.isError || projectOverrides.isError}>
       <div className="ai-task-routing-heading">
-        <div><strong>按任务设置 AI</strong><span>先选任务，再设置模型和生成长度。未指定模型时自动使用首选模型。</span></div>
-        <small>{assignedCount} 项指定模型 · {tunedCount} 项已自定义</small>
+        <div><strong>任务分配</strong><span>首选模型：{preferredProfile?.name ?? "未配置"}</span></div>
+        <small>{assignedCount} / {AI_TASK_DEFINITIONS.length} 项指定模型 · {tunedCount} 项已调整</small>
       </div>
-      {projectOverrides.data?.available ? <div className="ai-task-scope-row">
+      <div className="ai-task-scope-row">
         <strong>配置范围</strong>
         <div className="ai-task-scope-switch" role="tablist" aria-label="AI 配置编辑范围">
           <button type="button" role="tab" aria-selected={scope === "GLOBAL"} data-active={scope === "GLOBAL" || undefined} onClick={() => switchScope("GLOBAL")}>全局配置</button>
-          <button type="button" role="tab" aria-selected={scope === "PROJECT"} data-active={scope === "PROJECT" || undefined} onClick={() => switchScope("PROJECT")}>项目覆盖</button>
+          <button type="button" role="tab" aria-selected={scope === "PROJECT"} data-active={scope === "PROJECT" || undefined} onClick={() => switchScope("PROJECT")} disabled={!projectOverrides.data?.available} title={!projectOverrides.data?.available ? "需先打开作品" : undefined}>项目覆盖</button>
         </div>
-        <small>{scope === "PROJECT" ? "只影响当前打开的项目，未设置的任务沿用全局默认。" : "所有项目默认使用这组设置。"}</small>
-      </div> : null}
+        <small>{scope === "PROJECT" ? hasProjectOverride ? "当前任务已覆盖全局配置" : "当前任务继承全局配置" : projectOverrides.data?.available ? "所有作品的默认参数" : "未打开作品"}</small>
+        {scope === "PROJECT" && hasProjectOverride ? <button type="button" className="settings-text-link" onClick={() => void removeProjectOverride()} disabled={projectSaving}><RotateCcw size={14} />恢复全局配置</button> : null}
+      </div>
       <div className="ai-task-workbench">
-        <div className="ai-task-selector" role="tablist" aria-label="选择要设置的 AI 任务">
+        <div className="ai-task-selector" role="tablist" aria-label="选择要设置的 AI 任务" onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          const index = AI_TASK_DEFINITIONS.findIndex(({ key }) => key === selectedTask);
+          const next = event.key === "Home" ? 0 : event.key === "End" ? AI_TASK_DEFINITIONS.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + AI_TASK_DEFINITIONS.length) % AI_TASK_DEFINITIONS.length;
+          selectTask(AI_TASK_DEFINITIONS[next].key);
+          event.currentTarget.querySelectorAll<HTMLButtonElement>("button")[next]?.focus();
+        }}>
           {AI_TASK_DEFINITIONS.map(({ key, label, description }) => {
             const preference = activeDraft[key];
             const profile = preference.profileId ? chatProfiles.find((item) => item.id === preference.profileId) : null;
-            return <button type="button" role="tab" aria-selected={selectedTask === key} data-active={selectedTask === key || undefined} key={key} onClick={() => setSelectedTask(key)}>
+            return <button type="button" role="tab" aria-selected={selectedTask === key} aria-controls="ai-task-editor" id={`ai-task-${key}`} tabIndex={selectedTask === key ? 0 : -1} data-active={selectedTask === key || undefined} key={key} onClick={() => selectTask(key)}>
               <strong>{label}</strong><small>{description}</small>
               <span>{profile?.name ?? (preferredProfile ? `自动：${preferredProfile.name}` : "未配置")}{hasCustomGeneration(preference, key, maxOutputLimitForTask(key)) || hasCustomPrompt(preference, key) ? " · 已调整" : ""}</span>
             </button>;
           })}
         </div>
-        <section className="ai-task-editor">
+        <section className="ai-task-editor" id="ai-task-editor" role="tabpanel" aria-labelledby={`ai-task-${selectedTask}`}>
           <div className="ai-task-editor-heading">
             <div><strong>{selectedDefinition.label}</strong><span>{selectedDefinition.description}</span></div>
-            <div><span className="ai-task-routing-state" data-ready={selectedProfile?.hasSecret || (!selectedId && preferredProfile?.hasSecret) || undefined}>{selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "模型可用" : "缺少 Key" : preferredProfile ? `自动使用 ${preferredProfile.name}` : "未配置"}</span><small>{nextRunCostLabel(estimateNextRunCost(usage.data?.byTask, selectedTask, effectiveProfile), usage.data?.days)}</small>{hasCustomGeneration(selectedPreference, selectedTask, selectedMaxOutputLimit) ? <button type="button" className="ai-task-reset" onClick={() => clearTaskTuning(selectedTask, selectedMaxOutputLimit)} aria-label="恢复推荐参数" title={`恢复推荐值：温度 ${recommendedTaskPreference(selectedTask).temperature}，最大输出 ${Math.min(recommendedTaskPreference(selectedTask).maxOutputTokens ?? selectedMaxOutputLimit, selectedMaxOutputLimit)}`}><RotateCcw size={13} /></button> : null}</div>
+            <div><span className="ai-task-routing-state" data-ready={effectiveProfile?.hasSecret || undefined}>{selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "模型可用" : "缺少 Key" : preferredProfile ? preferredProfile.hasSecret ? `自动使用 ${preferredProfile.name}` : "首选模型缺少 Key" : "未配置"}</span><small>{nextRunCostLabel(estimateNextRunCost(usage.data?.byTask, selectedTask, effectiveProfile), null)}</small>{hasCustomGeneration(selectedPreference, selectedTask, selectedMaxOutputLimit) ? <button type="button" className="ai-task-reset" onClick={() => clearTaskTuning(selectedTask, selectedMaxOutputLimit)} aria-label="恢复推荐参数" title={`恢复推荐值：温度 ${recommendedTaskPreference(selectedTask).temperature}，最大输出 ${Math.min(recommendedTaskPreference(selectedTask).maxOutputTokens ?? selectedMaxOutputLimit, selectedMaxOutputLimit)}`}><RotateCcw size={13} /></button> : null}</div>
           </div>
           <div className="ai-task-main-fields">
             <label className="ai-task-model-field"><span>使用模型</span><select value={selectedId} onChange={(event) => selectTaskProfile(selectedTask, event.target.value)} aria-label={`${selectedDefinition.label}模型`} data-missing={selectionMissing || undefined}>
               <option value="">自动选择可用模型</option>
               {chatProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {providerLabel(profile.provider)} · {profile.modelId}{recommendedIds[selectedTask] === profile.id ? " · 推荐" : ""}{profile.hasSecret ? "" : "（未设置 Key）"}</option>)}
             </select><small>未指定时自动使用首选模型。</small></label>
-            <label><span>温度</span><input type="number" min="0" max="2" step="0.1" inputMode="decimal" value={selectedPreference.temperature ?? ""} onChange={(event) => updateTask(selectedTask, { temperature: parseTemperature(event.target.value) })} aria-label={`${selectedDefinition.label}温度`} /><small>越低越稳定，越高越有创意。</small></label>
-            <label><span>最大输出</span><input type="number" min="1" max={selectedMaxOutputLimit} step="1" inputMode="numeric" value={selectedPreference.maxOutputTokens ?? ""} onChange={(event) => updateTask(selectedTask, { maxOutputTokens: parseMaxOutputTokens(event.target.value, selectedMaxOutputLimit) })} placeholder={selectedProfile ? `最大 ${selectedMaxOutputLimit}` : "模型默认"} aria-label={`${selectedDefinition.label}最大输出`} /><small>单次生成上限；更高会更长、更慢。</small></label>
+            <label><span>温度 · 创意程度</span><input type="number" min="0" max="2" step="0.05" inputMode="decimal" value={selectedPreference.temperature ?? ""} onChange={(event) => updateTask(selectedTask, { temperature: parseTemperature(event.target.value) })} aria-label={`${selectedDefinition.label}温度`} /><small>推荐 {selectedDefinition.defaultTemperature} · 低值更稳定</small></label>
+            <label><span>最大输出 · tokens</span><input type="number" min="1" max={selectedMaxOutputLimit} step="1" inputMode="numeric" value={selectedPreference.maxOutputTokens ?? ""} onChange={(event) => setTaskOutputLimit(event.target.value)} placeholder={selectedProfile ? `最大 ${selectedMaxOutputLimit}` : "模型默认"} aria-label={`${selectedDefinition.label}最大输出`} /><small>模型上限 {selectedMaxOutputLimit.toLocaleString()}</small></label>
           </div>
-          <details className="ai-task-optional-settings" hidden>
+          <details className="ai-task-optional-settings">
             <summary>备用模型和高级设置</summary>
             <div className="ai-task-optional-content">
               <label className="ai-task-model-field"><span>故障备用模型</span><select value={selectedPreference.fallbackProfileId ?? ""} onChange={(event) => updateTask(selectedTask, { fallbackProfileId: event.target.value || null })} aria-label={`${selectedDefinition.label}备用模型`}>
                 <option value="">不使用备用模型</option>
-                {chatProfiles.filter((profile) => profile.id !== selectedId).map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.modelId}{profile.hasSecret ? "" : "（未设置 Key）"}</option>)}
+                {chatProfiles.filter((profile) => profile.id !== effectiveProfile?.id).map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.modelId}{profile.hasSecret ? "" : "（未设置 Key）"}</option>)}
               </select></label>
               <section className="ai-task-advanced">
         <div className="ai-task-advanced-heading"><div><strong>提示词与上下文</strong><span>通常保持默认即可；只有希望改变任务边界或取材范围时再调整。</span></div></div>
@@ -588,11 +664,11 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
         </div>
         <div className="ai-task-context-panel">
           <div className="ai-task-context-heading">
-            <div><strong>上下文来源与输入预算</strong><span>关闭某个来源后，该内容不会进入当前任务请求。</span></div>
+            <div><strong>{discussionTask ? "讨论输入预算" : "上下文来源与输入预算"}</strong><span>{discussionTask ? "消息记录、构思草稿与相关作品背景由当前会话提供。" : "关闭某个来源后，该内容不会进入当前任务请求。"}</span></div>
             <button type="button" className="secondary-action" onClick={() => resetTaskPrompt(selectedTask)} disabled={!hasCustomPrompt(selectedPreference, selectedTask)}><RotateCcw size={12} />恢复推荐提示词与上下文</button>
           </div>
           <div className="ai-task-context-options">
-            {CONTEXT_OPTIONS.map(({ key, label, description }) => <label key={key}>
+            {(discussionTask ? [] : CONTEXT_OPTIONS).map(({ key, label, description }) => <label key={key}>
               <input type="checkbox" checked={selectedPreference.prompt.context[key] ?? false} onChange={(event) => updateTaskContext(selectedTask, { [key]: event.target.checked })} />
               <span><strong>{label}</strong><small>{description}</small></span>
             </label>)}
@@ -601,7 +677,6 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
               <input type="number" min="256" max={maxInputBudgetForTask(selectedTask)} step="256" inputMode="numeric" value={selectedPreference.prompt.context.inputTokenBudget ?? ""} onChange={(event) => updateTaskContext(selectedTask, { inputTokenBudget: Math.min(maxInputBudgetForTask(selectedTask), Math.max(256, Number(event.target.value) || 256)) })} />
             </label>
           </div>
-          {scope === "PROJECT" && hasProjectOverride ? <button type="button" className="ai-task-remove-override" onClick={() => void removeProjectOverride()} disabled={projectSaving}><RotateCcw size={12} />移除本任务的项目覆盖</button> : null}
           <p className="ai-task-request-note">保存后，任务中心会在实际请求发出时记录最终提示词、上下文和请求体；API Key 不会写入记录。</p>
         </div>
               </section>
@@ -609,17 +684,13 @@ export function AiTaskModelSettings(props: { onDirtyChange?: (dirty: boolean) =>
           </details>
         </section>
       </div>
-      <details className="ai-task-presets">
-        <summary>按题材套用推荐参数</summary>
-        <div className="ai-task-preset-list">
-          {AI_TASK_PRESETS.map((preset) => <button type="button" key={preset.id} aria-label={preset.label} data-active={activePresetId === preset.id || undefined} onClick={() => applyPreset(preset.id)}><strong>{preset.label}</strong><small>{preset.description}</small></button>)}
-        </div>
-      </details>
+      <div className="settings-preset-row"><label htmlFor="task-genre-preset">题材参数</label><select id="task-genre-preset" value={activePresetId ?? ""} onChange={(event) => applyPreset(event.target.value)}><option value="">自定义 / 默认</option>{AI_TASK_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select><span>{activePresetId ? AI_TASK_PRESETS.find((preset) => preset.id === activePresetId)?.description : "保留当前模型和自定义提示词"}</span></div>
       <div className="ai-task-routing-actions">
-        <button type="button" className="primary-action" onClick={() => scope === "PROJECT" ? void saveProjectOverride() : void save()} disabled={scope === "PROJECT" ? projectSaving : !changed || saving}><Save size={14} />{scope === "PROJECT" ? projectSaving ? "保存中…" : hasProjectOverride ? "保存项目覆盖" : "保存为项目覆盖" : saving ? "保存中…" : "保存任务配置"}</button>
+        <button type="button" className="primary-action" onClick={() => scope === "PROJECT" ? void saveProjectOverride() : void save()} disabled={!initialized || profiles.isError || preferences.isError || projectOverrides.isError || saving || projectSaving || (scope === "GLOBAL" && !changed)}><Save size={14} />{scope === "PROJECT" ? projectSaving ? "保存中…" : hasProjectOverride ? "保存项目覆盖" : "保存为项目覆盖" : saving ? "保存中…" : "保存任务配置"}</button>
         {changed ? <button type="button" className="secondary-action" onClick={() => { if (scope === "PROJECT") setProjectDraft(projectBaseline); else if (normalizedPreferences) setDraft(normalizedPreferences); setNotice("已撤销未保存的修改"); }} disabled={scope === "PROJECT" ? projectSaving : saving}>撤销修改</button> : null}
         {!changed && notice?.includes("已保存") ? <span className="ai-task-saved"><Check size={13} />已应用</span> : null}
+        <span className="settings-status" data-dirty={changed || undefined}>{changed ? "未保存修改" : "与已保存配置一致"}</span>
       </div>
-    </div> : null}
+    </fieldset> : null}
   </div>;
 }

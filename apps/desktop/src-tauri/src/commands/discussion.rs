@@ -223,12 +223,20 @@ pub(crate) async fn summarize_discussion_design(
     if profile.privacy_level == novel_infrastructure::PrivacyLevel::LocalOnly {
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
-    let preference =
-        super::ai::load_ai_task_preference(&state, novel_infrastructure::AiTaskKind::WorkDesign)?;
+    let preference = super::ai::load_ai_task_preference(
+        &state,
+        novel_infrastructure::AiTaskKind::DiscussionDesign,
+    )?;
     let options = super::ai::task_generation_options(
-        Some(novel_infrastructure::AiTaskKind::WorkDesign),
-        input.temperature,
-        Some(input.max_output_tokens.unwrap_or(8_192).min(16_384)),
+        Some(novel_infrastructure::AiTaskKind::DiscussionDesign),
+        input.temperature.or(preference.temperature),
+        Some(
+            input
+                .max_output_tokens
+                .or(preference.max_output_tokens)
+                .unwrap_or(4_096)
+                .min(16_384),
+        ),
     )?;
     let budget = super::ai::effective_task_input_budget(
         &profile,
@@ -304,8 +312,8 @@ pub(crate) async fn summarize_discussion_design(
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            let context = manager.assemble_discussion_design_context(&novel_application::DiscussionContextInput {
-                scope_label: label.clone(), scope_content: scope_content.clone(), history,
+            let mut context = manager.assemble_discussion_design_context(&novel_application::DiscussionContextInput {
+                scope_label: label.clone(), scope_content: scope_content.clone(), history: history.clone(),
                 user_message: "请根据构思草稿和提供的整段讨论，整理成实体与作者设定候选；只采用作者已选择的方向，不替作者决定未决内容。关联已有实体时保留它已有的属性，仅整理本次作者选择的修改。".into(),
                 input_token_budget: budget,
                 focus: None,
@@ -319,6 +327,11 @@ pub(crate) async fn summarize_discussion_design(
                 item.kind == novel_application::ContextSectionKind::CurrentDraft && item.truncated
             });
             if !history_truncated || selected.is_empty() {
+                novel_infrastructure::apply_task_prompt_preferences(
+                    &mut context,
+                    &preference,
+                    &[("scopeLabel", &label), ("discussionHistory", &history)],
+                );
                 break context;
             }
             selected.remove(0);
@@ -564,11 +577,11 @@ pub(crate) async fn ask_project_discussion(
         return Err(ApiError::from(novel_infrastructure::AiError::PrivacyPolicy));
     }
     let preference =
-        super::ai::load_ai_task_preference(&state, novel_infrastructure::AiTaskKind::WorkDesign)?;
+        super::ai::load_ai_task_preference(&state, novel_infrastructure::AiTaskKind::Discussion)?;
     let options = super::ai::task_generation_options(
-        Some(novel_infrastructure::AiTaskKind::WorkDesign),
-        input.temperature,
-        input.max_output_tokens,
+        Some(novel_infrastructure::AiTaskKind::Discussion),
+        input.temperature.or(preference.temperature),
+        input.max_output_tokens.or(preference.max_output_tokens),
     )?;
     let max_output_tokens = super::ai::effective_max_output_tokens(&profile, options);
     let input_token_budget =
@@ -598,7 +611,7 @@ pub(crate) async fn ask_project_discussion(
             .map(|message| message.content.chars().take(600).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n");
-        let context = manager
+        let mut context = manager
             .assemble_discussion_context(&novel_application::DiscussionContextInput {
                 scope_label: scope_label.clone(),
                 scope_content,
@@ -618,6 +631,15 @@ pub(crate) async fn ask_project_discussion(
                 code: "INVALID_INPUT",
                 message: error.to_string(),
             })?;
+        novel_infrastructure::apply_task_prompt_preferences(
+            &mut context,
+            &preference,
+            &[
+                ("scopeLabel", &scope_label),
+                ("userMessage", input.message.trim()),
+                ("discussionHistory", &history),
+            ],
+        );
         (scope_label, context, history)
     };
     let secret = profile

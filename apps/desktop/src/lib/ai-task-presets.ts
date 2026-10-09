@@ -26,6 +26,8 @@ export const AI_TASK_PRESETS: AiTaskPreset[] = [
     label: "长篇连载",
     description: "强化推进速度、章末钩子和持续产出，适合长篇网文。",
     tasks: {
+      discussion: { temperature: 0.5, maxOutputTokens: 4096, context: { inputTokenBudget: 28672 } },
+      discussionDesign: { temperature: 0.5, maxOutputTokens: 4096, context: { inputTokenBudget: 28672 } },
       workDesign: { temperature: 0.5, maxOutputTokens: 4096, context: { inputTokenBudget: 28672 } },
       outline: { temperature: 0.65, maxOutputTokens: 7168, context: { inputTokenBudget: 36864 } },
       volumePlanning: { temperature: 0.6, maxOutputTokens: 7168, context: { inputTokenBudget: 36864 } },
@@ -41,6 +43,8 @@ export const AI_TASK_PRESETS: AiTaskPreset[] = [
     label: "悬疑推理",
     description: "降低情节漂移，强调线索、因果和前后一致性。",
     tasks: {
+      discussion: { temperature: 0.35, maxOutputTokens: 4608, context: { inputTokenBudget: 32768 } },
+      discussionDesign: { temperature: 0.35, maxOutputTokens: 4608, context: { inputTokenBudget: 32768 } },
       workDesign: { temperature: 0.35, maxOutputTokens: 4608, context: { includeReferenceContent: true, inputTokenBudget: 32768 } },
       outline: { temperature: 0.45, maxOutputTokens: 7168, context: { includeProjectKnowledge: true, inputTokenBudget: 40960 } },
       volumePlanning: { temperature: 0.5, maxOutputTokens: 7168, context: { includeProjectKnowledge: true, inputTokenBudget: 40960 } },
@@ -56,6 +60,8 @@ export const AI_TASK_PRESETS: AiTaskPreset[] = [
     label: "情感关系",
     description: "提高人物关系、情绪层次和关系转折的表达弹性。",
     tasks: {
+      discussion: { temperature: 0.55, maxOutputTokens: 4096, context: { inputTokenBudget: 28672 } },
+      discussionDesign: { temperature: 0.55, maxOutputTokens: 4096, context: { inputTokenBudget: 28672 } },
       workDesign: { temperature: 0.55, maxOutputTokens: 4096, context: { inputTokenBudget: 28672 } },
       outline: { temperature: 0.7, maxOutputTokens: 6144, context: { includeProjectKnowledge: true, inputTokenBudget: 36864 } },
       volumePlanning: { temperature: 0.65, maxOutputTokens: 7168, context: { includeProjectKnowledge: true, inputTokenBudget: 36864 } },
@@ -71,6 +77,8 @@ export const AI_TASK_PRESETS: AiTaskPreset[] = [
     label: "科幻设定",
     description: "强化规则一致性、世界约束和跨章节知识检索。",
     tasks: {
+      discussion: { temperature: 0.35, maxOutputTokens: 5120, context: { inputTokenBudget: 36864 } },
+      discussionDesign: { temperature: 0.35, maxOutputTokens: 5120, context: { inputTokenBudget: 36864 } },
       workDesign: { temperature: 0.35, maxOutputTokens: 5120, context: { includeReferenceContent: true, inputTokenBudget: 36864 } },
       outline: { temperature: 0.5, maxOutputTokens: 7168, context: { includeProjectKnowledge: true, inputTokenBudget: 40960 } },
       volumePlanning: { temperature: 0.5, maxOutputTokens: 7168, context: { includeProjectKnowledge: true, inputTokenBudget: 40960 } },
@@ -86,6 +94,8 @@ export const AI_TASK_PRESETS: AiTaskPreset[] = [
     label: "现实题材",
     description: "控制夸张表达，更重视人物动机、现实因果和稳定文风。",
     tasks: {
+      discussion: { temperature: 0.5, maxOutputTokens: 4096, context: { inputTokenBudget: 28672 } },
+      discussionDesign: { temperature: 0.5, maxOutputTokens: 4096, context: { inputTokenBudget: 28672 } },
       workDesign: { temperature: 0.5, maxOutputTokens: 4096, context: { includeReferenceContent: true, inputTokenBudget: 28672 } },
       outline: { temperature: 0.65, maxOutputTokens: 6144, context: { includeProjectKnowledge: true, inputTokenBudget: 36864 } },
       volumePlanning: { temperature: 0.6, maxOutputTokens: 6144, context: { includeProjectKnowledge: true, inputTokenBudget: 36864 } },
@@ -101,6 +111,8 @@ export const AI_TASK_PRESETS: AiTaskPreset[] = [
     label: "快速草稿",
     description: "压缩上下文和单次输出，优先快速形成可修改的第一版。",
     tasks: {
+      discussion: { temperature: 0.55, maxOutputTokens: 2560, context: { inputTokenBudget: 16384 } },
+      discussionDesign: { temperature: 0.55, maxOutputTokens: 2560, context: { inputTokenBudget: 16384 } },
       workDesign: { temperature: 0.55, maxOutputTokens: 2560, context: { includeProjectKnowledge: false, inputTokenBudget: 16384 } },
       outline: { temperature: 0.7, maxOutputTokens: 4096, context: { includeProjectKnowledge: false, inputTokenBudget: 20480 } },
       volumePlanning: { temperature: 0.65, maxOutputTokens: 4096, context: { includeProjectKnowledge: false, inputTokenBudget: 20480 } },
@@ -116,6 +128,8 @@ export const AI_TASK_PRESETS: AiTaskPreset[] = [
     label: "精修定稿",
     description: "提高上下文覆盖和输出空间，适合已有草稿后的集中精修。",
     tasks: {
+      discussion: { temperature: 0.35, maxOutputTokens: 5120, context: { inputTokenBudget: 36864 } },
+      discussionDesign: { temperature: 0.35, maxOutputTokens: 5120, context: { inputTokenBudget: 36864 } },
       workDesign: { temperature: 0.35, maxOutputTokens: 5120, context: { includeReferenceContent: true, inputTokenBudget: 36864 } },
       outline: { temperature: 0.5, maxOutputTokens: 8192, context: { includeProjectKnowledge: true, inputTokenBudget: 49152 } },
       volumePlanning: { temperature: 0.5, maxOutputTokens: 8192, context: { includeProjectKnowledge: true, inputTokenBudget: 49152 } },

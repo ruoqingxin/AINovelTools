@@ -1979,6 +1979,8 @@ fn project_ai_task_overrides_can_be_saved_as_a_batch() {
         ..super::AiTaskPreference::default()
     };
     let preferences = super::AiTaskPreferences {
+        discussion: preference.clone(),
+        discussion_design: preference.clone(),
         work_design: preference.clone(),
         outline: preference.clone(),
         volume_planning: preference.clone(),
@@ -1997,6 +1999,8 @@ fn project_ai_task_overrides_can_be_saved_as_a_batch() {
         .expect("project overrides");
     assert!(overrides.available);
     for task in [
+        super::AiTaskKind::Discussion,
+        super::AiTaskKind::DiscussionDesign,
         super::AiTaskKind::WorkDesign,
         super::AiTaskKind::Outline,
         super::AiTaskKind::VolumePlanning,

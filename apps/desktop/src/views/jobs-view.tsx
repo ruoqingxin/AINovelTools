@@ -41,6 +41,8 @@ const runActionLabels: Record<string, string> = {
   SUMMARIZE: "摘要",
   CONSISTENCY_CHECK: "一致性审核",
   workDesign: "作品设定",
+  discussion: "共创讨论",
+  discussionDesign: "构思整理",
   outline: "大纲主线",
   volumePlanning: "分卷规划",
   chapterSplit: "章节拆分",

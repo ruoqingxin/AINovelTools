@@ -63,7 +63,7 @@ export function estimateNextRunCost(
 
 export function nextRunCostLabel(
   estimate: NextRunCostEstimate,
-  days = 30,
+  days: number | null = 30,
   runMultiplier = 1,
 ) {
   if (estimate.status === "MISSING_PROFILE") return "选择模型后预估费用";
@@ -71,5 +71,6 @@ export function nextRunCostLabel(
   if (estimate.status === "INSUFFICIENT_SAMPLES") return "预估样本不足";
   const projectedMicros = estimate.estimatedMicros * Math.max(1, runMultiplier);
   const prefix = runMultiplier > 1 ? `预估本批 ${runMultiplier} 次约` : "预估下一次约";
-  return `${prefix} ${formatCost(projectedMicros, estimate.currency)} · 基于近 ${days} 天 ${estimate.runCount} 次记录${estimate.pricingNote ? ` · ${estimate.pricingNote}` : ""}`;
+  const period = days === null ? "基于项目累计" : `基于近 ${days} 天`;
+  return `${prefix} ${formatCost(projectedMicros, estimate.currency)} · ${period} ${estimate.runCount} 次记录${estimate.pricingNote ? ` · ${estimate.pricingNote}` : ""}`;
 }

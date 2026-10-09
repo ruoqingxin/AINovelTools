@@ -8,6 +8,7 @@ import {
   createDiscussionSession,
   dismissDiscussionCandidate,
   errorMessage,
+  getProjectAiTaskOverrides,
   listDiscussionCandidates,
   listDiscussionMessages,
   listDiscussionSessions,
@@ -78,8 +79,16 @@ export function DiscussionView() {
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const anchors = useQuery({ queryKey: ["evidence-anchors"], queryFn: listEvidenceAnchors });
   const aiPreferences = useAiTaskPreferences();
-  const profile = resolveTaskChatProfile(profiles.data, aiPreferences.data, "workDesign");
-  const preference = resolveTaskPreference(aiPreferences.data, "workDesign");
+  const projectOverrides = useQuery({ queryKey: ["project-ai-task-overrides"], queryFn: getProjectAiTaskOverrides });
+  const effectivePreferences = aiPreferences.data ? {
+    ...aiPreferences.data,
+    discussion: projectOverrides.data?.discussion ?? resolveTaskPreference(aiPreferences.data, "discussion"),
+    discussionDesign: projectOverrides.data?.discussionDesign ?? resolveTaskPreference(aiPreferences.data, "discussionDesign"),
+  } : undefined;
+  const profile = resolveTaskChatProfile(profiles.data, effectivePreferences, "discussion");
+  const preference = resolveTaskPreference(effectivePreferences, "discussion");
+  const designProfile = resolveTaskChatProfile(profiles.data, effectivePreferences, "discussionDesign");
+  const designPreference = resolveTaskPreference(effectivePreferences, "discussionDesign");
   const [sessionId, setSessionId] = useState<string | null>(() => window.location.hash.slice(1) || null);
   const [topicKind, setTopicKind] = useState<DiscussionTopicKind>("FREE");
   const [showSessionForm, setShowSessionForm] = useState(false);
@@ -460,7 +469,7 @@ export function DiscussionView() {
         </section>
         <details className="discussion-model-details">
           <summary><Cpu size={13} /><span>{profile?.hasSecret ? profile.modelId : "模型未就绪"}</span><span>模型与费用</span></summary>
-          <AiModelNote taskLabel="共创讨论" taskKey="workDesign" profile={profile} preference={preference} />
+          <AiModelNote taskLabel="共创讨论" taskKey="discussion" settingsScope={projectOverrides.data?.discussion ? "PROJECT" : "GLOBAL"} profile={profile} preference={preference} />
         </details>
         {notice ? <p className="project-notice" role="status">{notice}</p> : null}
         {error && !showSessionForm ? <p className="project-error" role="alert">{error}</p> : null}
@@ -518,10 +527,11 @@ export function DiscussionView() {
           <div><span>{Array.from(message).length.toLocaleString()} / 20,000 字</span><button type="button" className="primary-action" onClick={() => void send()} disabled={!sessionId || !profile?.hasSecret || !message.trim() || busy || designPending || Array.from(message).length > DISCUSSION_LIMITS.messageChars}><Send size={14} />{busy ? "处理中…" : "发送讨论"}</button></div>
           {designPending ? <p className="discussion-composer-status" role="status">构思草稿尚未保存或正在处理，暂不能发送。</p> : null}
         </section>
-        {!profile?.hasSecret ? <p className="project-error" role="alert">请先在设置中配置可用的作品设定模型。</p> : null}
+        {!profile?.hasSecret ? <p className="project-error" role="alert">请先在设置中配置可用的共创讨论模型。</p> : null}
       </section>
-      {sessionId ? <DiscussionDesignPanel key={sessionId} sessionId={sessionId} profile={profile}
-        preference={preference} hasDiscussion={visibleMessages.length > 0} conversationBusy={busy}
+      {sessionId ? <DiscussionDesignPanel key={sessionId} sessionId={sessionId} profile={designProfile}
+        settingsScope={projectOverrides.data?.discussionDesign ? "PROJECT" : "GLOBAL"}
+        preference={designPreference} hasDiscussion={visibleMessages.length > 0} conversationBusy={busy}
         draftFocus={draftFocus} onPendingChange={setDesignPending} /> : null}
     </div>
   </div>;
