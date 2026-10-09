@@ -26,6 +26,7 @@ impl From<novel_infrastructure::ProjectError> for ApiError {
             novel_infrastructure::ProjectError::Io(_) => "FILE_SYSTEM_ERROR",
             novel_infrastructure::ProjectError::Manifest(_) => "INVALID_MANIFEST",
             novel_infrastructure::ProjectError::Database(_) => "DATABASE_ERROR",
+            novel_infrastructure::ProjectError::PlanningConflict { .. } => "VERSION_CONFLICT",
         };
         Self {
             code,
@@ -61,6 +62,7 @@ impl From<novel_infrastructure::ManuscriptError> for ApiError {
             novel_infrastructure::ManuscriptError::EmptyDocument
             | novel_infrastructure::ManuscriptError::InvalidDocument(_) => "INVALID_DOCUMENT",
             novel_infrastructure::ManuscriptError::Conflict { .. } => "VERSION_CONFLICT",
+            novel_infrastructure::ManuscriptError::DraftConflict { .. } => "DRAFT_VERSION_CONFLICT",
             novel_infrastructure::ManuscriptError::Database(_) => "DATABASE_ERROR",
         };
         Self {

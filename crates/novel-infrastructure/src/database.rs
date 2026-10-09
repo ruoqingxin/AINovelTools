@@ -1161,6 +1161,21 @@ impl Database {
                 COMMIT;",
             )?;
         }
+        if applied.unwrap_or(0) < 49 {
+            let transaction = self.connection.unchecked_transaction()?;
+            transaction.execute_batch(
+                "CREATE TABLE manuscript_drafts (
+                    chapter_id TEXT PRIMARY KEY NOT NULL REFERENCES chapters(id),
+                    document_json TEXT CHECK(document_json IS NULL OR json_valid(document_json)),
+                    base_revision_id TEXT REFERENCES manuscript_revisions(id),
+                    version INTEGER NOT NULL CHECK(version > 0),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                );
+                ALTER TABLE planning_sections ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+                INSERT INTO schema_migrations (version, name) VALUES (49, 'chapter_drafts_and_planning_versions');",
+            )?;
+            transaction.commit()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }
@@ -1217,10 +1232,20 @@ impl Database {
     }
 
     pub(super) fn list_planning_sections(&self) -> Result<Vec<PlanningSection>, DatabaseError> {
+        Ok(self
+            .list_versioned_planning_sections()?
+            .into_iter()
+            .map(|item| item.section)
+            .collect())
+    }
+
+    pub(super) fn list_versioned_planning_sections(
+        &self,
+    ) -> Result<Vec<VersionedPlanningSection>, DatabaseError> {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, content, pending_content, story_state, rationale, consequence, references_json, updated_at
+                "SELECT id, content, pending_content, story_state, rationale, consequence, references_json, updated_at, version
                  FROM planning_sections ORDER BY updated_at DESC, id",
             )
             .map_err(DatabaseError::from)?;
@@ -1233,15 +1258,18 @@ impl Database {
                     Box::new(error),
                 )
             })?;
-            Ok(PlanningSection {
-                id: row.get(0)?,
-                content: row.get(1)?,
-                pending_content: row.get(2)?,
-                story_state: PlanningStoryState::parse(&row.get::<_, String>(3)?),
-                rationale: row.get(4)?,
-                consequence: row.get(5)?,
-                references,
-                updated_at: row.get(7)?,
+            Ok(VersionedPlanningSection {
+                section: PlanningSection {
+                    id: row.get(0)?,
+                    content: row.get(1)?,
+                    pending_content: row.get(2)?,
+                    story_state: PlanningStoryState::parse(&row.get::<_, String>(3)?),
+                    rationale: row.get(4)?,
+                    consequence: row.get(5)?,
+                    references,
+                    updated_at: row.get(7)?,
+                },
+                version: row.get(8)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()
@@ -1279,47 +1307,71 @@ impl Database {
         Ok(())
     }
 
-    pub(super) fn save_planning_section(
+    pub(super) fn save_planning_section_versioned(
         &mut self,
         section: PlanningSection,
-    ) -> Result<PlanningSection, DatabaseError> {
-        let content_hash = format!("sha256:{:x}", Sha256::digest(section.content.as_bytes()));
-        let previous_content: Option<String> = self
+        expected_version: Option<i64>,
+    ) -> Result<VersionedPlanningSection, ProjectError> {
+        let transaction = self
             .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(DatabaseError::from)?;
+        let actual: i64 = transaction
+            .query_row(
+                "SELECT version FROM planning_sections WHERE id=?1",
+                [&section.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(DatabaseError::from)?
+            .unwrap_or(0);
+        if expected_version.is_some_and(|expected| expected != actual) {
+            return Err(ProjectError::PlanningConflict {
+                expected: expected_version.unwrap(),
+                actual,
+            });
+        }
+        let content_hash = format!("sha256:{:x}", Sha256::digest(section.content.as_bytes()));
+        let previous_content: Option<String> = transaction
             .query_row(
                 "SELECT content FROM planning_sections WHERE id = ?1",
                 [section.id.as_str()],
                 |row| row.get(0),
             )
-            .optional()?;
+            .optional()
+            .map_err(DatabaseError::from)?;
         let content_changed = previous_content.as_deref() != Some(section.content.as_str());
-        let previous_hash: Option<String> = self
-            .connection
+        let previous_hash: Option<String> = transaction
             .query_row(
                 "SELECT content_hash FROM planning_embeddings WHERE section_id = ?1",
                 [section.id.as_str()],
                 |row| row.get(0),
             )
-            .optional()?;
+            .optional()
+            .map_err(DatabaseError::from)?;
         if previous_hash.is_some() {
-            self.connection.execute(
-                "DELETE FROM planning_embeddings WHERE section_id = ?1 AND content_hash <> ?2",
-                rusqlite::params![section.id, content_hash],
-            )?;
+            transaction
+                .execute(
+                    "DELETE FROM planning_embeddings WHERE section_id = ?1 AND content_hash <> ?2",
+                    rusqlite::params![section.id, content_hash],
+                )
+                .map_err(DatabaseError::from)?;
         }
         if content_changed {
-            self.connection.execute(
-                "DELETE FROM planning_chunk_embeddings WHERE section_id = ?1",
-                [section.id.as_str()],
-            )?;
+            transaction
+                .execute(
+                    "DELETE FROM planning_chunk_embeddings WHERE section_id = ?1",
+                    [section.id.as_str()],
+                )
+                .map_err(DatabaseError::from)?;
         }
         let references_json = serde_json::to_string(&section.references).map_err(|error| {
             DatabaseError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
         })?;
-        self.connection
+        transaction
             .execute(
-                "INSERT INTO planning_sections (id, content, pending_content, story_state, rationale, consequence, references_json, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                "INSERT INTO planning_sections (id, content, pending_content, story_state, rationale, consequence, references_json, updated_at, version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 1)
                  ON CONFLICT(id) DO UPDATE SET
                    content = excluded.content,
                    pending_content = excluded.pending_content,
@@ -1327,7 +1379,8 @@ impl Database {
                    rationale = excluded.rationale,
                    consequence = excluded.consequence,
                    references_json = excluded.references_json,
-                   updated_at = excluded.updated_at",
+                   updated_at = excluded.updated_at,
+                   version = planning_sections.version + 1",
                 rusqlite::params![
                     section.id,
                     section.content,
@@ -1340,12 +1393,18 @@ impl Database {
             )
             .map_err(DatabaseError::from)?;
         let mut saved = section;
-        saved.updated_at = self.connection.query_row(
-            "SELECT updated_at FROM planning_sections WHERE id = ?1",
-            [saved.id.as_str()],
-            |row| row.get(0),
-        )?;
-        Ok(saved)
+        saved.updated_at = transaction
+            .query_row(
+                "SELECT updated_at FROM planning_sections WHERE id = ?1",
+                [saved.id.as_str()],
+                |row| row.get(0),
+            )
+            .map_err(DatabaseError::from)?;
+        transaction.commit().map_err(DatabaseError::from)?;
+        Ok(VersionedPlanningSection {
+            section: saved,
+            version: actual + 1,
+        })
     }
 
     pub(super) fn chapter_contract_cache(
@@ -1882,49 +1941,21 @@ impl Database {
         &mut self,
         chapter_id: Uuid,
         base_revision_id: Option<Uuid>,
-        mut document_json: String,
+        document_json: String,
         creation_reason: String,
     ) -> Result<ManuscriptRevision, ManuscriptError> {
-        document_json = normalize_document(&document_json)?;
-        let exists: bool = self
+        let transaction = self
             .connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM chapters WHERE id = ?1)",
-                [chapter_id.to_string()],
-                |row| row.get(0),
-            )
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(DatabaseError::from)?;
-        if !exists {
-            return Err(ManuscriptError::MissingChapter(chapter_id));
-        }
-        let parent_revision_id = self
-            .current_manuscript(chapter_id)?
-            .map(|revision| revision.id);
-        if let Some(expected) = base_revision_id {
-            if Some(expected) != parent_revision_id {
-                return Err(ManuscriptError::Conflict {
-                    expected: Some(expected),
-                    actual: parent_revision_id,
-                });
-            }
-        }
-        let mut hasher = Sha256::new();
-        hasher.update(document_json.as_bytes());
-        let revision = ManuscriptRevision {
-            id: Uuid::new_v4(),
+        let revision = super::chapter_draft_store::insert_revision(
+            &transaction,
             chapter_id,
-            parent_revision_id,
-            base_revision_id: parent_revision_id,
-            content_hash: format!("{:x}", hasher.finalize()),
-            document_json,
+            base_revision_id,
+            &document_json,
             creation_reason,
-            document_schema_version: 1,
-            created_at: now_timestamp(),
-        };
-        self.connection.execute(
-            "INSERT INTO manuscript_revisions (id, chapter_id, parent_revision_id, document_json, content_hash, creation_reason, document_schema_version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![revision.id.to_string(), revision.chapter_id.to_string(), revision.parent_revision_id.map(|id| id.to_string()), revision.document_json, revision.content_hash, revision.creation_reason, revision.document_schema_version],
-        ).map_err(DatabaseError::from)?;
+        )?;
+        transaction.commit().map_err(DatabaseError::from)?;
         Ok(revision)
     }
 
@@ -2044,6 +2075,133 @@ impl Database {
 mod tests {
     use super::*;
 
+    fn planning_section() -> PlanningSection {
+        PlanningSection {
+            id: "plan".into(),
+            content: "formal".into(),
+            pending_content: "candidate".into(),
+            story_state: PlanningStoryState::Confirmed,
+            rationale: "reason".into(),
+            consequence: String::new(),
+            references: vec!["source".into()],
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn planning_cas_protects_content_and_caches_including_internal_updates() {
+        let mut db = Database::in_memory().unwrap();
+        let section = planning_section();
+        let first = db
+            .save_planning_section_versioned(section.clone(), Some(0))
+            .unwrap();
+        assert_eq!(first.version, 1);
+        let second = db
+            .save_planning_section_versioned(section.clone(), None)
+            .unwrap();
+        assert_eq!(second.version, 2);
+        let hash = format!("sha256:{:x}", Sha256::digest(section.content.as_bytes()));
+        db.connection.execute(
+            "INSERT INTO planning_embeddings (section_id,profile_id,model_id,dimensions,content_hash,vector_json) VALUES ('plan',?1,'model',1,?2,'[1]')",
+            rusqlite::params![Uuid::new_v4().to_string(), hash],
+        ).unwrap();
+        db.connection.execute(
+            "INSERT INTO planning_chunk_embeddings (chunk_id,section_id,chunk_index,profile_id,model_id,dimensions,content_hash,vector_json) VALUES ('chunk','plan',0,?1,'model',1,'hash','[1]')",
+            [Uuid::new_v4().to_string()],
+        ).unwrap();
+        let mut stale = section.clone();
+        stale.content = "stale change".into();
+        assert!(matches!(
+            db.save_planning_section_versioned(stale.clone(), Some(1)),
+            Err(ProjectError::PlanningConflict {
+                expected: 1,
+                actual: 2
+            })
+        ));
+        assert_eq!(db.list_versioned_planning_sections().unwrap()[0], second);
+        assert_eq!(db.list_planning_embeddings().unwrap().len(), 1);
+        assert_eq!(db.list_planning_chunk_embeddings().unwrap().len(), 1);
+        db.connection.execute_batch("CREATE TRIGGER fail_planning_write BEFORE UPDATE ON planning_sections BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
+        assert!(
+            db.save_planning_section_versioned(stale.clone(), Some(2))
+                .is_err()
+        );
+        assert_eq!(db.list_planning_embeddings().unwrap().len(), 1);
+        assert_eq!(db.list_planning_chunk_embeddings().unwrap().len(), 1);
+        db.connection
+            .execute_batch("DROP TRIGGER fail_planning_write")
+            .unwrap();
+        let saved = db.save_planning_section_versioned(stale, Some(2)).unwrap();
+        assert_eq!(saved.version, 3);
+        assert!(db.list_planning_embeddings().unwrap().is_empty());
+        assert!(db.list_planning_chunk_embeddings().unwrap().is_empty());
+        let json = serde_json::to_value(saved).unwrap();
+        assert_eq!(json["version"], 3);
+        assert_eq!(json["pendingContent"], "candidate");
+    }
+
+    #[test]
+    fn migration_49_preserves_formal_history_planning_and_recovery() {
+        let mut db = Database::in_memory().unwrap();
+        let chapter = db
+            .create_plan_node(None, PlanNodeKind::Chapter, "chapter".into())
+            .unwrap();
+        let doc = r#"{"type":"doc","content":[]}"#.to_owned();
+        let revision = db
+            .save_manuscript_checked(chapter.id, None, doc.clone(), "history".into())
+            .unwrap();
+        db.save_recovery_log(chapter.id, doc).unwrap();
+        let planning = db
+            .save_planning_section_versioned(planning_section(), Some(0))
+            .unwrap();
+        db.connection
+            .execute_batch(
+                "DROP TABLE manuscript_drafts;
+             ALTER TABLE planning_sections DROP COLUMN version;
+             DELETE FROM schema_migrations WHERE version=49;",
+            )
+            .unwrap();
+        db.migrate().unwrap();
+        assert_eq!(db.health().unwrap().schema_version, 49);
+        assert_eq!(
+            db.list_manuscript_revisions(chapter.id).unwrap()[0],
+            revision
+        );
+        assert_eq!(db.list_recovery_logs(chapter.id).unwrap().len(), 1);
+        assert_eq!(db.list_versioned_planning_sections().unwrap()[0], planning);
+        assert_eq!(db.current_manuscript_draft(chapter.id).unwrap().version, 0);
+        db.migrate().unwrap();
+        assert_eq!(db.list_recovery_logs(chapter.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn migration_49_rolls_back_schema_changes_on_failure_and_can_be_retried() {
+        let db = Database::in_memory().unwrap();
+        db.connection
+            .execute_batch(
+                "DROP TABLE manuscript_drafts;
+             DELETE FROM schema_migrations WHERE version=49;",
+            )
+            .unwrap();
+        assert!(db.migrate().is_err());
+        assert!(db.connection.is_autocommit());
+        let exists: bool = db
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='manuscript_drafts')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!exists);
+        assert_eq!(db.health().unwrap().schema_version, 48);
+        db.connection
+            .execute_batch("ALTER TABLE planning_sections DROP COLUMN version")
+            .unwrap();
+        db.migrate().unwrap();
+        assert_eq!(db.health().unwrap().schema_version, 49);
+    }
+
     #[test]
     fn migration_repairs_missing_ai_run_cost_columns_without_removing_records() {
         let database = Database::in_memory().expect("in-memory database");
@@ -2160,6 +2318,8 @@ mod tests {
                 ALTER TABLE ai_tasks DROP COLUMN review_purpose;
                 ALTER TABLE ai_proposals DROP COLUMN review_purpose;
                 ALTER TABLE ai_run_records DROP COLUMN review_purpose;
+                DROP TABLE manuscript_drafts;
+                ALTER TABLE planning_sections DROP COLUMN version;
                 DELETE FROM schema_migrations WHERE version >= 40;
                 COMMIT;
                 PRAGMA foreign_keys=ON;",

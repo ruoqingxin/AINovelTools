@@ -20,6 +20,7 @@ import {
 } from "../lib/tauri-client";
 import { isPlanningSectionSettled } from "../lib/writing-readiness";
 import { AiModelNote } from "./ai-model-note";
+import { usePlanningDraft } from "./use-planning-draft";
 
 type PlanningItem = { id: string; label: string; prompt: string; guidance: string };
 type PlanningGroup = { id: string; label: string; children: PlanningItem[] };
@@ -88,19 +89,6 @@ export function nextIncompletePlanningSectionId(currentId: string, completedIds:
   return ordered.find((section) => !completedIds.has(section.id))?.id ?? null;
 }
 
-function emptySection(id: string): PlanningSection {
-  return {
-    id,
-    content: "",
-    pendingContent: "",
-    storyState: "UNSET",
-    rationale: "",
-    consequence: "",
-    references: [],
-    updatedAt: "",
-  };
-}
-
 function planningJobInput(job: Job): PlanningAiJobInput | null {
   if (job.jobType !== "AI_PLANNING_GENERATE" && job.jobType !== "AI_PLANNING_EXTRACT") return null;
   try {
@@ -124,8 +112,9 @@ export function StoryPlanningWorkbench(props: {
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const aiPreferences = useAiTaskPreferences();
   const selectedId = props.selectedSectionId ?? "seed-premise";
-  const [form, setForm] = useState<PlanningSection>(emptySection(selectedId));
-  const [saving, setSaving] = useState(false);
+  const storedSelected = useMemo(() => storedSections.data?.find((section) => section.id === selectedId), [storedSections.data, selectedId]);
+  const planningDraft = usePlanningDraft(selectedId, storedSelected, storedSections.data !== undefined);
+  const { form, setForm, baseline, saving, dirty } = planningDraft;
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [settingMemoryNeedsRefresh, setSettingMemoryNeedsRefresh] = useState(false);
@@ -143,9 +132,8 @@ export function StoryPlanningWorkbench(props: {
   const [previousForm, setPreviousForm] = useState<PlanningSection | null>(null);
   const selectedDefinition = sections.find((section) => section.id === selectedId) ?? sections[0];
   const selectedGroup = planningSectionGroups.find((group) => group.children.some((item) => item.id === selectedId));
-  const storedSelected = useMemo(() => storedSections.data?.find((section) => section.id === selectedId) ?? emptySection(selectedId), [storedSections.data, selectedId]);
-  const pendingDirty = form.pendingContent !== storedSelected.pendingContent;
-  const storyStateDirty = form.storyState !== storedSelected.storyState;
+  const pendingDirty = form.pendingContent !== baseline.pendingContent;
+  const storyStateDirty = form.storyState !== baseline.storyState;
   const sectionStatus = pendingDirty
     ? { label: "候选有未保存修改", hint: "点击“保存待定内容”后，修改才会保留" }
     : form.content.trim() && form.pendingContent.trim()
@@ -155,17 +143,11 @@ export function StoryPlanningWorkbench(props: {
         : form.pendingContent.trim()
           ? { label: `${planningStoryStateLabels[form.storyState]} · 候选已保存`, hint: "候选不会进入正式上下文，可以继续修改或确认" }
           : { label: planningStoryStateLabels[form.storyState], hint: "空内容不等于错误，也可以明确标记未知、暂不决定或作者保留" };
-  const dirty = form.content !== storedSelected.content
-    || form.pendingContent !== storedSelected.pendingContent
-    || form.storyState !== storedSelected.storyState
-    || form.rationale !== storedSelected.rationale
-    || form.consequence !== storedSelected.consequence
-    || JSON.stringify(form.references) !== JSON.stringify(storedSelected.references);
-  const formalDirty = form.content !== storedSelected.content
-    || form.storyState !== storedSelected.storyState
-    || form.rationale !== storedSelected.rationale
-    || form.consequence !== storedSelected.consequence
-    || JSON.stringify(form.references) !== JSON.stringify(storedSelected.references);
+  const formalDirty = form.content !== baseline.content
+    || form.storyState !== baseline.storyState
+    || form.rationale !== baseline.rationale
+    || form.consequence !== baseline.consequence
+    || JSON.stringify(form.references) !== JSON.stringify(baseline.references);
   const completedCount = (storedSections.data ?? []).filter((section) => sectionIds.has(section.id) && isPlanningSectionSettled(section)).length;
   const completedIds = new Set((storedSections.data ?? []).filter(isPlanningSectionSettled).map((section) => section.id));
   const selectedIndex = sections.findIndex((section) => section.id === selectedId);
@@ -190,19 +172,21 @@ export function StoryPlanningWorkbench(props: {
     .join("\n"), [storedSections.data, selectedId]);
   const selectedAiPrompt = `当前节点“${selectedDefinition.label}”：${selectedDefinition.prompt}。填写参考：${selectedDefinition.guidance}`;
   useEffect(() => {
-    const next = storedSelected;
-    setForm(next);
     setError(null);
     setNotice(null);
     setShowEditor(true);
-    setEditorTab(next.pendingContent.trim() ? "pending" : "formal");
+    setEditorTab("formal");
     setStartMode("WRITE");
     setPendingAction(null);
     setPendingFiles([]);
     setOperationGuidance("");
     setAllowImportRewrite(false);
     setPreviousForm(null);
-  }, [selectedId, storedSelected]);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (baseline.pendingContent.trim()) setEditorTab("pending");
+  }, [selectedId, baseline.pendingContent]);
 
   useEffect(() => {
     if (latestJob?.status === "SUCCEEDED") {
@@ -217,11 +201,12 @@ export function StoryPlanningWorkbench(props: {
   }, [client, latestJob?.errorSummary, latestJob?.id, latestJob?.status]);
 
   useEffect(() => {
-    props.onDirtyChange?.(dirty);
+    props.onDirtyChange?.(dirty || saving);
     return () => props.onDirtyChange?.(false);
-  }, [dirty, props.onDirtyChange]);
+  }, [dirty, saving, props.onDirtyChange]);
 
   function selectSection(sectionId: string) {
+    if (saving) return;
     if (!confirmDiscardPending()) return;
     if (formalDirty && !window.confirm("当前正式设定有未保存修改，确定切换吗？")) return;
     props.onSelectSection?.(sectionId);
@@ -236,7 +221,7 @@ export function StoryPlanningWorkbench(props: {
 
   function restoreUnsavedPending() {
     if (!pendingDirty) return;
-    setForm((current) => ({ ...current, pendingContent: storedSelected.pendingContent }));
+    setForm((current) => ({ ...current, pendingContent: baseline.pendingContent }));
     setNotice("未保存的候选修改已恢复，当前显示的是上次保存的候选内容");
   }
 
@@ -259,23 +244,24 @@ export function StoryPlanningWorkbench(props: {
   }
 
   async function save() {
-    setSaving(true);
+    const snapshot = planningDraft.beginSave();
+    if (!snapshot) return;
     setError(null);
     setNotice(null);
     try {
       const formalChanged = editorTab === "formal" && formalDirty;
-      await savePlanningSection({
-        ...form,
-        id: selectedId,
-      });
+      const saved = await savePlanningSection({ ...snapshot.form, version: snapshot.baseline.version });
+      planningDraft.acknowledge(snapshot, saved);
+      cacheSavedSection(saved);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
       setSettingMemoryNeedsRefresh(formalChanged);
       setNotice(editorTab === "pending" ? "待定内容已保存" : formalChanged ? "正式设定已保存，后续 AI 会直接读取最新内容" : "正式设定已保存");
       setPreviousForm(null);
     } catch (cause) {
       setError(errorMessage(cause));
+      void client.invalidateQueries({ queryKey: ["planning-sections"] });
     } finally {
-      setSaving(false);
+      planningDraft.finishSave(snapshot);
     }
   }
 
@@ -368,23 +354,25 @@ export function StoryPlanningWorkbench(props: {
   }
 
   async function saveStoryState() {
-    setSaving(true);
+    const snapshot = planningDraft.beginSave();
+    if (!snapshot) return;
     setError(null);
     setNotice(null);
     try {
       const saved = await savePlanningSection({
-        ...storedSelected,
-        id: selectedId,
-        storyState: form.storyState,
+        ...snapshot.baseline,
+        storyState: snapshot.form.storyState,
       });
-      setForm((current) => ({ ...current, storyState: saved.storyState }));
+      planningDraft.acknowledge({ ...snapshot, form: { ...snapshot.baseline, storyState: snapshot.form.storyState } }, saved);
+      cacheSavedSection(saved);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
-      setSettingMemoryNeedsRefresh(form.storyState !== storedSelected.storyState);
+      setSettingMemoryNeedsRefresh(snapshot.form.storyState !== snapshot.baseline.storyState);
       setNotice(`当前节点状态已保存为“${planningStoryStateLabels[saved.storyState]}”`);
     } catch (cause) {
       setError(errorMessage(cause));
+      void client.invalidateQueries({ queryKey: ["planning-sections"] });
     } finally {
-      setSaving(false);
+      planningDraft.finishSave(snapshot);
     }
   }
 
@@ -407,19 +395,22 @@ export function StoryPlanningWorkbench(props: {
 
   async function confirmPending() {
     if (!form.pendingContent.trim()) return;
-    setSaving(true);
+    const snapshot = planningDraft.beginSave();
+    if (!snapshot) return;
     setError(null);
     try {
       const nextForm = {
-        ...form,
-        content: form.pendingContent,
+        ...snapshot.form,
+        version: snapshot.baseline.version,
+        content: snapshot.form.pendingContent,
         pendingContent: "",
         storyState: "CONFIRMED" as const,
         references: [],
       };
       const saved = await savePlanningSection(nextForm);
-      setPreviousForm(form);
-      setForm(saved);
+      setPreviousForm(snapshot.form);
+      planningDraft.acknowledge(snapshot, saved);
+      cacheSavedSection(saved);
       setEditorTab("formal");
       setShowEditor(true);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
@@ -427,9 +418,15 @@ export function StoryPlanningWorkbench(props: {
       setNotice("已将候选内容设为正式设定，后续 AI 会直接读取最新内容");
     } catch (cause) {
       setError(errorMessage(cause));
+      void client.invalidateQueries({ queryKey: ["planning-sections"] });
     } finally {
-      setSaving(false);
+      planningDraft.finishSave(snapshot);
     }
+  }
+
+  function cacheSavedSection(saved: PlanningSection) {
+    client.setQueryData<PlanningSection[]>(["planning-sections"], (items) =>
+      [...(items ?? []).filter((item) => item.id !== saved.id), saved]);
   }
 
   async function refreshSettingMemory() {
@@ -446,6 +443,9 @@ export function StoryPlanningWorkbench(props: {
       setRefreshingSettingMemory(false);
     }
   }
+
+  if (storedSections.isPending) return <p role="status">正在读取作品设定…</p>;
+  if (storedSections.isError && !storedSections.data) return <p className="project-error" role="alert">{errorMessage(storedSections.error)}</p>;
 
   return (
     <section className="story-planning-workbench" aria-label="作品设定工作台">
@@ -492,6 +492,7 @@ export function StoryPlanningWorkbench(props: {
           {notice ? <p className="project-notice story-planning-status">{notice}</p> : null}
           {settingMemoryNeedsRefresh ? <div className="story-planning-state"><strong>跨章节任务前建议更新设定记忆</strong><span>当前 AI 已会读取这次保存的正式设定；只有需要摘要导航或跨章节上下文时，才更新设定记忆。</span><button type="button" className="secondary-action" onClick={() => void refreshSettingMemory()} disabled={refreshingSettingMemory}>{refreshingSettingMemory ? "提交中…" : "更新设定记忆"}</button></div> : null}
           {error ? <p className="project-error story-planning-status" role="alert">{error}</p> : null}
+          {planningDraft.remoteChanged ? <div className="story-planning-state" role="status"><strong>此规划已有新版本，本地修改仍保留</strong><button type="button" className="secondary-action" disabled={saving} onClick={() => { if (window.confirm("放弃本地未保存修改并读取最新规划吗？")) { planningDraft.reload(); setError(null); setPreviousForm(null); setNotice("已读取最新规划"); } }}><RotateCcw size={14} />读取最新规划</button></div> : null}
         </div>
       </div>
     </section>

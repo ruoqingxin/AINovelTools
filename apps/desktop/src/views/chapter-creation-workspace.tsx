@@ -96,16 +96,24 @@ export function ChapterCreationWorkspace({
       </div>
       {state.manuscript.isError ? <p className="project-error" role="alert">无法读取正文：{state.manuscript.error.message}</p> : null}
       {state.manuscript.isPending ? <p className="plan-empty" role="status">正在加载正文…</p> : null}
+      {state.localDraft.isPending && state.manuscript.isSuccess ? <p className="plan-empty" role="status">正在读取本地草稿…</p> : null}
+      {state.localDraft.isError || state.draftStorageError ? <div className="creation-memory-status" role="alert">
+        <span>{state.draftStorageError ?? `无法读取本地草稿：${state.localDraft.error?.message}`}</span>
+        {state.draftStorageError ? <button type="button" className="secondary-action"
+          onClick={() => void state.persistLocalDraft()} disabled={state.savingLocalDraft}>重试保存草稿</button> : null}
+        <button type="button" className="secondary-action" onClick={() => void state.reloadLocalDraft()} disabled={state.savingDraft}>
+          {state.draftReady ? "保留副本并重读" : "重新读取草稿"}</button>
+      </div> : null}
       {state.manuscriptMemoryNeedsRefresh && (!assistantOpen || assistantTab !== "ai") ? <div className="creation-memory-status" role="status">
         <span>章节记忆待更新</span>
         <button type="button" className="secondary-action" onClick={() => void state.refreshChapterMemory()}
           disabled={state.refreshingChapterMemory}><RefreshCw size={14} />{state.refreshingChapterMemory ? "提交中…" : "更新章节记忆"}</button>
       </div> : null}
-      {state.manuscript.isSuccess && state.manuscriptTab === "candidate" ? <div
+      {state.draftReady && state.manuscriptTab === "candidate" ? <div
         className="creation-edit-panel" id="manuscript-panel-candidate" role="tabpanel" aria-labelledby="manuscript-tab-candidate">
         <div className="creation-document-heading">
           <h3>正文编辑</h3>
-          <span>{documentCharacterCount(state.draft)} 字 · {state.chapterDirty ? "未保存" : state.manuscript.data ? "已保存" : "新章节"}</span>
+          <span>{documentCharacterCount(state.draft)} 字 · {state.chapterDirty ? "本地草稿" : state.manuscript.data ? "已保存正文" : "新章节"}</span>
         </div>
         {state.editor ? <ManuscriptCandidateEditor editor={state.editor} /> : <p className="plan-empty">正在加载编辑器…</p>}
         {state.mergeResult ? <div className="merge-panel" role="status">
@@ -117,8 +125,12 @@ export function ChapterCreationWorkspace({
           </p>)}
         </div> : null}
         <div className="creation-savebar">
-          <span>{state.savingDraft ? "保存中…" : state.chapterDirty ? "有内容待保存" : "无待保存修改"}</span>
+          <span>{state.savingDraft ? "正在保存正文…" : state.savingLocalDraft ? "正在保存草稿…"
+            : state.draftStorageError ? "草稿保存失败" : state.draftNeedsPersistence ? "草稿待保存"
+            : state.chapterDirty ? "本地草稿已保存" : "无待保存修改"}</span>
           <div>
+            {state.chapterDirty ? <button type="button" className="secondary-action" onClick={() => void state.discardLocalDraft()}
+              disabled={state.savingDraft}>放弃草稿</button> : null}
             {state.chapterDirty && state.manuscript.data ? <button type="button" className="secondary-action"
               onClick={() => void state.mergeDraft()} disabled={state.savingDraft}>检查冲突</button> : null}
             {auditFlow?.manuscript !== false ? <button type="button" className="secondary-action"
@@ -160,7 +172,7 @@ export function ChapterCreationWorkspace({
           <button type="button" aria-pressed={knowledgeTab === "extraction"} onClick={() => setKnowledgeTab("extraction")}>提取候选</button>
           <button type="button" aria-pressed={knowledgeTab === "facts"} onClick={() => setKnowledgeTab("facts")}>事实审核</button>
         </div>
-        {knowledgeTab === "extraction" ? state.manuscript.data && !state.chapterDirty ? <ChapterExtractionPanel
+        {knowledgeTab === "extraction" ? state.draftReady && state.manuscript.data && !state.chapterDirty ? <ChapterExtractionPanel
           chapterId={chapter.id} onOpenFactReview={() => setKnowledgeTab("facts")}
           onOpenManuscript={() => state.setManuscriptTab("manuscript")} /> : <div className="creation-empty">
           <p>{state.chapterDirty ? "请先保存当前正文，再提取本章知识" : "保存正文后即可提取本章知识"}</p>
@@ -174,7 +186,7 @@ export function ChapterCreationWorkspace({
     <aside className="creation-assistant" aria-label="创作助手" hidden={!assistantOpen}>
       <WorkspaceTabs prefix="assistant" label="创作助手页签" value={assistantTab} tabs={assistantTabs} onChange={selectAssistantTab} />
       <div id="assistant-panel-ai" role="tabpanel" aria-labelledby="assistant-tab-ai" hidden={assistantTab !== "ai"}>
-        {state.manuscript.isSuccess ? <AiWritingPanel {...aiProps}
+        {state.draftReady ? <AiWritingPanel {...aiProps}
           mode="create" onOpenAdmissionReview={() => openReview("admission")} /> : <p className="plan-empty">等待正文就绪…</p>}
       </div>
       <div id="assistant-panel-plan" role="tabpanel" aria-labelledby="assistant-tab-plan" hidden={assistantTab !== "plan"}>
@@ -214,7 +226,7 @@ export function ChapterCreationWorkspace({
             </select>
           </label>
           {!reviewEnabled ? <p className="plan-empty">此类检查已关闭。<a href="/settings#writing-admission">审核设置</a></p>
-            : state.manuscript.isSuccess ? <AiWritingPanel {...aiProps} key={reviewPurpose} mode="review" reviewPurpose={reviewPurpose} />
+            : state.draftReady ? <AiWritingPanel {...aiProps} key={reviewPurpose} mode="review" reviewPurpose={reviewPurpose} />
             : <p className="plan-empty">等待正文就绪…</p>}
         </> : null}
       </div>

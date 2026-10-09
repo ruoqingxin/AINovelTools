@@ -27,9 +27,13 @@ impl ProjectManager {
             return Err(ManuscriptError::EmptyDocument);
         }
         let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
+        let base = session
+            .database
+            .current_manuscript(chapter_id)?
+            .map(|revision| revision.id);
         let revision = session.database.save_manuscript_checked(
             chapter_id,
-            None,
+            base,
             document_json,
             creation_reason,
         )?;
@@ -205,6 +209,67 @@ impl ProjectManager {
             .database
             .list_recovery_logs(chapter_id)
             .map_err(ManuscriptError::Database)
+    }
+
+    pub fn current_manuscript_draft(
+        &self,
+        chapter_id: Uuid,
+    ) -> Result<ManuscriptDraft, ManuscriptError> {
+        self.current
+            .as_ref()
+            .ok_or(ManuscriptError::NoProject)?
+            .database
+            .current_manuscript_draft(chapter_id)
+    }
+
+    pub fn save_manuscript_draft(
+        &mut self,
+        chapter_id: Uuid,
+        base_revision_id: Option<Uuid>,
+        document_json: String,
+        expected_version: i64,
+    ) -> Result<ManuscriptDraft, ManuscriptError> {
+        self.current
+            .as_mut()
+            .ok_or(ManuscriptError::NoProject)?
+            .database
+            .save_manuscript_draft(
+                chapter_id,
+                base_revision_id,
+                document_json,
+                expected_version,
+            )
+    }
+
+    pub fn discard_manuscript_draft(
+        &mut self,
+        chapter_id: Uuid,
+        expected_version: i64,
+    ) -> Result<ManuscriptDraft, ManuscriptError> {
+        self.current
+            .as_mut()
+            .ok_or(ManuscriptError::NoProject)?
+            .database
+            .discard_manuscript_draft(chapter_id, expected_version)
+    }
+
+    pub fn commit_manuscript_draft(
+        &mut self,
+        chapter_id: Uuid,
+        base_revision_id: Option<Uuid>,
+        document_json: String,
+        expected_version: i64,
+    ) -> Result<ManuscriptDraftCommit, ManuscriptError> {
+        let session = self.current.as_mut().ok_or(ManuscriptError::NoProject)?;
+        let committed = session.database.commit_manuscript_draft(
+            chapter_id,
+            base_revision_id,
+            document_json,
+            expected_version,
+            session.manifest.project_id,
+        )?;
+        self.invalidate_chapter_summaries(chapter_id);
+        Ok(committed)
     }
 
     pub fn list_all_recovery_logs(&self) -> Result<Vec<RecoveryLog>, ManuscriptError> {

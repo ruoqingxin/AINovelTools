@@ -15,12 +15,28 @@ pub(crate) fn list_plan_nodes(
 #[tauri::command]
 pub(crate) fn list_planning_sections(
     state: tauri::State<'_, ProjectState>,
-) -> Result<Vec<novel_infrastructure::PlanningSection>, ApiError> {
+) -> Result<Vec<novel_infrastructure::VersionedPlanningSection>, ApiError> {
     let manager = state
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager.list_planning_sections().map_err(ApiError::from)
+    manager
+        .list_versioned_planning_sections()
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn save_planning_section_checked(
+    state: tauri::State<'_, ProjectState>,
+    section: novel_infrastructure::PlanningSection,
+    expected_version: i64,
+) -> Result<novel_infrastructure::VersionedPlanningSection, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .save_planning_section_checked(section, expected_version)
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]

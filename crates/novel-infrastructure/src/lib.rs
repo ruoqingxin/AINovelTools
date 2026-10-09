@@ -28,6 +28,7 @@ const JOB_HISTORY_RETENTION: usize = 100;
 const AI_REQUEST_SNAPSHOT_RETENTION: usize = 100;
 
 mod ai;
+mod chapter_draft_store;
 mod context_store;
 mod database;
 mod discussion_context_store;
@@ -212,7 +213,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 48;
+pub const CURRENT_SCHEMA_VERSION: i64 = 49;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -552,6 +553,8 @@ pub enum ProjectError {
     Manifest(#[from] serde_json::Error),
     #[error("project database failed: {0}")]
     Database(#[from] DatabaseError),
+    #[error("planning version conflict: expected {expected}, actual {actual}")]
+    PlanningConflict { expected: i64, actual: i64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -668,6 +671,13 @@ pub struct PlanningSection {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VersionedPlanningSection {
+    #[serde(flatten)]
+    pub section: PlanningSection,
+    pub version: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanningEmbedding {
@@ -736,6 +746,24 @@ pub struct RecoveryLog {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct ManuscriptDraft {
+    pub chapter_id: Uuid,
+    pub document_json: Option<String>,
+    pub base_revision_id: Option<Uuid>,
+    pub base_document_json: String,
+    pub version: i64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptDraftCommit {
+    pub revision: ManuscriptRevision,
+    pub draft: ManuscriptDraft,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct MergeConflict {
     pub block_id: String,
     pub base: Option<String>,
@@ -787,6 +815,8 @@ pub enum ManuscriptError {
         expected: Option<Uuid>,
         actual: Option<Uuid>,
     },
+    #[error("local draft version conflict: expected {expected}, actual {actual}")]
+    DraftConflict { expected: i64, actual: i64 },
     #[error("manuscript database operation failed: {0}")]
     Database(#[from] DatabaseError),
 }

@@ -49,9 +49,10 @@ use commands::knowledge::{
     update_foreshadowing, update_relation,
 };
 use commands::manuscript::{
-    clear_recovery_logs, current_manuscript, enqueue_chapter_summary_refresh,
-    list_all_recovery_logs, list_manuscript_revisions, list_recovery_logs, merge_manuscript,
-    save_manuscript, save_manuscript_checked, save_recovery_log,
+    clear_recovery_logs, commit_manuscript_draft, current_manuscript, current_manuscript_draft,
+    discard_manuscript_draft, enqueue_chapter_summary_refresh, list_all_recovery_logs,
+    list_manuscript_revisions, list_recovery_logs, merge_manuscript, save_manuscript,
+    save_manuscript_checked, save_manuscript_draft, save_recovery_log,
 };
 use commands::materials::{
     list_summary_materials, list_writing_cards, rebuild_summary_material,
@@ -61,7 +62,8 @@ use commands::materials::{
 use commands::planning::{
     clear_planning_embedding, create_plan_node, enqueue_project_setting_summary_refresh,
     generate_planning_embedding, list_plan_nodes, list_planning_embeddings, list_planning_sections,
-    move_plan_node, save_planning_section, update_plan_node, update_plan_node_checked,
+    move_plan_node, save_planning_section, save_planning_section_checked, update_plan_node,
+    update_plan_node_checked,
 };
 use commands::project::{
     close_project, create_project, current_project, list_recent_projects, open_project,
@@ -135,6 +137,7 @@ pub fn run() {
             list_plan_nodes,
             list_planning_sections,
             save_planning_section,
+            save_planning_section_checked,
             enqueue_project_setting_summary_refresh,
             list_planning_embeddings,
             generate_planning_embedding,
@@ -144,6 +147,10 @@ pub fn run() {
             update_plan_node_checked,
             move_plan_node,
             current_manuscript,
+            current_manuscript_draft,
+            save_manuscript_draft,
+            discard_manuscript_draft,
+            commit_manuscript_draft,
             list_manuscript_revisions,
             list_recovery_logs,
             list_all_recovery_logs,

@@ -1,6 +1,75 @@
 use crate::{ApiError, ProjectState};
 
 #[tauri::command]
+pub(crate) fn current_manuscript_draft(
+    state: tauri::State<'_, ProjectState>,
+    chapter_id: uuid::Uuid,
+) -> Result<novel_infrastructure::ManuscriptDraft, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .current_manuscript_draft(chapter_id)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn save_manuscript_draft(
+    state: tauri::State<'_, ProjectState>,
+    chapter_id: uuid::Uuid,
+    base_revision_id: Option<uuid::Uuid>,
+    document_json: String,
+    expected_version: i64,
+) -> Result<novel_infrastructure::ManuscriptDraft, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .save_manuscript_draft(
+            chapter_id,
+            base_revision_id,
+            document_json,
+            expected_version,
+        )
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn discard_manuscript_draft(
+    state: tauri::State<'_, ProjectState>,
+    chapter_id: uuid::Uuid,
+    expected_version: i64,
+) -> Result<novel_infrastructure::ManuscriptDraft, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .discard_manuscript_draft(chapter_id, expected_version)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn commit_manuscript_draft(
+    state: tauri::State<'_, ProjectState>,
+    chapter_id: uuid::Uuid,
+    base_revision_id: Option<uuid::Uuid>,
+    document_json: String,
+    expected_version: i64,
+) -> Result<novel_infrastructure::ManuscriptDraftCommit, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .commit_manuscript_draft(
+            chapter_id,
+            base_revision_id,
+            document_json,
+            expected_version,
+        )
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn current_manuscript(
     state: tauri::State<'_, ProjectState>,
@@ -70,7 +139,10 @@ pub(crate) fn enqueue_chapter_summary_refresh(
     })
     .to_string();
     let job = manager
-        .enqueue_job(novel_infrastructure::JobType::RefreshChapterSummary, payload)
+        .enqueue_job(
+            novel_infrastructure::JobType::RefreshChapterSummary,
+            payload,
+        )
         .map_err(|error| ApiError::internal(error.to_string()))?;
     let _ = manager.append_job_event(job.id, "QUEUED", "等待用户请求的章节摘要更新", 0);
     Ok(job)

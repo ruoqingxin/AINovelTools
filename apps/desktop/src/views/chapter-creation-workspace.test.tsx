@@ -52,6 +52,9 @@ function makeState(overrides: Partial<ManuscriptState> = {}) {
     manuscript: { isSuccess: true, isPending: false, isError: false, data: { id: "revision-1", createdAt: "0" } },
     history: { isSuccess: true, isPending: false, isError: false, data: [] },
     recovery: { data: [] },
+    localDraft: { isSuccess: true, isPending: false, isError: false },
+    draftReady: true, draftNeedsPersistence: false, savingLocalDraft: false, draftStorageError: null,
+    persistLocalDraft: vi.fn(), discardLocalDraft: vi.fn(), reloadLocalDraft: vi.fn(),
     manuscriptTab: "candidate", setManuscriptTab: vi.fn(),
     draft: doc("已保存内容"), editor: { id: "shared-editor" }, chapterDirty: false,
     savingDraft: false, saveDraft: vi.fn().mockResolvedValue(undefined),
@@ -183,6 +186,7 @@ describe("ChapterCreationWorkspace", () => {
     const view = render(<ChapterCreationWorkspace {...props} />);
     expect(screen.getByRole("button", { name: "保存正文" })).toBeDisabled();
     view.rerender(<ChapterCreationWorkspace {...props} state={makeState({
+      draftReady: false,
       manuscript: { isSuccess: false, isPending: false, isError: true, error: new Error("读取失败") } as ManuscriptState["manuscript"],
     })} />);
     expect(screen.getByRole("alert")).toHaveTextContent("读取失败");

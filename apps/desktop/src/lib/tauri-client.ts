@@ -56,6 +56,7 @@ export type PlanningStoryState =
   | "RETIRED";
 
 export type PlanningSection = {
+  version?: number;
   id: string;
   content: string;
   pendingContent: string;
@@ -235,6 +236,11 @@ export type ContextPackage = {
   taskContract: unknown; sectionAudit: unknown[];
 };
 export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
+export type ManuscriptDraft = {
+  chapterId: string; documentJson: string | null; baseRevisionId: string | null;
+  baseDocumentJson: string; version: number; updatedAt: string;
+};
+export type ManuscriptDraftCommit = { revision: ManuscriptRevision; draft: ManuscriptDraft };
 export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
 export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
 export type ModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
@@ -716,7 +722,23 @@ export function listPlanningSections() {
 }
 
 export function savePlanningSection(section: PlanningSection) {
-  return invoke<PlanningSection>("save_planning_section", { section });
+  return invoke<PlanningSection>("save_planning_section_checked", { section, expectedVersion: section.version ?? 0 });
+}
+
+export function currentManuscriptDraft(chapterId: string) {
+  return invoke<ManuscriptDraft>("current_manuscript_draft", { chapterId });
+}
+
+export function saveManuscriptDraft(input: { chapterId: string; baseRevisionId?: string; documentJson: string; expectedVersion: number }) {
+  return invoke<ManuscriptDraft>("save_manuscript_draft", input);
+}
+
+export function discardManuscriptDraft(input: { chapterId: string; expectedVersion: number }) {
+  return invoke<ManuscriptDraft>("discard_manuscript_draft", input);
+}
+
+export function commitManuscriptDraft(input: { chapterId: string; baseRevisionId?: string; documentJson: string; expectedVersion: number }) {
+  return invoke<ManuscriptDraftCommit>("commit_manuscript_draft", input);
 }
 export function listPlanningEmbeddings() {
   return invoke<PlanningEmbedding[]>("list_planning_embeddings");
@@ -929,7 +951,7 @@ export function invalidateProjectQueries(queryClient: { invalidateQueries: (opti
     ["writing-cards"], ["plan-nodes"], ["planning-sections"], ["current-facts"], ["evidence-anchors"],
     ["relations"], ["events"], ["beliefs"], ["foreshadowings"], ["knowledge-candidates"],
     ["knowledge-conflicts"], ["project-search"], ["jobs"], ["recovery-all"], ["manuscript"],
-    ["manuscript-history"], ["recovery-logs"], ["ai-proposals"], ["ai-runs"],
+    ["manuscript-draft"], ["manuscript-history"], ["recovery-logs"], ["ai-proposals"], ["ai-runs"],
     ["project-ai-task-overrides"], ["writing-review-policy"],
   ];
   return Promise.all([

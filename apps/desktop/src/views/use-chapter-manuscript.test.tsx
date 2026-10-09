@@ -3,10 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChapterManuscript } from "./use-chapter-manuscript";
+import type { ManuscriptDraft, ManuscriptDraftCommit } from "../lib/tauri-client";
 
 const mocks = vi.hoisted(() => ({
   currentManuscript: vi.fn(), listManuscriptRevisions: vi.fn(), listRecoveryLogs: vi.fn(),
-  saveManuscriptChecked: vi.fn(), clearRecoveryLogs: vi.fn(), saveRecoveryLog: vi.fn(),
+  currentManuscriptDraft: vi.fn(), saveManuscriptDraft: vi.fn(), commitManuscriptDraft: vi.fn(),
+  discardManuscriptDraft: vi.fn(), clearRecoveryLogs: vi.fn(), saveRecoveryLog: vi.fn(),
   enqueueChapterSummaryRefresh: vi.fn(), mergeManuscript: vi.fn(),
 }));
 const editorMock = vi.hoisted(() => ({
@@ -23,8 +25,13 @@ const documentJson = (text: string) => JSON.stringify({
   type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }],
 });
 const revision = (id: string, text: string, chapterId = "chapter-1") => ({
-  id, chapterId, documentJson: documentJson(text), parentRevisionId: null, createdAt: "", creationReason: "MANUAL_SAVE",
+  id, chapterId, documentJson: documentJson(text), parentRevisionId: null, baseRevisionId: null,
+  contentHash: id, documentSchemaVersion: 1, createdAt: "", creationReason: "MANUAL_SAVE",
 });
+const emptyDraft = (chapterId = "chapter-1", version = 0): ManuscriptDraft => ({
+  chapterId, version, documentJson: null, baseRevisionId: null, baseDocumentJson: "", updatedAt: "",
+});
+let drafts: Map<string, ManuscriptDraft>;
 
 function setup(chapterId = "chapter-1", mode: "planning" | "writing" = "writing", initialTab: "candidate" | "manuscript" = "manuscript") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -44,12 +51,31 @@ describe("useChapterManuscript", () => {
   });
   beforeEach(() => {
     vi.clearAllMocks();
+    drafts = new Map();
     mocks.currentManuscript.mockResolvedValue(revision("revision-1", "saved"));
     mocks.listManuscriptRevisions.mockResolvedValue([revision("revision-1", "saved"), revision("revision-0", "old")]);
     mocks.listRecoveryLogs.mockResolvedValue([]);
     mocks.clearRecoveryLogs.mockResolvedValue(undefined);
     mocks.saveRecoveryLog.mockResolvedValue(undefined);
-    mocks.saveManuscriptChecked.mockImplementation(({ documentJson }) => Promise.resolve({ ...revision("revision-2", ""), documentJson }));
+    mocks.currentManuscriptDraft.mockImplementation((chapterId) => Promise.resolve(drafts.get(chapterId) ?? emptyDraft(chapterId)));
+    mocks.saveManuscriptDraft.mockImplementation(({ chapterId, documentJson, baseRevisionId, expectedVersion }) => {
+      const saved = { chapterId, documentJson, baseRevisionId: baseRevisionId ?? null, baseDocumentJson: "", version: expectedVersion + 1, updatedAt: "" };
+      saved.baseDocumentJson = revision("revision-1", "saved").documentJson;
+      drafts.set(chapterId, saved);
+      return Promise.resolve(saved);
+    });
+    mocks.commitManuscriptDraft.mockImplementation(({ chapterId, documentJson, expectedVersion }) => {
+      const saved = { ...revision("revision-2", "", chapterId), documentJson };
+      mocks.currentManuscript.mockResolvedValue(saved);
+      const draft = emptyDraft(chapterId, expectedVersion + 1);
+      drafts.set(chapterId, draft);
+      return Promise.resolve({ revision: saved, draft });
+    });
+    mocks.discardManuscriptDraft.mockImplementation(({ chapterId, expectedVersion }) => {
+      const draft = emptyDraft(chapterId, expectedVersion + 1);
+      drafts.set(chapterId, draft);
+      return Promise.resolve(draft);
+    });
     mocks.mergeManuscript.mockResolvedValue({ documentJson: documentJson("merged"), conflicts: [] });
   });
 
@@ -80,7 +106,7 @@ describe("useChapterManuscript", () => {
     expect(result.current.draft).toBe(documentJson("candidate"));
     expect(result.current.chapterDirty).toBe(true);
     await act(() => result.current.saveDraft());
-    expect(mocks.saveManuscriptChecked).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.commitManuscriptDraft).toHaveBeenCalledWith(expect.objectContaining({
       baseRevisionId: "revision-1", documentJson: documentJson("candidate"),
     }));
   });
@@ -153,13 +179,14 @@ describe("useChapterManuscript", () => {
     const { result } = setup();
     await waitFor(() => expect(result.current.draft).toBe(documentJson("saved")));
     act(() => result.current.setDraft(documentJson("first edit")));
-    let finishSave!: (value: ReturnType<typeof revision>) => void;
-    mocks.saveManuscriptChecked.mockImplementation(() => new Promise((resolve) => { finishSave = resolve; }));
+    let finishSave!: (value: ManuscriptDraftCommit) => void;
+    mocks.commitManuscriptDraft.mockImplementation(() => new Promise((resolve) => { finishSave = resolve; }));
     let saving!: Promise<void>;
     act(() => { saving = result.current.saveDraft(); });
+    await waitFor(() => expect(mocks.commitManuscriptDraft).toHaveBeenCalled());
     act(() => result.current.setDraft(documentJson("newer edit")));
     await act(async () => {
-      finishSave(revision("revision-2", "first edit"));
+      finishSave({ revision: revision("revision-2", "first edit"), draft: emptyDraft("chapter-1", 2) });
       await saving;
     });
     expect(result.current.draft).toBe(documentJson("newer edit"));
@@ -170,14 +197,14 @@ describe("useChapterManuscript", () => {
     const { result, onError } = setup();
     await waitFor(() => expect(result.current.draft).toBe(documentJson("saved")));
     act(() => result.current.setDraft(documentJson("local draft")));
-    mocks.saveManuscriptChecked.mockRejectedValueOnce(new Error("正文版本冲突"));
+    mocks.commitManuscriptDraft.mockRejectedValueOnce(new Error("正文版本冲突"));
     await act(() => result.current.saveDraft());
     expect(onError).toHaveBeenLastCalledWith("正文版本冲突");
     expect(result.current.draft).toBe(documentJson("local draft"));
     expect(result.current.chapterDirty).toBe(true);
     expect(mocks.clearRecoveryLogs).not.toHaveBeenCalled();
     await act(() => result.current.saveDraft());
-    expect(mocks.saveManuscriptChecked).toHaveBeenLastCalledWith(expect.objectContaining({
+    expect(mocks.commitManuscriptDraft).toHaveBeenLastCalledWith(expect.objectContaining({
       baseRevisionId: "revision-1", documentJson: documentJson("local draft"),
     }));
   });
@@ -192,5 +219,85 @@ describe("useChapterManuscript", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["summary-materials"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["ai-proposals", "chapter-1"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project-search"] });
+  });
+
+  it("autosaves independently of formal revisions and restores a persisted draft on reopening", async () => {
+    const { result, rerender } = setup();
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setDraft(documentJson("persistent draft")));
+    await waitFor(() => expect(result.current.draftNeedsPersistence).toBe(false), { timeout: 2500 });
+    expect(mocks.saveManuscriptDraft).toHaveBeenCalledWith(expect.objectContaining({ baseRevisionId: "revision-1" }));
+    expect(mocks.commitManuscriptDraft).not.toHaveBeenCalled();
+    expect(mocks.saveRecoveryLog).not.toHaveBeenCalled();
+    rerender({ chapterId: "chapter-2", mode: "writing" });
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    rerender({ chapterId: "chapter-1", mode: "writing" });
+    await waitFor(() => expect(result.current.draft).toBe(documentJson("persistent draft")));
+    expect(result.current.chapterDirty).toBe(true);
+  });
+
+  it("restores the original baseline even when the formal revision changed while closed", async () => {
+    drafts.set("chapter-1", { ...emptyDraft(), documentJson: documentJson("local"), baseRevisionId: "revision-0", baseDocumentJson: documentJson("old"), version: 2 });
+    const { result } = setup();
+    await waitFor(() => expect(result.current.draft).toBe(documentJson("local")));
+    await act(() => result.current.mergeDraft());
+    expect(mocks.mergeManuscript).toHaveBeenCalledWith({ base: documentJson("old"), current: documentJson("saved"), draft: documentJson("local") });
+  });
+
+  it("retains dirty content and exposes retry when draft persistence fails", async () => {
+    mocks.saveManuscriptDraft.mockRejectedValueOnce(new Error("草稿版本冲突"));
+    const { result } = setup();
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setDraft(documentJson("local")));
+    await act(() => result.current.persistLocalDraft());
+    expect(result.current.draftStorageError).toBe("草稿版本冲突");
+    expect(result.current.draftNeedsPersistence).toBe(true);
+    await act(() => result.current.persistLocalDraft());
+    expect(result.current.draftStorageError).toBeNull();
+    expect(result.current.draftNeedsPersistence).toBe(false);
+  });
+
+  it("does not erase edits entered while discard is awaiting the backend", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let finish!: (value: ManuscriptDraft) => void;
+    mocks.discardManuscriptDraft.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const { result } = setup();
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setDraft(documentJson("discard me")));
+    let operation!: Promise<void>;
+    act(() => { operation = result.current.discardLocalDraft(); });
+    await waitFor(() => expect(mocks.discardManuscriptDraft).toHaveBeenCalled());
+    act(() => result.current.setDraft(documentJson("keep new edit")));
+    await act(async () => { finish(emptyDraft("chapter-1", 1)); await operation; });
+    expect(result.current.draft).toBe(documentJson("keep new edit"));
+    expect(result.current.draftNeedsPersistence).toBe(true);
+  });
+
+  it("does not silently replace new typing during a draft reload", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { result, onError } = setup();
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setDraft(documentJson("before reload")));
+    let finish!: (value: ManuscriptDraft) => void;
+    mocks.currentManuscriptDraft.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    let operation!: Promise<void>;
+    act(() => { operation = result.current.reloadLocalDraft(); });
+    await waitFor(() => expect(mocks.currentManuscriptDraft).toHaveBeenCalledTimes(2));
+    act(() => result.current.setDraft(documentJson("new typing")));
+    await act(async () => { finish(emptyDraft()); await operation; });
+    expect(result.current.draft).toBe(documentJson("new typing"));
+    expect(onError).toHaveBeenLastCalledWith(expect.stringContaining("新编辑"));
+  });
+
+  it("keeps initialized content and unsaved protection when a background draft read fails", async () => {
+    const { result } = setup();
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setDraft(documentJson("not persisted")));
+    mocks.currentManuscriptDraft.mockRejectedValueOnce(new Error("read failed"));
+    await act(() => result.current.localDraft.refetch());
+    await waitFor(() => expect(result.current.localDraft.isError).toBe(true));
+    expect(result.current.draftReady).toBe(true);
+    expect(result.current.draftNeedsPersistence).toBe(true);
+    expect(result.current.draft).toBe(documentJson("not persisted"));
   });
 });

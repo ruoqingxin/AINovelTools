@@ -3516,6 +3516,8 @@ textarea:focus-visible,
 .inspector-move-row { grid-column:1 / -1; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:8px; padding-top:10px; border-top:1px solid #e3eaf4; }
 .inspector-move-row button { min-height:38px; }
 .story-planning-workbench { margin-top:30px; padding-top:22px; border-top:1px solid #dbe5f3; }
+.story-planning-workbench .primary-action,
+.story-planning-workbench .secondary-action { display:inline-flex; min-height:34px; align-items:center; justify-content:center; gap:6px; padding:0 10px; border-radius:6px; font:inherit; font-size:12px; cursor:pointer; }
 .story-planning-titlebar { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; padding-bottom:14px; border-bottom:1px solid var(--line); }
 .story-planning-titlebar .eyebrow { margin:0 0 5px; color:#4f7fe0; font-size:11px; }
 .story-planning-titlebar h2 { margin:0; color:#243b62; font-size:18px; }
@@ -3710,6 +3712,14 @@ textarea:focus-visible,
 
 @media (max-width: 620px) {
   .planning-overview { padding:15px; }
+  .plan-layout { grid-template-columns:minmax(0,1fr); }
+  .plan-layout .plan-tree { position:static; max-height:280px; }
+  .plan-inspector-work-design { padding:0; }
+  .plan-inspector-work-design .story-planning-workbench { padding:14px; }
+  .story-planning-titlebar { align-items:flex-start; flex-direction:column; gap:8px; }
+  .planning-phase-strip { grid-template-columns:minmax(0,1fr); }
+  .story-planning-state-control label,
+  .story-planning-state-control > small { min-width:0; width:100%; flex-basis:100%; }
   .planning-overview-heading { flex-direction:column; }
   .planning-overview-heading button, .planning-overview-heading > a { width:100%; }
   .planning-stage-grid { grid-template-columns:1fr; }

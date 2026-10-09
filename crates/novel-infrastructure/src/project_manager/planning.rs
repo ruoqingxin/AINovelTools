@@ -11,8 +11,31 @@ impl ProjectManager {
 
     pub fn save_planning_section(
         &mut self,
-        mut section: PlanningSection,
+        section: PlanningSection,
     ) -> Result<PlanningSection, ProjectError> {
+        Ok(self.save_planning_section_versioned(section, None)?.section)
+    }
+
+    pub fn list_versioned_planning_sections(
+        &self,
+    ) -> Result<Vec<VersionedPlanningSection>, ProjectError> {
+        let session = self.current.as_ref().ok_or(ProjectError::NoProject)?;
+        Ok(session.database.list_versioned_planning_sections()?)
+    }
+
+    pub fn save_planning_section_checked(
+        &mut self,
+        section: PlanningSection,
+        expected_version: i64,
+    ) -> Result<VersionedPlanningSection, ProjectError> {
+        self.save_planning_section_versioned(section, Some(expected_version))
+    }
+
+    fn save_planning_section_versioned(
+        &mut self,
+        mut section: PlanningSection,
+        expected_version: Option<i64>,
+    ) -> Result<VersionedPlanningSection, ProjectError> {
         if !section.content.trim().is_empty()
             && section.story_state == PlanningStoryState::AiSuggested
         {
@@ -36,7 +59,9 @@ impl ProjectManager {
             .list_planning_sections()?
             .into_iter()
             .find(|existing| existing.id == section.id);
-        let saved = session.database.save_planning_section(section)?;
+        let saved = session
+            .database
+            .save_planning_section_versioned(section, expected_version)?;
         let is_formal = |item: &PlanningSection| {
             !item.content.trim().is_empty()
                 && matches!(
@@ -45,11 +70,12 @@ impl ProjectManager {
                 )
         };
         let formal_changed = match previous.as_ref().filter(|item| is_formal(item)) {
-            Some(before) if is_formal(&saved) => {
-                before.content != saved.content || before.story_state != saved.story_state
+            Some(before) if is_formal(&saved.section) => {
+                before.content != saved.section.content
+                    || before.story_state != saved.section.story_state
             }
             Some(_) => true,
-            None => is_formal(&saved),
+            None => is_formal(&saved.section),
         };
         if formal_changed {
             self.invalidate_auto_setting_summaries();
