@@ -137,6 +137,7 @@ impl From<novel_infrastructure::MaterialsStoreError> for ApiError {
         let code = match error {
             novel_infrastructure::MaterialsStoreError::NoProject => "NO_PROJECT_OPEN",
             novel_infrastructure::MaterialsStoreError::EmptyContent => "INVALID_INPUT",
+            novel_infrastructure::MaterialsStoreError::InvalidTarget => "INVALID_MATERIAL_TARGET",
             novel_infrastructure::MaterialsStoreError::Database(_) => "DATABASE_ERROR",
         };
         Self {

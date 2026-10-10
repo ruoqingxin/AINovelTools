@@ -57,9 +57,9 @@ use commands::manuscript::{
     save_manuscript, save_manuscript_checked, save_manuscript_draft, save_recovery_log,
 };
 use commands::materials::{
-    list_summary_materials, list_writing_cards, rebuild_summary_material,
-    set_summary_material_lifecycle, set_writing_card_enabled, upsert_summary_material,
-    upsert_writing_card,
+    get_summary_material, get_writing_card, list_summary_materials, list_writing_cards,
+    rebuild_summary_material, set_summary_material_lifecycle, set_writing_card_enabled,
+    upsert_summary_material, upsert_writing_card,
 };
 use commands::planning::{
     clear_planning_embedding, create_plan_node, enqueue_project_setting_summary_refresh,
@@ -223,8 +223,10 @@ pub fn run() {
             confirm_discussion_design,
             list_author_settings,
             list_summary_materials,
+            get_summary_material,
             upsert_summary_material,
             list_writing_cards,
+            get_writing_card,
             upsert_writing_card,
             set_writing_card_enabled,
             set_summary_material_lifecycle,

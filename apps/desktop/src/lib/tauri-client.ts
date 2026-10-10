@@ -558,8 +558,10 @@ export function setEntityArchived(input: { id: string; archived: boolean; expect
   return invoke<Entity>("set_entity_archived", input);
 }
 export function listSummaryMaterials() { return invoke<SummaryMaterial[]>("list_summary_materials"); }
+export function getSummaryMaterial(id: string, projectId: string) { return invoke<SummaryMaterial>("get_summary_material", { id, projectId }); }
 export function upsertSummaryMaterial(material: SummaryMaterial) { return invoke<SummaryMaterial>("upsert_summary_material", { material }); }
 export function listWritingCards(cardType?: string) { return invoke<WritingCard[]>("list_writing_cards", { cardType }); }
+export function getWritingCard(id: string, projectId: string) { return invoke<WritingCard>("get_writing_card", { id, projectId }); }
 export function upsertWritingCard(card: WritingCard) { return invoke<WritingCard>("upsert_writing_card", { card }); }
 export function setWritingCardEnabled(id: string, enabled: boolean) { return invoke<WritingCard>("set_writing_card_enabled", { id, enabled }); }
 export function setSummaryMaterialLifecycle(id: string, lifecycleStatus: string) { return invoke<SummaryMaterial>("set_summary_material_lifecycle", { id, lifecycleStatus }); }

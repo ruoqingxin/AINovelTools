@@ -1,6 +1,36 @@
 use crate::{ApiError, ProjectState};
 
 #[tauri::command]
+pub(crate) fn get_summary_material(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    project_id: uuid::Uuid,
+) -> Result<novel_infrastructure::SummaryMaterial, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .get_summary_material(id, project_id)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn get_writing_card(
+    state: tauri::State<'_, ProjectState>,
+    id: uuid::Uuid,
+    project_id: uuid::Uuid,
+) -> Result<novel_infrastructure::WritingCard, ApiError> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager
+        .get_writing_card(id, project_id)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn list_summary_materials(
     state: tauri::State<'_, ProjectState>,
 ) -> Result<Vec<novel_infrastructure::SummaryMaterial>, ApiError> {

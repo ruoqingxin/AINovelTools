@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, ArrowRight, BookOpen, Check, ChevronRight, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArchiveRestore, ArrowLeft, ArrowRight, BookOpen, Check, ChevronRight, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import { cancelJob, createPlanNode, enqueuePlanningAiJob, errorMessage, getAuditFlowSettings, getCurrentProject, listModelProfiles, listPlanningSections, listPlanNodes, movePlanNode, savePlanningSection, updatePlanNodeChecked, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
@@ -17,6 +17,8 @@ import { isPlanningSectionSettled } from "../lib/writing-readiness";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { resolveDiscussionPlanningTarget } from "../lib/discussion-source";
 import { PlanningDiscussionSources } from "./planning-discussion-sources";
+import { planNodeHref, resolvePlanNodeTarget } from "../lib/knowledge-navigation";
+import { sourceReturnTo } from "../lib/manuscript-source";
 
 import {
   buildVolumePlanTargetGuidance,
@@ -72,6 +74,8 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const discussionTarget = new URLSearchParams(window.location.search).get("discussionTarget");
   const targetProject = new URLSearchParams(window.location.search).get("targetProject");
   const referenceChapter = new URLSearchParams(window.location.search).get("referenceChapter");
+  const planNodeTarget = new URLSearchParams(window.location.search).get("planNode");
+  const returnTo = sourceReturnTo(new URLSearchParams(window.location.search).get("returnTo"));
   const [targetError, setTargetError] = useState<string | null>(null);
 
   async function addNode() {
@@ -302,6 +306,17 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 
   useEffect(() => {
     if (!isChapterMode || selectedId) return;
+    if (planNodeTarget !== null) {
+      if (currentProject.isPending || nodes.isPending) return;
+      if (currentProject.isError || nodes.isError) return;
+      const target = resolvePlanNodeTarget(planNodeTarget, targetProject, currentProject.data?.projectId, nodes.data ?? [], true);
+      if (!target || referenceChapter !== null || discussionTarget !== null) {
+        setTargetError("目标章节已不可用或不属于当前项目，未打开其他章节。");
+        return;
+      }
+      selectNode(target);
+      return;
+    }
     if (referenceChapter !== null) {
       if (currentProject.isPending || nodes.isPending) return;
       const target = chapterNodes.find((node) => node.id === referenceChapter);
@@ -338,7 +353,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     }
     const defaultChapter = resolveDefaultWritingChapter(chapterNodes, requestedId, rememberedId);
     if (defaultChapter) selectNode(defaultChapter);
-  }, [chapterNodes, currentProject.data?.projectId, currentProject.isPending, isChapterMode, selectedId, workspaceMode, discussionTarget, targetProject, referenceChapter, nodes.data, nodes.isPending]);
+  }, [chapterNodes, currentProject.data?.projectId, currentProject.isPending, currentProject.isError, isChapterMode, selectedId, workspaceMode, discussionTarget, targetProject, referenceChapter, planNodeTarget, nodes.data, nodes.isPending, nodes.isError]);
 
   useEffect(() => {
     if (workspaceMode !== "writing" || selected?.kind !== "CHAPTER" || currentProject.isPending) return;
@@ -351,6 +366,17 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 
   useEffect(() => {
     if (workspaceMode !== "planning" || selectedId) return;
+    if (planNodeTarget !== null) {
+      if (nodes.isPending || currentProject.isPending) return;
+      if (currentProject.isError || nodes.isError) return;
+      const target = resolvePlanNodeTarget(planNodeTarget, targetProject, currentProject.data?.projectId, nodes.data ?? []);
+      if (!target || referenceChapter !== null || discussionTarget !== null) {
+        setTargetError("目标规划已不可用或不属于当前项目，未打开其他规划项。");
+        return;
+      }
+      selectNode(target);
+      return;
+    }
     if (discussionTarget !== null) {
       if (nodes.isPending || currentProject.isPending) return;
       const target = resolveDiscussionPlanningTarget(discussionTarget, nodes.data ?? [], Array.from(planningDefinitionsById.keys()));
@@ -370,7 +396,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     }
     const requestedNode = activeNodes.find((node) => node.id === requestedId);
     if (requestedNode) selectNode(requestedNode);
-  }, [activeNodes, selectedId, workspaceMode, workDesignNode, discussionTarget, targetProject, nodes.data, nodes.isPending, currentProject.isPending, currentProject.data?.projectId]);
+  }, [activeNodes, selectedId, workspaceMode, workDesignNode, discussionTarget, targetProject, referenceChapter, planNodeTarget, nodes.data, nodes.isPending, nodes.isError, currentProject.isPending, currentProject.isError, currentProject.data?.projectId]);
 
   useEffect(() => {
     if (nodePlanJob?.status !== "SUCCEEDED") return;
@@ -679,10 +705,13 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
         {isChapterMode ? null : <p className="eyebrow">项目规划</p>}
         <h1>{isChapterMode ? "创作" : "把想法推进成可写的故事"}</h1>
         {!isChapterMode ? <p className="workspace-lede">作品设定、故事大纲和分卷规划</p> : null}
+        {returnTo && (!isChapterMode || !selected) ? <a className="secondary-action workspace-return-link" href={returnTo}><ArrowLeft size={15} />返回来源</a> : null}
       </div>
 
       {nodes.isPending ? <p className="plan-loading">正在加载规划…</p> : null}
       {nodes.isError ? <p className="project-error" role="alert">无法加载规划：{errorMessage(nodes.error)}</p> : null}
+      {planNodeTarget !== null && currentProject.isError ? <p className="project-error" role="alert">无法核对目标项目：{errorMessage(currentProject.error)}</p> : null}
+      {planNodeTarget !== null && (nodes.isError || currentProject.isError) ? <button type="button" className="secondary-action workspace-return-link" onClick={() => void Promise.all([nodes.refetch(), currentProject.refetch()])}><RefreshCw size={15} />重试定位</button> : null}
       {error ? <p className="project-error" role="alert">{error}</p> : null}
       {targetError ? <p className="project-error" role="alert">{targetError}</p> : null}
 
@@ -799,6 +828,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
         {selected.kind !== "WORK_DESIGN" && (nodeDraft.remoteChanged || splitDraft.remoteChanged) ? <div className="project-error" role="status">规划已有新版本，本地修改仍保留。<button type="button" className="secondary-action" disabled={savingNodePlan} onClick={() => { if (window.confirm("放弃本地未保存规划并读取最新版本吗？")) { nodeDraft.reload(); splitDraft.reload(); setError(null); } }}><ArchiveRestore size={14} />读取最新规划</button></div> : null}
         {selected.kind === "CHAPTER" && workspaceMode === "planning" ? <div className="planning-redirect-panel">
           <BookOpen size={18} /><strong>{selected.title}</strong><a href={`/writing#${selected.id}`}>开始创作</a>
+          {currentProject.data ? <a href={planNodeHref(selected.id, currentProject.data.projectId, returnTo ?? undefined, true)}>查看本章计划</a> : null}
         </div> : null}
         {selected.kind === "CHAPTER" && isChapterMode ? <ChapterCreationWorkspace
           key={`${currentProject.data?.projectId}:${selected.id}`}

@@ -57,6 +57,23 @@ describe("SearchView", () => {
     expect(back.searchParams.get("type")).toBe("ENTITY");
   });
 
+  it.each([
+    ["SUMMARY", "打开当前摘要", "/knowledge/materials", "summary"],
+    ["CARD", "打开当前卡片", "/knowledge/materials", "card"],
+    ["PLAN", "打开当前规划", "/planning", "planNode"],
+  ])("opens an exact %s object with project identity and a filtered return", async (objectType, label, pathname, field) => {
+    window.history.replaceState(null, "", `/search?q=雾城&type=${objectType}`);
+    mocks.searchProject.mockResolvedValue([{ ...result(1), objectType, objectId: "exact-object" }]);
+    renderSearch();
+    const url = new URL((await screen.findByRole("link", { name: label })).getAttribute("href")!, window.location.origin);
+    expect(url.pathname).toBe(pathname);
+    expect(url.searchParams.get(field)).toBe("exact-object");
+    expect(url.searchParams.get("targetProject")).toBe("project-1");
+    const back = new URL(url.searchParams.get("returnTo")!, window.location.origin);
+    expect(back.searchParams.get("q")).toBe("雾城");
+    expect(back.searchParams.get("type")).toBe(objectType);
+  });
+
   it("appends pages and resets pagination when the filter changes", async () => {
     mocks.searchProject.mockImplementation((_query, type, _limit, offset) =>
       Promise.resolve(type ? [result(100)] : offset === 0 ? Array.from({ length: 50 }, (_, index) => result(index)) : [result(50)]));

@@ -17,6 +17,8 @@ import {
 } from "../lib/tauri-client";
 import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { parseMaterialTarget } from "../lib/knowledge-navigation";
+import { MaterialDetailView } from "./material-detail-view";
 
 const emptyCard: WritingCard = { id: "", projectId: "", cardType: "STYLE_RULE", title: "", content: "", sourceVersion: null, scope: "PROJECT", enabled: true, sortOrder: 0, createdAt: "", updatedAt: "" };
 
@@ -43,6 +45,11 @@ function cardSignature(card: WritingCard) {
 }
 
 export function MaterialsView() {
+  const target = parseMaterialTarget(window.location.search);
+  return target ? <MaterialDetailView target={target} /> : <MaterialsManager />;
+}
+
+function MaterialsManager() {
   const client = useQueryClient();
   const summaries = useQuery({ queryKey: ["summary-materials"], queryFn: listSummaryMaterials });
   const jobs = useQuery({

@@ -1,0 +1,10 @@
+.material-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.material-detail-view .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; max-width: 100%; padding: 6px 10px; border-radius: 5px; font-size: 12px; text-decoration: none; }
+.material-detail-view .secondary-action svg { flex-shrink: 0; }
+.material-detail-body { min-width: 0; padding: 20px 0; }
+.material-detail-body h2 { margin: 0 0 16px; font-size: 18px; overflow-wrap: anywhere; }
+.material-detail-metadata { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 0 0 20px; font-size: 12px; }
+.material-detail-metadata div { min-width: 0; max-width: 100%; }
+.material-detail-metadata dt { margin-bottom: 5px; color: #69756e; }
+.material-detail-metadata dd { margin: 0; overflow-wrap: anywhere; }
+.material-detail-content { margin: 0 0 20px; padding: 16px 0; border-top: 1px solid #dce5ed; border-bottom: 1px solid #dce5ed; color: #304f41; font-size: 14px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }

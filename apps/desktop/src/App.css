@@ -3885,9 +3885,10 @@ textarea:focus-visible,
 .search-toolbar button { display:inline-flex; align-items:center; gap:6px; min-height:36px; padding:0 11px; border-radius:7px; font-size:12px; }
 .search-results { margin-top:22px; }
 .search-result { padding:13px 0; border-bottom:1px solid #e4eaf3; }
-.search-result > div { display:flex; align-items:center; gap:8px; }
-.search-result code { color:#8797b0; font-size:10px; }
-.search-result p { margin:8px 0 0; color:#50617d; font-size:12px; line-height:1.6; white-space:pre-wrap; }
+.search-result > div { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.search-result code { color:#8797b0; font-size:10px; overflow-wrap:anywhere; }
+.search-result p { margin:8px 0 0; color:#50617d; font-size:12px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.project-workspace .workspace-return-link { display:inline-flex; align-items:center; gap:6px; min-height:34px; margin-top:10px; padding:6px 10px; border-radius:5px; font-size:12px; text-decoration:none; }
 .search-more { margin-top:14px; min-height:32px; padding:0 10px; border-radius:7px; font-size:11px; }
 .jobs-view { width:min(1000px,calc(100% - 48px)); margin:0 auto; padding:38px 0 64px; }
 .settings-view { width:min(1120px,calc(100% - 48px)); margin:0 auto; padding:38px 0 64px; }
