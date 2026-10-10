@@ -1,5 +1,6 @@
 [package]
 name = "ainoveltools-desktop"
+default-run = "ainoveltools-desktop"
 version.workspace = true
 description = "Local-first AI-assisted long-form novel writing workspace"
 edition.workspace = true
