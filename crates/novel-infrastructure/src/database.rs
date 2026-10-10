@@ -1342,6 +1342,16 @@ impl Database {
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(DatabaseError::from)?;
+        let saved = Self::save_planning_section_in_tx(&transaction, section, expected_version)?;
+        transaction.commit().map_err(DatabaseError::from)?;
+        Ok(saved)
+    }
+
+    pub(super) fn save_planning_section_in_tx(
+        transaction: &rusqlite::Transaction<'_>,
+        section: PlanningSection,
+        expected_version: Option<i64>,
+    ) -> Result<VersionedPlanningSection, ProjectError> {
         let actual: i64 = transaction
             .query_row(
                 "SELECT version FROM planning_sections WHERE id=?1",
@@ -1426,7 +1436,6 @@ impl Database {
                 |row| row.get(0),
             )
             .map_err(DatabaseError::from)?;
-        transaction.commit().map_err(DatabaseError::from)?;
         Ok(VersionedPlanningSection {
             section: saved,
             version: actual + 1,
@@ -1654,9 +1663,23 @@ impl Database {
         kind: PlanNodeKind,
         title: String,
     ) -> Result<PlanNode, PlanError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(DatabaseError::from)?;
+        let node = Self::create_plan_node_in_tx(&transaction, parent_id, kind, title)?;
+        transaction.commit().map_err(DatabaseError::from)?;
+        Ok(node)
+    }
+
+    pub(super) fn create_plan_node_in_tx(
+        transaction: &rusqlite::Transaction<'_>,
+        parent_id: Option<Uuid>,
+        kind: PlanNodeKind,
+        title: String,
+    ) -> Result<PlanNode, PlanError> {
         if let Some(parent) = parent_id {
-            let parent_kind: Option<String> = self
-                .connection
+            let parent_kind: Option<String> = transaction
                 .query_row(
                     "SELECT kind FROM plan_nodes WHERE id = ?1 AND archived = 0",
                     [parent.to_string()],
@@ -1676,8 +1699,7 @@ impl Database {
                 return Err(PlanError::InvalidParentKind);
             }
         }
-        let sort_order: i64 = self
-            .connection
+        let sort_order: i64 = transaction
             .query_row(
                 "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM plan_nodes WHERE parent_id IS ?1",
                 rusqlite::params![parent_id.map(|id| id.to_string())],
@@ -1693,7 +1715,7 @@ impl Database {
             archived: false,
             revision: 1,
         };
-        self.connection
+        transaction
             .execute(
                 "INSERT INTO plan_nodes (id, parent_id, kind, title, sort_order)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -1707,18 +1729,18 @@ impl Database {
             )
             .map_err(DatabaseError::from)?;
         if node.kind == PlanNodeKind::Chapter {
-            self.connection
+            transaction
                 .execute(
                     "INSERT INTO chapters (id, plan_node_id, title) VALUES (?1, ?1, ?2)",
                     rusqlite::params![node.id.to_string(), node.title],
                 )
                 .map_err(DatabaseError::from)?;
         }
-        self.connection.execute(
+        transaction.execute(
             "INSERT INTO plan_revisions (id, node_id, revision, title, archived) VALUES (?1, ?2, 1, ?3, 0)",
             rusqlite::params![Uuid::new_v4().to_string(), node.id.to_string(), node.title],
         ).map_err(DatabaseError::from)?;
-        self.connection
+        transaction
             .execute(
                 "INSERT INTO plan_node_revisions (id, node_id, revision, title, archived)
              VALUES (?1, ?2, 1, ?3, 0)",

@@ -28,6 +28,7 @@ const JOB_HISTORY_RETENTION: usize = 100;
 const AI_REQUEST_SNAPSHOT_RETENTION: usize = 100;
 
 mod ai;
+mod batch_store;
 mod chapter_draft_store;
 mod chapter_entity_store;
 mod context_store;
@@ -55,6 +56,9 @@ pub use ai::{
     GenerationCompletion, GenerationOptions, GenerationOutput, GenerationUsage, ModelGateway,
     ModelProfileStore, ProjectAiTaskOverrides, SecretStore, WritingAdmission,
     apply_task_prompt_preferences, render_prompt_template,
+};
+pub use batch_store::{
+    BatchStoreError, ImportEntitiesInput, PlanBatchCandidate, PlanBatchInput, PlanBatchReceipt,
 };
 pub use chapter_entity_store::{
     ChapterEntityReferences, ChapterEntitySave, EntityChapter, EntityReferenceError,

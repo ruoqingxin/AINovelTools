@@ -554,6 +554,10 @@ export function upsertEntity(input: EntityInput) {
   return invoke<Entity>("upsert_entity", { input });
 }
 
+export function importEntities(input: { expectedProjectId: string; items: EntityInput[] }) {
+  return invoke<Entity[]>("import_entities", { input });
+}
+
 export function listEntityRevisions(entityId: string) {
   return invoke<EntityRevision[]>("list_entity_revisions", { entityId });
 }
@@ -786,6 +790,20 @@ export function currentManuscript(chapterId: string) {
 
 export function listManuscriptRevisions(chapterId: string) {
   return invoke<ManuscriptRevision[]>("list_manuscript_revisions", { chapterId });
+}
+
+export type PlanBatchInput = {
+  expectedProjectId: string;
+  parentId: string;
+  expectedParentRevision: number;
+  expectedSourceVersion: number;
+  source: PlanningSection;
+  candidates: Array<{ title: string; content: string }>;
+};
+export type PlanBatchReceipt = { nodes: PlanNode[]; source: PlanningSection & { version: number } };
+
+export function adoptPlanBatch(input: PlanBatchInput) {
+  return invoke<PlanBatchReceipt>("adopt_plan_batch", { input });
 }
 
 export type DiscussionSourceRequest = {

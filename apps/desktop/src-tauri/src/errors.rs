@@ -73,6 +73,26 @@ impl From<novel_infrastructure::PlanError> for ApiError {
     }
 }
 
+impl From<novel_infrastructure::BatchStoreError> for ApiError {
+    fn from(error: novel_infrastructure::BatchStoreError) -> Self {
+        use novel_infrastructure::BatchStoreError;
+        let code = match error {
+            BatchStoreError::NoProject => "NO_PROJECT_OPEN",
+            BatchStoreError::WrongProject => "SOURCE_MISMATCH",
+            BatchStoreError::InvalidBatch => "INVALID_INPUT",
+            BatchStoreError::InvalidTarget => "NOT_FOUND",
+            BatchStoreError::Entity(error) => return error.into(),
+            BatchStoreError::Plan(error) => return error.into(),
+            BatchStoreError::Project(error) => return error.into(),
+            BatchStoreError::Database(_) | BatchStoreError::Sqlite(_) => "DATABASE_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
 impl From<novel_infrastructure::ManuscriptError> for ApiError {
     fn from(error: novel_infrastructure::ManuscriptError) -> Self {
         let code = match error {

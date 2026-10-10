@@ -69,6 +69,19 @@ pub(crate) fn list_entities(
 }
 
 #[tauri::command]
+pub(crate) fn import_entities(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_infrastructure::ImportEntitiesInput,
+) -> Result<Vec<novel_infrastructure::Entity>, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .import_entities(input)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn upsert_entity(
     state: tauri::State<'_, ProjectState>,
     input: novel_infrastructure::EntityInput,

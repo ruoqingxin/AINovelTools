@@ -26,6 +26,19 @@ pub(crate) fn list_planning_sections(
 }
 
 #[tauri::command]
+pub(crate) fn adopt_plan_batch(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_infrastructure::PlanBatchInput,
+) -> Result<novel_infrastructure::PlanBatchReceipt, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .adopt_plan_batch(input)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn save_planning_section_checked(
     state: tauri::State<'_, ProjectState>,
     section: novel_infrastructure::PlanningSection,

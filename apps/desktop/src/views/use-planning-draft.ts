@@ -14,20 +14,20 @@ type Snapshot = { scope: object; baseline: PlanningSection; form: PlanningSectio
 
 export function usePlanningDraft(id: string, stored: PlanningSection | undefined, loaded: boolean) {
   const [state, setState] = useState(() => ({
-    scope: {}, baseline: stored ?? emptyPlanningSection(id), form: stored ?? emptyPlanningSection(id), saving: false,
+    scope: {}, baseline: stored ?? emptyPlanningSection(id), form: stored ?? emptyPlanningSection(id), saving: false, retained: false,
   }));
   const inFlight = useRef<Snapshot | null>(null);
   const ready = loaded && state.baseline.id === id;
   const form = ready ? state.form : stored ?? emptyPlanningSection(id);
   const baseline = ready ? state.baseline : stored ?? emptyPlanningSection(id);
-  const dirty = ready && planningDraftDirty(form, baseline);
+  const dirty = ready && (state.retained || planningDraftDirty(form, baseline));
 
   useEffect(() => {
     if (!loaded) return;
     const next = stored ?? emptyPlanningSection(id);
     setState((current) => {
-      if (current.baseline.id !== id) return { scope: {}, baseline: next, form: next, saving: false };
-      if (current.saving || planningDraftDirty(current.form, current.baseline)
+      if (current.baseline.id !== id) return { scope: {}, baseline: next, form: next, saving: false, retained: false };
+      if (current.saving || current.retained || planningDraftDirty(current.form, current.baseline)
         || (next.version ?? 0) < (current.baseline.version ?? 0)) return current;
       if (equal(next, current.baseline)) return current;
       return { ...current, baseline: next, form: next };
@@ -57,8 +57,12 @@ export function usePlanningDraft(id: string, stored: PlanningSection | undefined
       for (const key of editableFields) {
         if (!equal(current.form[key], snapshot.form[key])) Object.assign(next, { [key]: current.form[key] });
       }
-      return { ...current, baseline: saved, form: next };
+      return { ...current, baseline: saved, form: next, retained: false };
     });
+  }
+
+  function retainFailedSave(snapshot: Snapshot) {
+    setState((current) => current.scope !== snapshot.scope ? current : { ...current, retained: true });
   }
 
   function finishSave(snapshot: Snapshot) {
@@ -69,12 +73,12 @@ export function usePlanningDraft(id: string, stored: PlanningSection | undefined
   function reload() {
     if (inFlight.current || !loaded) return;
     const next = stored ?? emptyPlanningSection(id);
-    setState({ scope: {}, baseline: next, form: next, saving: false });
+    setState({ scope: {}, baseline: next, form: next, saving: false, retained: false });
   }
 
   return {
     form, baseline, setForm, dirty, ready, saving: state.saving,
     remoteChanged: ready && (stored?.version ?? 0) > (baseline.version ?? 0),
-    beginSave, acknowledge, finishSave, reload,
+    beginSave, acknowledge, retainFailedSave, finishSave, reload,
   };
 }

@@ -83,4 +83,43 @@ describe("usePlanningDraft", () => {
     expect(result.current.form.id).toBe("plan-2");
     expect(result.current.form.content).toBe("formal");
   });
+
+  it("retains an unchanged failed batch snapshot across remote refresh until explicit reload", () => {
+    const { result, rerender } = renderHook(({ stored }) => usePlanningDraft("plan-1", stored, true), { initialProps: { stored: section() } });
+    let snapshot!: NonNullable<ReturnType<typeof result.current.beginSave>>;
+    act(() => { snapshot = result.current.beginSave()!; });
+    act(() => {
+      result.current.retainFailedSave(snapshot);
+      result.current.finishSave(snapshot);
+    });
+    rerender({ stored: { ...section("plan-1", 2), pendingContent: "external batch" } });
+    expect(result.current.form.pendingContent).toBe("candidate");
+    expect(result.current.baseline.version).toBe(1);
+    expect(result.current.dirty).toBe(true);
+    let retry!: NonNullable<ReturnType<typeof result.current.beginSave>>;
+    act(() => { retry = result.current.beginSave()!; });
+    expect(retry.baseline.version).toBe(1);
+    act(() => result.current.finishSave(retry));
+    act(() => result.current.reload());
+    expect(result.current.form.pendingContent).toBe("external batch");
+    expect(result.current.baseline.version).toBe(2);
+    expect(result.current.dirty).toBe(false);
+  });
+
+  it("clears failed-batch retention after a successful retry without losing subsequent edits", () => {
+    const { result } = renderHook(() => usePlanningDraft("plan-1", section(), true));
+    let snapshot!: NonNullable<ReturnType<typeof result.current.beginSave>>;
+    act(() => { snapshot = result.current.beginSave()!; });
+    act(() => {
+      result.current.retainFailedSave(snapshot);
+      result.current.finishSave(snapshot);
+    });
+    act(() => { snapshot = result.current.beginSave()!; });
+    act(() => {
+      result.current.acknowledge(snapshot, { ...section("plan-1", 2), pendingContent: "" });
+      result.current.finishSave(snapshot);
+    });
+    expect(result.current.dirty).toBe(false);
+    expect(result.current.baseline.version).toBe(2);
+  });
 });

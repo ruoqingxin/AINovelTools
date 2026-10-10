@@ -115,7 +115,7 @@ fn parse_entity_type(value: &str) -> rusqlite::Result<EntityType> {
     }
 }
 
-fn map_entity(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entity> {
+pub(super) fn map_entity(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entity> {
     Ok(Entity {
         id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(

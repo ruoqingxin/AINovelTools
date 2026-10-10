@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EntityCard } from "../lib/tauri-client";
@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   listEntityCards: vi.fn(),
   listEntityRevisions: vi.fn(),
   upsertEntity: vi.fn(),
+  importEntities: vi.fn(),
+  extractEntitiesFromText: vi.fn(),
   getCurrentProject: vi.fn(),
   listModelProfiles: vi.fn(),
   getAiTaskPreferences: vi.fn(),
@@ -22,6 +24,8 @@ vi.mock("../lib/tauri-client", async () => {
     listEntityCards: mocks.listEntityCards,
     listEntityRevisions: mocks.listEntityRevisions,
     upsertEntity: mocks.upsertEntity,
+    importEntities: mocks.importEntities,
+    extractEntitiesFromText: mocks.extractEntitiesFromText,
     getCurrentProject: mocks.getCurrentProject,
     listModelProfiles: mocks.listModelProfiles,
     getAiTaskPreferences: mocks.getAiTaskPreferences,
@@ -48,6 +52,7 @@ describe("StoryBibleView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.upsertEntity.mockReset();
+    mocks.importEntities.mockReset();
     window.history.replaceState(null, "", "/knowledge");
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
     mocks.listModelProfiles.mockResolvedValue([]);
@@ -160,5 +165,74 @@ describe("StoryBibleView", () => {
 
     await waitFor(() => expect(mocks.upsertEntity).toHaveBeenCalledWith(expect.objectContaining({ name: "林澈" })));
     expect(await screen.findByText("已保存为新修订")).toBeVisible();
+  });
+
+  async function prepareImport() {
+    mocks.listModelProfiles.mockResolvedValue([{ id: "model", capability: "CHAT", hasSecret: true }]);
+    mocks.extractEntitiesFromText.mockResolvedValue([
+      { name: "候选甲", description: "描述甲", aliases: ["别名"], tags: ["标签"] },
+      { name: "候选乙", description: "描述乙", aliases: [], tags: [] },
+    ]);
+    mocks.listEntityCards.mockResolvedValue([card]);
+    renderView();
+    fireEvent.change(await screen.findByLabelText("名称"), { target: { value: "导入主题" } });
+    fireEvent.change(screen.getByLabelText("简要概述"), { target: { value: "力量体系" } });
+    fireEvent.change(screen.getByLabelText("适用范围"), { target: { value: "本书人物" } });
+    const file = new File(["资料原文"], "资料.md", { type: "text/markdown" });
+    Object.defineProperty(file, "text", { value: () => Promise.resolve("资料原文") });
+    fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "按主题提炼" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "按主题提炼" }));
+    await screen.findByDisplayValue("候选甲");
+  }
+
+  it("submits a single project-scoped batch and locks edits, file changes and entity selection", async () => {
+    let resolve!: (entities: EntityCard["entity"][]) => void;
+    mocks.importEntities.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    await prepareImport();
+    fireEvent.change(screen.getByDisplayValue("候选甲"), { target: { value: "作者修改甲" } });
+    const button = screen.getByRole("button", { name: "确认写入 2 条" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(mocks.importEntities).toHaveBeenCalledTimes(1));
+    expect(mocks.importEntities).toHaveBeenCalledWith({ expectedProjectId: "project-1", items: [
+      expect.objectContaining({ name: "作者修改甲", entityType: "CHARACTER", sourceVersion: "资料.md", aliases: ["别名"], tags: ["标签"] }),
+      expect.objectContaining({ name: "候选乙", description: "描述乙" }),
+    ] });
+    expect(screen.getByDisplayValue("作者修改甲")).toBeDisabled();
+    expect(document.querySelector('input[type="file"]')).toBeDisabled();
+    expect(screen.getByRole("button", { name: /沈砚/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "创建实体" })).toBeDisabled();
+    await act(async () => { resolve([card.entity, { ...card.entity, id: "entity-2" }]); });
+    expect(await screen.findByText("已从“资料.md”导入 2 条人物信息")).toBeVisible();
+    expect(screen.queryByDisplayValue("作者修改甲")).not.toBeInTheDocument();
+    expect(mocks.upsertEntity).not.toHaveBeenCalled();
+  });
+
+  it("keeps the full edited batch and file on failure and retries with the same snapshot", async () => {
+    mocks.importEntities.mockRejectedValueOnce(new Error("整批写入失败"));
+    await prepareImport();
+    fireEvent.change(screen.getByDisplayValue("描述乙"), { target: { value: "作者描述乙" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认写入 2 条" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("整批写入失败");
+    expect(screen.getByDisplayValue("候选甲")).toBeEnabled();
+    expect(screen.getByDisplayValue("作者描述乙")).toBeVisible();
+    expect(screen.getByText("资料.md")).toBeVisible();
+    mocks.importEntities.mockResolvedValueOnce([card.entity, card.entity]);
+    fireEvent.click(screen.getByRole("button", { name: "确认写入 2 条" }));
+    await screen.findByText("已从“资料.md”导入 2 条人物信息");
+    expect(mocks.importEntities.mock.calls[1]).toEqual(mocks.importEntities.mock.calls[0]);
+  });
+
+  it("keeps candidates when switching entities or replacing the file is cancelled", async () => {
+    await prepareImport();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: /沈砚/ }));
+    expect(confirm).toHaveBeenCalled();
+    expect(screen.getByDisplayValue("候选甲")).toBeVisible();
+    const file = new File(["替换"], "新文件.md");
+    fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    expect(screen.getByText("资料.md")).toBeVisible();
+    expect(screen.getByDisplayValue("候选乙")).toBeVisible();
   });
 });

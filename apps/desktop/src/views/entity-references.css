@@ -21,3 +21,6 @@
 .story-bible-view > a.secondary-action,
 .story-bible-editor > .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; max-width: 100%; padding: 6px 10px; border-radius: 5px; font: inherit; font-size: 12px; line-height: 1.4; text-decoration: none; white-space: normal; cursor: pointer; }
 .entity-reference-actions svg { flex: none; }
+.entity-import-lock { min-width: 0; margin: 0; padding: 0; border: 0; }
+.entity-import-lock > .inspector-actions { margin-top: 12px; }
+.entity-import-lock:disabled button, .entity-row:disabled { cursor: wait; opacity: .6; }

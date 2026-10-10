@@ -2,12 +2,13 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PlanNode } from "../lib/tauri-client";
+import type { PlanBatchReceipt, PlanNode, PlanningSection } from "../lib/tauri-client";
 import { ProjectWorkspaceView } from "./project-workspace-view";
 
 const mocks = vi.hoisted(() => ({
   listPlanNodes: vi.fn(), getCurrentProject: vi.fn(), listPlanningSections: vi.fn(), listModelProfiles: vi.fn(),
   getAuditFlowSettings: vi.fn(), savePlanningSection: vi.fn(),
+  adoptPlanBatch: vi.fn(), createPlanNode: vi.fn(),
 }));
 vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
@@ -109,5 +110,108 @@ describe("exact planning navigation", () => {
     const back = new URL(url.searchParams.get("returnTo")!, window.location.origin);
     expect(back.searchParams.get("q")).toBe("入城");
     expect(back.searchParams.get("type")).toBe("PLAN");
+  });
+
+  function batchSetup(split = false) {
+    const manager: PlanNode = { ...scene, id: "manager", kind: "VOLUME_MANAGER", title: "分卷管理", revision: 4 };
+    const volume: PlanNode = { ...scene, id: "volume", kind: "VOLUME", title: "第一卷", parentId: manager.id, revision: 3 };
+    const outline: PlanNode = { ...scene, id: "outline", kind: "OUTLINE", title: "大纲" };
+    const source: PlanningSection = {
+      id: split ? "chapter-split-volume" : "plan-node:manager",
+      content: "原正式计划", pendingContent: split ? "第1章·入城｜寻找线索\n第2章·问路｜发现冲突" : "第1卷·入城｜阶段目标\n第2卷·追查｜主要矛盾",
+      storyState: "LOCKED", rationale: "作者理由", consequence: "作者后果", references: ["discussion:original"],
+      updatedAt: "", version: 7,
+    };
+    const list = [manager, outline, ...(split ? [volume, { ...volume, id: "other-volume", title: "第二卷" }] : [])];
+    mocks.listPlanNodes.mockResolvedValue(list);
+    mocks.listPlanningSections.mockResolvedValue([
+      source, { ...source, id: "plan-node:outline", content: "正式大纲", pendingContent: "", storyState: "CONFIRMED" },
+    ]);
+    renderPlan("?planNode=manager&targetProject=project-1");
+    return { source, parent: split ? volume : manager };
+  }
+
+  it("adopts volumes through one batch using the original source and parent versions, preserving newer edits", async () => {
+    let resolve!: (receipt: PlanBatchReceipt) => void;
+    mocks.adoptPlanBatch.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    const { source, parent } = batchSetup();
+    const editor = await screen.findByLabelText("分卷候选");
+    await waitFor(() => expect(screen.getByRole("button", { name: "采用并创建 2 个分卷" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 2 个分卷" }));
+    await waitFor(() => expect(mocks.adoptPlanBatch).toHaveBeenCalledTimes(1));
+    expect(mocks.adoptPlanBatch).toHaveBeenCalledWith({
+      expectedProjectId: "project-1", parentId: parent.id, expectedParentRevision: 4, expectedSourceVersion: 7,
+      source, candidates: [{ title: "第1卷·入城", content: "阶段目标" }, { title: "第2卷·追查", content: "主要矛盾" }],
+    });
+    fireEvent.change(editor, { target: { value: "第3卷·新增｜保存期间的新输入" } });
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 1 个分卷" }));
+    const saved = { ...source, version: 8, content: source.pendingContent, pendingContent: "", storyState: "CONFIRMED" as const };
+    const created: PlanNode = { ...parent, id: "created-volume", kind: "VOLUME", parentId: parent.id, title: "第1卷·入城" };
+    await act(async () => { resolve({ nodes: [created], source: saved }); });
+    expect(screen.getByLabelText("分卷候选")).toHaveValue("第3卷·新增｜保存期间的新输入");
+    expect(mocks.adoptPlanBatch).toHaveBeenCalledTimes(1);
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it("preserves volume candidates and their original CAS baseline after a conflict", async () => {
+    mocks.adoptPlanBatch.mockRejectedValue({ code: "VERSION_CONFLICT", message: "规划版本冲突" });
+    batchSetup();
+    const editor = await screen.findByLabelText("分卷候选");
+    await act(async () => {});
+    fireEvent.change(editor, { target: { value: "第1卷·作者修改｜新目标" } });
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 1 个分卷" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("规划版本冲突");
+    expect(editor).toHaveValue("第1卷·作者修改｜新目标");
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 1 个分卷" }));
+    await waitFor(() => expect(mocks.adoptPlanBatch).toHaveBeenCalledTimes(2));
+    expect(mocks.adoptPlanBatch.mock.calls[1][0].expectedSourceVersion).toBe(7);
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+  });
+
+  it("adopts chapters with the formal source baseline and keeps newer candidate text while locking the target", async () => {
+    let resolve!: (receipt: PlanBatchReceipt) => void;
+    mocks.adoptPlanBatch.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    const { source, parent } = batchSetup(true);
+    const editor = await screen.findByLabelText("章节拆分候选");
+    await waitFor(() => expect(screen.getByRole("button", { name: "采用并创建 2 章" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 2 章" }));
+    await waitFor(() => expect(mocks.adoptPlanBatch).toHaveBeenCalledTimes(1));
+    expect(mocks.adoptPlanBatch).toHaveBeenCalledWith({
+      expectedProjectId: "project-1", parentId: parent.id, expectedParentRevision: 3, expectedSourceVersion: 7,
+      source, candidates: [{ title: "第1章·入城", content: "寻找线索" }, { title: "第2章·问路", content: "发现冲突" }],
+    });
+    expect(screen.getByLabelText("拆章节目标分卷")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "清空候选" })).toBeDisabled();
+    fireEvent.change(editor, { target: { value: "第3章·新编辑｜追踪" } });
+    await act(async () => { resolve({ nodes: [], source: { ...source, pendingContent: "", version: 8 } }); });
+    expect(editor).toHaveValue("第3章·新编辑｜追踪");
+    expect(screen.getByLabelText("拆章节目标分卷")).toBeEnabled();
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it("keeps all chapter candidates on a failed batch instead of clearing the source", async () => {
+    mocks.adoptPlanBatch.mockRejectedValue(new Error("执行卡写入失败"));
+    batchSetup(true);
+    const editor = await screen.findByLabelText("章节拆分候选");
+    await waitFor(() => expect(screen.getByRole("button", { name: "采用并创建 2 章" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 2 章" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("执行卡写入失败");
+    expect(editor).toHaveValue("第1章·入城｜寻找线索\n第2章·问路｜发现冲突");
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+  });
+
+  it("keeps unsaved chapter candidates and the target when a volume switch is cancelled", async () => {
+    batchSetup(true);
+    const editor = await screen.findByLabelText("章节拆分候选");
+    await act(async () => {});
+    fireEvent.change(editor, { target: { value: "第3章·作者修改｜新目标" } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.change(screen.getByLabelText("拆章节目标分卷"), { target: { value: "other-volume" } });
+    expect(confirm).toHaveBeenCalled();
+    expect(screen.getByLabelText("拆章节目标分卷")).toHaveValue("volume");
+    expect(editor).toHaveValue("第3章·作者修改｜新目标");
   });
 });

@@ -35,8 +35,9 @@ use commands::discussion::{
     summarize_discussion_design,
 };
 use commands::entities::{
-    get_chapter_entity_references, list_entities, list_entity_cards, list_entity_chapters,
-    list_entity_revisions, save_chapter_entity_references, set_entity_archived, upsert_entity,
+    get_chapter_entity_references, import_entities, list_entities, list_entity_cards,
+    list_entity_chapters, list_entity_revisions, save_chapter_entity_references,
+    set_entity_archived, upsert_entity,
 };
 use commands::jobs::{
     acknowledge_failed_jobs, cancel_job, claim_next_job, create_diagnostic_package, enqueue_job,
@@ -62,9 +63,10 @@ use commands::materials::{
     upsert_summary_material, upsert_writing_card,
 };
 use commands::planning::{
-    clear_planning_embedding, create_plan_node, enqueue_project_setting_summary_refresh,
-    generate_planning_embedding, list_plan_nodes, list_planning_embeddings, list_planning_sections,
-    move_plan_node, save_planning_section_checked, update_plan_node_checked,
+    adopt_plan_batch, clear_planning_embedding, create_plan_node,
+    enqueue_project_setting_summary_refresh, generate_planning_embedding, list_plan_nodes,
+    list_planning_embeddings, list_planning_sections, move_plan_node,
+    save_planning_section_checked, update_plan_node_checked,
 };
 use commands::project::{
     close_project, create_project, current_project, list_recent_projects, open_project,
@@ -132,6 +134,7 @@ pub fn run() {
             save_chapter_entity_references,
             list_entity_chapters,
             upsert_entity,
+            import_entities,
             list_entity_revisions,
             set_entity_archived,
             create_project,
@@ -142,6 +145,7 @@ pub fn run() {
             list_plan_nodes,
             list_planning_sections,
             save_planning_section_checked,
+            adopt_plan_batch,
             enqueue_project_setting_summary_refresh,
             list_planning_embeddings,
             generate_planning_embedding,
