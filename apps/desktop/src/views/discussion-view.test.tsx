@@ -357,6 +357,11 @@ describe("DiscussionView", () => {
         expectedStatus: "PENDING",
       }),
     );
+    const destination = await screen.findByRole("link", { name: "打开规划待定区" });
+    const target = new URL(destination.getAttribute("href")!, window.location.origin);
+    expect(target.pathname).toBe("/planning");
+    expect(target.searchParams.get("discussionTarget")).toBe("engine-theme");
+    expect(target.searchParams.get("targetProject")).toBe(session.projectId);
 
     const foreshadowing = screen
       .getByText(foreshadowingCandidate.content)
@@ -368,7 +373,7 @@ describe("DiscussionView", () => {
       ),
       { target: { value: "anchor-1" } },
     );
-    fireEvent.click(within(foreshadowing!).getByRole("button", { name: "送入事实审核" }));
+    fireEvent.click(within(foreshadowing!).getByRole("button", { name: "送入伏笔提取审核" }));
     await waitFor(() =>
       expect(mocks.promoteDiscussionCandidateToForeshadowingReview).toHaveBeenCalledWith({
         id: foreshadowingCandidate.id,
@@ -376,6 +381,88 @@ describe("DiscussionView", () => {
         evidenceAnchorId: "anchor-1",
       }),
     );
+  });
+
+  it("offers active chapter targets and excludes archived nodes", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    const chapter = { id: "chapter-1", kind: "CHAPTER", title: "入城", archived: false, parentId: null, sortOrder: 0, revision: 1 };
+    mocks.listPlanNodes.mockResolvedValue([chapter, { ...chapter, id: "archived", title: "旧章", archived: true }]);
+    renderView();
+    fireEvent.click(await screen.findByText("保存片段为候选"));
+    expect(await screen.findByRole("option", { name: "章节执行卡 · 入城" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "章节执行卡 · 旧章" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("目标规划项"), { target: { value: "plan-node:chapter-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存候选" }));
+    await waitFor(() => expect(mocks.createDiscussionCandidate).toHaveBeenCalledWith(expect.objectContaining({
+      targetSectionId: "plan-node:chapter-1",
+    })));
+  });
+
+  it("preserves a newer candidate edit while an older snapshot is being saved", async () => {
+    let resolve!: (value: unknown) => void;
+    mocks.createDiscussionCandidate.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    renderView();
+    fireEvent.click(await screen.findByText("保存片段为候选"));
+    const input = screen.getByLabelText("转为候选时使用的内容");
+    fireEvent.change(input, { target: { value: "提交快照" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存候选" }));
+    await waitFor(() => expect(mocks.createDiscussionCandidate).toHaveBeenCalled());
+    fireEvent.change(input, { target: { value: "保存期间新增的编辑" } });
+    resolve({});
+    await screen.findByText("已保存为候选内容，确认前不会进入规划。");
+    expect(input).toHaveValue("保存期间新增的编辑");
+    expect(mocks.createDiscussionCandidate).toHaveBeenCalledWith(expect.objectContaining({ content: "提交快照" }));
+  });
+
+  it("confirms candidate abandonment before creating a session and locks edits only during the switch", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    let resolve!: (value: DiscussionSession) => void;
+    try {
+      mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+      mocks.createDiscussionSession.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+      renderView();
+      fireEvent.click(await screen.findByText("保存片段为候选"));
+      const input = screen.getByLabelText("转为候选时使用的内容");
+      fireEvent.change(input, { target: { value: "未保存的片段" } });
+      fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
+      fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
+      expect(mocks.createDiscussionSession).not.toHaveBeenCalled();
+      expect(input).toHaveValue("未保存的片段");
+      confirm.mockReturnValue(true);
+      fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
+      expect(input).toBeDisabled();
+      resolve({ ...session, id: "session-2" });
+      await screen.findByText("已建立新的讨论会话。");
+    } finally { confirm.mockRestore(); }
+  });
+
+  it("keeps failed edits and cancelled session switches, then discards only after confirmation", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    try {
+      mocks.listDiscussionMessages.mockImplementation(async (id) => id === session.id ? [assistantMessage] : []);
+      mocks.listDiscussionSessions.mockResolvedValue([session, { ...session, id: "session-2", title: "另一讨论" }]);
+      mocks.createDiscussionCandidate.mockRejectedValueOnce(new Error("保存失败"));
+      renderView();
+      fireEvent.click(await screen.findByText("保存片段为候选"));
+      const input = screen.getByLabelText("转为候选时使用的内容");
+      fireEvent.change(input, { target: { value: "未保存候选" } });
+      fireEvent.click(screen.getByRole("button", { name: "保存候选" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("保存失败");
+      expect(input).toHaveValue("未保存候选");
+      const selector = screen.getByLabelText("选择讨论会话");
+      fireEvent.change(selector, { target: { value: "session-2" } });
+      expect(selector).toHaveValue(session.id);
+      expect(input).toHaveValue("未保存候选");
+      confirm.mockReturnValue(true);
+      fireEvent.change(selector, { target: { value: "session-2" } });
+      await waitFor(() => expect(selector).toHaveValue("session-2"));
+      const count = confirm.mock.calls.length;
+      fireEvent.change(selector, { target: { value: session.id } });
+      await screen.findByLabelText("转为候选时使用的内容");
+      expect(confirm).toHaveBeenCalledTimes(count);
+      expect(screen.getByLabelText("转为候选时使用的内容")).toHaveValue(assistantMessage.content);
+    } finally { confirm.mockRestore(); }
   });
 
   it("creates an item discussion without requiring a name or chapter", async () => {

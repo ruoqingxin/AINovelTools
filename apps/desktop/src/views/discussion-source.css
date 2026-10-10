@@ -1,0 +1,24 @@
+.discussion-source-view { min-width: 0; max-width: 1132px; padding: 0 16px 24px; margin: 0 auto; }
+.discussion-source-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid #dce5ed; }
+.discussion-source-heading h1 { margin: 0; font-size: 22px; overflow-wrap: anywhere; }
+.discussion-source-heading p { margin: 6px 0 0; color: #63726b; font-size: 12px; }
+.discussion-source-actions, .discussion-source-transfer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.discussion-source-view :is(.primary-action, .secondary-action) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 10px; border-radius: 5px; font: inherit; font-size: 12px; line-height: 1.4; text-decoration: none; cursor: pointer; }
+.discussion-source-metadata { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 16px 0; font-size: 11px; color: #667481; overflow-wrap: anywhere; }
+.discussion-source-text { padding: 16px 0; border-bottom: 1px solid #dce5ed; }
+.discussion-source-text h2 { margin: 0 0 12px; font-size: 15px; }
+.discussion-source-text p { margin: 0; font-size: 14px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+.discussion-source-transfer { margin-top: 16px; font-size: 12px; overflow-wrap: anywhere; }
+.planning-discussion-sources { margin-top: 12px; min-width: 0; border-top: 1px solid #dce5ed; font-size: 12px; }
+.planning-discussion-sources summary { display: flex; align-items: center; gap: 6px; min-height: 36px; cursor: pointer; color: #42617d; font-weight: 600; }
+.planning-discussion-sources article { padding: 10px 0; border-bottom: 1px solid #dce5ed; }
+.planning-discussion-sources article > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.planning-discussion-sources article span { color: #6d7b85; font-size: 11px; }
+.planning-discussion-sources p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.planning-discussion-sources a { display: inline-flex; align-items: center; gap: 5px; color: #2f68d1; text-decoration: none; }
+.discussion-candidate-links { display: flex; flex-wrap: wrap; gap: 10px; }
+.discussion-candidate-links a, .discussion-notice-link { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #2f68d1; text-decoration: none; }
+.discussion-notice-link { margin-left: 10px; }
+@media (max-width: 640px) {
+  .discussion-source-heading { align-items: flex-start; flex-direction: column; gap: 12px; }
+}

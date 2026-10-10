@@ -27,11 +27,12 @@ use commands::ai::{
 use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::discussion::{
     ask_project_discussion, confirm_discussion_design, create_discussion_candidate,
-    create_discussion_session, dismiss_discussion_candidate, get_discussion_workspace,
-    list_author_settings, list_discussion_candidates, list_discussion_design_proposals,
-    list_discussion_draft_revisions, list_discussion_messages, list_discussion_sessions,
-    promote_discussion_candidate, promote_discussion_candidate_to_foreshadowing_review,
-    save_discussion_workspace, summarize_discussion_design,
+    create_discussion_session, dismiss_discussion_candidate, get_discussion_source,
+    get_discussion_workspace, list_author_settings, list_discussion_candidates,
+    list_discussion_design_proposals, list_discussion_draft_revisions, list_discussion_messages,
+    list_discussion_sessions, list_planning_discussion_sources, promote_discussion_candidate,
+    promote_discussion_candidate_to_foreshadowing_review, save_discussion_workspace,
+    summarize_discussion_design,
 };
 use commands::entities::{
     list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
@@ -50,9 +51,9 @@ use commands::knowledge::{
 };
 use commands::manuscript::{
     clear_recovery_logs, commit_manuscript_draft, current_manuscript, current_manuscript_draft,
-    discard_manuscript_draft, enqueue_chapter_summary_refresh, get_manuscript_source, list_all_recovery_logs,
-    list_manuscript_revisions, list_recovery_logs, merge_manuscript, save_manuscript,
-    save_manuscript_checked, save_manuscript_draft, save_recovery_log,
+    discard_manuscript_draft, enqueue_chapter_summary_refresh, get_manuscript_source,
+    list_all_recovery_logs, list_manuscript_revisions, list_recovery_logs, merge_manuscript,
+    save_manuscript, save_manuscript_checked, save_manuscript_draft, save_recovery_log,
 };
 use commands::materials::{
     list_summary_materials, list_writing_cards, rebuild_summary_material,
@@ -207,6 +208,8 @@ pub fn run() {
             promote_discussion_candidate,
             promote_discussion_candidate_to_foreshadowing_review,
             ask_project_discussion,
+            get_discussion_source,
+            list_planning_discussion_sources,
             get_discussion_workspace,
             save_discussion_workspace,
             list_discussion_draft_revisions,

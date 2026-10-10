@@ -11,6 +11,7 @@ import { EmptyProjectView } from "./views/empty-project-view";
 import { useQuery } from "@tanstack/react-query";
 import { getCurrentProject } from "./lib/tauri-client";
 import { parseManuscriptSource } from "./lib/manuscript-source";
+import { parseDiscussionSource } from "./lib/discussion-source";
 
 const ProjectWorkspaceView = lazyRouteComponent(() => import("./views/project-workspace-view"), "ProjectWorkspaceView");
 const StoryBibleView = lazyRouteComponent(() => import("./views/story-bible-view"), "StoryBibleView");
@@ -23,6 +24,7 @@ const ReviewCenterView = lazyRouteComponent(() => import("./views/review-center-
 const KnowledgeRecordsView = lazyRouteComponent(() => import("./views/knowledge-records-view"), "KnowledgeRecordsView");
 const AuthorSettingsView = lazyRouteComponent(() => import("./views/author-settings-view"), "AuthorSettingsView");
 const ManuscriptSourceView = lazyRouteComponent(() => import("./views/manuscript-source-view"), "ManuscriptSourceView");
+const DiscussionSourceView = lazyRouteComponent(() => import("./views/discussion-source-view"), "DiscussionSourceView");
 
 function RouteErrorView({ error, reset }: { error: Error; reset: () => void }) {
   const goBack = () => {
@@ -65,7 +67,8 @@ function ChaptersEntryView() {
 }
 
 function DiscussionEntryView() {
-  return <ProjectGate><DiscussionView /></ProjectGate>;
+  const search = useRouterState({ select: (state) => state.location.searchStr });
+  return <ProjectGate>{parseDiscussionSource(search) ? <DiscussionSourceView search={search} /> : <DiscussionView />}</ProjectGate>;
 }
 
 function ReviewEntryView() {

@@ -12,6 +12,7 @@ import { documentCharacterCount, documentToText, formatSavedAt } from "./project
 import type { useChapterManuscript } from "./use-chapter-manuscript";
 import { WorkspaceTabs } from "./workspace-tabs";
 import "./chapter-creation-workspace.css";
+import { PlanningDiscussionSources } from "./planning-discussion-sources";
 
 type AssistantTab = "ai" | "plan" | "review";
 
@@ -50,8 +51,9 @@ export function ChapterCreationWorkspace({
   state: ReturnType<typeof useChapterManuscript>;
   onPendingChange?: (pending: boolean) => void;
 }) {
-  const [assistantTab, setAssistantTab] = useState<AssistantTab>("ai");
-  const [visitedAssistantTabs, setVisitedAssistantTabs] = useState<AssistantTab[]>(["ai"]);
+  const [assistantTab, setAssistantTab] = useState<AssistantTab>(() =>
+    new URLSearchParams(window.location.search).get("assistant") === "plan" ? "plan" : "ai");
+  const [visitedAssistantTabs, setVisitedAssistantTabs] = useState<AssistantTab[]>([assistantTab]);
   const [assistantOpen, setAssistantOpen] = useState(true);
   const [reviewPurpose, setReviewPurpose] = useState<"admission" | "manuscript">("manuscript");
   const [knowledgeTab, setKnowledgeTab] = useState<"extraction" | "facts">(() =>
@@ -246,6 +248,8 @@ export function ChapterCreationWorkspace({
             </div>
           </div> : null}
           <a href="/planning">全书规划</a>
+          <PlanningDiscussionSources sectionId={`plan-node:${chapter.id}`} active={assistantOpen && assistantTab === "plan"}
+            returnTo={`/writing?assistant=plan#${encodeURIComponent(chapter.id)}`} />
           <details onToggle={(event) => setReadinessOpen(event.currentTarget.open)}>
             <summary>写作准备</summary>
             {readinessOpen ? <AiWritingPanel {...aiProps} mode="readiness" active={assistantOpen && assistantTab === "plan"} /> : null}

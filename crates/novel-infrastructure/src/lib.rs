@@ -33,12 +33,13 @@ mod context_store;
 mod database;
 mod discussion_context_store;
 mod discussion_design_store;
+mod discussion_source_store;
 mod discussion_store;
 mod entity_store;
 mod extraction_store;
 mod knowledge_store;
-mod materials_store;
 mod manuscript_source_store;
+mod materials_store;
 mod review_contract;
 mod review_rules;
 mod review_store;
@@ -59,6 +60,9 @@ pub use discussion_design_store::{
     DiscussionDesignEntity, DiscussionDesignProposal, DiscussionDraft, DiscussionTopicKind,
     DiscussionWorkspace,
 };
+pub use discussion_source_store::{
+    DiscussionSource, DiscussionSourceRequest, PlanningDiscussionSource,
+};
 pub use discussion_store::{
     DiscussionCandidate, DiscussionCandidateKind, DiscussionCandidateStatus, DiscussionMessage,
     DiscussionMessageRole, DiscussionScopeKind, DiscussionSession, DiscussionStoreError,
@@ -69,10 +73,10 @@ pub use extraction_store::{
     ExtractionAdoption, ExtractionItemKind, ExtractionItemStatus, ExtractionStoreError,
 };
 pub use knowledge_store::KnowledgeStoreError;
-pub use materials_store::MaterialsStoreError;
 pub use manuscript_source_store::{
     ManuscriptSource, ManuscriptSourceError, ManuscriptSourceRequest,
 };
+pub use materials_store::MaterialsStoreError;
 pub use novel_domain::{
     AiAction, AiProposal, AiProposalStatus, AiTaskStatus, AuditFlowSettings, Belief,
     CandidateStatus, ChangeSet, ChangeSetStatus, ChapterContract, ContextAuthority, Entity,

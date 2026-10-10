@@ -15,6 +15,8 @@ import { ProjectPlanTree } from "./project-plan-tree";
 import { essentialPlanningSectionIds, planningSectionGroups, StoryPlanningWorkbench } from "./story-planning-workbench";
 import { isPlanningSectionSettled } from "../lib/writing-readiness";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { resolveDiscussionPlanningTarget } from "../lib/discussion-source";
+import { PlanningDiscussionSources } from "./planning-discussion-sources";
 
 import {
   buildVolumePlanTargetGuidance,
@@ -67,6 +69,9 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const [showArchived, setShowArchived] = useState(false);
   const [chapterListCollapsed, setChapterListCollapsed] = useState(false);
   const [chapterSearch, setChapterSearch] = useState("");
+  const discussionTarget = new URLSearchParams(window.location.search).get("discussionTarget");
+  const targetProject = new URLSearchParams(window.location.search).get("targetProject");
+  const [targetError, setTargetError] = useState<string | null>(null);
 
   async function addNode() {
     if (!title.trim()) return;
@@ -295,7 +300,18 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   }, [chapterSplitJob?.id, chapterSplitJob?.status, client]);
 
   useEffect(() => {
-    if (!isChapterMode || selectedId || !chapterNodes.length) return;
+    if (!isChapterMode || selectedId) return;
+    if (discussionTarget !== null) {
+      if (currentProject.isPending || nodes.isPending) return;
+      const target = resolveDiscussionPlanningTarget(discussionTarget, nodes.data ?? [], [], true);
+      if (!target || targetProject !== null && currentProject.data?.projectId !== targetProject) {
+        setTargetError("讨论目标章节已不可用或不属于当前项目，未打开其他章节。");
+        return;
+      }
+      selectNode(target.node);
+      return;
+    }
+    if (!chapterNodes.length) return;
     const requestedId = window.location.hash.slice(1);
     if (workspaceMode === "chapters") {
       const requestedChapter = chapterNodes.find((node) => node.id === requestedId);
@@ -311,7 +327,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     }
     const defaultChapter = resolveDefaultWritingChapter(chapterNodes, requestedId, rememberedId);
     if (defaultChapter) selectNode(defaultChapter);
-  }, [chapterNodes, currentProject.data?.projectId, currentProject.isPending, isChapterMode, selectedId, workspaceMode]);
+  }, [chapterNodes, currentProject.data?.projectId, currentProject.isPending, isChapterMode, selectedId, workspaceMode, discussionTarget, targetProject, nodes.data, nodes.isPending]);
 
   useEffect(() => {
     if (workspaceMode !== "writing" || selected?.kind !== "CHAPTER" || currentProject.isPending) return;
@@ -324,6 +340,16 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 
   useEffect(() => {
     if (workspaceMode !== "planning" || selectedId) return;
+    if (discussionTarget !== null) {
+      if (nodes.isPending || currentProject.isPending) return;
+      const target = resolveDiscussionPlanningTarget(discussionTarget, nodes.data ?? [], Array.from(planningDefinitionsById.keys()));
+      if (!target || targetProject !== null && currentProject.data?.projectId !== targetProject) {
+        setTargetError("讨论目标规划已不可用或不属于当前项目，未打开其他规划项。");
+        return;
+      }
+      if (selectNode(target.node) && target.sectionId) setSelectedPlanningSectionId(target.sectionId);
+      return;
+    }
     const requestedId = window.location.hash.slice(1);
     if (!requestedId) return;
     const requestedSection = planningSectionGroups.flatMap((group) => group.children).find((item) => item.id === requestedId);
@@ -333,7 +359,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     }
     const requestedNode = activeNodes.find((node) => node.id === requestedId);
     if (requestedNode) selectNode(requestedNode);
-  }, [activeNodes, selectedId, workspaceMode, workDesignNode]);
+  }, [activeNodes, selectedId, workspaceMode, workDesignNode, discussionTarget, targetProject, nodes.data, nodes.isPending, currentProject.isPending, currentProject.data?.projectId]);
 
   useEffect(() => {
     if (nodePlanJob?.status !== "SUCCEEDED") return;
@@ -591,6 +617,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
       return false;
     }
     if ((chapterManuscript.draftNeedsPersistence || workspaceDirty) && !window.confirm(`${chapterManuscript.draftNeedsPersistence ? "当前草稿尚未保存在本地。" : unsavedMessage}确定切换吗？`)) return false;
+    setTargetError(null);
     setSelectedId(node.id);
     setEditTitle(node.title);
     setMoveParentId(node.parentId ?? "");
@@ -646,6 +673,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
       {nodes.isPending ? <p className="plan-loading">正在加载规划…</p> : null}
       {nodes.isError ? <p className="project-error" role="alert">无法加载规划：{errorMessage(nodes.error)}</p> : null}
       {error ? <p className="project-error" role="alert">{error}</p> : null}
+      {targetError ? <p className="project-error" role="alert">{targetError}</p> : null}
 
       {!nodes.isPending && !nodes.isError ? <div className={`plan-layout${isChapterMode ? " chapter-mode-layout" : ""}${workspaceMode === "writing" ? " writing-focus-layout" : ""}${chapterListCollapsed && workspaceMode === "chapters" ? " chapter-list-collapsed" : ""}`}>
       {workspaceMode !== "writing" ? <ProjectPlanTree
@@ -755,6 +783,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
           {nodePlanJob && (nodePlanJob.status === "QUEUED" || nodePlanJob.status === "RUNNING") ? <div className="node-plan-job"><span>AI 正在梳理结构，完成后候选会出现在待定区</span><div><i style={{ width: `${nodePlanJob.progress}%` }} /></div><button type="button" onClick={() => void cancelJob(nodePlanJob.id)}>取消</button></div> : null}
           {selected.kind === "VOLUME" && !outlinePlan?.content.trim() ? <div className="node-plan-locked"><strong>分卷规划尚未开启</strong><span>先在故事大纲中确认正式主线，系统才会开放分卷目标与卷末转折规划。</span><button type="button" className="secondary-action" onClick={() => outlineNode && selectNode(outlineNode)}>返回故事大纲</button></div> : <>{selected.kind === "OUTLINE" ? <div className="node-plan-tabs" role="tablist"><button type="button" role="tab" aria-selected={nodePlanTab === "formal"} data-active={nodePlanTab === "formal" || undefined} onClick={() => setNodePlanTab("formal")}>正式主线<small>{nodePlanDraft.trim() ? "已确认" : "未确认"}</small></button><button type="button" role="tab" aria-selected={nodePlanTab === "pending"} data-active={nodePlanTab === "pending" || undefined} onClick={() => setNodePlanTab("pending")}>待定区<small>{nodePlanPendingDraft.trim() ? "有候选" : "暂无候选"}</small></button></div> : null}<textarea rows={selected.kind === "OUTLINE" ? 12 : 8} value={selected.kind === "OUTLINE" && nodePlanTab === "pending" ? nodePlanPendingDraft : nodePlanDraft} onChange={(event) => selected.kind === "OUTLINE" && nodePlanTab === "pending" ? setNodePlanPendingDraft(event.target.value) : setNodePlanDraft(event.target.value)} placeholder={nodePlanPrompt(selected.kind)} />{selected.kind === "OUTLINE" && nodePlanTab === "pending" ? <div className="node-plan-actions"><button type="button" className="secondary-action" onClick={() => void saveNodePlan()} disabled={savingNodePlan || !nodePlanPendingDraft.trim()}>保存待定候选</button><button type="button" className="primary-action" onClick={() => void adoptNodePlan()} disabled={savingNodePlan || !nodePlanPendingDraft.trim()}><Check size={15} />采用为正式主线</button></div> : null}{selectedStoredPlan?.pendingContent?.trim() && selected.kind !== "OUTLINE" ? <div className="node-plan-candidate"><div><strong>待定候选</strong><small>AI 已生成，可编辑后采用</small></div><p>{selectedStoredPlan.pendingContent}</p><button type="button" className="secondary-action" onClick={() => { setNodePlanDraft(selectedStoredPlan.pendingContent); }}>载入编辑</button><button type="button" className="primary-action" onClick={() => void adoptNodePlan()} disabled={savingNodePlan}>采用候选</button></div> : null}<button type="button" className="primary-action" onClick={() => void saveNodePlan()} disabled={savingNodePlan || !(selected.kind === "OUTLINE" && nodePlanTab === "pending" ? nodePlanPendingDraft : nodePlanDraft).trim()}><Check size={15} />{savingNodePlan ? "保存中…" : selected.kind === "OUTLINE" && nodePlanTab === "pending" ? "保存待定候选" : "保存规划"}</button></>}</div> : null}</> : null}
         {selected.kind === "VOLUME_MANAGER" && workspaceMode === "planning" && outlinePlan?.content.trim() ? <div id="volume-chapter-splitter" className="plan-create-row volume-manager-create-row"><div className="plan-create-copy"><strong>{volumePlanReady ? "拆章节" : "添加结构节点"}</strong><span>{volumePlanReady ? "选择分卷，逐章建立可执行结构" : "在分卷管理中创建分卷、章节和场景"}</span></div><select value={kind} onChange={(event) => { setKind(event.target.value as PlanNodeKind); setParentId(""); }} aria-label="节点类型">{creatableNodeKinds.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><select value={parentId} onChange={(event) => setParentId(event.target.value)} aria-label="父节点"><option value="" disabled>选择归属节点</option>{parentCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select><input value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void addNode(); }} placeholder={kind === "CHAPTER" ? "例如：第1章·入城" : kind === "VOLUME" ? "例如：第一卷·启程" : "例如：场景1"} aria-label="节点标题" /><button type="button" className="primary-action" onClick={() => void addNode()} disabled={!canAddNode}><Plus size={16} />{kind === "CHAPTER" ? "添加章节" : "新建节点"}</button></div> : null}
+        {selected.kind !== "WORK_DESIGN" && selected.kind !== "CHAPTER" ? <PlanningDiscussionSources sectionId={nodePlanId(selected.id)} /> : null}
         {selected.kind === "WORK_DESIGN" ? <StoryPlanningWorkbench selectedSectionId={selectedPlanningSectionId} onSelectSection={setSelectedPlanningSectionId} onDirtyChange={setPlanningSectionDirty} /> : null}
         {selected.kind !== "WORK_DESIGN" && (nodeDraft.remoteChanged || splitDraft.remoteChanged) ? <div className="project-error" role="status">规划已有新版本，本地修改仍保留。<button type="button" className="secondary-action" disabled={savingNodePlan} onClick={() => { if (window.confirm("放弃本地未保存规划并读取最新版本吗？")) { nodeDraft.reload(); splitDraft.reload(); setError(null); } }}><ArchiveRestore size={14} />读取最新规划</button></div> : null}
         {selected.kind === "CHAPTER" && workspaceMode === "planning" ? <div className="planning-redirect-panel">

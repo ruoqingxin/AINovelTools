@@ -26,6 +26,7 @@ vi.mock("./ai-writing-panel", () => ({
 }));
 vi.mock("./manuscript-candidate-editor", () => ({ ManuscriptCandidateEditor: () => <p>共享编辑器</p> }));
 vi.mock("./manuscript-reader", () => ({ ManuscriptReader: () => <p>正式版本</p> }));
+vi.mock("./planning-discussion-sources", () => ({ PlanningDiscussionSources: () => <p>讨论流转记录</p> }));
 vi.mock("./manuscript-versions-panel", () => ({
   ManuscriptVersionsPanel: (props: { onRecoverLatest: () => void }) =>
     <button onClick={props.onRecoverLatest}>恢复草稿</button>,
@@ -76,7 +77,19 @@ function makeProps(state = makeState()): WorkspaceProps {
 
 describe("ChapterCreationWorkspace", () => {
   afterEach(cleanup);
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.history.replaceState(null, "", "/writing");
+  });
+
+  it("opens chapter-plan deep links in the existing assistant without activating AI creation", () => {
+    window.history.replaceState(null, "", "/writing?assistant=plan#chapter-1");
+    render(<ChapterCreationWorkspace {...makeProps()} pendingChapterPlan="讨论送来的候选" />);
+    expect(screen.getByRole("tab", { name: "本章计划" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("讨论送来的候选")).toBeVisible();
+    expect(screen.getByLabelText("章节执行卡")).toBeVisible();
+    expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ active: false, mode: "create" }));
+  });
 
   it("opens the editor by default and shares the live draft and editor with both review purposes", () => {
     const state = makeState({ chapterDirty: true, draft: doc("最新修改") });

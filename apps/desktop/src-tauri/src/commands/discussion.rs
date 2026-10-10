@@ -114,6 +114,40 @@ pub(crate) fn list_discussion_candidates(
 }
 
 #[tauri::command]
+pub(crate) fn get_discussion_source(
+    state: tauri::State<'_, ProjectState>,
+    request: novel_infrastructure::DiscussionSourceRequest,
+) -> Result<novel_infrastructure::DiscussionSource, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .get_discussion_source(request)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn list_planning_discussion_sources(
+    state: tauri::State<'_, ProjectState>,
+    section_id: String,
+    project_id: uuid::Uuid,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<Vec<novel_infrastructure::PlanningDiscussionSource>, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_planning_discussion_sources(
+            section_id,
+            project_id,
+            limit.unwrap_or(20),
+            offset.unwrap_or(0),
+        )
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn get_discussion_workspace(
     state: tauri::State<'_, ProjectState>,
     session_id: uuid::Uuid,

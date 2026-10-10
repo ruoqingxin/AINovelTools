@@ -31,6 +31,8 @@ import { AiModelNote } from "./ai-model-note";
 import { planningSectionGroups } from "./story-planning-workbench";
 import { DiscussionDesignPanel, discussionTopics } from "./discussion-design-panel";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { discussionSourceHref, planningTargetHref } from "../lib/discussion-source";
+import "./discussion-source.css";
 
 const planningOptions = planningSectionGroups.flatMap((group) => group.children);
 
@@ -52,12 +54,13 @@ function messageLabel(message: DiscussionMessage) {
   return message.role === "USER" ? "作者" : "AI 协作者";
 }
 
-function candidateTarget(candidate: DiscussionCandidate) {
+function candidateTarget(candidate: DiscussionCandidate, nodeTitles: Map<string, string>) {
   if (candidate.kind === "FORESHADOWING" && candidate.status === "PROMOTED") {
-    return "已送入事实审核";
+    return "已送入伏笔提取审核";
   }
   if (!candidate.targetSectionId) return "未指定目标";
   return planningOptions.find((section) => section.id === candidate.targetSectionId)?.label
+    ?? nodeTitles.get(candidate.targetSectionId)
     ?? candidate.targetSectionId;
 }
 
@@ -109,7 +112,9 @@ export function DiscussionView() {
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({});
   const [reviewAnchorIds, setReviewAnchorIds] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [planningDestination, setPlanningDestination] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const creatingDefault = useRef(false);
   const initialSessionSelected = useRef(false);
@@ -117,6 +122,11 @@ export function DiscussionView() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const autoScroll = useRef(true);
   const activeSession = sessions.data?.find((session) => session.id === sessionId) ?? null;
+  const nodeTargets = (nodes.data ?? []).filter((node) => !node.archived && ["OUTLINE", "VOLUME", "CHAPTER", "SCENE"].includes(node.kind))
+    .map((node) => ({ id: `plan-node:${node.id}`, label: `${node.kind === "CHAPTER" ? "章节执行卡" : node.kind === "VOLUME" ? "分卷规划" : node.kind === "SCENE" ? "场景执行卡" : "故事大纲"} · ${node.title}` }));
+  const targetOptions = [...planningOptions, ...nodeTargets];
+  const nodeTitles = new Map(nodeTargets.map((node) => [node.id, node.label]));
+  const targetKind = (id: string | null) => (nodes.data ?? []).find((node) => `plan-node:${node.id}` === id)?.kind;
   const messages = useQuery({
     queryKey: ["discussion-messages", sessionId],
     queryFn: () => listDiscussionMessages(sessionId!),
@@ -127,13 +137,15 @@ export function DiscussionView() {
     queryFn: () => listDiscussionCandidates(sessionId!),
     enabled: Boolean(sessionId),
   });
-  useUnsavedChangesGuard(Boolean(message.trim()), "讨论输入还有未发送的内容。");
+  const candidateEditsPending = Object.keys(candidateDrafts).length > 0;
+  useUnsavedChangesGuard(Boolean(message.trim()) || candidateEditsPending || busy, "讨论还有未发送输入、未保存候选或正在处理的操作。");
 
   useEffect(() => {
     setOlderMessages([]);
     setHasMoreHistory(true);
     setLoadingHistory(false);
     autoScroll.current = true;
+    setPlanningDestination(null);
     if (!sessionId) return;
     try {
       const stored = localStorage.getItem(`discussion-composer:${sessionId}`);
@@ -157,7 +169,9 @@ export function DiscussionView() {
   }
 
   function selectSession(id: string | null) {
-    if (designPending && !window.confirm("构思草稿仍有未保存内容，确定切换讨论吗？")) return;
+    if (id === sessionId || busy) return;
+    if ((designPending || candidateEditsPending) && !window.confirm("讨论仍有未保存草稿或候选，确定切换讨论吗？")) return;
+    setCandidateDrafts({});
     setSessionId(id);
     setDraftFocus(null);
     setMobileView("chat");
@@ -252,7 +266,9 @@ export function DiscussionView() {
       setError("请填写当前选区内容。");
       return;
     }
+    if (candidateEditsPending && !window.confirm("候选仍有未保存修改，确定放弃并建立新讨论吗？")) return;
     setBusy(true);
+    setCreatingSession(true);
     setError(null);
     setNotice(null);
     try {
@@ -263,6 +279,7 @@ export function DiscussionView() {
         scopeText: scopeKind === "SELECTION" ? scopeText.trim() : null,
         topicKind,
       });
+      setCandidateDrafts({});
       setSessionId(session.id);
       setDraftFocus(null);
       setMobileView("chat");
@@ -273,6 +290,7 @@ export function DiscussionView() {
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
+      setCreatingSession(false);
       setBusy(false);
     }
   }
@@ -326,6 +344,12 @@ export function DiscussionView() {
         content: content.trim(),
         ...(needsTarget ? { targetSectionId: candidateTargetId } : {}),
       });
+      setCandidateDrafts((current) => {
+        if (current[messageItem.id] !== content) return current;
+        const next = { ...current };
+        delete next[messageItem.id];
+        return next;
+      });
       await client.invalidateQueries({ queryKey: ["discussion-candidates", sessionId] });
       setNotice(kind === "NOTE" ? "已保存为临时笔记。" : "已保存为候选内容，确认前不会进入规划。");
     } catch (cause) {
@@ -339,13 +363,16 @@ export function DiscussionView() {
     setBusy(true);
     setError(null);
     try {
-      await promoteDiscussionCandidate({
+      const promoted = await promoteDiscussionCandidate({
         id: candidate.id,
         expectedStatus: candidate.status,
       });
+      if (promoted.targetSectionId) setPlanningDestination(planningTargetHref(promoted.targetSectionId, activeSession?.projectId, targetKind(promoted.targetSectionId)));
       await Promise.all([
         client.invalidateQueries({ queryKey: ["discussion-candidates", sessionId] }),
         client.invalidateQueries({ queryKey: ["planning-sections"] }),
+        client.invalidateQueries({ queryKey: ["planning-discussion-sources"] }),
+        client.invalidateQueries({ queryKey: ["discussion-source"] }),
       ]);
       setNotice("候选已写入规划待定区，仍需在规划工作台确认为正式设定。");
     } catch (cause) {
@@ -373,7 +400,7 @@ export function DiscussionView() {
         client.invalidateQueries({ queryKey: ["discussion-candidates", sessionId] }),
         client.invalidateQueries({ queryKey: ["chapter-extractions"] }),
       ]);
-      setNotice("候选伏笔已送入事实审核，请在左侧审核中心批准后才会成为正式伏笔。");
+      setNotice("候选伏笔已送入本章提取候选，作者采用后才会生成正式伏笔。");
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -442,13 +469,20 @@ export function DiscussionView() {
           <summary>候选内容 <span>{candidates.data.length} 条</span></summary>
           <div className="discussion-candidate-list">
             {(candidates.data ?? []).map((candidate) => <article className="discussion-candidate" data-status={candidate.status.toLowerCase()} key={candidate.id}>
-              <div><strong>{candidateKindLabels[candidate.kind]}</strong><small>{candidateTarget(candidate)}</small></div>
+              <div><strong>{candidateKindLabels[candidate.kind]}</strong><small>{candidateTarget(candidate, nodeTitles)}</small></div>
               <p>{candidate.content}</p>
+              <div className="discussion-candidate-links">
+                <a href={discussionSourceHref({ candidateId: candidate.id, sessionId: candidate.sessionId, projectId: activeSession?.projectId },
+                  `/discussion#${encodeURIComponent(candidate.sessionId)}`)}><MessageSquareText size={12} />查看讨论来源</a>
+                {candidate.status === "PROMOTED" && (candidate.kind === "PLANNING" || candidate.kind === "SETTING")
+                  && candidate.targetSectionId && candidate.promotedObjectId === candidate.targetSectionId ? <a
+                    href={planningTargetHref(candidate.targetSectionId, activeSession?.projectId, targetKind(candidate.targetSectionId))}><ArrowUpRight size={12} />打开规划待定区</a> : null}
+              </div>
               {candidate.status === "PENDING" ? <div className="discussion-candidate-actions">
                 {candidate.kind === "PLANNING" || candidate.kind === "SETTING" ? <button type="button" className="primary-action" onClick={() => void promote(candidate)} disabled={busy}><CheckCircle2 size={12} />写入规划待定区</button> : null}
                 {candidate.kind === "FORESHADOWING" ? <>
                   <label><span>正文证据</span><select aria-label={`选择${candidate.content}的正文证据`} value={reviewAnchorIds[candidate.id] ?? ""} onChange={(event) => setReviewAnchorIds((current) => ({ ...current, [candidate.id]: event.target.value }))}><option value="">选择证据锚点</option>{(anchors.data ?? []).map((anchor) => <option key={anchor.id} value={anchor.id}>{anchor.sourceVersion} · {anchor.blockId}</option>)}</select></label>
-                  <button type="button" className="primary-action" onClick={() => void promoteForeshadowing(candidate)} disabled={busy || !reviewAnchorIds[candidate.id]}><CheckCircle2 size={12} />送入事实审核</button>
+                  <button type="button" className="primary-action" onClick={() => void promoteForeshadowing(candidate)} disabled={busy || !reviewAnchorIds[candidate.id]}><CheckCircle2 size={12} />送入伏笔提取审核</button>
                 </> : null}
                 <button type="button" className="secondary-action destructive-action" onClick={() => void dismiss(candidate)} disabled={busy}><X size={12} />忽略</button>
               </div> : null}
@@ -471,7 +505,8 @@ export function DiscussionView() {
           <summary><Cpu size={13} /><span>{profile?.hasSecret ? profile.modelId : "模型未就绪"}</span><span>模型与费用</span></summary>
           <AiModelNote taskLabel="共创讨论" taskKey="discussion" settingsScope={projectOverrides.data?.discussion ? "PROJECT" : "GLOBAL"} profile={profile} preference={preference} />
         </details>
-        {notice ? <p className="project-notice" role="status">{notice}</p> : null}
+        {notice ? <p className="project-notice" role="status">{notice}
+          {planningDestination ? <a className="discussion-notice-link" href={planningDestination}><ArrowUpRight size={14} />打开规划待定区</a> : null}</p> : null}
         {error && !showSessionForm ? <p className="project-error" role="alert">{error}</p> : null}
         <div className="discussion-messages" ref={messagesRef} aria-busy={busy || messages.isFetching}
           onScroll={(event) => {
@@ -493,10 +528,18 @@ export function DiscussionView() {
               const selectedKind = candidateKinds[messageItem.id] ?? "SETTING";
               const needsTarget = selectedKind === "PLANNING" || selectedKind === "SETTING";
               return <details className="discussion-message-actions"><summary>保存片段为候选</summary>
-                <textarea rows={3} value={candidateDrafts[messageItem.id] ?? messageItem.content} onChange={(event) => setCandidateDrafts((current) => ({ ...current, [messageItem.id]: event.target.value }))} aria-label="转为候选时使用的内容" />
+                <textarea rows={3} value={candidateDrafts[messageItem.id] ?? messageItem.content} onChange={(event) => {
+                  const value = event.target.value;
+                  setCandidateDrafts((current) => {
+                    const next = { ...current };
+                    if (value === messageItem.content) delete next[messageItem.id];
+                    else next[messageItem.id] = value;
+                    return next;
+                  });
+                }} disabled={creatingSession} aria-label="转为候选时使用的内容" />
                 <div>
                   <label><span>保存类型</span><select value={selectedKind} onChange={(event) => setCandidateKinds((current) => ({ ...current, [messageItem.id]: event.target.value as DiscussionCandidateKind }))}><option value="NOTE">{candidateKindLabels.NOTE}</option><option value="PLANNING">{candidateKindLabels.PLANNING}</option><option value="SETTING">{candidateKindLabels.SETTING}</option><option value="FORESHADOWING">{candidateKindLabels.FORESHADOWING}</option></select></label>
-                  {needsTarget ? <label><span>目标规划项</span><select value={candidateTargetId} onChange={(event) => setCandidateTargetId(event.target.value)}>{planningOptions.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}</select></label> : null}
+                  {needsTarget ? <label><span>目标规划项</span><select value={candidateTargetId} onChange={(event) => setCandidateTargetId(event.target.value)}>{targetOptions.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}</select></label> : null}
                   <button type="button" className="primary-action" onClick={() => void saveCandidate(messageItem, selectedKind)} disabled={busy}><Save size={12} />保存候选</button>
                 </div>
               </details>;

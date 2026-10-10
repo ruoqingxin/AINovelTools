@@ -417,20 +417,36 @@ impl Database {
         id: Uuid,
         expected_status: DiscussionCandidateStatus,
         section_id: &str,
+        project_id: Uuid,
     ) -> Result<DiscussionCandidate, DiscussionStoreError> {
+        if expected_status != DiscussionCandidateStatus::Pending {
+            return Err(DiscussionStoreError::Conflict);
+        }
         let tx = self.connection.transaction()?;
+        if !Self::valid_discussion_planning_target(&tx, section_id)? {
+            return Err(DiscussionStoreError::InvalidPromotion);
+        }
         let candidate = tx
             .query_row(
-                "SELECT id, session_id, message_id, kind, content, target_section_id,
-                        status, promoted_object_id, created_at, updated_at
-                 FROM discussion_candidates WHERE id = ?1 AND status = ?2",
-                rusqlite::params![id.to_string(), expected_status.as_str()],
+                "SELECT c.id, c.session_id, c.message_id, c.kind, c.content, c.target_section_id,
+                        c.status, c.promoted_object_id, c.created_at, c.updated_at
+                 FROM discussion_candidates c JOIN discussion_sessions s ON s.id = c.session_id
+                 JOIN discussion_messages m ON m.id = c.message_id AND m.session_id = s.id
+                 WHERE c.id = ?1 AND c.status = ?2 AND s.project_id = ?3",
+                rusqlite::params![
+                    id.to_string(),
+                    expected_status.as_str(),
+                    project_id.to_string()
+                ],
                 map_discussion_candidate,
             )
             .optional()?
             .ok_or(DiscussionStoreError::Conflict)?;
         if !candidate.kind.can_promote_to_planning() || section_id.trim().is_empty() {
             return Err(DiscussionStoreError::InvalidPromotion);
+        }
+        if candidate.target_section_id.as_deref() != Some(section_id) {
+            return Err(DiscussionStoreError::Conflict);
         }
         tx.execute(
             "INSERT INTO planning_sections
@@ -445,7 +461,8 @@ impl Database {
                      WHEN trim(planning_sections.content) <> '' THEN planning_sections.story_state
                      ELSE 'AI_SUGGESTED'
                  END,
-                 updated_at = excluded.updated_at",
+                 updated_at = excluded.updated_at,
+                 version = planning_sections.version + 1",
             rusqlite::params![section_id, candidate.content],
         )?;
         tx.execute(
@@ -472,6 +489,9 @@ impl Database {
         expected_status: DiscussionCandidateStatus,
         evidence_anchor_id: Uuid,
     ) -> Result<DiscussionCandidate, DiscussionStoreError> {
+        if expected_status != DiscussionCandidateStatus::Pending {
+            return Err(DiscussionStoreError::Conflict);
+        }
         let tx = self.connection.transaction()?;
         let candidate = tx
             .query_row(
@@ -884,9 +904,12 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(DiscussionStoreError::NoProject)?;
-        session
-            .database
-            .promote_discussion_candidate_to_planning(id, expected_status, section_id)
+        session.database.promote_discussion_candidate_to_planning(
+            id,
+            expected_status,
+            section_id,
+            session.manifest.project_id,
+        )
     }
 
     pub fn promote_discussion_candidate_to_foreshadowing_review(
@@ -986,7 +1009,9 @@ fn map_discussion_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Discussio
     })
 }
 
-fn map_discussion_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<DiscussionMessage> {
+pub(super) fn map_discussion_message(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<DiscussionMessage> {
     Ok(DiscussionMessage {
         id: parse_uuid(0, &row.get::<_, String>(0)?)?,
         session_id: parse_uuid(1, &row.get::<_, String>(1)?)?,
@@ -1003,7 +1028,9 @@ fn map_discussion_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Discussio
     })
 }
 
-fn map_discussion_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<DiscussionCandidate> {
+pub(super) fn map_discussion_candidate(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<DiscussionCandidate> {
     Ok(DiscussionCandidate {
         id: parse_uuid(0, &row.get::<_, String>(0)?)?,
         session_id: parse_uuid(1, &row.get::<_, String>(1)?)?,

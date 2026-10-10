@@ -786,6 +786,23 @@ export function listManuscriptRevisions(chapterId: string) {
   return invoke<ManuscriptRevision[]>("list_manuscript_revisions", { chapterId });
 }
 
+export type DiscussionSourceRequest = {
+  candidateId: string; projectId?: string; sessionId?: string; sectionId?: string;
+};
+export type PlanningDiscussionSource = {
+  candidate: DiscussionCandidate; projectId: string; sessionTitle: string;
+};
+export type DiscussionSource = {
+  session: DiscussionSession; candidate: DiscussionCandidate; message: DiscussionMessage;
+  planningTargetAvailable: boolean; planningTargetKind: string | null;
+};
+export function getDiscussionSource(request: DiscussionSourceRequest) {
+  return invoke<DiscussionSource>("get_discussion_source", { request });
+}
+export function listPlanningDiscussionSources(sectionId: string, projectId: string, limit = 20, offset = 0) {
+  return invoke<PlanningDiscussionSource[]>("list_planning_discussion_sources", { sectionId, projectId, limit, offset });
+}
+
 export function getManuscriptSource(request: ManuscriptSourceRequest) {
   return invoke<ManuscriptSource>("get_manuscript_source", { request });
 }
@@ -964,6 +981,7 @@ export function invalidateProjectQueries(queryClient: { invalidateQueries: (opti
     ["relations"], ["events"], ["beliefs"], ["foreshadowings"], ["knowledge-candidates"],
     ["knowledge-conflicts"], ["project-search"], ["jobs"], ["recovery-all"], ["manuscript"],
     ["manuscript-draft"], ["manuscript-history"], ["manuscript-source"], ["recovery-logs"], ["ai-proposals"], ["ai-runs"],
+    ["planning-discussion-sources"], ["discussion-source"],
     ["project-ai-task-overrides"], ["writing-review-policy"],
   ];
   return Promise.all([

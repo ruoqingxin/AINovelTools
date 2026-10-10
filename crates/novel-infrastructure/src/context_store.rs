@@ -3,7 +3,7 @@ use novel_application::{ContextCandidate, ContextCandidateKind};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 
-const WRITING_SETTING_SECTIONS: [(&str, &str); 15] = [
+pub(super) const WRITING_SETTING_SECTIONS: [(&str, &str); 15] = [
     ("seed-premise", "核心前提与开局情境"),
     ("seed-genre-promise", "类型、题材与阅读承诺"),
     ("seed-hook", "核心卖点与独特钩子"),
