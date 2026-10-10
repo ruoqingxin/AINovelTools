@@ -2,21 +2,21 @@ use super::*;
 
 const MAX_BATCH_ITEMS: usize = 200;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportEntitiesInput {
     pub expected_project_id: Uuid,
     pub items: Vec<EntityInput>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanBatchCandidate {
     pub title: String,
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanBatchInput {
     pub expected_project_id: Uuid,
@@ -27,7 +27,7 @@ pub struct PlanBatchInput {
     pub candidates: Vec<PlanBatchCandidate>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanBatchReceipt {
     pub nodes: Vec<PlanNode>,

@@ -75,9 +75,12 @@ function isAiJob(job: Job) {
   return job.jobType === "AI_PLANNING_GENERATE" || job.jobType === "AI_PLANNING_EXTRACT";
 }
 
-function planningInput(job: Job): PlanningAiJobInput | null {
+// Historical stored jobs may predate the current IPC array-only sourceName.
+type StoredPlanningInput = Omit<PlanningAiJobInput, "sourceName"> & { sourceName?: string[] | string | null };
+
+function planningInput(job: Job): StoredPlanningInput | null {
   if (!isAiJob(job)) return null;
-  try { return JSON.parse(job.payload) as PlanningAiJobInput; }
+  try { return JSON.parse(job.payload) as StoredPlanningInput; }
   catch { return null; }
 }
 

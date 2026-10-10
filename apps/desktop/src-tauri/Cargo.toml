@@ -17,6 +17,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { workspace = true, features = [] }
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+quote = "1"
 
 [dependencies]
 novel-application.workspace = true
@@ -24,11 +26,20 @@ novel-domain.workspace = true
 novel-infrastructure.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 sha2.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 tauri = { workspace = true, features = [] }
 tauri-plugin-dialog = "2"
+
+[features]
+ipc-contract = []
+
+[[bin]]
+name = "ipc-schema"
+path = "src/bin/ipc-schema.rs"
+required-features = ["ipc-contract"]
 
 [lints]
 workspace = true

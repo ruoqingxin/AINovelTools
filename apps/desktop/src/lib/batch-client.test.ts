@@ -19,7 +19,7 @@ it("transmits original parent and source CAS versions and returns the batch rece
   const input: PlanBatchInput = {
     expectedProjectId: "project", parentId: "volume", expectedParentRevision: 3, expectedSourceVersion: 7,
     source: { id: "chapter-split-volume", content: "formal", pendingContent: "candidate", storyState: "LOCKED",
-      rationale: "reason", consequence: "", references: ["source"], updatedAt: "", version: 7 },
+      rationale: "reason", consequence: "", references: ["source"], updatedAt: "" },
     candidates: [{ title: "A", content: "card" }],
   };
   const receipt = { nodes: [], source: { ...input.source, version: 8, pendingContent: "" } };

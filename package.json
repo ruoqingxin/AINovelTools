@@ -9,9 +9,14 @@
   },
   "scripts": {
     "dev": "pnpm --filter @ainoveltools/desktop tauri dev",
-    "build": "pnpm --filter @ainoveltools/desktop build",
-    "check": "pnpm -r check && node --test tools/validate-ipc-contract.test.mjs && node tools/validate-ipc-contract.mjs && cargo clippy --workspace --all-targets -- -D warnings",
-    "test": "node --test tools/validate-ipc-contract.test.mjs && pnpm -r test && cargo test --workspace",
+    "build": "pnpm check:ipc && pnpm --filter @ainoveltools/desktop build",
+    "generate:ipc": "node tools/generate-ipc-types.mjs",
+    "check:ipc": "node tools/generate-ipc-types.mjs --check && node --test tools/validate-ipc-contract.test.mjs tools/generate-ipc-types.test.mjs && node tools/validate-ipc-contract.mjs",
+    "check": "pnpm check:ipc && pnpm -r check && cargo clippy --workspace --all-targets --features ainoveltools-desktop/ipc-contract -- -D warnings",
+    "test": "pnpm check:ipc && pnpm -r check && pnpm -r test && cargo test --workspace --features ainoveltools-desktop/ipc-contract",
     "tauri": "pnpm --filter @ainoveltools/desktop tauri"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "15.0.4"
   }
 }

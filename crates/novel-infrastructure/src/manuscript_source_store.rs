@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ManuscriptSourceRequest {
     pub project_id: Option<Uuid>,
@@ -10,7 +10,7 @@ pub struct ManuscriptSourceRequest {
     pub block_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ManuscriptSource {
     pub revision: ManuscriptRevision,

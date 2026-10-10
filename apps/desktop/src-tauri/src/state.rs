@@ -9,20 +9,20 @@ pub(crate) struct ProjectState {
     pub(crate) ai_cancellations: Mutex<HashMap<uuid::Uuid, Arc<AtomicBool>>>,
 }
 
-#[derive(Debug, serde::Serialize, Clone)]
+#[derive(Debug, serde::Serialize, Clone, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AiStreamChunk {
     pub(crate) task_id: uuid::Uuid,
     pub(crate) chunk: String,
 }
 
-#[derive(Debug, serde::Serialize, Clone)]
+#[derive(Debug, serde::Serialize, Clone, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AiTaskStarted {
     pub(crate) task_id: uuid::Uuid,
 }
 
-#[derive(Debug, serde::Serialize, Clone)]
+#[derive(Debug, serde::Serialize, Clone, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AiTaskAttempt {
     pub(crate) task_id: uuid::Uuid,
@@ -31,7 +31,7 @@ pub(crate) struct AiTaskAttempt {
     pub(crate) fallback_reason: Option<String>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelConnectionResponse {
     pub(crate) capability: novel_infrastructure::ModelCapability,
@@ -40,14 +40,14 @@ pub(crate) struct ModelConnectionResponse {
     pub(crate) detail: String,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BootstrapStatus {
     pub(crate) app_version: &'static str,
     pub(crate) layers: [&'static str; 3],
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DatabaseHealthResponse {
     pub(crate) status: &'static str,

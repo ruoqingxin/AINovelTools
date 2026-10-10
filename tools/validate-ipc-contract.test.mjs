@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertNoRetiredCommands, findClientCommands, findRegisteredCommands, validateIpcContract } from "./validate-ipc-contract.mjs";
+import { assertContractCoverage, assertNoRetiredCommands, assertTypedTransport, findClientCommands, findContractKeys, findRegisteredCommands, validateIpcContract } from "./validate-ipc-contract.mjs";
 
 test("client calls support nested generics, multiline calls, and untyped calls", () => {
   const commands = findClientCommands(`
@@ -41,4 +41,20 @@ test("only commands in the Tauri handler count as registered", () => {
   `);
   assert.deepEqual([...registered], ["first_command", "second_command"]);
   assert.throws(() => findRegisteredCommands("fn private_helper() {}"), /registration/);
+});
+
+test("generated requests, responses and errors must cover the exact registration", () => {
+  const keys = findContractKeys("export type IpcRequests = { first: unknown; second: unknown };", "IpcRequests");
+  assert.deepEqual([...keys], ["first", "second"]);
+  assertContractCoverage(new Set(["first", "second"]), keys, "requests");
+  assert.throws(() => assertContractCoverage(new Set(["first"]), keys, "requests"), /extra \[second\]/);
+  assert.throws(() => assertContractCoverage(new Set(["first", "third"]), keys, "requests"), /missing \[third\]/);
+  assert.throws(() => findContractKeys("export type Missing = string;", "IpcRequests"), /Missing generated/);
+});
+
+test("production clients cannot bypass the typed transport via imports or re-exports", () => {
+  assert.throws(() => assertTypedTransport('import { invoke as raw } from "@tauri-apps/api/core";', "view.ts"), /Raw Tauri/);
+  assert.throws(() => assertTypedTransport('export { listen } from "@tauri-apps/api/event";', "view.ts"), /Raw Tauri/);
+  assert.throws(() => assertTypedTransport('await import("@tauri-apps/api/core");', "view.ts"), /Raw Tauri/);
+  assertTypedTransport('import { invoke } from "./ipc-transport";', "view.ts");
 });

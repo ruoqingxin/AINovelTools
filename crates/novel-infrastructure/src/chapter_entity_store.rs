@@ -21,7 +21,7 @@ pub enum EntityReferenceError {
     Sqlite(#[from] rusqlite::Error),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ChapterEntityReferences {
     pub project_id: Uuid,
@@ -30,7 +30,7 @@ pub struct ChapterEntityReferences {
     pub entities: Vec<EntityCard>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ChapterEntitySave {
     pub project_id: Uuid,
@@ -39,7 +39,7 @@ pub struct ChapterEntitySave {
     pub entity_ids: Vec<Uuid>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityChapter {
     pub chapter_id: Uuid,

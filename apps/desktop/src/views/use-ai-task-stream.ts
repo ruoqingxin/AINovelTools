@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "../lib/ipc-transport";
 import { useEffect, useRef, useState } from "react";
 import { listAiRuns, type ReviewPurpose } from "../lib/tauri-client";
 
@@ -51,19 +51,19 @@ export function useAiTaskStream(props: {
     if (!listenEnabled) return;
     let disposed = false;
     const subscriptions = Promise.all([
-      listen<{ taskId: string }>("ai-task-started", ({ payload }) => {
+      listen("ai-task-started", ({ payload }) => {
         if (!disposed) {
           if (streamTask.current.requesting && !streamTask.current.taskId) streamTask.current.taskId = payload.taskId;
           if (streamTask.current.taskId === payload.taskId || streamTask.current.persistedTaskId === payload.taskId) setPreview("");
           void client.invalidateQueries({ queryKey: ["ai-runs"] });
         }
       }),
-      listen<{ taskId: string; chunk: string }>("ai-task-chunk", ({ payload }) => {
+      listen("ai-task-chunk", ({ payload }) => {
         if (!disposed && (streamTask.current.taskId === payload.taskId || streamTask.current.persistedTaskId === payload.taskId)) {
           setPreview((value) => value + payload.chunk);
         }
       }),
-      listen<{ taskId: string; attempt: number; profileName: string; fallbackReason?: string }>("ai-task-attempt", ({ payload }) => {
+      listen("ai-task-attempt", ({ payload }) => {
         if (!disposed && payload.attempt > 1
             && (streamTask.current.taskId === payload.taskId || streamTask.current.persistedTaskId === payload.taskId)) {
           setPreview("");

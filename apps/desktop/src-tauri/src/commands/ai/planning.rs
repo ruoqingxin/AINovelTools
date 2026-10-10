@@ -507,7 +507,7 @@ fn build_planning_context_plan(
     )
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PlanningAiRequestPreview {
     pub(crate) endpoint: Option<String>,

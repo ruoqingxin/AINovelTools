@@ -206,7 +206,7 @@ impl ContextPlanner {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AssembleContextInput {
     pub chapter_id: Uuid,
@@ -245,7 +245,7 @@ pub struct DiscussionFocus {
     pub recent_topic: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AiTaskRole {
     DraftWriter,
@@ -258,7 +258,7 @@ pub enum AiTaskRole {
     ApiConnectionTester,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiTaskContract {
     pub role: AiTaskRole,
@@ -273,7 +273,7 @@ pub struct AiTaskContract {
     pub output_contract: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ContextSectionKind {
     TaskContract,
@@ -287,7 +287,7 @@ pub enum ContextSectionKind {
     References,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextSectionAudit {
     pub kind: ContextSectionKind,
@@ -297,7 +297,7 @@ pub struct ContextSectionAudit {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextPackage {
     pub chapter_id: Uuid,
@@ -315,7 +315,7 @@ pub struct ContextPackage {
     pub section_audit: Vec<ContextSectionAudit>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextEvidenceRef {
     pub chunk_id: Uuid,

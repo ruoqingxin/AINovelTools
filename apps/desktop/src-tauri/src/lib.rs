@@ -10,6 +10,9 @@ mod commands;
 mod errors;
 mod state;
 
+#[cfg(feature = "ipc-contract")]
+pub mod ipc_contract;
+
 use commands::ai::{
     adopt_extraction_item, assemble_context_with_project_knowledge, cancel_ai_task,
     decide_ai_proposal, decide_extraction_item, delete_model_secret, enqueue_planning_ai_job,

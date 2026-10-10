@@ -78,7 +78,7 @@ const facts: Fact[] = [
   },
 ];
 
-const item: ChapterExtractionItem = {
+const item = {
   id: "extraction-1",
   proposalId: "proposal-1",
   kind: "RELATION",
@@ -95,7 +95,7 @@ const item: ChapterExtractionItem = {
   finalObjectId: null,
   createdAt: "0",
   updatedAt: "0",
-};
+} satisfies ChapterExtractionItem;
 
 const proposal: ChapterExtractionProposal = {
   id: "proposal-1",
@@ -148,6 +148,14 @@ describe("ChapterExtractionPanel", () => {
       finalObjectId: "relation-1",
     });
     mocks.decideExtractionItem.mockResolvedValue({ ...item, status: "REJECTED" });
+  });
+
+  it.each([null, [], "legacy payload"])("does not treat unvalidated JSON %j as an object", async (payload) => {
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...item, payload }] }]);
+    renderPanel();
+    expect(await screen.findByText("未命名候选")).toBeInTheDocument();
+    expect(mocks.updateExtractionItem).not.toHaveBeenCalled();
+    expect(mocks.adoptExtractionItem).not.toHaveBeenCalled();
   });
 
   it("saves selected fact endpoints before adopting a relation", async () => {

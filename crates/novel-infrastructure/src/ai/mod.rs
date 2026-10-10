@@ -146,7 +146,7 @@ impl AiError {
 
 pub struct SecretStore;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum AiTaskKind {
     Discussion,
@@ -304,7 +304,7 @@ pub struct AiTaskContextPreference {
     pub input_token_budget: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiRun {
     pub id: Uuid,
@@ -328,7 +328,7 @@ pub struct AiRun {
     pub finished_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiRunRequest {
     pub endpoint: Option<String>,
@@ -346,7 +346,7 @@ pub struct AiRunStart<'a> {
     pub estimated_input_tokens: u32,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiUsageSummary {
     pub days: u32,
@@ -355,7 +355,7 @@ pub struct AiUsageSummary {
     pub by_task: Vec<AiUsageTaskSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiUsageCurrencySummary {
     pub currency: String,
@@ -365,7 +365,7 @@ pub struct AiUsageCurrencySummary {
     pub estimated_cost_micros: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiUsageDailySummary {
     pub date: String,
@@ -373,7 +373,7 @@ pub struct AiUsageDailySummary {
     pub usage: AiUsageCurrencySummary,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiUsageTaskSummary {
     pub task_key: String,
@@ -381,7 +381,7 @@ pub struct AiUsageTaskSummary {
     pub usage: AiUsageCurrencySummary,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiQualitySummary {
     pub total_proposals: u32,
@@ -391,7 +391,7 @@ pub struct AiQualitySummary {
     pub groups: Vec<AiQualityGroup>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiQualityGroup {
     pub task_key: String,
@@ -409,7 +409,7 @@ pub struct AiQualityGroup {
     pub invalid_count: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiBudgetSettings {
     pub currency: String,
@@ -441,14 +441,14 @@ impl AiBudgetSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AiProposalFeedbackRating {
     Helpful,
     NotHelpful,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProposalFeedback {
     pub proposal_id: Uuid,
@@ -458,7 +458,7 @@ pub struct AiProposalFeedback {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiOutputValidation {
     pub status: String,
@@ -468,7 +468,7 @@ pub struct AiOutputValidation {
     pub estimated_output_tokens: u32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AiConsistencyVerdict {
     Pass,
@@ -478,7 +478,7 @@ pub enum AiConsistencyVerdict {
     Unparsed,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AiConsistencySeverity {
     Blocker,
@@ -487,7 +487,7 @@ pub enum AiConsistencySeverity {
     Info,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiConsistencyFinding {
     pub severity: AiConsistencySeverity,
@@ -496,7 +496,7 @@ pub struct AiConsistencyFinding {
     pub suggestion: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiConsistencyReport {
     pub verdict: AiConsistencyVerdict,
@@ -505,7 +505,7 @@ pub struct AiConsistencyReport {
     pub parse_warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ConsistencyReviewFreshness {
     Missing,
@@ -514,7 +514,7 @@ pub enum ConsistencyReviewFreshness {
     Unverified,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProposalReview {
     pub proposal: AiProposal,
@@ -533,8 +533,9 @@ pub struct WritingAdmission {
     pub review_freshness: ConsistencyReviewFreshness,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
+#[schemars(rename = "AiTaskPreferenceDetails")]
 struct AiTaskPreferenceData {
     profile_id: Option<Uuid>,
     fallback_profile_id: Option<Uuid>,
@@ -543,16 +544,18 @@ struct AiTaskPreferenceData {
     prompt: AiTaskPromptPreferenceData,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
+#[schemars(rename = "AiTaskPromptPreference")]
 struct AiTaskPromptPreferenceData {
     system_prompt: Option<String>,
     instruction_template: Option<String>,
     context: AiTaskContextPreferenceData,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
+#[schemars(rename = "AiTaskContextPreference")]
 struct AiTaskContextPreferenceData {
     include_project_context: Option<bool>,
     include_reference_content: Option<bool>,
@@ -562,12 +565,27 @@ struct AiTaskContextPreferenceData {
     input_token_budget: Option<u32>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 enum AiTaskPreferenceValue {
     ProfileId(Uuid),
     Detailed(AiTaskPreferenceData),
     Empty,
+}
+
+impl schemars::JsonSchema for AiTaskPreference {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "AiTaskPreference".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // The legacy UUID/null input is normalized to the detailed output.
+        if generator.contract().is_serialize() {
+            AiTaskPreferenceData::json_schema(generator)
+        } else {
+            AiTaskPreferenceValue::json_schema(generator)
+        }
+    }
 }
 
 impl Serialize for AiTaskPreference {
@@ -630,7 +648,7 @@ impl<'de> Deserialize<'de> for AiTaskPreference {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiTaskPreferences {
     pub discussion: AiTaskPreference,
@@ -645,7 +663,7 @@ pub struct AiTaskPreferences {
     pub knowledge_extraction: AiTaskPreference,
 }
 
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectAiTaskOverrides {
     pub available: bool,

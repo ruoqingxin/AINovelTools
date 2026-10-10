@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiscussionSourceRequest {
     pub candidate_id: Uuid,
@@ -9,7 +9,7 @@ pub struct DiscussionSourceRequest {
     pub section_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanningDiscussionSource {
     pub candidate: DiscussionCandidate,
@@ -17,7 +17,7 @@ pub struct PlanningDiscussionSource {
     pub session_title: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscussionSource {
     pub session: DiscussionSession,

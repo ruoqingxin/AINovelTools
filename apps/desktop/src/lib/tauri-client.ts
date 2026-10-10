@@ -1,1006 +1,430 @@
-import { invoke } from "@tauri-apps/api/core";
+import type {
+  AiBudgetSettings, AiProposalStatus, AiTaskPreference, AiTaskPreferences, AuditFlowSettings, Belief,
+  DiscussionDesignEntity, DiscussionWorkspace, EntityType, Event, EvidenceAnchor, Foreshadowing,
+  InputPlanningSection, IpcRequests, IpcResponses, JobType, KnowledgeCandidate, Relation, SummaryMaterial,
+  VersionedPlanningSection, WritingCard, WritingReviewPolicy,
+} from "./ipc-types.generated";
+import { invoke } from "./ipc-transport";
 
-export type BootstrapStatus = {
-  appVersion: string;
-  layers: ["domain", "application", "infrastructure"];
+export type * from "./ipc-types.generated";
+export type DatabaseHealth = IpcResponses["health_query"];
+export type EntityInput = IpcRequests["upsert_entity"]["input"];
+export type ModelProfileInput = IpcRequests["upsert_model_profile"]["input"];
+export type ManuscriptSourceRequest = IpcRequests["get_manuscript_source"]["request"];
+export type DiscussionSourceRequest = IpcRequests["get_discussion_source"]["request"];
+export type ExtractionItemTarget = IpcRequests["adopt_extraction_item"]["target"];
+export type PlanBatchInput = IpcRequests["adopt_plan_batch"]["input"];
+export type PlanningAiJobInput = IpcRequests["enqueue_planning_ai_job"]["input"];
+// Unsaved forms have no stored version; raw IPC responses use VersionedPlanningSection.
+export type PlanningSection = InputPlanningSection & { version?: VersionedPlanningSection["version"] };
+// UI-only object selection is passed as a separate command argument.
+export type AssembleContextInput = IpcRequests["assemble_context_with_project_knowledge"]["input"] & {
+  knowledgeObjectIds?: IpcRequests["assemble_context_with_project_knowledge"]["objectIds"];
 };
-
-export type ApiError = { code: string; message: string };
 
 export function errorMessage(cause: unknown) {
   if (cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string") return cause.message;
   return cause instanceof Error ? cause.message : String(cause);
 }
-
-export type DatabaseHealth = {
-  status: "PROJECT_HEALTHY" | "NO_PROJECT_OPEN";
-  sqliteVersion: string;
-  schemaVersion: number;
-  journalMode: string;
-  foreignKeysEnabled: boolean;
-};
-
-export type ProjectManifest = {
-  projectId: string;
-  formatVersion: number;
-  name: string;
-  createdAt: string;
-};
-
-export type RecentProject = {
-  root: string;
-  name: string;
-  lastOpenedAt: string;
-};
-
-  export type PlanNodeKind = "WORK_DESIGN" | "OUTLINE" | "VOLUME_MANAGER" | "VOLUME" | "CHAPTER" | "SCENE";
-
-export type PlanNode = {
-  id: string;
-  parentId: string | null;
-  kind: PlanNodeKind;
-  title: string;
-  sortOrder: number;
-  archived: boolean;
-  revision: number;
-};
-
-export type PlanningStoryState =
-  | "UNSET"
-  | "UNKNOWN"
-  | "DEFERRED"
-  | "AUTHOR_RESERVED"
-  | "AI_SUGGESTED"
-  | "CONFIRMED"
-  | "LOCKED"
-  | "RETIRED";
-
-export type PlanningSection = {
-  version?: number;
-  id: string;
-  content: string;
-  pendingContent: string;
-  storyState: PlanningStoryState;
-  rationale: string;
-  consequence: string;
-  references: string[];
-  updatedAt: string;
-};
-export type PlanningEmbedding = {
-  sectionId: string;
-  profileId: string;
-  modelId: string;
-  dimensions: number;
-  contentHash: string;
-  vector?: number[];
-  updatedAt: string;
-};
-
-export type ManuscriptRevision = {
-  id: string;
-  chapterId: string;
-  parentRevisionId: string | null;
-  baseRevisionId: string | null;
-  documentJson: string;
-  contentHash: string;
-  creationReason: string;
-  documentSchemaVersion: number;
-  createdAt: string;
-};
-
-export type ManuscriptSourceRequest = {
-  projectId?: string; revisionId?: string; evidenceAnchorId?: string; chapterId?: string; blockId?: string;
-};
-export type ManuscriptSource = {
-  revision: ManuscriptRevision; chapterTitle: string; chapterArchived: boolean; isCurrentRevision: boolean;
-  blockId: string | null; blockText: string | null; quote: string | null; evidenceAnchorId: string | null;
-};
-
-export type FeatureDescriptor = { id: string; displayName: string; stage: string; status: "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED"; unavailableReason: string | null };
-export type R4MigrationDescriptor = { version: number; name: string; purpose: string; dependsOn: number[] };
-export type R4ContractDescriptor = { id: string; layer: string; purpose: string; introducedBy: number };
-export type EntityType = "CHARACTER" | "LOCATION" | "FACTION" | "ITEM" | "CONCEPT";
-export type EntityLifecycleStatus = "ACTIVE" | "ARCHIVED";
-export type Entity = {
-  id: string; projectId: string; entityType: EntityType; lifecycleStatus: EntityLifecycleStatus;
-  currentRevisionId: string; version: number; createdAt: string; updatedAt: string;
-};
-export type EntityRevision = {
-  id: string; entityId: string; revision: number; name: string; aliases: string[];
-  description: string; fixedAttributesJson: string; tags: string[]; baseRevisionId: string | null;
-  sourceVersion: string | null; createdAt: string;
-};
-export type EntityInput = {
-  id?: string; entityType: EntityType; name: string; aliases: string[]; description: string;
-  fixedAttributesJson: string; tags: string[]; baseRevisionId?: string; sourceVersion?: string;
-  expectedVersion?: number;
-};
-export type SummaryKind = "CHAPTER" | "CHARACTER" | "SETTING";
-export type SummaryPrecision = "L0" | "L1" | "L2" | "L3" | "L4" | "L5";
-export type SummaryMaterial = {
-  id: string; projectId: string; kind: SummaryKind; precision: SummaryPrecision;
-  sourceId: string | null; sourceVersion: string | null; content: string;
-  generationMode: string; lifecycleStatus: string; createdAt: string; updatedAt: string;
-};
-export type WritingCard = {
-  id: string; projectId: string; cardType: "STYLE_RULE" | "TECHNIQUE"; title: string;
-  content: string; sourceVersion: string | null; scope: string; enabled: boolean;
-  sortOrder: number; createdAt: string; updatedAt: string;
-};
-export type SearchResult = { objectType: string; objectId: string; blockId: string | null; sourceVersion: string | null; snippet: string };
-export type KnowledgeLifecycleStatus = "ACTIVE" | "NEEDS_REVIEW" | "ARCHIVED";
-export type CandidateStatus = "PENDING" | "NEEDS_REVIEW" | "APPROVED" | "REJECTED" | "FINALIZED";
-export type ReviewDecision = "APPROVE" | "REJECT" | "NEEDS_REVIEW";
-export type ChangeSetStatus = "DRAFT" | "IN_REVIEW" | "BLOCKED" | "FINALIZED" | "REJECTED";
-export type EvidenceAnchor = {
-  id: string; projectId: string; chapterId: string; sourceRevisionId: string;
-  blockId: string; startOffset: number; endOffset: number; sourceVersion: string;
-  sourceHash: string; lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string;
-  createdAt: string; updatedAt: string;
-};
-export type Fact = {
-  knowledgeId: string; projectId: string; knowledgeVersion: number; subject: string;
-  predicate: string; object: string; sourceRevisionId: string; evidenceAnchorIds: string[];
-  lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string; createdAt: string; updatedAt: string;
-};
-export type KnowledgeCandidate = {
-  id: string; projectId: string; chapterId: string; proposalId: string | null;
-  candidateStatus: CandidateStatus; reviewDecision: ReviewDecision | null;
-  reviewer: string | null; reviewedAt: string | null; fact: Fact; createdAt: string; updatedAt: string;
-};
-export type KnowledgeConflict = {
-  kind: "DUPLICATE_FACT" | "CONTRADICTORY_OBJECT"; candidateIds: string[];
-  subject: string; predicate: string; objects: string[]; highRisk: boolean;
-};
-export type ExtractionItemKind = "ENTITY" | "FACT" | "RELATION" | "EVENT" | "FORESHADOWING";
-export type ExtractionItemStatus = "PENDING_REVIEW" | "ACCEPTED" | "DEFERRED" | "REJECTED";
-export type ChapterExtractionProposalStatus =
-  | "PENDING_REVIEW"
-  | "PARTIALLY_ACCEPTED"
-  | "DEFERRED"
-  | "ACCEPTED"
-  | "REJECTED";
-export type ChapterExtractionItem = {
-  id: string; proposalId: string; kind: ExtractionItemKind; payload: Record<string, unknown>;
-  evidenceAnchorId: string; status: ExtractionItemStatus; version: number; finalObjectId: string | null;
-  createdAt: string; updatedAt: string;
-};
-export type ChapterExtractionProposal = {
-  id: string; projectId: string; chapterId: string; sourceRevisionId: string;
-  aiRunId: string | null; status: ChapterExtractionProposalStatus;
-  items: ChapterExtractionItem[]; createdAt: string; updatedAt: string;
-};
-export type ExtractionItemTarget = {
-  id: string; projectId: string; chapterId: string;
-  expectedStatus: ExtractionItemStatus; expectedVersion: number;
-};
-
-export type DiscussionScopeKind = "PROJECT" | "VOLUME" | "CHAPTER" | "SCENE" | "SELECTION";
-export type DiscussionMessageRole = "USER" | "ASSISTANT";
-export type DiscussionCandidateKind = "NOTE" | "PLANNING" | "SETTING" | "FORESHADOWING";
-export type DiscussionCandidateStatus = "PENDING" | "PROMOTED" | "DISMISSED";
-
-export type DiscussionSession = {
-  id: string; projectId: string; title: string; scopeKind: DiscussionScopeKind;
-  scopeId: string | null; scopeText: string | null; summary: string; createdAt: string; updatedAt: string;
-};
-
-export type DiscussionMessage = {
-  id: string; sessionId: string; role: DiscussionMessageRole; content: string;
-  profileId: string | null; contextVersion: string | null; contextSummary: string | null;
-  createdAt: string;
-};
-
-export type DiscussionCandidate = {
-  id: string; sessionId: string; messageId: string; kind: DiscussionCandidateKind;
-  content: string; targetSectionId: string | null; status: DiscussionCandidateStatus;
-  promotedObjectId: string | null; createdAt: string; updatedAt: string;
-};
-
-export type DiscussionExchange = {
-  userMessage: DiscussionMessage; assistantMessage: DiscussionMessage;
-};
-export type DiscussionTopicKind = "FREE" | "CHARACTER" | "ITEM" | "LOCATION" | "PLOT";
-export type DiscussionDraft = { chosen: string; alternatives: string; questions: string };
-export type DiscussionWorkspace = {
-  sessionId: string; topicKind: DiscussionTopicKind; linkedEntityId: string | null;
-  draft: DiscussionDraft; version: number;
-};
-export type DiscussionDesignEntity = {
-  entityType: EntityType; name: string; description: string; aliases: string[]; tags: string[];
-  attributes: Record<string, unknown>; settings: string[]; visibility: "AUTHOR_ONLY" | "PUBLIC";
-  targetEntityId: string | null; expectedEntityVersion: number | null;
-};
-export type DiscussionDesignProposal = {
-  id: string; sessionId: string; workspaceVersion: number; entities: DiscussionDesignEntity[];
-  sourceMessageIds: string[]; contextVersion: string; omittedMessageCount: number;
-  status: "PENDING" | "CONFIRMED"; promotedEntityIds: string[]; createdAt: string;
-};
-export type AuthorSetting = {
-  id: string; entityId: string; entityRevisionId: string; entityName: string;
-  content: string; visibility: "AUTHOR_ONLY" | "PUBLIC"; sourceProposalId: string;
-  sessionId: string; createdAt: string;
-};
 export const DISCUSSION_LIMITS = {
   messageChars: 20_000, draftChars: 50_000, proposalChars: 100_000,
   pageSize: 100, proposalEntities: 20,
 } as const;
-export type ChangeSet = {
-  id: string; projectId: string; chapterId: string; sourceRevisionId: string;
-  status: ChangeSetStatus; candidateIds: string[]; createdBy: string; createdAt: string; updatedAt: string;
-};
-export type WorldStateEntry = { subject: string; predicate: string; object: string; factKnowledgeId: string; factVersion: number };
-export type WorldState = { id: string; projectId: string; knowledgeVersionId: string; entries: WorldStateEntry[]; createdAt: string };
-export type Relation = { id: string; projectId: string; relationVersion: number; fromKnowledgeId: string; toKnowledgeId: string; relationType: string; evidenceAnchorIds: string[]; lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string; createdAt: string; updatedAt: string };
-export type Event = { id: string; projectId: string; eventVersion: number; name: string; occurredAt: string; participantFactIds: string[]; evidenceAnchorIds: string[]; lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string; createdAt: string; updatedAt: string };
-export type Belief = { id: string; projectId: string; beliefVersion: number; holderKnowledgeId: string; proposition: string; evidenceAnchorIds: string[]; lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string; createdAt: string; updatedAt: string };
-export type Foreshadowing = { id: string; projectId: string; foreshadowingVersion: number; title: string; targetChapterId: string | null; status: string; evidenceAnchorIds: string[]; lifecycleStatus: KnowledgeLifecycleStatus; createdBy: string; createdAt: string; updatedAt: string };
-export type AssembleContextInput = {
-  chapterId: string; targetRevisionId: string | null; action: AiAction; chapterTitle: string;
-  chapterPlan: string; documentJson: string; selection: string | null; instruction: string | null;
-  inputTokenBudget: number;
-  knowledgeObjectIds?: string[];
-};
-export type ContextPackage = {
-  chapterId: string; targetRevisionId: string | null; action: AiAction; contextVersion: string;
-  promptVersion: string; systemPrompt: string; userPrompt: string; estimatedInputTokens: number;
-  truncated: boolean; entitySourceStatus: string; retrievalEvidence: unknown[];
-  taskContract: unknown; sectionAudit: unknown[];
-};
-export type RecoveryLog = { id: string; chapterId: string; documentJson: string; createdAt: string };
-export type ManuscriptDraft = {
-  chapterId: string; documentJson: string | null; baseRevisionId: string | null;
-  baseDocumentJson: string; version: number; updatedAt: string;
-};
-export type ManuscriptDraftCommit = { revision: ManuscriptRevision; draft: ManuscriptDraft };
-export type MergeConflict = { blockId: string; base?: string; current?: string; draft?: string };
-export type MergeResult = { documentJson: string; conflicts: MergeConflict[] };
-export type ModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
-export type ModelCapability = "CHAT" | "EMBEDDING";
-export type PrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
-export type WritingReviewPolicy = "ADVISORY" | "BALANCED" | "REQUIRED";
-export type AuditFlowSettings = { admission: boolean; manuscript: boolean; knowledge: boolean };
-export type AiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE" | "CONSISTENCY_CHECK";
-export type ReviewPurpose = "ADMISSION" | "MANUSCRIPT";
-export type AiProposalStatus = "PENDING" | "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED";
-export type ModelProfile = {
-  id: string; name: string; provider: ModelProvider; capability: ModelCapability; baseUrl: string; modelId: string;
-  contextWindow: number; maxOutputTokens: number; privacyLevel: PrivacyLevel;
-  timeoutSeconds: number; retryLimit: number;
-  inputPriceMicrosPerMillion: number; outputPriceMicrosPerMillion: number; priceCurrency: string;
-  secretRef: string | null; hasSecret: boolean;
-  createdAt: string; updatedAt: string;
-};
-export type ModelProfileInput = Omit<ModelProfile, "id" | "secretRef" | "hasSecret" | "createdAt" | "updatedAt"> & { id?: string };
-export type AiTaskPreference = {
-  profileId: string | null;
-  fallbackProfileId: string | null;
-  temperature: number | null;
-  maxOutputTokens: number | null;
-  prompt: AiTaskPromptPreference;
-};
-export type AiTaskPromptPreference = {
-  systemPrompt: string | null;
-  instructionTemplate: string | null;
-  context: AiTaskContextPreference;
-};
-export type AiTaskContextPreference = {
-  includeProjectContext: boolean | null;
-  includeReferenceContent: boolean | null;
-  includeProjectKnowledge: boolean | null;
-  includeCurrentDraft: boolean | null;
-  includeChapterPlan: boolean | null;
-  inputTokenBudget: number | null;
-};
-export type AiTaskPreferences = {
-  discussion: AiTaskPreference;
-  discussionDesign: AiTaskPreference;
-  workDesign: AiTaskPreference;
-  outline: AiTaskPreference;
-  volumePlanning: AiTaskPreference;
-  chapterSplit: AiTaskPreference;
-  chapterPlan: AiTaskPreference;
-  consistencyReview: AiTaskPreference;
-  writing: AiTaskPreference;
-  knowledgeExtraction: AiTaskPreference;
-};
-export type ProjectAiTaskOverrides = {
-  available: boolean;
-  discussion: AiTaskPreference | null;
-  discussionDesign: AiTaskPreference | null;
-  workDesign: AiTaskPreference | null;
-  outline: AiTaskPreference | null;
-  volumePlanning: AiTaskPreference | null;
-  chapterSplit: AiTaskPreference | null;
-  chapterPlan: AiTaskPreference | null;
-  consistencyReview: AiTaskPreference | null;
-  writing: AiTaskPreference | null;
-  knowledgeExtraction: AiTaskPreference | null;
-};
-export type AiProposal = {
-  id: string; taskId: string; chapterId: string; action: AiAction; reviewPurpose: ReviewPurpose; targetRevisionId: string | null;
-  contextVersion: string; promptVersion: string; outputText: string; acceptedText: string | null;
-  status: AiProposalStatus; createdAt: string; decidedAt: string | null;
-};
-export type AiRun = {
-  id: string; taskKey: string; source: string; action: AiAction | string; status: string;
-  chapterId: string | null; reviewPurpose: ReviewPurpose; chapterTitle: string; profileName: string;
-  attemptCount: number; retryReason: string | null; errorCode: string | null;
-  estimatedInputTokens: number; estimatedOutputTokens: number;
-  estimatedCostMicros: number | null; priceCurrency: string;
-  promptVersion: string; createdAt: string; finishedAt: string | null;
-};
-export type AiRunRequest = {
-  endpoint: string | null;
-  requestBody: string | null;
-};
-export type AiUsageCurrencySummary = {
-  currency: string;
-  runCount: number;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedCostMicros: number | null;
-};
-export type AiUsageDailySummary = AiUsageCurrencySummary & { date: string };
-export type AiUsageTaskSummary = AiUsageCurrencySummary & { taskKey: string };
-export type AiUsageSummary = {
-  days: number;
-  total: AiUsageCurrencySummary[];
-  daily: AiUsageDailySummary[];
-  byTask: AiUsageTaskSummary[];
-};
-export type AiBudgetSettings = {
-  currency: string;
-  dailyLimitMicros: number | null;
-  projectLimitMicros: number | null;
-};
-export type AiQualityGroup = {
-  taskKey: string;
-  action: string;
-  promptVersion: string;
-  profileName: string;
-  proposalCount: number;
-  acceptedCount: number;
-  ratedCount: number;
-  helpfulCount: number;
-  notHelpfulCount: number;
-  validCount: number;
-  warningCount: number;
-  needsInputCount: number;
-  invalidCount: number;
-};
-export type AiQualitySummary = {
-  totalProposals: number;
-  totalRated: number;
-  totalHelpful: number;
-  totalWithIssues: number;
-  groups: AiQualityGroup[];
-};
-export type AiProposalFeedback = {
-  proposalId: string; rating: "HELPFUL" | "NOT_HELPFUL"; note: string | null;
-  createdAt: string; updatedAt: string;
-};
-export type AiConsistencyVerdict = "PASS" | "REVIEW" | "BLOCKED" | "NEEDS_INPUT" | "UNPARSED";
-export type AiConsistencySeverity = "BLOCKER" | "MAJOR" | "MINOR" | "INFO";
-export type AiConsistencyFinding = {
-  severity: AiConsistencySeverity;
-  problem: string;
-  evidence: string;
-  suggestion: string;
-};
-export type AiConsistencyReport = {
-  verdict: AiConsistencyVerdict;
-  summary: string;
-  findings: AiConsistencyFinding[];
-  parseWarnings: string[];
-};
-export type ReviewClaimType =
-  | "CHARACTER_STATUS"
-  | "CHARACTER_LOCATION"
-  | "ABILITY_OR_REALM"
-  | "ITEM_POSSESSION"
-  | "RELATION"
-  | "KNOWLEDGE_BOUNDARY"
-  | "REQUIRED_EVENT"
-  | "FORBIDDEN_EVENT"
-  | "ALLOWED_CHARACTER"
-  | "TIME_WINDOW"
-  | "STAGE_BOUNDARY"
-  | "FORESHADOWING_WINDOW"
-  | "PLAN_DEPENDENCY";
-export type ReviewStatus = "PASS" | "NOTICE" | "WARNING" | "BLOCK" | "UNKNOWN";
-export type FindingSource = "RULE" | "LLM" | "MERGED";
-export type ReviewEvidenceSource =
-  | "ENTITY"
-  | "FACT"
-  | "WORLD_STATE"
-  | "RELATION"
-  | "BELIEF"
-  | "EVENT"
-  | "FORESHADOWING"
-  | "LOCKED_RULE"
-  | "CHAPTER_CONTRACT";
-export type EvidenceAuthority =
-  | "LOCKED_RULE"
-  | "CONFIRMED_FACT"
-  | "CURRENT_STATE"
-  | "CHAPTER_CONTRACT"
-  | "APPROVED_EVENT"
-  | "PLAN_REFERENCE"
-  | "SUMMARY_REFERENCE"
-  | "UNCONFIRMED";
-export type ReviewClaim = {
-  id: string;
-  claimType: ReviewClaimType;
-  subject: string;
-  predicate: string;
-  object: string;
-  quote: string;
-  blockId: string;
-  startOffset: number;
-  endOffset: number;
-  importance: number;
-  confidence: number;
-};
-export type ReviewEvidence = {
-  id: string;
-  claimId: string;
-  sourceKind: ReviewEvidenceSource;
-  sourceRecordId: string;
-  authority: EvidenceAuthority;
-  excerpt: string;
-  sourceRevision: string;
-  relevance: number;
-};
-export type ReviewFinding = {
-  id: string;
-  claimId: string;
-  status: ReviewStatus;
-  severity: string;
-  sourceKind: FindingSource;
-  ruleId: string | null;
-  ruleVersion: string | null;
-  ruleScope: string | null;
-  ruleEffectiveAt: string | null;
-  priority: number;
-  problem: string;
-  evidenceIds: string[];
-  suggestion: string;
-  confidence: number;
-};
-export type ReviewOmittedItem = {
-  itemType: string;
-  label: string;
-  reason: string;
-  claimId: string | null;
-};
-export type ReviewStageRequest = {
-  stage: "CLAIM_EXTRACTION" | "DETERMINISTIC_RULES" | "SEMANTIC_REVIEW" | "MERGE";
-  profileId: string | null;
-  modelId: string | null;
-  requestContextVersion: string;
-  requestSnapshot: string | null;
-  responsePreview: string | null;
-  parseResult: string;
-  fallbackReason: string | null;
-};
-export type ReviewTrace = {
-  runId: string;
-  reviewPurpose: ReviewPurpose;
-  chapterId: string;
-  targetRevisionId: string | null;
-  contextVersion: string;
-  claims: ReviewClaim[];
-  evidence: ReviewEvidence[];
-  deterministicFindings: ReviewFinding[];
-  modelFindings: ReviewFinding[];
-  omittedItems: ReviewOmittedItem[];
-  stageRequests: ReviewStageRequest[];
-};
-export type ConsistencyReviewFreshness = "MISSING" | "FRESH" | "STALE" | "UNVERIFIED";
-export type AiProposalReview = {
-  proposal: AiProposal;
-  validation: {
-    status: "VALID" | "WARNING" | "INVALID" | "NEEDS_INPUT"; messages: string[]; characterCount: number;
-    paragraphCount: number; estimatedOutputTokens: number;
-  };
-  feedback: AiProposalFeedback | null;
-  consistency: AiConsistencyReport | null;
-  consistencyFreshness: ConsistencyReviewFreshness | null;
-  hasReviewTrace: boolean;
-};
-export type JobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX" | "REFRESH_CHAPTER_SUMMARY" | "REFRESH_PROJECT_SETTING_SUMMARY" | "AI_PLANNING_GENERATE" | "AI_PLANNING_EXTRACT";
-export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
-export type Job = {
-  id: string; jobType: JobType; payload: string; status: JobStatus; progress: number;
-  attemptCount: number; cancelRequested: boolean; errorSummary: string | null;
-  createdAt: string; updatedAt: string; acknowledgedAt: string | null;
-};
-export type JobEvent = {
-  id: string; jobId: string; stage: string; message: string; progress: number; createdAt: string;
-};
-export type PlanningAiJobInput = {
-  profileId: string; mode: "GENERATE" | "EXTRACT"; sectionId: string; sectionTitle: string;
-  sectionPrompt: string; existingContext: string; referenceContent: string; userGuidance: string;
-  allowRewrite: boolean; taskKey?: "workDesign" | "outline" | "volumePlanning" | "chapterSplit" | "chapterPlan"; temperature?: number; maxOutputTokens?: number;
-  sourceName?: string[] | string; systemPromptSnapshot?: string; userPromptSnapshot?: string;
-  finalRequestEndpoint?: string; finalRequestBody?: string; finalRequestEstimatedInputTokens?: number;
-};
-export type PlanningAiRequestPreview = {
-  endpoint: string | null; requestBody: string | null; estimatedInputTokens: number | null;
-};
-export type HealthScanReport = { status: "HEALTHY" | "WARNING" | "ERROR"; schemaVersion: number; sqliteIntegrity: string; ftsRows: number; warnings: string[]; errors: string[] };
-export type StartupRecoveryReport = { crashMarkerPresent: boolean; recoveryLogCount: number; unfinishedJobCount: number; walPresent: boolean; tempFileCount: number; migrationInterrupted: boolean; actions: string[] };
-export type ModelConnectionResponse = { capability: ModelCapability; provider: ModelProvider; modelId: string; detail: string };
-export type ExtractedEntity = { name: string; description: string; aliases: string[]; tags: string[] };
 
 export function getBootstrapStatus() {
-  return invoke<BootstrapStatus>("bootstrap_status");
+  return invoke("bootstrap_status");
 }
 
 export function getFeatureCatalog() {
-  return invoke<FeatureDescriptor[]>("feature_catalog");
+  return invoke("feature_catalog");
 }
 
 export function getHealth() {
-  return invoke<DatabaseHealth>("health_query");
+  return invoke("health_query");
 }
 
 export function listEntities(includeArchived = false) {
-  return invoke<Entity[]>("list_entities", { includeArchived });
+  return invoke("list_entities", { includeArchived });
 }
 
 export function upsertEntity(input: EntityInput) {
-  return invoke<Entity>("upsert_entity", { input });
+  return invoke("upsert_entity", { input });
 }
 
-export function importEntities(input: { expectedProjectId: string; items: EntityInput[] }) {
-  return invoke<Entity[]>("import_entities", { input });
+export function importEntities(input: IpcRequests["import_entities"]["input"]) {
+  return invoke("import_entities", { input });
 }
 
 export function listEntityRevisions(entityId: string) {
-  return invoke<EntityRevision[]>("list_entity_revisions", { entityId });
+  return invoke("list_entity_revisions", { entityId });
 }
 
-export function setEntityArchived(input: { id: string; archived: boolean; expectedVersion: number }) {
-  return invoke<Entity>("set_entity_archived", input);
+export function setEntityArchived(input: IpcRequests["set_entity_archived"]) {
+  return invoke("set_entity_archived", input);
 }
-export function listSummaryMaterials() { return invoke<SummaryMaterial[]>("list_summary_materials"); }
-export function getSummaryMaterial(id: string, projectId: string) { return invoke<SummaryMaterial>("get_summary_material", { id, projectId }); }
-export function upsertSummaryMaterial(material: SummaryMaterial) { return invoke<SummaryMaterial>("upsert_summary_material", { material }); }
-export function listWritingCards(cardType?: string) { return invoke<WritingCard[]>("list_writing_cards", { cardType }); }
-export function getWritingCard(id: string, projectId: string) { return invoke<WritingCard>("get_writing_card", { id, projectId }); }
-export function upsertWritingCard(card: WritingCard) { return invoke<WritingCard>("upsert_writing_card", { card }); }
-export function setWritingCardEnabled(id: string, enabled: boolean) { return invoke<WritingCard>("set_writing_card_enabled", { id, enabled }); }
-export function setSummaryMaterialLifecycle(id: string, lifecycleStatus: string) { return invoke<SummaryMaterial>("set_summary_material_lifecycle", { id, lifecycleStatus }); }
-export function rebuildSummaryMaterial(id: string) { return invoke<SummaryMaterial>("rebuild_summary_material", { id }); }
-export function rebuildSearchIndex() { return invoke<void>("rebuild_search_index"); }
-export function searchProject(query: string, objectType?: string, limit = 50, offset = 0) { return invoke<SearchResult[]>("search_project", { query, objectType, limit, offset }); }
-export function createEvidenceAnchor(anchor: EvidenceAnchor) { return invoke<EvidenceAnchor>("create_evidence_anchor", { anchor }); }
-export function listEvidenceAnchors() { return invoke<EvidenceAnchor[]>("list_evidence_anchors"); }
-export function listCurrentFacts() { return invoke<Fact[]>("list_current_facts"); }
-export function createKnowledgeCandidate(candidate: KnowledgeCandidate) { return invoke<KnowledgeCandidate>("create_knowledge_candidate", { candidate }); }
-export function listKnowledgeCandidates(chapterId: string) { return invoke<KnowledgeCandidate[]>("list_knowledge_candidates", { chapterId }); }
-export function extractChapterCandidates(input: {
-  profileId: string; chapterId: string; sourceRevisionId?: string;
-  userGuidance?: string; temperature?: number; maxOutputTokens?: number;
-}) {
-  return invoke<ChapterExtractionProposal>("extract_chapter_candidates", { input });
+export function listSummaryMaterials() { return invoke("list_summary_materials"); }
+export function getSummaryMaterial(id: string, projectId: string) { return invoke("get_summary_material", { id, projectId }); }
+export function upsertSummaryMaterial(material: SummaryMaterial) { return invoke("upsert_summary_material", { material }); }
+export function listWritingCards(cardType?: string) { return invoke("list_writing_cards", { cardType }); }
+export function getWritingCard(id: string, projectId: string) { return invoke("get_writing_card", { id, projectId }); }
+export function upsertWritingCard(card: WritingCard) { return invoke("upsert_writing_card", { card }); }
+export function setWritingCardEnabled(id: string, enabled: boolean) { return invoke("set_writing_card_enabled", { id, enabled }); }
+export function setSummaryMaterialLifecycle(id: string, lifecycleStatus: string) { return invoke("set_summary_material_lifecycle", { id, lifecycleStatus }); }
+export function rebuildSummaryMaterial(id: string) { return invoke("rebuild_summary_material", { id }); }
+export function rebuildSearchIndex() { return invoke("rebuild_search_index"); }
+export function searchProject(query: string, objectType?: string, limit = 50, offset = 0) { return invoke("search_project", { query, objectType, limit, offset }); }
+export function createEvidenceAnchor(anchor: EvidenceAnchor) { return invoke("create_evidence_anchor", { anchor }); }
+export function listEvidenceAnchors() { return invoke("list_evidence_anchors"); }
+export function listCurrentFacts() { return invoke("list_current_facts"); }
+export function createKnowledgeCandidate(candidate: KnowledgeCandidate) { return invoke("create_knowledge_candidate", { candidate }); }
+export function listKnowledgeCandidates(chapterId: string) { return invoke("list_knowledge_candidates", { chapterId }); }
+export function extractChapterCandidates(input: IpcRequests["extract_chapter_candidates"]["input"]) {
+  return invoke("extract_chapter_candidates", { input });
 }
 export function listChapterExtractions(chapterId: string) {
-  return invoke<ChapterExtractionProposal[]>("list_chapter_extractions", { chapterId });
+  return invoke("list_chapter_extractions", { chapterId });
 }
-export function updateExtractionItem(input: {
-  target: ExtractionItemTarget; payload: Record<string, unknown>;
-}) {
-  return invoke<ChapterExtractionItem>("update_extraction_item", input);
+export function updateExtractionItem(input: IpcRequests["update_extraction_item"]) {
+  return invoke("update_extraction_item", input);
 }
-export function decideExtractionItem(input: {
-  target: ExtractionItemTarget; decision: "DEFERRED" | "REJECTED";
-}) {
-  return invoke<ChapterExtractionItem>("decide_extraction_item", input);
+export function decideExtractionItem(input: IpcRequests["decide_extraction_item"] & { decision: "DEFERRED" | "REJECTED" }) {
+  return invoke("decide_extraction_item", input);
 }
-export function adoptExtractionItem(input: {
-  target: ExtractionItemTarget;
-}) {
-  return invoke<ChapterExtractionItem>("adopt_extraction_item", input);
+export function adoptExtractionItem(input: IpcRequests["adopt_extraction_item"]) {
+  return invoke("adopt_extraction_item", input);
 }
 
 export function listDiscussionSessions() {
-  return invoke<DiscussionSession[]>("list_discussion_sessions");
+  return invoke("list_discussion_sessions");
 }
 
-export function createDiscussionSession(input: {
-  title: string; scopeKind: DiscussionScopeKind; scopeId: string | null; scopeText: string | null;
-  topicKind?: DiscussionTopicKind; linkedEntityId?: string | null;
-}) {
-  return invoke<DiscussionSession>("create_discussion_session", input);
+export function createDiscussionSession(input: IpcRequests["create_discussion_session"]) {
+  return invoke("create_discussion_session", input);
 }
 
 export function listDiscussionMessages(sessionId: string, limit = 100, beforeMessageId?: string) {
-  return invoke<DiscussionMessage[]>("list_discussion_messages", { sessionId, limit, beforeMessageId });
+  return invoke("list_discussion_messages", { sessionId, limit, beforeMessageId });
 }
 
 export function getDiscussionWorkspace(sessionId: string) {
-  return invoke<DiscussionWorkspace>("get_discussion_workspace", { sessionId });
+  return invoke("get_discussion_workspace", { sessionId });
 }
 export function saveDiscussionWorkspace(workspace: DiscussionWorkspace) {
-  return invoke<DiscussionWorkspace>("save_discussion_workspace", { workspace });
+  return invoke("save_discussion_workspace", { workspace });
 }
 export function listDiscussionDraftRevisions(sessionId: string, beforeVersion?: number) {
-  return invoke<DiscussionWorkspace[]>("list_discussion_draft_revisions", { sessionId, beforeVersion });
+  return invoke("list_discussion_draft_revisions", { sessionId, beforeVersion });
 }
 export function listDiscussionDesignProposals(sessionId: string, beforeId?: string) {
-  return invoke<DiscussionDesignProposal[]>("list_discussion_design_proposals", { sessionId, beforeId });
+  return invoke("list_discussion_design_proposals", { sessionId, beforeId });
 }
-export function summarizeDiscussionDesign(input: {
-  sessionId: string; profileId: string; expectedWorkspaceVersion: number;
-  temperature?: number; maxOutputTokens?: number;
-}) {
-  return invoke<DiscussionDesignProposal>("summarize_discussion_design", { input });
+export function summarizeDiscussionDesign(input: IpcRequests["summarize_discussion_design"]["input"]) {
+  return invoke("summarize_discussion_design", { input });
 }
 export function confirmDiscussionDesign(id: string, entities: DiscussionDesignEntity[]) {
-  return invoke<string[]>("confirm_discussion_design", { id, entities });
+  return invoke("confirm_discussion_design", { id, entities });
 }
 export function listAuthorSettings() {
-  return invoke<AuthorSetting[]>("list_author_settings");
+  return invoke("list_author_settings");
 }
 
 export function listDiscussionCandidates(sessionId: string) {
-  return invoke<DiscussionCandidate[]>("list_discussion_candidates", { sessionId });
+  return invoke("list_discussion_candidates", { sessionId });
 }
 
-export function createDiscussionCandidate(input: {
-  sessionId: string;
-  messageId: string;
-  kind: DiscussionCandidateKind;
-  content: string;
-  targetSectionId?: string;
-}) {
-  return invoke<DiscussionCandidate>("create_discussion_candidate", input);
+export function createDiscussionCandidate(input: IpcRequests["create_discussion_candidate"]) {
+  return invoke("create_discussion_candidate", input);
 }
 
-export function dismissDiscussionCandidate(input: {
-  id: string; expectedStatus: DiscussionCandidateStatus;
-}) {
-  return invoke<DiscussionCandidate>("dismiss_discussion_candidate", input);
+export function dismissDiscussionCandidate(input: IpcRequests["dismiss_discussion_candidate"]) {
+  return invoke("dismiss_discussion_candidate", input);
 }
 
-export function promoteDiscussionCandidate(input: {
-  id: string; expectedStatus: DiscussionCandidateStatus;
-}) {
-  return invoke<DiscussionCandidate>("promote_discussion_candidate", input);
+export function promoteDiscussionCandidate(input: IpcRequests["promote_discussion_candidate"]) {
+  return invoke("promote_discussion_candidate", input);
 }
 
-export function promoteDiscussionCandidateToForeshadowingReview(input: {
-  id: string; expectedStatus: DiscussionCandidateStatus; evidenceAnchorId: string;
-}) {
-  return invoke<DiscussionCandidate>("promote_discussion_candidate_to_foreshadowing_review", input);
+export function promoteDiscussionCandidateToForeshadowingReview(input: IpcRequests["promote_discussion_candidate_to_foreshadowing_review"]) {
+  return invoke("promote_discussion_candidate_to_foreshadowing_review", input);
 }
 
-export function askProjectDiscussion(input: {
-  sessionId: string;
-  profileId: string;
-  message: string;
-  temperature?: number;
-  maxOutputTokens?: number;
-}) {
-  return invoke<DiscussionExchange>("ask_project_discussion", { input });
+export function askProjectDiscussion(input: IpcRequests["ask_project_discussion"]["input"]) {
+  return invoke("ask_project_discussion", { input });
 }
-export function reviewKnowledgeCandidate(input: { id: string; expectedStatus: CandidateStatus; decision: ReviewDecision; reviewer: string }) {
-  return invoke<KnowledgeCandidate>("review_knowledge_candidate", input);
+export function reviewKnowledgeCandidate(input: IpcRequests["review_knowledge_candidate"]) {
+  return invoke("review_knowledge_candidate", input);
 }
-export function detectCandidateConflicts(chapterId: string) { return invoke<KnowledgeConflict[]>("detect_candidate_conflicts", { chapterId }); }
-export function finalizeKnowledgeCandidates(input: { chapterId: string; candidateIds: string[]; actor: string }) {
-  return invoke<ChangeSet>("finalize_knowledge_candidates", input);
+export function detectCandidateConflicts(chapterId: string) { return invoke("detect_candidate_conflicts", { chapterId }); }
+export function finalizeKnowledgeCandidates(input: IpcRequests["finalize_knowledge_candidates"]) {
+  return invoke("finalize_knowledge_candidates", input);
 }
-export function rebuildWorldState(actor: string) { return invoke<WorldState>("rebuild_world_state", { actor }); }
-export function createRelation(relation: Relation) { return invoke<Relation>("create_relation", { relation }); }
-export function updateRelation(relation: Relation, expectedVersion: number) { return invoke<Relation>("update_relation", { relation, expectedVersion }); }
-export function createEvent(event: Event) { return invoke<Event>("create_event", { event }); }
-export function updateEvent(event: Event, expectedVersion: number) { return invoke<Event>("update_event", { event, expectedVersion }); }
-export function createBelief(belief: Belief) { return invoke<Belief>("create_belief", { belief }); }
-export function updateBelief(belief: Belief, expectedVersion: number) { return invoke<Belief>("update_belief", { belief, expectedVersion }); }
-export function createForeshadowing(foreshadowing: Foreshadowing) { return invoke<Foreshadowing>("create_foreshadowing", { foreshadowing }); }
-export function updateForeshadowing(foreshadowing: Foreshadowing, expectedVersion: number) { return invoke<Foreshadowing>("update_foreshadowing", { foreshadowing, expectedVersion }); }
-export function listRelations() { return invoke<Relation[]>("list_relations"); }
-export function listEvents() { return invoke<Event[]>("list_events"); }
-export function listBeliefs() { return invoke<Belief[]>("list_beliefs"); }
-export function listForeshadowings() { return invoke<Foreshadowing[]>("list_foreshadowings"); }
+export function rebuildWorldState(actor: string) { return invoke("rebuild_world_state", { actor }); }
+export function createRelation(relation: Relation) { return invoke("create_relation", { relation }); }
+export function updateRelation(relation: Relation, expectedVersion: number) { return invoke("update_relation", { relation, expectedVersion }); }
+export function createEvent(event: Event) { return invoke("create_event", { event }); }
+export function updateEvent(event: Event, expectedVersion: number) { return invoke("update_event", { event, expectedVersion }); }
+export function createBelief(belief: Belief) { return invoke("create_belief", { belief }); }
+export function updateBelief(belief: Belief, expectedVersion: number) { return invoke("update_belief", { belief, expectedVersion }); }
+export function createForeshadowing(foreshadowing: Foreshadowing) { return invoke("create_foreshadowing", { foreshadowing }); }
+export function updateForeshadowing(foreshadowing: Foreshadowing, expectedVersion: number) { return invoke("update_foreshadowing", { foreshadowing, expectedVersion }); }
+export function listRelations() { return invoke("list_relations"); }
+export function listEvents() { return invoke("list_events"); }
+export function listBeliefs() { return invoke("list_beliefs"); }
+export function listForeshadowings() { return invoke("list_foreshadowings"); }
 export function assembleContextWithProjectKnowledge(input: AssembleContextInput) {
-  return invoke<ContextPackage>("assemble_context_with_project_knowledge", { input, objectIds: input.knowledgeObjectIds });
+  const { knowledgeObjectIds, ...request } = input;
+  return invoke("assemble_context_with_project_knowledge", { input: request, objectIds: knowledgeObjectIds });
 }
 
 export function getCurrentProject() {
-  return invoke<ProjectManifest | null>("current_project");
+  return invoke("current_project");
 }
 
 export function listRecentProjects() {
-  return invoke<RecentProject[]>("list_recent_projects");
+  return invoke("list_recent_projects");
 }
 
 export function createProject(root: string, name: string) {
-  return invoke<ProjectManifest>("create_project", { root, name });
+  return invoke("create_project", { root, name });
 }
 
 export function openProject(root: string) {
-  return invoke<ProjectManifest>("open_project", { root });
+  return invoke("open_project", { root });
 }
 
 export function closeProject() {
-  return invoke<ProjectManifest | null>("close_project");
+  return invoke("close_project");
 }
 
 export function listPlanNodes() {
-  return invoke<PlanNode[]>("list_plan_nodes");
+  return invoke("list_plan_nodes");
 }
 
 export function listPlanningSections() {
-  return invoke<PlanningSection[]>("list_planning_sections");
+  return invoke("list_planning_sections");
 }
 
 export function savePlanningSection(section: PlanningSection) {
-  return invoke<PlanningSection>("save_planning_section_checked", { section, expectedVersion: section.version ?? 0 });
+  return invoke("save_planning_section_checked", { section, expectedVersion: section.version ?? 0 });
 }
 
 export function currentManuscriptDraft(chapterId: string) {
-  return invoke<ManuscriptDraft>("current_manuscript_draft", { chapterId });
+  return invoke("current_manuscript_draft", { chapterId });
 }
 
-export function saveManuscriptDraft(input: { chapterId: string; baseRevisionId?: string; documentJson: string; expectedVersion: number }) {
-  return invoke<ManuscriptDraft>("save_manuscript_draft", input);
+export function saveManuscriptDraft(input: IpcRequests["save_manuscript_draft"]) {
+  return invoke("save_manuscript_draft", input);
 }
 
-export function discardManuscriptDraft(input: { chapterId: string; expectedVersion: number }) {
-  return invoke<ManuscriptDraft>("discard_manuscript_draft", input);
+export function discardManuscriptDraft(input: IpcRequests["discard_manuscript_draft"]) {
+  return invoke("discard_manuscript_draft", input);
 }
 
-export function commitManuscriptDraft(input: { chapterId: string; baseRevisionId?: string; documentJson: string; expectedVersion: number }) {
-  return invoke<ManuscriptDraftCommit>("commit_manuscript_draft", input);
+export function commitManuscriptDraft(input: IpcRequests["commit_manuscript_draft"]) {
+  return invoke("commit_manuscript_draft", input);
 }
 export function listPlanningEmbeddings() {
-  return invoke<PlanningEmbedding[]>("list_planning_embeddings");
+  return invoke("list_planning_embeddings");
 }
 export function generatePlanningEmbedding(profileId: string, sectionId: string) {
-  return invoke<PlanningEmbedding>("generate_planning_embedding", { profileId, sectionId });
+  return invoke("generate_planning_embedding", { profileId, sectionId });
 }
 export function clearPlanningEmbedding(sectionId: string) {
-  return invoke<void>("clear_planning_embedding", { sectionId });
+  return invoke("clear_planning_embedding", { sectionId });
 }
 
-export function createPlanNode(input: {
-  parentId?: string;
-  kind: PlanNodeKind;
-  title: string;
-}) {
-  return invoke<PlanNode>("create_plan_node", input);
+export function createPlanNode(input: IpcRequests["create_plan_node"]) {
+  return invoke("create_plan_node", input);
 }
 
-export function updatePlanNodeChecked(input: { id: string; title: string; archived: boolean; expectedVersion: number }) {
-  return invoke<PlanNode>("update_plan_node_checked", input);
+export function updatePlanNodeChecked(input: IpcRequests["update_plan_node_checked"]) {
+  return invoke("update_plan_node_checked", input);
 }
 
-export function movePlanNode(input: { id: string; parentId?: string; expectedVersion: number }) {
-  return invoke<PlanNode>("move_plan_node", input);
+export function movePlanNode(input: IpcRequests["move_plan_node"]) {
+  return invoke("move_plan_node", input);
 }
 
 export function currentManuscript(chapterId: string) {
-  return invoke<ManuscriptRevision | null>("current_manuscript", { chapterId });
+  return invoke("current_manuscript", { chapterId });
 }
 
 export function listManuscriptRevisions(chapterId: string) {
-  return invoke<ManuscriptRevision[]>("list_manuscript_revisions", { chapterId });
+  return invoke("list_manuscript_revisions", { chapterId });
 }
-
-export type PlanBatchInput = {
-  expectedProjectId: string;
-  parentId: string;
-  expectedParentRevision: number;
-  expectedSourceVersion: number;
-  source: PlanningSection;
-  candidates: Array<{ title: string; content: string }>;
-};
-export type PlanBatchReceipt = { nodes: PlanNode[]; source: PlanningSection & { version: number } };
 
 export function adoptPlanBatch(input: PlanBatchInput) {
-  return invoke<PlanBatchReceipt>("adopt_plan_batch", { input });
+  return invoke("adopt_plan_batch", { input });
 }
-
-export type DiscussionSourceRequest = {
-  candidateId: string; projectId?: string; sessionId?: string; sectionId?: string;
-};
-export type PlanningDiscussionSource = {
-  candidate: DiscussionCandidate; projectId: string; sessionTitle: string;
-};
-export type DiscussionSource = {
-  session: DiscussionSession; candidate: DiscussionCandidate; message: DiscussionMessage;
-  planningTargetAvailable: boolean; planningTargetKind: string | null;
-};
 export function getDiscussionSource(request: DiscussionSourceRequest) {
-  return invoke<DiscussionSource>("get_discussion_source", { request });
+  return invoke("get_discussion_source", { request });
 }
 export function listPlanningDiscussionSources(sectionId: string, projectId: string, limit = 20, offset = 0) {
-  return invoke<PlanningDiscussionSource[]>("list_planning_discussion_sources", { sectionId, projectId, limit, offset });
+  return invoke("list_planning_discussion_sources", { sectionId, projectId, limit, offset });
 }
-
-export type EntityCard = { entity: Entity; revision: EntityRevision };
-export type ChapterEntityReferences = { projectId: string; chapterId: string; version: number; entities: EntityCard[] };
-export type EntityChapter = { chapterId: string; title: string; archived: boolean };
 export function listEntityCards(includeArchived = false) {
-  return invoke<EntityCard[]>("list_entity_cards", { includeArchived });
+  return invoke("list_entity_cards", { includeArchived });
 }
 export function getChapterEntityReferences(projectId: string, chapterId: string) {
-  return invoke<ChapterEntityReferences>("get_chapter_entity_references", { projectId, chapterId });
+  return invoke("get_chapter_entity_references", { projectId, chapterId });
 }
-export function saveChapterEntityReferences(input: { projectId: string; chapterId: string; expectedVersion: number; entityIds: string[] }) {
-  return invoke<ChapterEntityReferences>("save_chapter_entity_references", { input });
+export function saveChapterEntityReferences(input: IpcRequests["save_chapter_entity_references"]["input"]) {
+  return invoke("save_chapter_entity_references", { input });
 }
 export function listEntityChapters(projectId: string, entityId: string) {
-  return invoke<EntityChapter[]>("list_entity_chapters", { projectId, entityId });
+  return invoke("list_entity_chapters", { projectId, entityId });
 }
 
 export function getManuscriptSource(request: ManuscriptSourceRequest) {
-  return invoke<ManuscriptSource>("get_manuscript_source", { request });
+  return invoke("get_manuscript_source", { request });
 }
 
-export function saveRecoveryLog(input: { chapterId: string; documentJson: string }) {
-  return invoke<void>("save_recovery_log", input);
+export function saveRecoveryLog(input: IpcRequests["save_recovery_log"]) {
+  return invoke("save_recovery_log", input);
 }
 
 export function listRecoveryLogs(chapterId: string) {
-  return invoke<RecoveryLog[]>("list_recovery_logs", { chapterId });
+  return invoke("list_recovery_logs", { chapterId });
 }
 
 export function listAllRecoveryLogs() {
-  return invoke<RecoveryLog[]>("list_all_recovery_logs");
+  return invoke("list_all_recovery_logs");
 }
 
 export function clearRecoveryLogs(chapterId: string) {
-  return invoke<void>("clear_recovery_logs", { chapterId });
+  return invoke("clear_recovery_logs", { chapterId });
 }
 
 export function enqueueChapterSummaryRefresh(chapterId: string) {
-  return invoke<Job>("enqueue_chapter_summary_refresh", { chapterId });
+  return invoke("enqueue_chapter_summary_refresh", { chapterId });
 }
 export function enqueueProjectSettingSummaryRefresh() {
-  return invoke<Job>("enqueue_project_setting_summary_refresh");
+  return invoke("enqueue_project_setting_summary_refresh");
 }
 
-export function mergeManuscript(input: { base: string; current: string; draft: string }) {
-  return invoke<MergeResult>("merge_manuscript", input);
+export function mergeManuscript(input: IpcRequests["merge_manuscript"]) {
+  return invoke("merge_manuscript", input);
 }
 
 export function listModelProfiles() {
-  return invoke<ModelProfile[]>("list_model_profiles");
+  return invoke("list_model_profiles");
 }
 
 export function getAiTaskPreferences() {
-  return invoke<AiTaskPreferences>("get_ai_task_preferences");
+  return invoke("get_ai_task_preferences");
 }
 
 export function saveAiTaskPreferences(preferences: AiTaskPreferences) {
-  return invoke<AiTaskPreferences>("save_ai_task_preferences", { preferences });
+  return invoke("save_ai_task_preferences", { preferences });
 }
 export function getAiBudgetSettings() {
-  return invoke<AiBudgetSettings>("get_ai_budget_settings");
+  return invoke("get_ai_budget_settings");
 }
 export function saveAiBudgetSettings(settings: AiBudgetSettings) {
-  return invoke<AiBudgetSettings>("save_ai_budget_settings", { settings });
+  return invoke("save_ai_budget_settings", { settings });
 }
 export function getWritingReviewPolicy() {
-  return invoke<WritingReviewPolicy>("get_writing_review_policy");
+  return invoke("get_writing_review_policy");
 }
 export function saveWritingReviewPolicy(policy: WritingReviewPolicy) {
-  return invoke<WritingReviewPolicy>("save_writing_review_policy", { policy });
+  return invoke("save_writing_review_policy", { policy });
 }
 export function getAuditFlowSettings() {
-  return invoke<AuditFlowSettings>("get_audit_flow_settings");
+  return invoke("get_audit_flow_settings");
 }
 export function saveAuditFlowSettings(settings: AuditFlowSettings) {
-  return invoke<AuditFlowSettings>("save_audit_flow_settings", { settings });
+  return invoke("save_audit_flow_settings", { settings });
 }
 export function getProjectAiTaskOverrides() {
-  return invoke<ProjectAiTaskOverrides>("get_project_ai_task_overrides");
+  return invoke("get_project_ai_task_overrides");
 }
 export function saveProjectAiTaskOverride(task: keyof AiTaskPreferences, preference: AiTaskPreference) {
-  return invoke<ProjectAiTaskOverrides>("save_project_ai_task_override", { task, preference });
+  return invoke("save_project_ai_task_override", { task, preference });
 }
 export function saveProjectAiTaskOverrides(preferences: AiTaskPreferences) {
-  return invoke<ProjectAiTaskOverrides>("save_project_ai_task_overrides", { preferences });
+  return invoke("save_project_ai_task_overrides", { preferences });
 }
 export function removeProjectAiTaskOverride(task: keyof AiTaskPreferences) {
-  return invoke<ProjectAiTaskOverrides>("remove_project_ai_task_override", { task });
+  return invoke("remove_project_ai_task_override", { task });
 }
 
 export function upsertModelProfile(input: ModelProfileInput) {
-  return invoke<ModelProfile>("upsert_model_profile", { input });
+  return invoke("upsert_model_profile", { input });
 }
 
 export function saveModelSecret(profileId: string, secret: string) {
-  return invoke<ModelProfile>("save_model_secret", { profileId, secret });
+  return invoke("save_model_secret", { profileId, secret });
 }
 
 export function deleteModelSecret(profileId: string) {
-  return invoke<ModelProfile>("delete_model_secret", { profileId });
+  return invoke("delete_model_secret", { profileId });
 }
 
 export function testModelProfile(profileId: string) {
-  return invoke<ModelConnectionResponse>("test_model_profile", { profileId });
+  return invoke("test_model_profile", { profileId });
 }
 
 export function extractEntitiesFromText(profileId: string, entityType: EntityType, entityName: string, briefSummary: string, applicabilityScope: string, sourceText: string, userGuidance?: string, temperature?: number, maxOutputTokens?: number) {
-  return invoke<ExtractedEntity[]>("extract_entities_from_text", { input: { profileId, entityType, entityName, briefSummary, applicabilityScope, sourceText, userGuidance, temperature, maxOutputTokens } });
+  return invoke("extract_entities_from_text", { input: { profileId, entityType, entityName, briefSummary, applicabilityScope, sourceText, userGuidance, temperature, maxOutputTokens } });
 }
 
-export function listAiProposals(input: {
-  reviewPurpose?: ReviewPurpose;
-  chapterId: string;
-  chapterTitle: string;
-  chapterPlan: string;
-  volumePlan: string;
-  documentJson: string;
-  instruction?: string;
-}) {
-  return invoke<AiProposalReview[]>("list_ai_proposals", input);
+export function listAiProposals(input: IpcRequests["list_ai_proposals"]) {
+  return invoke("list_ai_proposals", input);
 }
 export function getConsistencyReviewTrace(proposalId: string) {
-  return invoke<ReviewTrace>("get_consistency_review_trace", { proposalId });
+  return invoke("get_consistency_review_trace", { proposalId });
 }
 export function listAiRuns(limit?: number) {
-  return invoke<AiRun[]>("list_ai_runs", { limit });
+  return invoke("list_ai_runs", { limit });
 }
 export function getAiRunRequest(runId: string) {
-  return invoke<AiRunRequest>("get_ai_run_request", { runId });
+  return invoke("get_ai_run_request", { runId });
 }
 export function getAiUsageSummary(days = 30) {
-  return invoke<AiUsageSummary>("get_ai_usage_summary", { days });
+  return invoke("get_ai_usage_summary", { days });
 }
 export function getAiQualitySummary(limit = 20, days = 90) {
-  return invoke<AiQualitySummary>("get_ai_quality_summary", { limit, days });
+  return invoke("get_ai_quality_summary", { limit, days });
 }
 export function rateAiProposal(id: string, rating: "HELPFUL" | "NOT_HELPFUL", note?: string) {
-  return invoke<AiProposalFeedback>("rate_ai_proposal", { id, rating, note });
+  return invoke("rate_ai_proposal", { id, rating, note });
 }
 
-export function generateAiProposal(input: {
-  profileId: string; chapterId: string; action: AiAction; chapterTitle: string; chapterPlan: string; volumePlan: string;
-  documentJson: string; reviewPurpose?: ReviewPurpose; selection?: string; instruction?: string; stream: boolean;
-  temperature?: number; maxOutputTokens?: number;
-}) {
-  return invoke<AiProposal>("generate_ai_proposal", input);
+export function generateAiProposal(input: IpcRequests["generate_ai_proposal"]) {
+  return invoke("generate_ai_proposal", input);
 }
 
-export function generatePlanningContent(input: { profileId: string; mode: "GENERATE" | "EXTRACT"; sectionTitle: string; sectionPrompt: string; existingContext: string; referenceContent: string; userGuidance: string; allowRewrite: boolean }) {
-  return invoke<string>("generate_planning_content", input);
+export function generatePlanningContent(input: IpcRequests["generate_planning_content"]) {
+  return invoke("generate_planning_content", input);
 }
 
 export function enqueuePlanningAiJob(input: PlanningAiJobInput) {
-  return invoke<Job>("enqueue_planning_ai_job", { input });
+  return invoke("enqueue_planning_ai_job", { input });
 }
 export function getPlanningAiJobRequest(jobId: string) {
-  return invoke<PlanningAiRequestPreview>("get_planning_ai_job_request", { jobId });
+  return invoke("get_planning_ai_job_request", { jobId });
 }
 
 export function cancelAiTask(taskId: string) {
-  return invoke<void>("cancel_ai_task", { taskId });
+  return invoke("cancel_ai_task", { taskId });
 }
 
-export function listJobs() { return invoke<Job[]>("list_jobs"); }
-export function listJobEvents(jobId: string) { return invoke<JobEvent[]>("list_job_events", { jobId }); }
+export function listJobs() { return invoke("list_jobs"); }
+export function listJobEvents(jobId: string) { return invoke("list_job_events", { jobId }); }
 export function enqueueJob(jobType: JobType, payload = "{}") {
-  return invoke<Job>("enqueue_job", { jobType, payload });
+  return invoke("enqueue_job", { jobType, payload });
 }
-export function cancelJob(id: string) { return invoke<Job>("cancel_job", { id }); }
-export function retryJob(id: string) { return invoke<Job>("retry_job", { id }); }
-export function acknowledgeFailedJobs() { return invoke<number>("acknowledge_failed_jobs"); }
-export function claimNextJob() { return invoke<Job | null>("claim_next_job"); }
-export function runNextJob() { return invoke<Job | null>("run_next_job"); }
-export function healthScan() { return invoke<HealthScanReport>("health_scan"); }
-export function startupRecoveryReport() { return invoke<StartupRecoveryReport>("startup_recovery_report"); }
-export function createDiagnosticPackage() { return invoke<string>("create_diagnostic_package"); }
+export function cancelJob(id: string) { return invoke("cancel_job", { id }); }
+export function retryJob(id: string) { return invoke("retry_job", { id }); }
+export function acknowledgeFailedJobs() { return invoke("acknowledge_failed_jobs"); }
+export function claimNextJob() { return invoke("claim_next_job"); }
+export function runNextJob() { return invoke("run_next_job"); }
+export function healthScan() { return invoke("health_scan"); }
+export function startupRecoveryReport() { return invoke("startup_recovery_report"); }
+export function createDiagnosticPackage() { return invoke("create_diagnostic_package"); }
 
-export function decideAiProposal(input: { id: string; status: Exclude<AiProposalStatus, "PENDING">; acceptedText?: string }) {
-  return invoke<AiProposal>("decide_ai_proposal", input);
+export function decideAiProposal(input: IpcRequests["decide_ai_proposal"] & { status: Exclude<AiProposalStatus, "PENDING"> }) {
+  return invoke("decide_ai_proposal", input);
 }
 
 export function invalidateProjectQueries(queryClient: { invalidateQueries: (options: { queryKey: string[] }) => Promise<unknown> }) {

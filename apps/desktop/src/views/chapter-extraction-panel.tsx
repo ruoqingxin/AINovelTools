@@ -39,21 +39,22 @@ const statusLabels: Record<ExtractionItemStatus, string> = {
 };
 
 function itemTitle(item: ChapterExtractionItem) {
-  const name = item.payload.name;
+  const payload = payloadObject(item.payload);
+  const name = payload?.name;
   if (typeof name === "string" && name.trim()) return name;
-  const subject = item.payload.subject;
-  const predicate = item.payload.predicate;
-  const object = item.payload.object;
+  const subject = payload?.subject;
+  const predicate = payload?.predicate;
+  const object = payload?.object;
   if (typeof subject === "string" && typeof predicate === "string" && typeof object === "string") {
     return `${subject} · ${predicate} · ${object}`;
   }
-  const fromHint = item.payload.fromHint;
-  const toHint = item.payload.toHint;
-  const relationType = item.payload.relationType;
+  const fromHint = payload?.fromHint;
+  const toHint = payload?.toHint;
+  const relationType = payload?.relationType;
   if (typeof fromHint === "string" && typeof toHint === "string" && typeof relationType === "string") {
     return `${fromHint} · ${relationType} · ${toHint}`;
   }
-  const title = item.payload.title;
+  const title = payload?.title;
   return typeof title === "string" && title.trim() ? title : "未命名候选";
 }
 
@@ -61,13 +62,18 @@ function factLabel(fact: Fact) {
   return `${fact.subject} · ${fact.predicate} · ${fact.object}`;
 }
 
-function stringValue(payload: Record<string, unknown>, key: string) {
-  const value = payload[key];
+function payloadObject(payload: unknown): Record<string, unknown> | null {
+  return payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload as Record<string, unknown> : null;
+}
+
+function stringValue(payload: unknown, key: string) {
+  const value = payloadObject(payload)?.[key];
   return typeof value === "string" ? value : "";
 }
 
-function uuidValues(payload: Record<string, unknown>, key: string) {
-  const value = payload[key];
+function uuidValues(payload: unknown, key: string) {
+  const value = payloadObject(payload)?.[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 

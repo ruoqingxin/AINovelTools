@@ -5,7 +5,9 @@ pub const DISCUSSION_DRAFT_MAX_CHARS: usize = 50_000;
 const MAX_PROPOSAL_ENTITIES: usize = 20;
 const MAX_PROPOSAL_CHARS: usize = 100_000;
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DiscussionTopicKind {
     #[default]
@@ -365,7 +367,7 @@ impl DiscussionTopicKind {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscussionDraft {
     pub chosen: String,
@@ -373,7 +375,7 @@ pub struct DiscussionDraft {
     pub questions: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscussionWorkspace {
     pub session_id: Uuid,
@@ -383,7 +385,7 @@ pub struct DiscussionWorkspace {
     pub version: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscussionDesignEntity {
     pub entity_type: EntityType,
@@ -413,7 +415,7 @@ fn author_only() -> String {
     "AUTHOR_ONLY".to_owned()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscussionDesignProposal {
     pub id: Uuid,
@@ -428,7 +430,7 @@ pub struct DiscussionDesignProposal {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorSetting {
     pub id: Uuid,

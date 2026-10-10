@@ -10,7 +10,7 @@ use std::sync::{
 use std::time::Instant;
 use tauri::{Emitter, Manager};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExtractedEntity {
     pub name: String,
@@ -19,7 +19,7 @@ pub(crate) struct ExtractedEntity {
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PlanningAiJobInput {
     pub(crate) profile_id: uuid::Uuid,
@@ -45,7 +45,7 @@ pub(crate) struct PlanningAiJobInput {
     pub(crate) final_request_estimated_input_tokens: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExtractEntitiesInput {
     profile_id: uuid::Uuid,
@@ -59,7 +59,7 @@ pub(crate) struct ExtractEntitiesInput {
     max_output_tokens: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExtractChapterCandidatesInput {
     profile_id: uuid::Uuid,

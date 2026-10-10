@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::errors::ApiError;
 use crate::state::ProjectState;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AskProjectDiscussionInput {
     pub(crate) session_id: uuid::Uuid,
@@ -16,7 +16,7 @@ pub(crate) struct AskProjectDiscussionInput {
     pub(crate) max_output_tokens: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiscussionExchange {
     pub(crate) user_message: novel_infrastructure::DiscussionMessage,
@@ -227,7 +227,7 @@ pub(crate) fn list_author_settings(
         .map_err(ApiError::from)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SummarizeDiscussionDesignInput {
     pub(crate) session_id: uuid::Uuid,
