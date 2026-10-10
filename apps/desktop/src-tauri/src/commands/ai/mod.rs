@@ -92,70 +92,6 @@ struct ChapterExtractionAiItem {
     status: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ReviewClaimExtractionResponse {
-    #[serde(default)]
-    claims: Vec<ExtractedReviewClaim>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ExtractedReviewClaim {
-    #[serde(rename = "type")]
-    claim_type: String,
-    subject: String,
-    predicate: String,
-    object: String,
-    quote: String,
-    block_id: String,
-    #[serde(default = "default_claim_importance")]
-    importance: u8,
-    #[serde(default)]
-    confidence: u8,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SemanticReviewResponse {
-    #[serde(default)]
-    summary: String,
-    #[serde(default)]
-    findings: Vec<SemanticReviewFinding>,
-    #[serde(default)]
-    omitted: Vec<SemanticReviewOmitted>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SemanticReviewFinding {
-    claim_id: String,
-    status: String,
-    #[serde(default)]
-    severity: String,
-    #[serde(default)]
-    problem: String,
-    #[serde(default)]
-    evidence_ids: Vec<String>,
-    #[serde(default)]
-    suggestion: String,
-    #[serde(default)]
-    confidence: u8,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SemanticReviewOmitted {
-    #[serde(default)]
-    label: String,
-    #[serde(default)]
-    reason: String,
-}
-
-fn default_claim_importance() -> u8 {
-    3
-}
-
 const PLANNING_CONTEXT_RESERVE_TOKENS: u32 = 2_048;
 const EXTRACTION_PROMPT_VERSION: &str = "r5.1-chapter-extraction-v2";
 
@@ -559,11 +495,12 @@ mod task_generation_options_tests {
 }
 
 mod extraction;
+mod generation;
 mod model_settings;
 mod planning;
 mod review;
 
 pub(crate) use extraction::*;
+pub(crate) use generation::*;
 pub(crate) use model_settings::*;
 pub(crate) use planning::*;
-pub(crate) use review::*;

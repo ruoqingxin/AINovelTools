@@ -693,4 +693,41 @@ describe("AiWritingPanel consistency review", () => {
       await waitFor(() => expect(pending).toHaveBeenLastCalledWith(false));
     } finally { confirm.mockRestore(); }
   });
+
+  it("retains feedback typed during submission when hidden and later reopened", async () => {
+    const draft = { ...reviewProposal, id: "draft-feedback", action: "DRAFT" as const, outputText: "候选正文" };
+    mocks.listAiProposals.mockReset().mockResolvedValue([{ ...review, proposal: draft, consistency: null }]);
+    let finish!: () => void;
+    mocks.rateAiProposal.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const pending = vi.fn();
+    const props = { chapterId: "chapter-1", chapterTitle: "入城", chapterPlan: "", volumeId: "", volumePlan: "", draft: "", editor: null, onPendingChange: pending };
+    const view = render(<QueryClientProvider client={client}><AiWritingPanel {...props} /></QueryClientProvider>);
+    const input = await screen.findByLabelText("候选质量反馈");
+    fireEvent.change(input, { target: { value: "提交的评价" } });
+    fireEvent.click(screen.getByRole("button", { name: "有帮助" }));
+    await waitFor(() => expect(mocks.rateAiProposal).toHaveBeenCalledWith(draft.id, "HELPFUL", "提交的评价"));
+    fireEvent.change(input, { target: { value: "提交期间的新评价" } });
+    view.rerender(<QueryClientProvider client={client}><AiWritingPanel {...props} active={false} /></QueryClientProvider>);
+    await act(async () => finish());
+    view.rerender(<QueryClientProvider client={client}><AiWritingPanel {...props} /></QueryClientProvider>);
+    expect(screen.getByLabelText("候选质量反馈")).toHaveValue("提交期间的新评价");
+    expect(pending).toHaveBeenLastCalledWith(true);
+  });
+
+  it("keeps review trace disclosure mounted without reading while hidden", async () => {
+    mocks.listAiProposals.mockReset().mockResolvedValue([{ ...review, hasReviewTrace: true }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const props = { mode: "review" as const, chapterId: "chapter-1", chapterTitle: "入城", chapterPlan: "入城", volumeId: "", volumePlan: "", draft: "", editor: null };
+    const view = render(<QueryClientProvider client={client}><AiWritingPanel {...props} /></QueryClientProvider>);
+    const details = (await screen.findByText("查看声明与依据")).closest("details")!;
+    fireEvent.click(screen.getByText("查看声明与依据"));
+    await waitFor(() => expect(mocks.getConsistencyReviewTrace).toHaveBeenCalledOnce());
+    view.rerender(<QueryClientProvider client={client}><AiWritingPanel {...props} active={false} /></QueryClientProvider>);
+    await act(async () => { await client.invalidateQueries({ queryKey: ["review-trace"] }); });
+    expect(mocks.getConsistencyReviewTrace).toHaveBeenCalledOnce();
+    expect(screen.getByText("查看声明与依据").closest("details")).toBe(details);
+    view.rerender(<QueryClientProvider client={client}><AiWritingPanel {...props} /></QueryClientProvider>);
+    await waitFor(() => expect(mocks.getConsistencyReviewTrace).toHaveBeenCalledTimes(2));
+  });
 });

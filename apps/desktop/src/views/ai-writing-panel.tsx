@@ -1,72 +1,34 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { listen } from "@tauri-apps/api/event";
 import type { Editor } from "@tiptap/react";
 import { Ban, Check, ClipboardCheck, Columns2, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
-import { useDeferredValue, useEffect, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import {
   cancelAiTask,
-  decideAiProposal,
   enqueueChapterSummaryRefresh,
   errorMessage,
   getAuditFlowSettings,
   generateAiProposal,
-  getConsistencyReviewTrace,
   getWritingReviewPolicy,
-  listAiRuns,
   listAiProposals,
   listEntities,
   listModelProfiles,
   listPlanningSections,
   listSummaryMaterials,
-  rateAiProposal,
   type AiAction,
-  type AiConsistencyReport,
-  type AiConsistencySeverity,
-  type AiConsistencyVerdict,
-  type AiProposal,
   type AiProposalReview,
-  type ConsistencyReviewFreshness,
   type Job,
   type ReviewPurpose,
-  type ReviewTrace,
-  type WritingReviewPolicy,
 } from "../lib/tauri-client";
-import { classifyAiFailure } from "../lib/ai-failure";
 import { useJobs } from "../lib/jobs-query";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import { assessWritingReadiness, findWritingGapTargets } from "../lib/writing-readiness";
 import { AiModelNote } from "./ai-model-note";
 import { WritingReadinessPanel } from "./writing-readiness-panel";
-import { useCandidateEdits, useCandidateEditGuard } from "./use-candidate-edits";
-
-const actionLabels: Record<AiAction, string> = {
-  DRAFT: "AI 创作整章",
-  CONTINUE: "续写",
-  REWRITE: "重写选区",
-  POLISH: "润色选区",
-  SUMMARIZE: "章节摘要",
-  CONSISTENCY_CHECK: "一致性检查",
-};
-const consistencyVerdictLabels: Record<AiConsistencyVerdict, string> = {
-  PASS: "审核通过",
-  REVIEW: "需要复核",
-  BLOCKED: "审核阻断",
-  NEEDS_INPUT: "需补资料",
-  UNPARSED: "报告格式异常",
-};
-const consistencySeverityLabels: Record<AiConsistencySeverity, string> = {
-  BLOCKER: "阻断",
-  MAJOR: "严重",
-  MINOR: "一般",
-  INFO: "提示",
-};
-const reviewStatusLabels: Record<ReviewTrace["modelFindings"][number]["status"], string> = {
-  PASS: "通过",
-  NOTICE: "提示",
-  WARNING: "警告",
-  BLOCK: "阻断",
-  UNKNOWN: "无法确认",
-};
+import { useCandidateEditGuard } from "./use-candidate-edits";
+import { actionLabels, aiFailureMessage, buildLineDiff, consistencyAdmission, documentHasText } from "./ai-writing-utils";
+import { useAiTaskStream } from "./use-ai-task-stream";
+import { useAiProposalActions } from "./use-ai-proposal-actions";
+import { AiConsistencyReviewList } from "./ai-consistency-review-list";
 
 function isChapterSummaryJobFor(job: Job, chapterId: string) {
   if (job.jobType !== "REFRESH_CHAPTER_SUMMARY") return false;
@@ -77,193 +39,7 @@ function isChapterSummaryJobFor(job: Job, chapterId: string) {
   }
 }
 
-function consistencyAdmission(
-  report: AiConsistencyReport | null,
-  freshness: ConsistencyReviewFreshness | null,
-  policy: WritingReviewPolicy,
-) {
-  if (!report) {
-    return {
-      state: "blocked",
-      text: "当前作品采用严格准入，生成正文前必须完成一次与当前输入一致的创作准入检查。",
-    };
-  }
-  const blockerCount = report.findings.filter((finding) => finding.severity === "BLOCKER").length;
-  if (policy === "ADVISORY" && (report.verdict === "BLOCKED" || report.verdict === "NEEDS_INPUT")) {
-    return {
-      state: "advisory",
-      text: report.verdict === "BLOCKED"
-        ? `当前为建议模式，审核发现 ${blockerCount} 个阻断问题，但不会阻止生成正文。`
-        : "当前为建议模式，审核提示资料不足，但不会阻止生成正文。",
-    };
-  }
-  if (freshness === "STALE") {
-    return policy === "REQUIRED"
-      ? {
-          state: "stale",
-          text: "审核依据已经变化，严格准入已暂停生成。请按当前执行卡、正文和正式设定重新审核。",
-        }
-      : {
-          state: "stale",
-          text: "审核依据已经变化，这份报告已过期，不再阻止正文生成。请按当前执行卡、正文和正式设定重新审核。",
-        };
-  }
-  if (freshness === "UNVERIFIED") {
-    return policy === "REQUIRED"
-      ? {
-          state: "unverified",
-          text: "无法确认现有审核是否对应当前正文与设定，严格准入已暂停生成。请重新审核。",
-        }
-      : {
-          state: "unverified",
-          text: "暂时无法确认审核与当前内容是否一致，这份报告仅作提示，不再阻止生成。",
-        };
-  }
-  if (policy === "REQUIRED" && report.verdict === "UNPARSED") {
-    return {
-      state: "unparsed",
-      text: "审核报告格式无法解析，严格准入已暂停生成。请重新审核并确认报告格式。",
-    };
-  }
-  if (report.verdict === "BLOCKED") {
-    return {
-      state: "blocked",
-      text: `最近一次审核发现 ${blockerCount} 个阻断问题，整章创作已暂停。请先处理问题并关闭本次审核。`,
-    };
-  }
-  if (report.verdict === "NEEDS_INPUT") {
-    return {
-      state: "needs_input",
-      text: "审核发现部分正式依据未记录或无法确认。未知项可以保留，正文生成不会被阻断；请避免把推测写成既成事实。",
-    };
-  }
-  if (report.verdict === "REVIEW") {
-    return {
-      state: "review",
-      text: `审核有 ${report.findings.length} 条问题需要复核，不阻止生成，但建议先确认依据。`,
-    };
-  }
-  if (report.verdict === "PASS") {
-    return { state: "pass", text: "审核通过，未发现阻断正文生成的冲突。" };
-  }
-  return {
-    state: "unparsed",
-    text: "审核报告格式无法识别，请查看原始报告后再决定是否生成。",
-  };
-}
-
-function textContent(text: string) {
-  return text.split(/\r?\n/).map((line) => ({
-    type: "paragraph",
-    content: line ? [{ type: "text", text: line }] : undefined,
-  }));
-}
-
-function documentHasText(documentJson: string) {
-  if (!documentJson.trim()) return false;
-  try {
-    const visit = (value: unknown): boolean => {
-      if (!value || typeof value !== "object") return false;
-      if (Array.isArray(value)) return value.some(visit);
-      const record = value as Record<string, unknown>;
-      return typeof record.text === "string" && Boolean(record.text.trim())
-        || Object.values(record).some(visit);
-    };
-    return visit(JSON.parse(documentJson) as unknown);
-  } catch {
-    return true;
-  }
-}
-
-function aiFailureMessage(cause: unknown) {
-  const detail = errorMessage(cause).trim();
-  const failure = classifyAiFailure(detail);
-  if (failure.kind === "UNKNOWN") return detail || failure.label;
-  if (detail.startsWith(`${failure.label}：`)) return `${detail} ${failure.hint}`;
-  return `${failure.label}：${detail} ${failure.hint}`;
-}
-
-function buildLineDiff(left: string, right: string) {
-  const leftLines = left.split(/\r?\n/);
-  const rightLines = right.split(/\r?\n/);
-  const rows: Array<{ kind: "same" | "removed" | "added"; text: string }> = [];
-  const table = Array.from({ length: leftLines.length + 1 }, () => Array<number>(rightLines.length + 1).fill(0));
-
-  for (let leftIndex = leftLines.length - 1; leftIndex >= 0; leftIndex -= 1) {
-    for (let rightIndex = rightLines.length - 1; rightIndex >= 0; rightIndex -= 1) {
-      table[leftIndex]![rightIndex] = leftLines[leftIndex] === rightLines[rightIndex]
-        ? table[leftIndex + 1]![rightIndex + 1]! + 1
-        : Math.max(table[leftIndex + 1]![rightIndex]!, table[leftIndex]![rightIndex + 1]!);
-    }
-  }
-
-  let leftIndex = 0;
-  let rightIndex = 0;
-  while (leftIndex < leftLines.length || rightIndex < rightLines.length) {
-    if (leftIndex < leftLines.length && rightIndex < rightLines.length && leftLines[leftIndex] === rightLines[rightIndex]) {
-      rows.push({ kind: "same", text: leftLines[leftIndex]! });
-      leftIndex += 1;
-      rightIndex += 1;
-    } else if (rightIndex < rightLines.length && (leftIndex === leftLines.length || table[leftIndex]![rightIndex + 1]! >= table[leftIndex + 1]![rightIndex]!)) {
-      rows.push({ kind: "added", text: rightLines[rightIndex]! });
-      rightIndex += 1;
-    } else {
-      rows.push({ kind: "removed", text: leftLines[leftIndex] ?? "" });
-      leftIndex += 1;
-    }
-  }
-  return rows;
-}
-
-type ProposalAnchor = {
-  from: number;
-  to: number;
-  selection: string;
-};
-
 export type AiWritingPanelMode = "readiness" | "create" | "review";
-
-function ReviewTraceDetails(props: { proposalId: string; active: boolean }) {
-  const [open, setOpen] = useState(false);
-  const trace = useQuery({
-    queryKey: ["review-trace", props.proposalId],
-    queryFn: () => getConsistencyReviewTrace(props.proposalId),
-    enabled: props.active && open,
-  });
-  return <details className="consistency-trace" onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary>查看声明与依据</summary>
-    {open ? trace.isPending ? <p className="consistency-trace-loading">正在读取声明与证据…</p>
-      : trace.isError ? <p className="project-error" role="alert">审核依据加载失败：{errorMessage(trace.error)}</p>
-        : <ReviewTraceContent data={trace.data} /> : null}
-  </details>;
-}
-
-function ReviewTraceContent({ data }: { data: ReviewTrace }) {
-  const evidenceByClaim = new Map<string, ReviewTrace["evidence"]>();
-  for (const item of data.evidence) {
-    const current = evidenceByClaim.get(item.claimId) ?? [];
-    current.push(item);
-    evidenceByClaim.set(item.claimId, current);
-  }
-  const findings = [...data.deterministicFindings, ...data.modelFindings];
-  return <>
-    <p>{data.claims.length} 条声明 · {data.evidence.length} 条证据{data.omittedItems.length ? ` · ${data.omittedItems.length} 项未检查` : ""}</p>
-    {data.claims.length ? <div className="consistency-claims">
-      {data.claims.map((claim) => {
-        const claimFindings = findings.filter((finding) => finding.claimId === claim.id);
-        const claimEvidence = evidenceByClaim.get(claim.id) ?? [];
-        return <article key={claim.id}>
-          <div className="proposal-meta"><strong>{claim.claimType}</strong><span>重要性 {claim.importance} · 置信度 {claim.confidence}</span></div>
-          <blockquote>{claim.quote}</blockquote>
-          <p>{claim.subject} · {claim.predicate} · {claim.object}</p>
-          {claimFindings.length ? <div className="consistency-claim-findings">{claimFindings.map((finding) => <span data-status={finding.status.toLowerCase()} key={finding.id}>{reviewStatusLabels[finding.status]} · {finding.sourceKind === "RULE" ? `规则 ${finding.ruleId ?? ""}` : finding.sourceKind === "MERGED" ? "规则与模型合并" : "模型复核"}</span>)}</div> : null}
-          {claimEvidence.length ? <ul>{claimEvidence.map((evidence) => <li key={evidence.id}><small>{evidence.sourceKind} · {evidence.authority} · {evidence.sourceRevision}</small><p>{evidence.excerpt}</p></li>)}</ul> : <p className="consistency-no-evidence">没有找到与这条声明对应的正式证据。</p>}
-        </article>;
-      })}
-    </div> : <p className="consistency-no-evidence">提取阶段没有保留可逐字定位的声明。</p>}
-    {data.omittedItems.length ? <div className="consistency-omitted"><strong>未检查项</strong>{data.omittedItems.map((item, index) => <p key={`${item.itemType}-${index}`}><span>{item.label}</span>{item.reason}</p>)}</div> : null}
-  </>;
-}
 
 export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: boolean; onPendingChange?: (pending: boolean) => void; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null; onOpenAdmissionReview?: () => void; onReturnToEditor?: () => void; onOpenChapterPlan?: () => void }) {
   const client = useQueryClient();
@@ -304,51 +80,17 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
     enabled: active && !isReadinessMode,
   });
   const [busy, setBusy] = useState(false);
-  const [preview, setPreview] = useState("");
-  const textEdits = useCandidateEdits();
-  const partialTexts = Object.fromEntries(Object.entries(textEdits.entries).map(([id, entry]) => [id, entry.value]));
   const [error, setError] = useState<string | null>(null);
-  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
-  const [decidingProposalId, setDecidingProposalId] = useState<string | null>(null);
-  const feedbackEdits = useCandidateEdits();
-  const feedbackNotes = Object.fromEntries(Object.entries(feedbackEdits.entries).map(([id, entry]) => [id, entry.value]));
-  const [feedbackBusyId, setFeedbackBusyId] = useState<string | null>(null);
-  const [unappliedCandidate, setUnappliedCandidate] = useState<{ proposal: AiProposal; text: string } | null>(null);
+  const { textEdits, partialTexts, feedbackEdits, feedbackNotes, decidingProposalId, feedbackBusyId,
+    unappliedCandidate, setUnappliedCandidate, compareIds, proposalAnchors, setProposalAnchors, lastApplied,
+    resolveReplacementRange, applyText, undoLastApplied, decide, submitFeedback, toggleCompare,
+  } = useAiProposalActions({ chapterId: props.chapterId, editor: props.editor, proposals: proposals.data, onError: setError });
   useCandidateEditGuard(textEdits.dirty || feedbackEdits.dirty || instruction !== instructionBaseline || unappliedCandidate !== null,
     busy || decidingProposalId !== null || feedbackBusyId !== null, props.onPendingChange);
-  const [compareIds, setCompareIds] = useState<string[]>([]);
-  const [proposalAnchors, setProposalAnchors] = useState<Record<string, ProposalAnchor>>({});
-  const [lastApplied, setLastApplied] = useState<{ documentJson: string; label: string } | null>(null);
-  const streamTask = useRef<{ requesting: boolean; taskId: string | null; persistedTaskId: string | null }>({
-    requesting: false, taskId: null, persistedTaskId: null,
-  });
-  const runningRuns = useQuery({
-    queryKey: ["ai-runs", 80],
-    queryFn: () => listAiRuns(80),
-    enabled: active && !isReadinessMode,
-    staleTime: 0,
-    refetchOnMount: "always",
-    refetchInterval: (query) => active && query.state.data?.some((run) =>
-      run.status === "RUNNING"
-      && run.chapterId === props.chapterId
-      && run.taskKey === panelTaskKey
-      && (!isReviewMode || run.reviewPurpose === reviewPurpose)
-    ) ? 1_000 : false,
-  });
-  const persistedRunning = isReadinessMode
-    ? null
-    : runningRuns.data?.find((run) =>
-        run.status === "RUNNING"
-        && run.chapterId === props.chapterId
-        && run.taskKey === panelTaskKey
-        && (!isReviewMode || run.reviewPurpose === reviewPurpose)
-      ) ?? null;
-  const generationBusy = busy || Boolean(persistedRunning);
-  const generationLocked = generationBusy
-    || (!isReadinessMode && (runningRuns.isPending || runningRuns.isFetching))
-    || Boolean(runningRuns.data?.some((run) => run.status === "RUNNING" && run.chapterId === props.chapterId));
-  const effectiveTaskId = persistedRunning?.id ?? null;
-  streamTask.current.persistedTaskId = effectiveTaskId;
+  const { preview, fallbackNotice, setFallbackNotice, generationBusy, generationLocked,
+    effectiveTaskId, beginRequest, finishRequest,
+  } = useAiTaskStream({ chapterId: props.chapterId, active, enabled: !isReadinessMode, busy, taskKey: panelTaskKey,
+    ...(isReviewMode ? { reviewPurpose } : {}) });
   const chapterSummary = (chapterSummaries.data ?? []).find((item) => item.sourceId === props.chapterId && item.generationMode === "EXTRACTIVE_AUTO");
   const chapterSummaryJob = (summaryJobs.data ?? []).find((job) => isChapterSummaryJobFor(job, props.chapterId) && (job.status === "QUEUED" || job.status === "RUNNING"));
   const chapterSummaryStatus = chapterSummaryJob?.status === "RUNNING"
@@ -356,44 +98,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
     : chapterSummaryJob ? "章节记忆等待更新"
     : chapterSummary?.lifecycleStatus === "ACTIVE" ? "章节记忆最新" : "章节记忆已过期";
 
-  const listenEnabled = !isReadinessMode && (active || busy);
-  useEffect(() => {
-    if (!listenEnabled) return;
-    let disposed = false;
-    const subscriptions = Promise.all([
-      listen<{ taskId: string }>("ai-task-started", ({ payload }) => {
-        if (!disposed) {
-          if (streamTask.current.requesting && !streamTask.current.taskId) streamTask.current.taskId = payload.taskId;
-          if (streamTask.current.taskId === payload.taskId || streamTask.current.persistedTaskId === payload.taskId) setPreview("");
-          void client.invalidateQueries({ queryKey: ["ai-runs"] });
-        }
-      }),
-      listen<{ taskId: string; chunk: string }>("ai-task-chunk", ({ payload }) => {
-        if (!disposed && (streamTask.current.taskId === payload.taskId || streamTask.current.persistedTaskId === payload.taskId)) {
-          setPreview((value) => value + payload.chunk);
-        }
-      }),
-      listen<{ taskId: string; attempt: number; profileName: string; fallbackReason?: string }>("ai-task-attempt", ({ payload }) => {
-        if (!disposed && payload.attempt > 1
-            && (streamTask.current.taskId === payload.taskId || streamTask.current.persistedTaskId === payload.taskId)) {
-          setPreview("");
-          setFallbackNotice(`主模型调用失败（${payload.fallbackReason ?? "未知原因"}），已切换到“${payload.profileName}”继续生成。`);
-        }
-      }),
-    ]);
-    return () => { disposed = true; void subscriptions.then((items) => items.forEach((unlisten) => unlisten())); };
-  }, [client, listenEnabled]);
-
-  useEffect(() => {
-    setPreview("");
-    setError(null);
-    setFallbackNotice(null);
-    setCompareIds([]);
-    setProposalAnchors({});
-    setLastApplied(null);
-    setUnappliedCandidate(null);
-    streamTask.current.taskId = null;
-  }, [props.chapterId]);
+  useEffect(() => { setError(null); }, [props.chapterId]);
 
   async function runAction(action: AiAction) {
     const consistencyCheck = action === "CONSISTENCY_CHECK";
@@ -424,10 +129,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
     setBusy(true);
     const submittedInstruction = instruction;
     setError(null);
-    setFallbackNotice(null);
-    setPreview("");
-    streamTask.current.requesting = true;
-    streamTask.current.taskId = null;
+    beginRequest();
     try {
       const documentJson = reviewingManuscript && props.editor
         ? JSON.stringify(props.editor.getJSON())
@@ -457,8 +159,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
       await client.invalidateQueries({ queryKey: ["ai-proposals", props.chapterId] });
     } catch (cause) { setError(aiFailureMessage(cause)); }
     finally {
-      streamTask.current.requesting = false;
-      void client.invalidateQueries({ queryKey: ["ai-runs"] });
+      finishRequest();
       setBusy(false);
     }
   }
@@ -467,122 +168,6 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
     if (!effectiveTaskId) return;
     try { await cancelAiTask(effectiveTaskId); }
     catch (cause) { setError(errorMessage(cause)); }
-  }
-
-  function resolveReplacementRange(proposal: AiProposal) {
-    if (!props.editor || (proposal.action !== "REWRITE" && proposal.action !== "POLISH")) return null;
-    const anchor = proposalAnchors[proposal.id];
-    if (anchor) {
-      const currentSelection = props.editor.state.doc.textBetween(anchor.from, anchor.to, "\n").trim();
-      return currentSelection === anchor.selection
-        ? { from: anchor.from, to: anchor.to, source: "stored" as const }
-        : null;
-    }
-    const { from, to, empty } = props.editor.state.selection;
-    if (empty) return null;
-    return { from, to, source: "current" as const };
-  }
-
-  function applyText(proposal: AiProposal, text: string, range?: { from: number; to: number }) {
-    if (!props.editor || proposal.action === "SUMMARIZE") return false;
-    const previousDocument = JSON.stringify(props.editor.getJSON());
-    if (proposal.action === "DRAFT") {
-      props.editor.commands.setContent({ type: "doc", content: textContent(text) });
-    } else if (proposal.action === "CONTINUE") {
-      props.editor.commands.insertContentAt(props.editor.state.doc.content.size, textContent(text));
-    } else if (range) {
-      props.editor.commands.insertContentAt(range, textContent(text));
-    } else {
-      return false;
-    }
-    setLastApplied({ documentJson: previousDocument, label: actionLabels[proposal.action] });
-    return true;
-  }
-
-  function undoLastApplied() {
-    if (!props.editor || !lastApplied) return;
-    try {
-      props.editor.commands.setContent(JSON.parse(lastApplied.documentJson), { emitUpdate: true });
-      setLastApplied(null);
-      setError(null);
-    } catch {
-      setError("无法撤销上一次应用，请使用正文历史版本恢复。");
-    }
-  }
-
-  async function decide(proposal: AiProposal, mode: "ACCEPTED" | "REJECTED") {
-    if (feedbackBusyId !== null) return;
-    if (mode === "ACCEPTED" && unappliedCandidate) {
-      setError("请先处理暂未写入的候选，再采用其他候选。");
-      return;
-    }
-    setError(null);
-    const textChanged = textEdits.entries[proposal.id]?.value !== textEdits.entries[proposal.id]?.baseline;
-    const feedbackChanged = feedbackEdits.entries[proposal.id]?.value !== feedbackEdits.entries[proposal.id]?.baseline;
-    if (((mode === "REJECTED" && textChanged) || feedbackChanged)
-      && !window.confirm("这条候选有未提交的文本或评价修改。继续处理将丢弃未提交部分，确定继续吗？")) return;
-    const proposalValidation = proposals.data?.find((item) => item.proposal.id === proposal.id)?.validation;
-    if (mode !== "REJECTED" && proposalValidation?.status === "NEEDS_INPUT") {
-      setError("这次结果没有生成正文，需要先补齐模型列出的关键设定。");
-      return;
-    }
-    if (mode !== "REJECTED" && proposal.action === "DRAFT" && props.editor?.getText().trim() && !window.confirm("应用整章创作候选会替换当前正文草稿。确定继续吗？")) return;
-    const replacementRange = mode !== "REJECTED" ? resolveReplacementRange(proposal) : null;
-    if (mode !== "REJECTED" && proposal.action !== "SUMMARIZE") {
-      if (!props.editor) {
-        setError("正文编辑器尚未准备好。");
-        return;
-      }
-      if ((proposal.action === "REWRITE" || proposal.action === "POLISH") && !replacementRange) {
-        setError("生成候选后原文已经变化，系统为避免替换错位置已停止应用。请撤销正文改动，或重新生成候选。");
-        return;
-      }
-    }
-    setDecidingProposalId(proposal.id);
-    const originalDocument = props.editor ? JSON.stringify(props.editor.getJSON()) : null;
-    try {
-      const candidateText = partialTexts[proposal.id] ?? proposal.outputText;
-      const candidateWasEdited = mode === "ACCEPTED" && candidateText !== proposal.outputText;
-      const decided = await decideAiProposal({
-        id: proposal.id,
-        status: candidateWasEdited ? "PARTIALLY_ACCEPTED" : mode,
-        ...(candidateWasEdited ? { acceptedText: candidateText } : {}),
-      });
-      if (mode !== "REJECTED" && proposal.action !== "SUMMARIZE") {
-        const acceptedText = decided.acceptedText ?? candidateText;
-        if (props.editor && JSON.stringify(props.editor.getJSON()) !== originalDocument) {
-          setUnappliedCandidate({ proposal, text: acceptedText });
-          setError("正文在确认期间发生变化，采用结果已记录，但尚未写入草稿。");
-        } else {
-          applyText(proposal, acceptedText, replacementRange ?? undefined);
-        }
-      }
-      textEdits.discard(proposal.id);
-      feedbackEdits.discard(proposal.id);
-      await client.invalidateQueries({ queryKey: ["ai-proposals", props.chapterId] });
-    } catch (cause) { setError(errorMessage(cause)); }
-    finally { setDecidingProposalId(null); }
-  }
-
-  async function submitFeedback(proposal: AiProposal, rating: "HELPFUL" | "NOT_HELPFUL") {
-    setError(null);
-    setFeedbackBusyId(proposal.id);
-    const submitted = feedbackNotes[proposal.id] ?? proposals.data?.find((item) => item.proposal.id === proposal.id)?.feedback?.note ?? "";
-    try {
-      await rateAiProposal(proposal.id, rating, submitted.trim() || undefined);
-      feedbackEdits.acknowledge(proposal.id, submitted, submitted.trim());
-      await client.invalidateQueries({ queryKey: ["ai-proposals", props.chapterId] });
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setFeedbackBusyId(null);
-    }
-  }
-
-  function toggleCompare(proposalId: string) {
-    setCompareIds((current) => current.includes(proposalId)
-      ? current.filter((id) => id !== proposalId)
-      : current.length >= 2 ? [current[1]!, proposalId] : [...current, proposalId]);
   }
 
   async function refreshChapterMemory() {
@@ -749,51 +334,13 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
         }}><Trash2 size={13} />放弃保留修改</button>
       </article>)}
     </div> : null}
-    {isReviewMode ? pendingReviews.length ? <section className="consistency-review-list" id="consistency-review-list" aria-label={reviewingManuscript ? "正文候选审核结果" : "创作准入结果"}>
-      <div className="section-heading"><h3><ShieldCheck size={14} />{reviewingManuscript ? "正文候选审核结果" : "创作准入结果"}</h3><span>{pendingReviews.length} 条 · 只读报告</span></div>
-      {pendingReviews.map(({ proposal, validation, consistency, consistencyFreshness, hasReviewTrace }) => {
-        const needsInput = validation.status === "NEEDS_INPUT";
-        const stale = consistencyFreshness === "STALE";
-        const text = partialTexts[proposal.id] ?? proposal.outputText;
-        const targets = needsInput ? findWritingGapTargets(text) : [];
-        return <article className="proposal consistency-review" data-state={stale ? "stale" : needsInput ? "needs-input" : undefined} data-verdict={consistency?.verdict.toLowerCase()} key={proposal.id}>
-          <div className="proposal-meta"><strong>{reviewingManuscript ? "正文候选审核" : "创作准入"}</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{stale ? `审核已过期 · 原判断：${consistency ? consistencyVerdictLabels[consistency.verdict] : "需补资料"}` : consistency ? consistencyVerdictLabels[consistency.verdict] : needsInput ? "需补资料" : validation.status === "VALID" ? "审核完成" : validation.status === "WARNING" ? "需要检查" : "无效结果"} · {validation.characterCount} 字</span></div>
-          {validation.messages.length ? <div className="proposal-validation-messages">{validation.messages.map((message) => <span key={message}>{message}</span>)}</div> : null}
-          {stale ? <div className="consistency-stale-notice"><strong>审核依据已经变化</strong><span>{reviewingManuscript ? "候选内容、章节执行卡、正式依据或审核模型配置已与生成报告时不同。这份候选审核报告仅作历史参考。" : reviewPolicy === "REQUIRED" ? "严格准入会暂停正文生成，直到按当前内容重新审核。" : "章节执行卡、正式依据或审核模型配置已与生成报告时不同。这份准入报告不再参与写作准入。"}</span></div> : needsInput ? <div className="proposal-needs-input"><strong>{reviewingManuscript ? "当前资料不足以完成候选审核" : "当前资料不足以判断准入"}</strong><span>请先补齐审核报告列出的正式设定，再重新运行审核。</span></div> : null}
-          {consistency ? <>
-            <p className="consistency-summary">{consistency.summary}</p>
-            {consistency.findings.length ? <div className="consistency-findings">{consistency.findings.map((finding, index) => <div className="consistency-finding" data-severity={finding.severity.toLowerCase()} key={`${proposal.id}-${index}`}>
-              <strong>{consistencySeverityLabels[finding.severity]}</strong>
-              <div>
-                <p>{finding.problem || "未提供问题描述"}</p>
-                <small>依据：{finding.evidence || "未提供正式依据"}</small>
-                <small>建议：{finding.suggestion || "未提供修改建议"}</small>
-              </div>
-            </div>)}</div> : null}
-            {consistency.parseWarnings.length ? <div className="consistency-parse-warnings">{consistency.parseWarnings.map((warning) => <span key={warning}>{warning}</span>)}</div> : null}
-          </> : <pre>{text}</pre>}
-          {hasReviewTrace ? <ReviewTraceDetails proposalId={proposal.id} active={active} /> : null}
-          <details className="consistency-raw"><summary>查看原始报告</summary><pre>{text}</pre></details>
-          <div className="ai-actions">
-            {stale ? <button type="button" className="primary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={generationLocked || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />按当前内容重新审核</button>
-              : consistency && (consistency.verdict === "BLOCKED" || consistency.verdict === "REVIEW")
-                ? reviewingManuscript
-                  ? props.onReturnToEditor
-                    ? <button type="button" className="primary-action" onClick={props.onReturnToEditor}>返回编辑</button>
-                    : <a className="primary-action" href={`/writing#${props.chapterId}`}>返回候选区修改</a>
-                  : props.onOpenChapterPlan
-                    ? <button type="button" className="primary-action" onClick={props.onOpenChapterPlan}>查看本章计划</button>
-                    : <a className="primary-action" href={`/chapters#${props.chapterId}`}>查看设定与执行卡</a>
-                : null}
-            {!stale && needsInput && targets.length ? targets.map((target) =>
-              target.id === "chapter-plan" && props.onOpenChapterPlan
-                ? <button type="button" className="primary-action" onClick={props.onOpenChapterPlan} key={target.id}>{target.label}</button>
-                : <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>,
-            ) : null}
-            <button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭审核</button>
-          </div>
-        </article>;
-      })}
-    </section> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>{reviewingManuscript ? "当前没有候选审核报告" : "当前没有创作准入报告"}</strong><span>{reviewingManuscript ? "候选区写作或修改后可反复审核；人物状态、规则、时间线和叙述问题会集中显示在这里。" : "检查后会明确当前是否可以生成正文，以及还需要补齐哪些设定。"}</span></div></div> : null}
+    {isReviewMode ? <AiConsistencyReviewList
+      reviews={pendingReviews} active={active} reviewingManuscript={reviewingManuscript}
+      partialTexts={partialTexts} reviewPolicy={reviewPolicy} generationLocked={generationLocked}
+      hasReviewSecret={Boolean(reviewProfile?.hasSecret)} canRunConsistencyCheck={canRunConsistencyCheck}
+      decidingProposalId={decidingProposalId} chapterId={props.chapterId}
+      onReturnToEditor={props.onReturnToEditor} onOpenChapterPlan={props.onOpenChapterPlan}
+      onRunReview={() => void runAction("CONSISTENCY_CHECK")} onCloseReview={(proposal) => void decide(proposal, "REJECTED")}
+    /> : null}
   </section>;
 }

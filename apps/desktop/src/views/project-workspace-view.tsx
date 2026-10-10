@@ -1,14 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArchiveRestore, ArrowLeft, ArrowRight, BookOpen, Check, ChevronRight, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
-import { adoptPlanBatch, cancelJob, createPlanNode, enqueuePlanningAiJob, errorMessage, getAuditFlowSettings, getCurrentProject, listModelProfiles, listPlanningSections, listPlanNodes, movePlanNode, savePlanningSection, updatePlanNodeChecked, type PlanNode, type PlanNodeKind, type PlanningSection } from "../lib/tauri-client";
+import { cancelJob, createPlanNode, errorMessage, getAuditFlowSettings, getCurrentProject, listModelProfiles, listPlanningSections, listPlanNodes, movePlanNode, updatePlanNodeChecked, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
 import { useJobs } from "../lib/jobs-query";
 import { AiModelNote } from "./ai-model-note";
 import { ChapterFocusHeader } from "./chapter-focus-header";
 import { ChapterCreationWorkspace } from "./chapter-creation-workspace";
 import { useChapterManuscript } from "./use-chapter-manuscript";
 import { usePlanningDraft } from "./use-planning-draft";
+import { useWorkspacePlanningOperations } from "./use-workspace-planning-operations";
 import { buildWorkspaceNodeIndex } from "./project-workspace-index";
 import { PlanningDashboard } from "./planning-dashboard";
 import { ProjectPlanTree } from "./project-plan-tree";
@@ -21,7 +22,6 @@ import { planNodeHref, resolvePlanNodeTarget } from "../lib/knowledge-navigation
 import { sourceReturnTo } from "../lib/manuscript-source";
 
 import {
-  buildVolumePlanTargetGuidance,
   isRootKind,
   isValidParentKind,
   kindLabels,
@@ -64,9 +64,6 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const [chapterSplitBatchCount, setChapterSplitBatchCount] = useState("20");
   const [chapterSplitGuidance, setChapterSplitGuidance] = useState("");
   const [planningSectionDirty, setPlanningSectionDirty] = useState(false);
-  const [savingNodePlan, setSavingNodePlan] = useState(false);
-  const [generatingNodePlan, setGeneratingNodePlan] = useState(false);
-  const [generatingChapterSplit, setGeneratingChapterSplit] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [chapterListCollapsed, setChapterListCollapsed] = useState(false);
@@ -158,8 +155,6 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const selected = selectedId ? nodeIndex.nodesById.get(selectedId) ?? null : null;
   const selectedQueryPlan = selected ? sectionsById.get(nodePlanId(selected.id)) : undefined;
   const nodeDraft = usePlanningDraft(selected ? nodePlanId(selected.id) : "", selectedQueryPlan, planningSections.data !== undefined);
-  const currentNodeForm = useRef(nodeDraft.form);
-  currentNodeForm.current = nodeDraft.form;
   const selectedStoredPlan = nodeDraft.baseline;
   const nodePlanDraft = nodeDraft.form.content;
   const nodePlanPendingDraft = nodeDraft.form.pendingContent;
@@ -223,7 +218,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
       try { return (JSON.parse(job.payload) as { sectionId?: string }).sectionId === chapterSplitSectionId; } catch { return false; }
     })
     : undefined;
-  const chapterSplitBusy = generatingChapterSplit || Boolean(chapterSplitJob?.status === "QUEUED" || chapterSplitJob?.status === "RUNNING");
+  const chapterSplitJobBusy = Boolean(chapterSplitJob?.status === "QUEUED" || chapterSplitJob?.status === "RUNNING");
   const showNodePlanAiBar = selected?.kind === "VOLUME" || (selected?.kind === "OUTLINE" && Boolean(nodePlanDraft.trim()));
   const parent = selected?.parentId ? nodeIndex.nodesById.get(selected.parentId) : undefined;
   const selectedVolume = parent?.kind === "VOLUME" && !parent.archived ? parent : undefined;
@@ -247,6 +242,24 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
       ? volumeProfile
       : undefined;
   const nodeTaskPreference = selected?.kind === "OUTLINE" ? outlinePreference : volumePreference;
+  const { savingNodePlan, generatingNodePlan, generatingChapterSplit,
+    saveNodePlan, generateNodePlan, generateChapterSplit, adoptChapterSplitPlan, adoptNodePlan, adoptVolumeManagerPlan,
+  } = useWorkspacePlanningOperations({
+    projectId: currentProject.data?.projectId, selected, planningSections: planningSections.data, sectionsById,
+    volumeNodes, chapterNodes, nodeDraft, splitDraft, nodePlanTab,
+    nodeGeneration: { profile: nodeTaskProfile, preference: nodeTaskPreference, guidance: nodePlanGuidance, targets: volumePlanTargets },
+    splitGeneration: { volume: chapterSplitVolume, profile: chapterSplitProfile, preference: chapterSplitPreference,
+      guidance: chapterSplitGuidance, busy: chapterSplitJobBusy, sectionId: chapterSplitSectionId,
+      targetCount: chapterSplitTargetCount, existingCount: chapterSplitExistingCount, batchSize: chapterSplitBatchSize },
+    onError: setError,
+    onVolumesAdopted: (firstVolumeId, hasNewEdits) => {
+      setKind("CHAPTER");
+      setParentId(firstVolumeId);
+      setChapterSplitVolumeId(firstVolumeId);
+      setShowVolumePlanning(hasNewEdits);
+    },
+  });
+  const chapterSplitBusy = generatingChapterSplit || chapterSplitJobBusy;
   const selectedChapterIndex = selected?.kind === "CHAPTER" ? chapterNodes.findIndex((node) => node.id === selected.id) : -1;
   const previousChapter = selectedChapterIndex > 0 ? chapterNodes[selectedChapterIndex - 1] : null;
   const nextChapter = selectedChapterIndex >= 0 && selectedChapterIndex < chapterNodes.length - 1 ? chapterNodes[selectedChapterIndex + 1] : null;
@@ -436,202 +449,6 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     }
     if (!window.confirm(`删除“${selected.title}”吗？删除后可通过“显示已删除节点”恢复。`)) return;
     await toggleArchived(selected);
-  }
-
-  async function saveNodePlan() {
-    if (!selected || selected.kind === "WORK_DESIGN") return;
-    const value = selected.kind === "OUTLINE" && nodePlanTab === "pending" ? nodePlanPendingDraft : nodePlanDraft;
-    if (!value.trim()) return;
-    const snapshot = nodeDraft.beginSave();
-    if (!snapshot) return;
-    setSavingNodePlan(true);
-    setError(null);
-    try {
-      const saved = await savePlanningSection({ ...snapshot.form, version: snapshot.baseline.version, ...(selected.kind === "OUTLINE" && nodePlanTab === "pending" ? { pendingContent: snapshot.form.pendingContent.trim(), storyState: "AI_SUGGESTED" as const } : { content: snapshot.form.content.trim(), storyState: "CONFIRMED" as const }) });
-      nodeDraft.acknowledge(snapshot, saved);
-      cacheSavedSection(saved);
-      await client.invalidateQueries({ queryKey: ["planning-sections"] });
-    } catch (cause) {
-      setError(errorMessage(cause));
-      void client.invalidateQueries({ queryKey: ["planning-sections"] });
-    } finally {
-      nodeDraft.finishSave(snapshot);
-      setSavingNodePlan(false);
-    }
-  }
-
-  async function generateNodePlan() {
-    if (!selected || selected.kind === "WORK_DESIGN" || !nodeTaskProfile) return;
-    setGeneratingNodePlan(true);
-    setError(null);
-    try {
-      const existing = (planningSections.data ?? []).filter((item) => item.content.trim()).map((item) => `${item.id}: ${item.content}`).join("\n");
-      const targetGuidance = selected.kind === "VOLUME_MANAGER" ? buildVolumePlanTargetGuidance(volumePlanTargets) : "";
-      const userGuidance = [nodePlanGuidance.trim(), targetGuidance].filter(Boolean).join("\n");
-      await enqueuePlanningAiJob({ profileId: nodeTaskProfile.id, mode: "GENERATE", sectionId: nodePlanId(selected.id), sectionTitle: selected.title, sectionPrompt: nodePlanPrompt(selected.kind), existingContext: existing, referenceContent: "", userGuidance: userGuidance || "请先给出可执行的候选方案，保留作者可修改的空间。", allowRewrite: false, taskKey: selected.kind === "OUTLINE" ? "outline" : "volumePlanning", temperature: nodeTaskPreference.temperature ?? undefined, maxOutputTokens: nodeTaskPreference.maxOutputTokens ?? undefined });
-      await client.invalidateQueries({ queryKey: ["jobs"] });
-    } catch (cause) { setError(errorMessage(cause)); }
-    finally { setGeneratingNodePlan(false); }
-  }
-
-  async function generateChapterSplit() {
-    if (!chapterSplitVolume || !chapterSplitProfile || chapterSplitBusy) return;
-    setGeneratingChapterSplit(true);
-    setError(null);
-    try {
-      const volumePlan = sectionsById.get(nodePlanId(chapterSplitVolume.id))?.content.trim() ?? "";
-      const existing = (planningSections.data ?? []).filter((item) => item.content.trim()).map((item) => `${item.id}: ${item.content}`).join("\n");
-      const startChapterNumber = chapterNodes.length + 1;
-      const targetGuidance = [
-        chapterSplitTargetCount ? `本卷预计共 ${chapterSplitTargetCount} 章` : "",
-        `当前本卷已拆 ${chapterSplitExistingCount} 章`,
-        `本次最多生成 ${chapterSplitBatchSize} 章，从第 ${startChapterNumber} 章开始连续编号`,
-      ].filter(Boolean).join("；");
-      const userGuidance = [
-        chapterSplitGuidance.trim(),
-        targetGuidance,
-        volumePlan ? `本卷正式规划：${volumePlan}` : "",
-      ].filter(Boolean).join("\n");
-      const sectionPrompt = `根据本分卷的正式规划，将其拆成可独立写作的章节。本次最多生成 ${chapterSplitBatchSize} 章，从第 ${startChapterNumber} 章开始连续编号。每章必须独占一行，只输出“第X章·标题｜本章目标｜关键冲突｜结尾钩子”，严禁输出解释、标题、编号、空行，也严禁把多章写在同一行。若本卷尚未拆完，本次只输出下一批章节，不要总结全卷。`;
-      await enqueuePlanningAiJob({
-        profileId: chapterSplitProfile.id,
-        mode: "GENERATE",
-        sectionId: chapterSplitSectionId,
-        sectionTitle: `${chapterSplitVolume.title}·章节拆分`,
-        sectionPrompt,
-        existingContext: existing,
-        referenceContent: "",
-        userGuidance: userGuidance || "请按剧情阶段拆分，避免重复章节目标。",
-        allowRewrite: false,
-        taskKey: "chapterSplit",
-        temperature: chapterSplitPreference.temperature ?? undefined,
-        maxOutputTokens: chapterSplitPreference.maxOutputTokens ?? undefined,
-      });
-      await client.invalidateQueries({ queryKey: ["jobs"] });
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setGeneratingChapterSplit(false);
-    }
-  }
-
-  async function adoptChapterSplitPlan() {
-    if (!chapterSplitVolume || savingNodePlan || !currentProject.data) return;
-    const candidates = parseChapterPlanCandidates(chapterSplitPendingDraft);
-    if (!candidates.length) {
-      setError("没有识别到可创建的章节，请按“第X章·标题｜本章目标｜关键冲突｜结尾钩子”的格式检查候选。");
-      return;
-    }
-    const volumeChapterTitles = new Set(chapterNodes.filter((chapter) => chapter.parentId === chapterSplitVolume.id).map((chapter) => chapter.title));
-    const newCandidates = candidates.filter((candidate) => !volumeChapterTitles.has(candidate.title));
-    if (!newCandidates.length) {
-      setError("候选中的章节均已存在，没有需要创建的新章节。");
-      return;
-    }
-    if (chapterSplitExistingCount && !window.confirm(`本卷已有 ${chapterSplitExistingCount} 个章节，继续将追加 ${newCandidates.length} 个新章节。确定继续吗？`)) return;
-    const snapshot = splitDraft.beginSave();
-    if (!snapshot) return;
-    setSavingNodePlan(true);
-    setError(null);
-    try {
-      const { source: saved } = await adoptPlanBatch({
-        expectedProjectId: currentProject.data.projectId,
-        parentId: chapterSplitVolume.id,
-        expectedParentRevision: chapterSplitVolume.revision,
-        expectedSourceVersion: snapshot.baseline.version ?? 0,
-        source: snapshot.baseline,
-        candidates,
-      });
-      splitDraft.acknowledge(snapshot, saved);
-      cacheSavedSection(saved);
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["plan-nodes"] }),
-        client.invalidateQueries({ queryKey: ["planning-sections"] }),
-      ]);
-    } catch (cause) {
-      splitDraft.retainFailedSave(snapshot);
-      setError(errorMessage(cause));
-      void client.invalidateQueries({ queryKey: ["planning-sections"] });
-    } finally {
-      splitDraft.finishSave(snapshot);
-      setSavingNodePlan(false);
-    }
-  }
-
-
-  async function adoptNodePlan() {
-    const pending = nodePlanPendingDraft;
-    if (!selected || !pending.trim()) return;
-    const snapshot = nodeDraft.beginSave();
-    if (!snapshot) return;
-    setSavingNodePlan(true);
-    try {
-      const saved = await savePlanningSection({ ...snapshot.form, version: snapshot.baseline.version, content: pending.trim(), pendingContent: "", storyState: "CONFIRMED" });
-      nodeDraft.acknowledge(snapshot, saved);
-      cacheSavedSection(saved);
-      await client.invalidateQueries({ queryKey: ["planning-sections"] });
-    } catch (cause) {
-      setError(errorMessage(cause));
-      void client.invalidateQueries({ queryKey: ["planning-sections"] });
-    }
-    finally {
-      nodeDraft.finishSave(snapshot);
-      setSavingNodePlan(false);
-    }
-  }
-
-  function cacheSavedSection(saved: PlanningSection) {
-    client.setQueryData<PlanningSection[]>(["planning-sections"], (items) =>
-      [...(items ?? []).filter((item) => item.id !== saved.id), saved]);
-  }
-
-  async function adoptVolumeManagerPlan() {
-    if (!selected || selected.kind !== "VOLUME_MANAGER" || savingNodePlan || !currentProject.data) return;
-    const candidates = parseVolumePlanCandidates(nodePlanPendingDraft);
-    if (!candidates.length) {
-      setError("没有识别到可创建的分卷，请按“第X卷·标题｜阶段目标｜主要矛盾｜卷末转折”的格式填写。");
-      return;
-    }
-    const existingTitles = new Set(volumeNodes.filter((node) => node.parentId === selected.id).map((node) => node.title));
-    const newCandidates = candidates.filter((candidate) => !existingTitles.has(candidate.title));
-    if (!newCandidates.length) {
-      setError("候选中的分卷均已存在，没有需要创建的新分卷。");
-      return;
-    }
-    if (volumeNodes.length && !window.confirm(`当前已有 ${volumeNodes.length} 个分卷，继续将追加 ${newCandidates.length} 个新分卷。确定继续吗？`)) return;
-    const snapshot = nodeDraft.beginSave();
-    if (!snapshot) return;
-    setSavingNodePlan(true);
-    setError(null);
-    try {
-      const { nodes: created, source: saved } = await adoptPlanBatch({
-        expectedProjectId: currentProject.data.projectId,
-        parentId: selected.id,
-        expectedParentRevision: selected.revision,
-        expectedSourceVersion: snapshot.baseline.version ?? 0,
-        source: snapshot.form,
-        candidates,
-      });
-      const firstCreatedVolumeId = created[0]?.id ?? "";
-      nodeDraft.acknowledge(snapshot, saved);
-      cacheSavedSection(saved);
-      setKind("CHAPTER");
-      setParentId(firstCreatedVolumeId || volumeNodes[0]?.id || "");
-      setChapterSplitVolumeId(firstCreatedVolumeId || volumeNodes[0]?.id || "");
-      // New edits remain visible after the submitted candidate has been consumed.
-      setShowVolumePlanning(currentNodeForm.current.pendingContent !== snapshot.form.pendingContent);
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["plan-nodes"] }),
-        client.invalidateQueries({ queryKey: ["planning-sections"] }),
-      ]);
-    } catch (cause) {
-      nodeDraft.retainFailedSave(snapshot);
-      setError(errorMessage(cause));
-      void client.invalidateQueries({ queryKey: ["planning-sections"] });
-    } finally {
-      nodeDraft.finishSave(snapshot);
-      setSavingNodePlan(false);
-    }
   }
 
   function selectNode(node: PlanNode) {
