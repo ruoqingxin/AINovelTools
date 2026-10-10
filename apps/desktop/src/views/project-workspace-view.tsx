@@ -71,6 +71,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const [chapterSearch, setChapterSearch] = useState("");
   const discussionTarget = new URLSearchParams(window.location.search).get("discussionTarget");
   const targetProject = new URLSearchParams(window.location.search).get("targetProject");
+  const referenceChapter = new URLSearchParams(window.location.search).get("referenceChapter");
   const [targetError, setTargetError] = useState<string | null>(null);
 
   async function addNode() {
@@ -301,6 +302,16 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 
   useEffect(() => {
     if (!isChapterMode || selectedId) return;
+    if (referenceChapter !== null) {
+      if (currentProject.isPending || nodes.isPending) return;
+      const target = chapterNodes.find((node) => node.id === referenceChapter);
+      if (!target || targetProject !== null && currentProject.data?.projectId !== targetProject) {
+        setTargetError("资料关联目标章节已不可用或不属于当前项目，未打开其他章节。");
+        return;
+      }
+      selectNode(target);
+      return;
+    }
     if (discussionTarget !== null) {
       if (currentProject.isPending || nodes.isPending) return;
       const target = resolveDiscussionPlanningTarget(discussionTarget, nodes.data ?? [], [], true);
@@ -327,7 +338,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     }
     const defaultChapter = resolveDefaultWritingChapter(chapterNodes, requestedId, rememberedId);
     if (defaultChapter) selectNode(defaultChapter);
-  }, [chapterNodes, currentProject.data?.projectId, currentProject.isPending, isChapterMode, selectedId, workspaceMode, discussionTarget, targetProject, nodes.data, nodes.isPending]);
+  }, [chapterNodes, currentProject.data?.projectId, currentProject.isPending, isChapterMode, selectedId, workspaceMode, discussionTarget, targetProject, referenceChapter, nodes.data, nodes.isPending]);
 
   useEffect(() => {
     if (workspaceMode !== "writing" || selected?.kind !== "CHAPTER" || currentProject.isPending) return;

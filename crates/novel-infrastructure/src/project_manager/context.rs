@@ -1,4 +1,5 @@
 use super::*;
+use std::fmt::Write as _;
 
 impl ProjectManager {
     pub fn assemble_context_with_project_knowledge(
@@ -22,7 +23,48 @@ impl ProjectManager {
             novel_application::RetrievalIntent::ProjectKnowledge,
             &availability,
         );
-        let candidates = self.collect_context_candidates(input, object_ids);
+        let references = self
+            .chapter_entity_context(input.chapter_id)
+            .map_err(|error| {
+                novel_application::ContextError::ProjectKnowledgeUnavailable(error.to_string())
+            })?;
+        let mut selected_ids = object_ids.to_vec();
+        if let Some(references) = &references {
+            selected_ids.extend(
+                references
+                    .entities
+                    .iter()
+                    .filter(|card| card.entity.lifecycle_status == EntityLifecycleStatus::Active)
+                    .map(|card| card.entity.id),
+            );
+        }
+        let mut candidates = self.collect_context_candidates(input, &selected_ids);
+        if let Some(references) = references.filter(|references| references.version > 0) {
+            let mut identity = references
+                .entities
+                .iter()
+                .map(|card| {
+                    (
+                        card.entity.id,
+                        card.entity.current_revision_id,
+                        card.entity.version,
+                    )
+                })
+                .collect::<Vec<_>>();
+            identity.sort_unstable();
+            // Selection changes invalidate admission even when attachment budgets omit a reference.
+            if let Some(candidate) = candidates.iter_mut().find(|candidate| {
+                candidate.kind == novel_application::ContextCandidateKind::ProjectSetting
+            }) {
+                let digest = Sha256::digest(
+                    serde_json::to_vec(&(references.version, identity)).unwrap_or_default(),
+                );
+                let _ = write!(
+                    candidate.evidence.chunk.source_revision,
+                    ":chapter-references:{digest:x}"
+                );
+            }
+        }
         let evidence = novel_application::ContextPlanner::plan(
             &candidates,
             plan.max_candidates,

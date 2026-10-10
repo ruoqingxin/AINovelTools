@@ -1,0 +1,23 @@
+.chapter-entity-references, .entity-chapters { min-width: 0; margin-top: 12px; border-top: 1px solid #dce5ed; font-size: 12px; }
+.chapter-entity-references summary, .entity-chapters summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 36px; cursor: pointer; font-weight: 600; }
+.chapter-entity-references summary span, .chapter-entity-references summary small { color: #687680; font-weight: 400; }
+.entity-reference-search { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
+.entity-reference-search input { width: 100%; min-width: 0; padding: 7px; border: 1px solid #ccd7e2; border-radius: 4px; font: inherit; background: #fff; }
+.entity-reference-list { max-height: 360px; overflow: auto; }
+.entity-reference-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid #e2e8ef; }
+.entity-reference-row > label { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.entity-reference-row span { min-width: 0; overflow-wrap: anywhere; }
+.entity-reference-row strong, .entity-reference-row small { display: block; }
+.entity-reference-row strong { font-size: 12px; font-weight: 600; }
+.entity-reference-row small { margin-top: 3px; color: #697a85; font-size: 11px; }
+.entity-reference-row input[type=checkbox] { flex: none; width: 16px; height: 16px; }
+.entity-reference-row > a { display: flex; flex: none; align-items: center; justify-content: center; width: 30px; height: 30px; color: #2f68d1; }
+.entity-reference-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.entity-reference-actions select { max-width: 100%; min-width: 0; padding: 6px; border: 1px solid #ccd7e2; border-radius: 4px; font: inherit; }
+.entity-chapters ul { list-style: none; padding: 0; }
+.entity-chapters li { padding: 7px 0; overflow-wrap: anywhere; }
+.entity-chapters a { display: inline-flex; align-items: center; gap: 6px; color: #2f68d1; text-decoration: none; }
+:is(.chapter-entity-references, .entity-chapters, .entity-reference-actions) :is(.primary-action, .secondary-action),
+.story-bible-view > a.secondary-action,
+.story-bible-editor > .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; max-width: 100%; padding: 6px 10px; border-radius: 5px; font: inherit; font-size: 12px; line-height: 1.4; text-decoration: none; white-space: normal; cursor: pointer; }
+.entity-reference-actions svg { flex: none; }

@@ -803,6 +803,22 @@ export function listPlanningDiscussionSources(sectionId: string, projectId: stri
   return invoke<PlanningDiscussionSource[]>("list_planning_discussion_sources", { sectionId, projectId, limit, offset });
 }
 
+export type EntityCard = { entity: Entity; revision: EntityRevision };
+export type ChapterEntityReferences = { projectId: string; chapterId: string; version: number; entities: EntityCard[] };
+export type EntityChapter = { chapterId: string; title: string; archived: boolean };
+export function listEntityCards(includeArchived = false) {
+  return invoke<EntityCard[]>("list_entity_cards", { includeArchived });
+}
+export function getChapterEntityReferences(projectId: string, chapterId: string) {
+  return invoke<ChapterEntityReferences>("get_chapter_entity_references", { projectId, chapterId });
+}
+export function saveChapterEntityReferences(input: { projectId: string; chapterId: string; expectedVersion: number; entityIds: string[] }) {
+  return invoke<ChapterEntityReferences>("save_chapter_entity_references", { input });
+}
+export function listEntityChapters(projectId: string, entityId: string) {
+  return invoke<EntityChapter[]>("list_entity_chapters", { projectId, entityId });
+}
+
 export function getManuscriptSource(request: ManuscriptSourceRequest) {
   return invoke<ManuscriptSource>("get_manuscript_source", { request });
 }
@@ -981,7 +997,8 @@ export function invalidateProjectQueries(queryClient: { invalidateQueries: (opti
     ["relations"], ["events"], ["beliefs"], ["foreshadowings"], ["knowledge-candidates"],
     ["knowledge-conflicts"], ["project-search"], ["jobs"], ["recovery-all"], ["manuscript"],
     ["manuscript-draft"], ["manuscript-history"], ["manuscript-source"], ["recovery-logs"], ["ai-proposals"], ["ai-runs"],
-    ["planning-discussion-sources"], ["discussion-source"],
+    ["planning-discussion-sources"], ["discussion-source"], ["entity-cards"],
+    ["chapter-entity-references"], ["entity-chapters"],
     ["project-ai-task-overrides"], ["writing-review-policy"],
   ];
   return Promise.all([

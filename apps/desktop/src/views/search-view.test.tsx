@@ -44,6 +44,19 @@ describe("SearchView", () => {
     expect(mocks.searchProject).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the current entity with exact project identity and search filters", async () => {
+    window.history.replaceState(null, "", "/search?q=沈砚&type=ENTITY");
+    mocks.searchProject.mockResolvedValue([result(1)]);
+    renderSearch();
+    const url = new URL((await screen.findByRole("link", { name: "打开当前实体" })).getAttribute("href")!, window.location.origin);
+    expect(url.searchParams.get("entity")).toBe("entity-1");
+    expect(url.searchParams.get("targetProject")).toBe("project-1");
+    const back = new URL(url.searchParams.get("returnTo")!, window.location.origin);
+    expect(back.pathname).toBe("/search");
+    expect(back.searchParams.get("q")).toBe("沈砚");
+    expect(back.searchParams.get("type")).toBe("ENTITY");
+  });
+
   it("appends pages and resets pagination when the filter changes", async () => {
     mocks.searchProject.mockImplementation((_query, type, _limit, offset) =>
       Promise.resolve(type ? [result(100)] : offset === 0 ? Array.from({ length: 50 }, (_, index) => result(index)) : [result(50)]));

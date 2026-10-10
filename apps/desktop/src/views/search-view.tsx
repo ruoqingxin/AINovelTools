@@ -3,6 +3,7 @@ import { BookOpenText, Database, RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { errorMessage, getCurrentProject, rebuildSearchIndex, searchProject } from "../lib/tauri-client";
 import { manuscriptSourceHref } from "../lib/manuscript-source";
+import { entityHref } from "../lib/entity-navigation";
 
 const PAGE_SIZE = 50;
 
@@ -53,6 +54,7 @@ export function SearchView() {
       {hasQuery && !isDebouncing && results.isError ? <p className="project-error" role="alert">搜索失败：{errorMessage(results.error)}</p> : null}
       {hasQuery && !isDebouncing && results.isSuccess && items.length === 0 ? <p className="plan-empty"><Database size={16} />没有匹配结果。</p> : null}
       {hasQuery && !isDebouncing ? items.map((item) => <article className="search-result" key={`${item.objectType}-${item.objectId}`}><div><span className="entity-type-badge">{item.objectType}</span><code>{item.sourceVersion ?? "无来源版本"}{item.blockId ? ` · 块 ${item.blockId}` : ""}</code></div><p>{item.snippet}</p>
+        {item.objectType === "ENTITY" && project.data ? <a className="secondary-action" href={entityHref(item.objectId, project.data.projectId, returnTo)}><BookOpenText size={14} />打开当前实体</a> : null}
         {item.objectType === "MANUSCRIPT" && project.data ? <a className="secondary-action" href={manuscriptSourceHref({
           projectId: project.data.projectId, revisionId: item.objectId, ...(item.blockId ? { blockId: item.blockId } : {}),
         }, returnTo)}><BookOpenText size={14} />定位原文</a> : null}

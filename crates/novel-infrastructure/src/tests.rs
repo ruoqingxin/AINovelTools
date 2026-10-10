@@ -721,7 +721,7 @@ fn context_assembly_attaches_only_active_project_sources() {
     let chapter = manager
         .create_plan_node(None, super::PlanNodeKind::Chapter, "第一章".into())
         .expect("chapter");
-    manager
+    let entity = manager
         .upsert_entity(super::EntityInput {
             id: None,
             entity_type: super::EntityType::Character,
@@ -764,7 +764,8 @@ fn context_assembly_attaches_only_active_project_sources() {
             package
                 .retrieval_evidence
                 .iter()
-                .any(|item| item.source_revision == "entity:1")
+                .any(|item| item.source_id == entity.id && item.source_revision
+                    == format!("entity:{}:revision:{}", entity.id, entity.current_revision_id))
         );
         assert_eq!(package.entity_source_status, "RETRIEVAL_ATTACHED");
         assert_eq!(package.action, action);

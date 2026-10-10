@@ -29,6 +29,7 @@ const AI_REQUEST_SNAPSHOT_RETENTION: usize = 100;
 
 mod ai;
 mod chapter_draft_store;
+mod chapter_entity_store;
 mod context_store;
 mod database;
 mod discussion_context_store;
@@ -55,6 +56,9 @@ pub use ai::{
     ModelProfileStore, ProjectAiTaskOverrides, SecretStore, WritingAdmission,
     apply_task_prompt_preferences, render_prompt_template,
 };
+pub use chapter_entity_store::{
+    ChapterEntityReferences, ChapterEntitySave, EntityChapter, EntityReferenceError,
+};
 pub use discussion_design_store::{
     AuthorSetting, DISCUSSION_DRAFT_MAX_CHARS, DISCUSSION_MESSAGE_MAX_CHARS,
     DiscussionDesignEntity, DiscussionDesignProposal, DiscussionDraft, DiscussionTopicKind,
@@ -67,7 +71,7 @@ pub use discussion_store::{
     DiscussionCandidate, DiscussionCandidateKind, DiscussionCandidateStatus, DiscussionMessage,
     DiscussionMessageRole, DiscussionScopeKind, DiscussionSession, DiscussionStoreError,
 };
-pub use entity_store::EntityStoreError;
+pub use entity_store::{EntityCard, EntityStoreError};
 pub use extraction_store::{
     ChapterExtractionItem, ChapterExtractionProposal, ChapterExtractionProposalStatus,
     ExtractionAdoption, ExtractionItemKind, ExtractionItemStatus, ExtractionStoreError,
@@ -221,7 +225,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 49;
+pub const CURRENT_SCHEMA_VERSION: i64 = 50;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

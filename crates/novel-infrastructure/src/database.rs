@@ -1176,6 +1176,23 @@ impl Database {
             )?;
             transaction.commit()?;
         }
+        if applied.unwrap_or(0) < 50 {
+            let transaction = self.connection.unchecked_transaction()?;
+            transaction.execute_batch(
+                "CREATE TABLE chapter_entity_reference_sets (
+                    chapter_id TEXT PRIMARY KEY NOT NULL REFERENCES plan_nodes(id),
+                    version INTEGER NOT NULL CHECK(version > 0)
+                );
+                CREATE TABLE chapter_entity_references (
+                    chapter_id TEXT NOT NULL REFERENCES chapter_entity_reference_sets(chapter_id),
+                    entity_id TEXT NOT NULL REFERENCES entities(id),
+                    PRIMARY KEY(chapter_id, entity_id)
+                );
+                CREATE INDEX idx_chapter_entity_references_entity ON chapter_entity_references(entity_id);
+                INSERT INTO schema_migrations (version, name) VALUES (50, 'chapter_entity_references');",
+            )?;
+            transaction.commit()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }
@@ -2141,6 +2158,47 @@ mod tests {
     }
 
     #[test]
+    fn migration_50_preserves_existing_project_data_without_backfilling_references() {
+        let mut db = Database::in_memory().unwrap();
+        let chapter = db.create_plan_node(None, PlanNodeKind::Chapter, "chapter".into()).unwrap();
+        let revision = db.save_manuscript_checked(chapter.id, None,
+            r#"{"type":"doc","content":[]}"#.into(), "history".into()).unwrap();
+        let planning = db.save_planning_section_versioned(planning_section(), Some(0)).unwrap();
+        db.connection.execute_batch(
+            "DROP TABLE chapter_entity_references; DROP TABLE chapter_entity_reference_sets;
+             DELETE FROM schema_migrations WHERE version=50;",
+        ).unwrap();
+        assert_eq!(db.health().unwrap().schema_version, 49);
+        db.migrate().unwrap();
+        assert_eq!(db.health().unwrap().schema_version, super::CURRENT_SCHEMA_VERSION);
+        assert_eq!(db.list_manuscript_revisions(chapter.id).unwrap()[0], revision);
+        assert_eq!(db.list_versioned_planning_sections().unwrap()[0], planning);
+        assert_eq!(db.connection.query_row("SELECT COUNT(*) FROM chapter_entity_reference_sets", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        db.migrate().unwrap();
+    }
+
+    #[test]
+    fn migration_50_failure_rolls_back_both_tables_and_can_be_retried() {
+        let db = Database::in_memory().unwrap();
+        db.connection.execute_batch(
+            "DROP TABLE chapter_entity_references; DROP TABLE chapter_entity_reference_sets;
+             DELETE FROM schema_migrations WHERE version=50;
+             CREATE TRIGGER fail_reference_migration BEFORE INSERT ON schema_migrations WHEN NEW.version=50
+             BEGIN SELECT RAISE(ABORT,'migration failure'); END;",
+        ).unwrap();
+        assert!(db.migrate().is_err());
+        assert!(db.connection.is_autocommit());
+        assert_eq!(db.health().unwrap().schema_version, 49);
+        assert_eq!(db.connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('chapter_entity_references','chapter_entity_reference_sets')", [],
+            |row| row.get::<_, i64>(0),
+        ).unwrap(), 0);
+        db.connection.execute_batch("DROP TRIGGER fail_reference_migration").unwrap();
+        db.migrate().unwrap();
+        assert_eq!(db.health().unwrap().schema_version, super::CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
     fn migration_49_preserves_formal_history_planning_and_recovery() {
         let mut db = Database::in_memory().unwrap();
         let chapter = db
@@ -2156,13 +2214,15 @@ mod tests {
             .unwrap();
         db.connection
             .execute_batch(
-                "DROP TABLE manuscript_drafts;
+                "DROP TABLE chapter_entity_references;
+             DROP TABLE chapter_entity_reference_sets;
+             DROP TABLE manuscript_drafts;
              ALTER TABLE planning_sections DROP COLUMN version;
-             DELETE FROM schema_migrations WHERE version=49;",
+             DELETE FROM schema_migrations WHERE version>=49;",
             )
             .unwrap();
         db.migrate().unwrap();
-        assert_eq!(db.health().unwrap().schema_version, 49);
+        assert_eq!(db.health().unwrap().schema_version, super::CURRENT_SCHEMA_VERSION);
         assert_eq!(
             db.list_manuscript_revisions(chapter.id).unwrap()[0],
             revision
@@ -2179,8 +2239,10 @@ mod tests {
         let db = Database::in_memory().unwrap();
         db.connection
             .execute_batch(
-                "DROP TABLE manuscript_drafts;
-             DELETE FROM schema_migrations WHERE version=49;",
+                "DROP TABLE chapter_entity_references;
+             DROP TABLE chapter_entity_reference_sets;
+             DROP TABLE manuscript_drafts;
+             DELETE FROM schema_migrations WHERE version>=49;",
             )
             .unwrap();
         assert!(db.migrate().is_err());
@@ -2199,7 +2261,7 @@ mod tests {
             .execute_batch("ALTER TABLE planning_sections DROP COLUMN version")
             .unwrap();
         db.migrate().unwrap();
-        assert_eq!(db.health().unwrap().schema_version, 49);
+        assert_eq!(db.health().unwrap().schema_version, super::CURRENT_SCHEMA_VERSION);
     }
 
     #[test]
@@ -2318,6 +2380,8 @@ mod tests {
                 ALTER TABLE ai_tasks DROP COLUMN review_purpose;
                 ALTER TABLE ai_proposals DROP COLUMN review_purpose;
                 ALTER TABLE ai_run_records DROP COLUMN review_purpose;
+                DROP TABLE chapter_entity_references;
+                DROP TABLE chapter_entity_reference_sets;
                 DROP TABLE manuscript_drafts;
                 ALTER TABLE planning_sections DROP COLUMN version;
                 DELETE FROM schema_migrations WHERE version >= 40;

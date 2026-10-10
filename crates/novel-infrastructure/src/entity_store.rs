@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityCard {
+    pub entity: Entity,
+    pub revision: EntityRevision,
+}
+
 #[derive(Debug, Error)]
 pub enum EntityStoreError {
     #[error("no project is open")]
@@ -17,6 +24,16 @@ pub enum EntityStoreError {
 }
 
 impl ProjectManager {
+    pub fn list_entity_cards(
+        &self,
+        include_archived: bool,
+    ) -> Result<Vec<EntityCard>, EntityStoreError> {
+        let session = self.current.as_ref().ok_or(EntityStoreError::NoProject)?;
+        session
+            .database
+            .list_entity_cards(session.manifest.project_id, include_archived)
+    }
+
     pub fn list_entities(&self, include_archived: bool) -> Result<Vec<Entity>, EntityStoreError> {
         let session = self.current.as_ref().ok_or(EntityStoreError::NoProject)?;
         session
@@ -189,6 +206,30 @@ fn map_entity_revision_at(
 }
 
 impl Database {
+    pub(super) fn list_entity_cards(
+        &self,
+        project_id: Uuid,
+        include_archived: bool,
+    ) -> Result<Vec<EntityCard>, EntityStoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT e.id, e.project_id, e.entity_type, e.lifecycle_status, e.current_revision_id, e.version, e.created_at, e.updated_at,
+                    r.id, r.entity_id, r.revision, r.name, r.aliases_json, r.description, r.fixed_attributes_json, r.tags_json, r.base_revision_id, r.source_version, r.created_at
+             FROM entities e JOIN entity_revisions r ON r.id = e.current_revision_id AND r.entity_id = e.id
+             WHERE e.project_id = ?1 AND (?2 OR e.lifecycle_status = 'ACTIVE')
+             ORDER BY e.updated_at DESC, e.id",
+        )?;
+        let rows = statement.query_map(
+            rusqlite::params![project_id.to_string(), include_archived],
+            |row| {
+                Ok(EntityCard {
+                    entity: map_entity(row)?,
+                    revision: map_entity_revision_at(row, 8)?,
+                })
+            },
+        )?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     fn list_current_entity_revisions(
         &self,
         project_id: Uuid,
@@ -454,5 +495,52 @@ mod tests {
         assert_eq!(revision.aliases, vec!["alias"]);
         assert_eq!(revision.tags, vec!["tag"]);
         assert_eq!(revision.base_revision_id, Some(first.current_revision_id));
+    }
+
+    #[test]
+    fn entity_cards_read_only_exact_current_revisions_and_filter_project_and_archive() {
+        let mut database = Database::in_memory().unwrap();
+        let project_id = Uuid::new_v4();
+        let first = database
+            .upsert_entity(project_id, input("old name"))
+            .unwrap();
+        let mut update = input("current name");
+        update.id = Some(first.id);
+        update.expected_version = Some(first.version);
+        update.base_revision_id = Some(first.current_revision_id);
+        let current = database.upsert_entity(project_id, update).unwrap();
+        let archived = database
+            .upsert_entity(project_id, input("archived"))
+            .unwrap();
+        database
+            .set_entity_archived(project_id, archived.id, true, archived.version)
+            .unwrap();
+        database
+            .upsert_entity(Uuid::new_v4(), input("foreign"))
+            .unwrap();
+        let before = database.connection.total_changes();
+        let active = database.list_entity_cards(project_id, false).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].entity, current);
+        assert_eq!(active[0].revision.id, current.current_revision_id);
+        assert_eq!(active[0].revision.name, "current name");
+        let all = database.list_entity_cards(project_id, true).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().any(|card| card.entity.id == archived.id));
+        assert_eq!(database.connection.total_changes(), before);
+        // A dangling current pointer must not silently return an older revision.
+        database
+            .connection
+            .execute(
+                "UPDATE entities SET current_revision_id=?1 WHERE id=?2",
+                rusqlite::params![Uuid::new_v4().to_string(), first.id.to_string()],
+            )
+            .unwrap();
+        assert!(
+            database
+                .list_entity_cards(project_id, false)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

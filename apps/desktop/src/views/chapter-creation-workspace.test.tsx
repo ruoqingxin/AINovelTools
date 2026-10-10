@@ -27,6 +27,7 @@ vi.mock("./ai-writing-panel", () => ({
 vi.mock("./manuscript-candidate-editor", () => ({ ManuscriptCandidateEditor: () => <p>共享编辑器</p> }));
 vi.mock("./manuscript-reader", () => ({ ManuscriptReader: () => <p>正式版本</p> }));
 vi.mock("./planning-discussion-sources", () => ({ PlanningDiscussionSources: () => <p>讨论流转记录</p> }));
+vi.mock("./chapter-entity-references", () => ({ ChapterEntityReferencePanel: () => <p>本章参考资料</p> }));
 vi.mock("./manuscript-versions-panel", () => ({
   ManuscriptVersionsPanel: (props: { onRecoverLatest: () => void }) =>
     <button onClick={props.onRecoverLatest}>恢复草稿</button>,

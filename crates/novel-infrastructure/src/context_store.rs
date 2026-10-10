@@ -270,9 +270,7 @@ impl ProjectManager {
                 ContextCandidateKind::Entity,
                 content,
                 entity.id,
-                revision.source_version.clone().unwrap_or_else(|| {
-                    source_revision(&format!("entity:{}", entity.id), &revision.description)
-                }),
+                format!("entity:{}:revision:{}", entity.id, revision.id),
                 RetrievalMethod::Structured,
                 ContextAuthority::TaskMaterial,
                 relevance_with_floor(score, 6_000),

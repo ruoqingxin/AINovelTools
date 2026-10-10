@@ -35,7 +35,8 @@ use commands::discussion::{
     summarize_discussion_design,
 };
 use commands::entities::{
-    list_entities, list_entity_revisions, set_entity_archived, upsert_entity,
+    get_chapter_entity_references, list_entities, list_entity_cards, list_entity_chapters,
+    list_entity_revisions, save_chapter_entity_references, set_entity_archived, upsert_entity,
 };
 use commands::jobs::{
     acknowledge_failed_jobs, cancel_job, claim_next_job, create_diagnostic_package, enqueue_job,
@@ -127,6 +128,10 @@ pub fn run() {
             feature_catalog,
             health_query,
             list_entities,
+            list_entity_cards,
+            get_chapter_entity_references,
+            save_chapter_entity_references,
+            list_entity_chapters,
             upsert_entity,
             list_entity_revisions,
             set_entity_archived,

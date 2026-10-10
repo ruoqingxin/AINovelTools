@@ -1,4 +1,4 @@
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Check, FileUp, MessageSquareText, Plus, RotateCcw, Save, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
@@ -7,7 +7,8 @@ import {
   errorMessage,
   createDiscussionSession,
   extractEntitiesFromText,
-  listEntities,
+  getCurrentProject,
+  listEntityCards,
   listEntityRevisions,
   listModelProfiles,
   setEntityArchived,
@@ -19,6 +20,8 @@ import {
 import { AiModelNote } from "./ai-model-note";
 import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { sourceReturnTo } from "../lib/manuscript-source";
+import { EntityChapters } from "./entity-chapters";
 
 const typeLabels: Record<EntityType, string> = {
   CHARACTER: "人物",
@@ -51,24 +54,17 @@ function entitySignature(form: EntityInput, summaryText: string, scopeText: stri
 
 export function StoryBibleView() {
   const client = useQueryClient();
-  const entities = useQuery({ queryKey: ["entities", true], queryFn: () => listEntities(true) });
-  const entityRevisionQueries = useQueries({
-    queries: (entities.data ?? []).map((entity) => ({
-      queryKey: ["entity-revisions", entity.id],
-      queryFn: () => listEntityRevisions(entity.id),
-    })),
-  });
-  const currentRevisionByEntity = useMemo(
-    () =>
-      new Map(
-        (entities.data ?? []).map((entity, index) => [
-          entity.id,
-          entityRevisionQueries[index]?.data?.find((revision) => revision.id === entity.currentRevisionId) ??
-            entityRevisionQueries[index]?.data?.[0],
-        ]),
-      ),
-    [entities.data, entityRevisionQueries],
-  );
+  const cards = useQuery({ queryKey: ["entity-cards", true], queryFn: () => listEntityCards(true), retry: false });
+  const records = useMemo(() => cards.data?.map((card) => card.entity), [cards.data]);
+  const entities = { ...cards, data: records };
+  const currentRevisionByEntity = useMemo(() => new Map((cards.data ?? []).map((card) => [card.entity.id, card.revision])), [cards.data]);
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject, retry: false });
+  const params = new URLSearchParams(window.location.search);
+  const requestedEntity = params.get("entity");
+  const targetProject = params.get("targetProject");
+  const returnTo = sourceReturnTo(params.get("returnTo"));
+  const [targetResolved, setTargetResolved] = useState(requestedEntity === null);
+  const [targetError, setTargetError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<"ALL" | EntityType>("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "ARCHIVED">("ACTIVE");
@@ -79,7 +75,7 @@ export function StoryBibleView() {
   const [savedSignature, setSavedSignature] = useState(() => entitySignature(emptyForm, "", ""));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"save" | "archive" | null>(null);
+  const [busy, setBusy] = useState<"save" | "archive" | "reload" | null>(null);
   const [importFileName, setImportFileName] = useState("");
   const [importItems, setImportItems] = useState<Array<{ name: string; description: string; aliases: string[]; tags: string[] }>>([]);
   const [importSourceText, setImportSourceText] = useState("");
@@ -91,6 +87,8 @@ export function StoryBibleView() {
   const extractionPreference = resolveTaskPreference(aiPreferences.data, "knowledgeExtraction");
   const [importGuidance, setImportGuidance] = useState("");
   const selected = entities.data?.find((entity) => entity.id === selectedId) ?? null;
+  const entityDirty = entitySignature(form, summaryText, scopeText) !== savedSignature;
+  const remoteChanged = selected && form.id === selected.id && form.expectedVersion !== selected.version;
   const revisions = useQuery({
     queryKey: ["entity-revisions", selectedId],
     queryFn: () => listEntityRevisions(selectedId!),
@@ -110,7 +108,8 @@ export function StoryBibleView() {
 
   useEffect(() => {
     if (!selected) return;
-    const revision = revisions.data?.find((item) => item.id === selected.currentRevisionId) ?? revisions.data?.[0];
+    if (selected.id === form.id && (entityDirty || busy)) return;
+    const revision = currentRevisionByEntity.get(selected.id);
     if (!revision) return;
     setForm({
       id: selected.id,
@@ -136,10 +135,53 @@ export function StoryBibleView() {
       tags: revision.tags,
       sourceVersion: revision.sourceVersion ?? undefined,
     }, revision.aliases.join("、"), revision.tags.join("、")));
-  }, [revisions.data, selected]);
+  }, [busy, currentRevisionByEntity, entityDirty, form.id, selected]);
 
-  const entityDirty = entitySignature(form, summaryText, scopeText) !== savedSignature;
-  useUnsavedChangesGuard(entityDirty, selected ? "当前实体详情有未保存修改。" : "当前新实体有未保存内容。");
+  useEffect(() => {
+    if (targetResolved || requestedEntity === null || cards.isPending || project.isPending) return;
+    const target = cards.data?.find((card) => card.entity.id === requestedEntity);
+    if (cards.isError || project.isError || !target || !project.data
+      || target.entity.projectId !== project.data.projectId || targetProject !== null && targetProject !== project.data.projectId) {
+      setTargetError("实体已不可用或不属于当前项目，未打开其他实体。");
+    } else {
+      setSelectedId(target.entity.id);
+      setStatusFilter("ALL");
+    }
+    setTargetResolved(true);
+  }, [cards.data, cards.isError, cards.isPending, project.data, project.isError, project.isPending, requestedEntity, targetProject, targetResolved]);
+  useUnsavedChangesGuard(entityDirty || busy !== null, selected ? "当前实体详情有未保存修改或进行中的操作。" : "当前新实体有未保存内容。");
+
+  async function refreshEntities(id?: string) {
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ["entity-cards"] }),
+      client.invalidateQueries({ queryKey: ["entities"] }),
+      client.invalidateQueries({ queryKey: ["chapter-entity-references"] }),
+      client.invalidateQueries({ queryKey: ["ai-proposals"] }),
+      ...(id ? [client.invalidateQueries({ queryKey: ["entity-revisions", id] })] : []),
+    ]);
+  }
+
+  async function reloadEntity() {
+    if (!selected || busy || entityDirty && !window.confirm("放弃本地实体修改并读取最新修订吗？")) return;
+    setBusy("reload");
+    try {
+      const result = await cards.refetch();
+      if (result.isError) throw result.error;
+      const latest = result.data?.find((card) => card.entity.id === selected.id);
+      if (!latest) throw new Error("实体已不可用，未打开其他实体。");
+      const input: EntityInput = { id: latest.entity.id, entityType: latest.entity.entityType,
+        name: latest.revision.name, description: latest.revision.description, aliases: latest.revision.aliases,
+        tags: latest.revision.tags, fixedAttributesJson: latest.revision.fixedAttributesJson,
+        sourceVersion: latest.revision.sourceVersion ?? undefined, baseRevisionId: latest.revision.id,
+        expectedVersion: latest.entity.version };
+      const aliases = input.aliases.join("、");
+      const tags = input.tags.join("、");
+      setForm(input); setSummaryText(aliases); setScopeText(tags);
+      setSavedSignature(entitySignature(input, aliases, tags));
+      setError(null);
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setBusy(null); }
+  }
 
   async function discussEntity() {
     if (!selected || entityDirty) return;
@@ -155,7 +197,8 @@ export function StoryBibleView() {
   }
 
   function startNew() {
-    if (entityDirty && selectedId && !window.confirm("当前实体有未保存修改，确定新建并放弃这些修改吗？")) return;
+    if (busy || entityDirty && !window.confirm("当前实体有未保存修改，确定新建并放弃这些修改吗？")) return;
+    setTargetError(null);
     setSelectedId(null);
     setForm(emptyForm);
     setSummaryText("");
@@ -166,14 +209,16 @@ export function StoryBibleView() {
   }
 
   function selectEntity(entity: Entity) {
+    if (busy) return;
     if (entity.id !== selectedId && entityDirty && !window.confirm("当前实体有未保存修改，确定切换吗？")) return;
+    setTargetError(null);
     setSelectedId(entity.id);
     setError(null);
     setNotice(null);
   }
 
   async function save() {
-    if (!form.name.trim()) return;
+    if (!form.name.trim() || busy) return;
     setError(null);
     setNotice(null);
     setBusy("save");
@@ -185,10 +230,10 @@ export function StoryBibleView() {
     };
     try {
       const saved = await upsertEntity(input);
+      setForm((current) => ({ ...current, id: saved.id, baseRevisionId: saved.currentRevisionId, expectedVersion: saved.version }));
       setSelectedId(saved.id);
       setSavedSignature(entitySignature(input, summaryText, scopeText));
-      await client.invalidateQueries({ queryKey: ["entities", true] });
-      await client.invalidateQueries({ queryKey: ["entity-revisions", saved.id] });
+      await refreshEntities(saved.id);
       setNotice("已保存为新修订");
     } catch (cause) {
       const code = cause && typeof cause === "object" && "code" in cause ? String(cause.code) : "";
@@ -205,7 +250,7 @@ export function StoryBibleView() {
     setBusy("archive");
     try {
       await setEntityArchived({ id: selected.id, archived: selected.lifecycleStatus === "ACTIVE", expectedVersion: selected.version });
-      await client.invalidateQueries({ queryKey: ["entities", true] });
+      await refreshEntities(selected.id);
       setNotice(selected.lifecycleStatus === "ACTIVE" ? "实体已归档" : "实体已恢复");
     } catch (cause) {
       const code = cause && typeof cause === "object" && "code" in cause ? String(cause.code) : "";
@@ -221,8 +266,9 @@ export function StoryBibleView() {
     setError(null); setNotice(null); setBusy("archive");
     try {
       await setEntityArchived({ id: selected.id, archived: true, expectedVersion: selected.version });
-      await client.invalidateQueries({ queryKey: ["entities", true] });
+      await refreshEntities(selected.id);
       setSelectedId(null); setForm(emptyForm); setSummaryText(""); setScopeText("");
+      setSavedSignature(entitySignature(emptyForm, "", ""));
       setNotice("实体已删除（已移入归档，可恢复）");
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(null); }
@@ -271,7 +317,7 @@ export function StoryBibleView() {
       for (const item of importItems) {
         await upsertEntity({ ...emptyForm, entityType: form.entityType, name: item.name, aliases: item.aliases, tags: item.tags, description: item.description, sourceVersion: importFileName });
       }
-      await client.invalidateQueries({ queryKey: ["entities", true] });
+      await refreshEntities();
       setNotice(`已从“${importFileName}”导入 ${importItems.length} 条${typeLabels[form.entityType]}信息`);
       setImportItems([]);
       setImportSourceText("");
@@ -291,6 +337,8 @@ export function StoryBibleView() {
         <p className="workspace-lede">维护人物、地点、阵营、物品和概念等稳定资料。这里负责资料整理，不处理正文候选事实的批准与定稿。</p>
       </div>
       <KnowledgeSectionNav />
+      {returnTo ? <a className="secondary-action" href={returnTo}>返回来源</a> : null}
+      {targetError ? <p className="project-error" role="alert">{targetError}</p> : null}
 
       <div className="story-bible-toolbar">
         <label className="search-field"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索实体名称" aria-label="搜索实体" /></label>
@@ -319,12 +367,17 @@ export function StoryBibleView() {
           ))}
         </aside>
 
-        <div className="story-bible-editor">
+        {!targetResolved || targetError ? <div className="story-bible-editor">{!targetResolved ? <p role="status">正在定位实体…</p> : null}</div> : <div className="story-bible-editor">
           <div className="section-heading"><h2>{selected ? "实体详情" : "新建实体"}</h2>{selected ? <span>版本 {selected.version}</span> : <span>尚未保存</span>}</div>
           {selected?.lifecycleStatus === "ACTIVE" ? <button type="button" className="secondary-action"
             onClick={() => void discussEntity()} disabled={entityDirty || busy !== null}><MessageSquareText size={14} />继续讨论这个实体</button> : null}
+          {selected ? <EntityChapters key={selected.id} projectId={selected.projectId} entityId={selected.id} /> : null}
+          {selected && (entityDirty || remoteChanged) ? <div className="entity-reference-actions">
+            {remoteChanged ? <span role="status">实体已有新修订，本地修改仍保留。</span> : null}
+            <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => void reloadEntity()}><RotateCcw size={14} />读取最新实体</button>
+          </div> : null}
           <div className="entity-form-grid">
-            <label>类型<select value={form.entityType} onChange={(event) => setForm((current) => ({ ...current, entityType: event.target.value as EntityType }))}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label>类型<select value={form.entityType} disabled={Boolean(selected) || busy !== null} onChange={(event) => setForm((current) => ({ ...current, entityType: event.target.value as EntityType }))}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>名称<input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：林澈" /></label>
             <label>简要概述<input value={summaryText} onChange={(event) => setSummaryText(event.target.value)} placeholder="例如：本书人物的力量体系" /></label>
             <label>适用范围<input value={scopeText} onChange={(event) => setScopeText(event.target.value)} placeholder="例如：本书所有人物" /></label>
@@ -351,7 +404,7 @@ export function StoryBibleView() {
           <div className="inspector-actions"><button type="button" className="primary-action" onClick={() => void save()} disabled={!form.name.trim() || busy !== null}><Save size={15} />{busy === "save" ? "保存中…" : selected ? "保存为新修订" : "创建实体"}</button>{selected ? <><button type="button" className="secondary-action" onClick={() => void toggleArchive()} disabled={busy !== null}>{selected.lifecycleStatus === "ACTIVE" ? <Archive size={15} /> : <RotateCcw size={15} />}{busy === "archive" ? "处理中…" : selected.lifecycleStatus === "ACTIVE" ? "归档实体" : "恢复实体"}</button>{selected.lifecycleStatus === "ACTIVE" ? <button type="button" className="danger-action" onClick={() => void removeEntity()} disabled={busy !== null}><Trash2 size={14} />删除实体</button> : null}</> : null}</div>
 
           {selected ? <div className="entity-revisions"><div className="section-heading"><h2>修订历史</h2><span>{revisions.isPending ? "加载中…" : `${revisions.data?.length ?? 0} 条`}</span></div>{revisions.data?.map((revision) => <div className="entity-revision-row" key={revision.id}><span>修订 {revision.revision}</span><span>{revision.name}</span><span className={revision.sourceVersion ? "revision-source" : "revision-source revision-source-missing"}>{revision.sourceVersion ? "已有来源" : "暂无来源"}</span><code>{revision.sourceVersion ?? "无来源版本"}</code>{revision.id === selected.currentRevisionId ? <span className="revision-current"><Check size={13} />当前</span> : null}</div>)}</div> : <div className="entity-form-hint">保存后会生成第一个实体修订，后续编辑不会覆盖历史版本。</div>}
-        </div>
+        </div>}
       </div>
     </section>
   );

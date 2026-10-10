@@ -13,6 +13,8 @@ import type { useChapterManuscript } from "./use-chapter-manuscript";
 import { WorkspaceTabs } from "./workspace-tabs";
 import "./chapter-creation-workspace.css";
 import { PlanningDiscussionSources } from "./planning-discussion-sources";
+import { ChapterEntityReferencePanel } from "./chapter-entity-references";
+import { sourceReturnTo } from "../lib/manuscript-source";
 
 type AssistantTab = "ai" | "plan" | "review";
 
@@ -64,11 +66,12 @@ export function ChapterCreationWorkspace({
   const [readinessOpen, setReadinessOpen] = useState(false);
   const [pendingPanels, setPendingPanels] = useState<Record<string, boolean>>({});
   const pendingCallbacks = useMemo(() => Object.fromEntries(
-    ["ai", "extraction", "facts", "admission", "manuscript"].map((key) => [key, (pending: boolean) => {
+    ["ai", "extraction", "facts", "admission", "manuscript", "references"].map((key) => [key, (pending: boolean) => {
       setPendingPanels((current) => current[key] === pending ? current : { ...current, [key]: pending });
     }]),
   ), []);
   const candidatePending = Object.values(pendingPanels).some(Boolean);
+  const referenceReturn = sourceReturnTo(new URLSearchParams(window.location.search).get("returnTo"));
   useEffect(() => { onPendingChange?.(candidatePending); }, [candidatePending, onPendingChange]);
   useEffect(() => () => { onPendingChange?.(false); }, [onPendingChange]);
   const hasDraft = Boolean(documentToText(state.draft).trim());
@@ -248,6 +251,9 @@ export function ChapterCreationWorkspace({
             </div>
           </div> : null}
           <a href="/planning">全书规划</a>
+          {referenceReturn ? <a href={referenceReturn}>返回来源</a> : null}
+          <ChapterEntityReferencePanel chapterId={chapter.id} active={assistantOpen && assistantTab === "plan"}
+            onPendingChange={pendingCallbacks.references} />
           <PlanningDiscussionSources sectionId={`plan-node:${chapter.id}`} active={assistantOpen && assistantTab === "plan"}
             returnTo={`/writing?assistant=plan#${encodeURIComponent(chapter.id)}`} />
           <details onToggle={(event) => setReadinessOpen(event.currentTarget.open)}>

@@ -385,6 +385,8 @@ impl ContextPackage {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ContextError {
+    #[error("project reference material could not be read: {0}")]
+    ProjectKnowledgeUnavailable(String),
     #[error(transparent)]
     Contract(#[from] AiContractError),
     #[error("document JSON is invalid: {0}")]

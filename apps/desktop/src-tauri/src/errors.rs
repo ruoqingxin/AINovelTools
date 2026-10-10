@@ -111,6 +111,27 @@ impl From<novel_infrastructure::EntityStoreError> for ApiError {
     }
 }
 
+impl From<novel_infrastructure::EntityReferenceError> for ApiError {
+    fn from(error: novel_infrastructure::EntityReferenceError) -> Self {
+        use novel_infrastructure::EntityReferenceError;
+        let code = match error {
+            EntityReferenceError::NoProject => "NO_PROJECT_OPEN",
+            EntityReferenceError::WrongProject => "SOURCE_MISMATCH",
+            EntityReferenceError::InvalidChapter | EntityReferenceError::InvalidEntity => {
+                "NOT_FOUND"
+            }
+            EntityReferenceError::InvalidSelection => "INVALID_INPUT",
+            EntityReferenceError::Conflict => "VERSION_CONFLICT",
+            EntityReferenceError::Entity(error) => return error.into(),
+            EntityReferenceError::Sqlite(_) => "DATABASE_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
 impl From<novel_infrastructure::MaterialsStoreError> for ApiError {
     fn from(error: novel_infrastructure::MaterialsStoreError) -> Self {
         let code = match error {
