@@ -74,7 +74,8 @@ pub use discussion_store::{
 pub use entity_store::{EntityCard, EntityStoreError};
 pub use extraction_store::{
     ChapterExtractionItem, ChapterExtractionProposal, ChapterExtractionProposalStatus,
-    ExtractionAdoption, ExtractionItemKind, ExtractionItemStatus, ExtractionStoreError,
+    ExtractionAdoption, ExtractionItemKind, ExtractionItemStatus, ExtractionItemTarget,
+    ExtractionStoreError,
 };
 pub use knowledge_store::KnowledgeStoreError;
 pub use manuscript_source_store::{
@@ -225,7 +226,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 50;
+pub const CURRENT_SCHEMA_VERSION: i64 = 51;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

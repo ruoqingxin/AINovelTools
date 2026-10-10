@@ -1305,8 +1305,13 @@ mod tests {
         let foreshadowing_id = Uuid::new_v4();
         manager
             .adopt_extraction_item(
-                item.id,
-                ExtractionItemStatus::PendingReview,
+                ExtractionItemTarget {
+                    id: item.id,
+                    project_id: manifest.project_id,
+                    chapter_id: chapter.id,
+                    expected_status: item.status,
+                    expected_version: item.version,
+                },
                 ExtractionAdoption::Foreshadowing(Foreshadowing {
                     id: foreshadowing_id,
                     project_id: manifest.project_id,
@@ -1397,6 +1402,7 @@ mod tests {
                         }),
                         evidence_anchor_id: anchor.id,
                         status: super::ExtractionItemStatus::PendingReview,
+                        version: 1,
                         final_object_id: None,
                         created_at: String::new(),
                         updated_at: String::new(),
@@ -1407,29 +1413,30 @@ mod tests {
                 vec![anchor.clone()],
             )
             .expect("extract character candidate");
-        let entity = manager
-            .upsert_entity(super::EntityInput {
-                id: None,
-                entity_type: super::EntityType::Character,
-                name: "沈砚".into(),
-                aliases: Vec::new(),
-                description: "在雾城醒来的失忆信使".into(),
-                fixed_attributes_json: "{}".into(),
-                tags: Vec::new(),
-                base_revision_id: None,
-                source_version: Some(anchor.source_version.clone()),
-                expected_version: None,
-            })
-            .expect("author adopts character");
-        let entity_id = entity.id.to_string();
         let adopted = manager
-            .decide_extraction_item(
-                item_id,
-                super::ExtractionItemStatus::PendingReview,
-                super::ExtractionItemStatus::Accepted,
-                Some(entity_id.clone()),
+            .adopt_extraction_item(
+                super::ExtractionItemTarget {
+                    id: item_id,
+                    project_id: manifest.project_id,
+                    chapter_id: chapter.id,
+                    expected_status: super::ExtractionItemStatus::PendingReview,
+                    expected_version: 1,
+                },
+                super::ExtractionAdoption::Entity(super::EntityInput {
+                    id: None,
+                    entity_type: super::EntityType::Character,
+                    name: "沈砚".into(),
+                    aliases: Vec::new(),
+                    description: "在雾城醒来的失忆信使".into(),
+                    fixed_attributes_json: "{}".into(),
+                    tags: Vec::new(),
+                    base_revision_id: None,
+                    source_version: Some(anchor.source_version.clone()),
+                    expected_version: None,
+                }),
             )
-            .expect("mark candidate accepted");
+            .expect("author adopts character");
+        let entity_id = adopted.final_object_id.clone().unwrap();
         assert_eq!(adopted.final_object_id.as_deref(), Some(entity_id.as_str()));
 
         let session = manager

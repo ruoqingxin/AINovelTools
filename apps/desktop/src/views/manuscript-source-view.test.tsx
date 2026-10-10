@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ManuscriptSourceView } from "./manuscript-source-view";
 
 const mocks = vi.hoisted(() => ({ getCurrentProject: vi.fn(), getManuscriptSource: vi.fn(),
-  saveManuscript: vi.fn(), currentManuscriptDraft: vi.fn(), saveRecoveryLog: vi.fn() }));
+  saveManuscriptDraft: vi.fn(), commitManuscriptDraft: vi.fn(), currentManuscriptDraft: vi.fn(), saveRecoveryLog: vi.fn() }));
 vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
 }));
@@ -41,7 +41,8 @@ describe("verified read-only source view", () => {
     expect(reader).toHaveAttribute("contenteditable", "false");
     expect(screen.getByRole("link", { name: "返回来源" })).toHaveAttribute("href", "/search?q=old");
     expect(mocks.getManuscriptSource).toHaveBeenCalledWith({ projectId: "project-1", revisionId: "old-revision" });
-    expect(mocks.saveManuscript).not.toHaveBeenCalled();
+    expect(mocks.saveManuscriptDraft).not.toHaveBeenCalled();
+    expect(mocks.commitManuscriptDraft).not.toHaveBeenCalled();
     expect(mocks.currentManuscriptDraft).not.toHaveBeenCalled();
     expect(mocks.saveRecoveryLog).not.toHaveBeenCalled();
   });

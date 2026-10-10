@@ -98,39 +98,6 @@ pub(crate) fn current_manuscript(
 }
 
 #[tauri::command]
-pub(crate) fn save_manuscript(
-    state: tauri::State<'_, ProjectState>,
-    chapter_id: uuid::Uuid,
-    document_json: String,
-    creation_reason: String,
-) -> Result<novel_infrastructure::ManuscriptRevision, ApiError> {
-    let mut manager = state
-        .manager
-        .lock()
-        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
-        .save_manuscript(chapter_id, document_json, creation_reason)
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
-pub(crate) fn save_manuscript_checked(
-    state: tauri::State<'_, ProjectState>,
-    chapter_id: uuid::Uuid,
-    base_revision_id: Option<uuid::Uuid>,
-    document_json: String,
-    creation_reason: String,
-) -> Result<novel_infrastructure::ManuscriptRevision, ApiError> {
-    let mut manager = state
-        .manager
-        .lock()
-        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
-        .save_manuscript_checked(chapter_id, base_revision_id, document_json, creation_reason)
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
 pub(crate) fn enqueue_chapter_summary_refresh(
     state: tauri::State<'_, ProjectState>,
     chapter_id: uuid::Uuid,

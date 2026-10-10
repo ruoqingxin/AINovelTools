@@ -116,6 +116,7 @@ pub struct ChapterExtractionItem {
     pub payload: serde_json::Value,
     pub evidence_anchor_id: Uuid,
     pub status: ExtractionItemStatus,
+    pub version: i64,
     pub final_object_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -133,6 +134,30 @@ pub struct ChapterExtractionProposal {
     pub items: Vec<ChapterExtractionItem>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractionItemTarget {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub chapter_id: Uuid,
+    pub expected_status: ExtractionItemStatus,
+    pub expected_version: i64,
+}
+
+impl ExtractionItemTarget {
+    fn validate_edit(&self) -> Result<(), ExtractionStoreError> {
+        if self.expected_version <= 0
+            || !matches!(
+                self.expected_status,
+                ExtractionItemStatus::PendingReview | ExtractionItemStatus::Deferred
+            )
+        {
+            return Err(ExtractionStoreError::Conflict);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -193,7 +218,7 @@ pub enum ExtractionStoreError {
     NoProject,
     #[error("extraction candidate does not exist: {0}")]
     MissingItem(Uuid),
-    #[error("extraction candidate status conflict")]
+    #[error("extraction candidate version, status or scope conflict")]
     Conflict,
     #[error("extraction candidate has no supported payload")]
     InvalidPayload,
@@ -324,7 +349,7 @@ impl Database {
     ) -> Result<Vec<ChapterExtractionItem>, DatabaseError> {
         let mut statement = self.connection.prepare(
             "SELECT id, proposal_id, kind, payload_json, evidence_anchor_id, status,
-                    final_object_id, created_at, updated_at
+                    final_object_id, created_at, updated_at, version
              FROM chapter_extraction_items WHERE proposal_id = ?1 ORDER BY created_at, id",
         )?;
         let rows = statement.query_map([proposal_id.to_string()], map_extraction_item)?;
@@ -334,14 +359,16 @@ impl Database {
 
     pub(super) fn get_extraction_item(
         &self,
-        id: Uuid,
+        target: ExtractionItemTarget,
     ) -> Result<Option<ChapterExtractionItem>, DatabaseError> {
         self.connection
             .query_row(
-                "SELECT id, proposal_id, kind, payload_json, evidence_anchor_id, status,
-                        final_object_id, created_at, updated_at
-                 FROM chapter_extraction_items WHERE id = ?1",
-                [id.to_string()],
+                "SELECT i.id, i.proposal_id, i.kind, i.payload_json, i.evidence_anchor_id, i.status,
+                        i.final_object_id, i.created_at, i.updated_at, i.version
+                 FROM chapter_extraction_items i
+                 JOIN chapter_extraction_proposals p ON p.id = i.proposal_id
+                 WHERE i.id = ?1 AND p.project_id = ?2 AND p.chapter_id = ?3",
+                rusqlite::params![target.id.to_string(), target.project_id.to_string(), target.chapter_id.to_string()],
                 map_extraction_item,
             )
             .optional()
@@ -349,66 +376,77 @@ impl Database {
     }
 
     pub(super) fn update_extraction_item_payload(
-        &self,
-        id: Uuid,
+        &mut self,
+        target: ExtractionItemTarget,
         payload_json: String,
-        expected_status: ExtractionItemStatus,
     ) -> Result<ChapterExtractionItem, DatabaseError> {
-        let changed = self.connection.execute(
+        let tx = self.connection.transaction()?;
+        let changed = tx.execute(
             "UPDATE chapter_extraction_items
-             SET payload_json = ?1, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-             WHERE id = ?2 AND status = ?3",
-            rusqlite::params![payload_json, id.to_string(), expected_status.as_str()],
+             SET payload_json = ?1, version = version + 1,
+                 updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+             WHERE id = ?2 AND status = ?3 AND version = ?4
+               AND proposal_id IN (SELECT id FROM chapter_extraction_proposals
+                                  WHERE project_id = ?5 AND chapter_id = ?6)",
+            rusqlite::params![
+                payload_json,
+                target.id.to_string(),
+                target.expected_status.as_str(),
+                target.expected_version,
+                target.project_id.to_string(),
+                target.chapter_id.to_string()
+            ],
         )?;
         if changed == 0 {
             return Err(DatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows));
         }
-        self.get_extraction_item(id)?
-            .ok_or_else(|| DatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))
+        let item = tx.query_row(
+            "SELECT id, proposal_id, kind, payload_json, evidence_anchor_id, status,
+                    final_object_id, created_at, updated_at, version
+             FROM chapter_extraction_items WHERE id = ?1",
+            [target.id.to_string()],
+            map_extraction_item,
+        )?;
+        tx.commit()?;
+        Ok(item)
     }
 
     pub(super) fn decide_extraction_item(
         &mut self,
-        id: Uuid,
-        expected_status: ExtractionItemStatus,
+        target: ExtractionItemTarget,
         next_status: ExtractionItemStatus,
-        final_object_id: Option<String>,
     ) -> Result<ChapterExtractionItem, DatabaseError> {
         let tx = self.connection.transaction()?;
-        let item = update_extraction_item_status_in_tx(
-            &tx,
-            id,
-            expected_status,
-            next_status,
-            final_object_id,
-        )?;
+        let item = update_extraction_item_status_in_tx(&tx, target, next_status, None)?;
         tx.commit()?;
         Ok(item)
     }
 
     pub(super) fn adopt_extraction_item(
         &mut self,
-        project_id: Uuid,
-        id: Uuid,
-        expected_status: ExtractionItemStatus,
+        target: ExtractionItemTarget,
         adoption: ExtractionAdoption,
     ) -> Result<ChapterExtractionItem, ExtractionStoreError> {
         let tx = self.connection.transaction()?;
         let item = tx
             .query_row(
                 "SELECT i.id, i.proposal_id, i.kind, i.payload_json, i.evidence_anchor_id,
-                        i.status, i.final_object_id, i.created_at, i.updated_at
+                        i.status, i.final_object_id, i.created_at, i.updated_at, i.version
                  FROM chapter_extraction_items i
                  JOIN chapter_extraction_proposals p ON p.id = i.proposal_id
-                 WHERE i.id = ?1 AND p.project_id = ?2",
-                rusqlite::params![id.to_string(), project_id.to_string()],
+                 WHERE i.id = ?1 AND p.project_id = ?2 AND p.chapter_id = ?3",
+                rusqlite::params![
+                    target.id.to_string(),
+                    target.project_id.to_string(),
+                    target.chapter_id.to_string()
+                ],
                 map_extraction_item,
             )
             .optional()?;
         let Some(item) = item else {
-            return Err(ExtractionStoreError::MissingItem(id));
+            return Err(ExtractionStoreError::Conflict);
         };
-        if item.status != expected_status {
+        if item.status != target.expected_status || item.version != target.expected_version {
             return Err(ExtractionStoreError::Conflict);
         }
         if item.kind != adoption.kind() {
@@ -416,8 +454,8 @@ impl Database {
         }
         let final_object_id = match adoption {
             ExtractionAdoption::Entity(value) => {
-                let entity_id = Self::upsert_entity_in_tx(&tx, project_id, value)?;
-                Self::rebuild_search_index_in_tx(&tx, project_id)?;
+                let entity_id = Self::upsert_entity_in_tx(&tx, target.project_id, value)?;
+                Self::rebuild_search_index_in_tx(&tx, target.project_id)?;
                 entity_id.to_string()
             }
             ExtractionAdoption::Fact(value) => {
@@ -443,8 +481,7 @@ impl Database {
         };
         let item = update_extraction_item_status_in_tx(
             &tx,
-            id,
-            expected_status,
+            target,
             ExtractionItemStatus::Accepted,
             Some(final_object_id),
         )?;
@@ -455,21 +492,25 @@ impl Database {
 
 fn update_extraction_item_status_in_tx(
     tx: &rusqlite::Transaction<'_>,
-    id: Uuid,
-    expected_status: ExtractionItemStatus,
+    target: ExtractionItemTarget,
     next_status: ExtractionItemStatus,
     final_object_id: Option<String>,
 ) -> Result<ChapterExtractionItem, rusqlite::Error> {
     let changed = tx.execute(
         "UPDATE chapter_extraction_items
          SET status = ?1, final_object_id = COALESCE(?2, final_object_id),
-             updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-         WHERE id = ?3 AND status = ?4",
+             version = version + 1, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+         WHERE id = ?3 AND status = ?4 AND version = ?5
+           AND proposal_id IN (SELECT id FROM chapter_extraction_proposals
+                              WHERE project_id = ?6 AND chapter_id = ?7)",
         rusqlite::params![
             next_status.as_str(),
             final_object_id,
-            id.to_string(),
-            expected_status.as_str()
+            target.id.to_string(),
+            target.expected_status.as_str(),
+            target.expected_version,
+            target.project_id.to_string(),
+            target.chapter_id.to_string(),
         ],
     )?;
     if changed == 0 {
@@ -477,7 +518,7 @@ fn update_extraction_item_status_in_tx(
     }
     let proposal_id: String = tx.query_row(
         "SELECT proposal_id FROM chapter_extraction_items WHERE id = ?1",
-        [id.to_string()],
+        [target.id.to_string()],
         |row| row.get(0),
     )?;
     let counts: (i64, i64, i64, i64) = tx.query_row(
@@ -513,9 +554,9 @@ fn update_extraction_item_status_in_tx(
     )?;
     tx.query_row(
         "SELECT id, proposal_id, kind, payload_json, evidence_anchor_id, status,
-                final_object_id, created_at, updated_at
+                final_object_id, created_at, updated_at, version
          FROM chapter_extraction_items WHERE id = ?1",
-        [id.to_string()],
+        [target.id.to_string()],
         map_extraction_item,
     )
 }
@@ -531,10 +572,9 @@ impl ProjectManager {
             .as_mut()
             .ok_or(ExtractionStoreError::NoProject)?;
         if proposal.project_id != session.manifest.project_id
-            || proposal
-                .items
-                .iter()
-                .any(|item| item.proposal_id != proposal.id)
+            || proposal.items.iter().any(|item| {
+                item.proposal_id != proposal.id || item.version != 1 || !item.payload.is_object()
+            })
         {
             return Err(ExtractionStoreError::Conflict);
         }
@@ -559,24 +599,34 @@ impl ProjectManager {
 
     pub fn get_extraction_item(
         &self,
-        id: Uuid,
+        target: ExtractionItemTarget,
     ) -> Result<ChapterExtractionItem, ExtractionStoreError> {
         let session = self
             .current
             .as_ref()
             .ok_or(ExtractionStoreError::NoProject)?;
-        session
+        if target.project_id != session.manifest.project_id {
+            return Err(ExtractionStoreError::Conflict);
+        }
+        let item = session
             .database
-            .get_extraction_item(id)?
-            .ok_or(ExtractionStoreError::MissingItem(id))
+            .get_extraction_item(target)?
+            .ok_or(ExtractionStoreError::Conflict)?;
+        if item.status != target.expected_status || item.version != target.expected_version {
+            return Err(ExtractionStoreError::Conflict);
+        }
+        Ok(item)
     }
 
     pub fn update_extraction_item_payload(
         &mut self,
-        id: Uuid,
+        target: ExtractionItemTarget,
         payload: serde_json::Value,
-        expected_status: ExtractionItemStatus,
     ) -> Result<ChapterExtractionItem, ExtractionStoreError> {
+        target.validate_edit()?;
+        if !payload.is_object() {
+            return Err(ExtractionStoreError::InvalidPayload);
+        }
         let payload_json = serde_json::to_string(&payload).map_err(|error| {
             ExtractionStoreError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
         })?;
@@ -584,43 +634,51 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(ExtractionStoreError::NoProject)?;
-        Ok(session
+        if target.project_id != session.manifest.project_id {
+            return Err(ExtractionStoreError::Conflict);
+        }
+        session
             .database
-            .update_extraction_item_payload(id, payload_json, expected_status)?)
+            .update_extraction_item_payload(target, payload_json)
+            .map_err(extraction_write_error)
     }
 
     pub fn decide_extraction_item(
         &mut self,
-        id: Uuid,
-        expected_status: ExtractionItemStatus,
+        target: ExtractionItemTarget,
         next_status: ExtractionItemStatus,
-        final_object_id: Option<String>,
     ) -> Result<ChapterExtractionItem, ExtractionStoreError> {
-        if !expected_status.can_transition_to(next_status) {
+        target.validate_edit()?;
+        if !matches!(
+            next_status,
+            ExtractionItemStatus::Deferred | ExtractionItemStatus::Rejected
+        ) || !target.expected_status.can_transition_to(next_status)
+        {
             return Err(ExtractionStoreError::Conflict);
         }
         let session = self
             .current
             .as_mut()
             .ok_or(ExtractionStoreError::NoProject)?;
+        if target.project_id != session.manifest.project_id {
+            return Err(ExtractionStoreError::Conflict);
+        }
         session
             .database
-            .decide_extraction_item(id, expected_status, next_status, final_object_id)
-            .map_err(|error| match error {
-                DatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows) => {
-                    ExtractionStoreError::Conflict
-                }
-                other => ExtractionStoreError::Database(other),
-            })
+            .decide_extraction_item(target, next_status)
+            .map_err(extraction_write_error)
     }
 
     pub fn adopt_extraction_item(
         &mut self,
-        id: Uuid,
-        expected_status: ExtractionItemStatus,
+        target: ExtractionItemTarget,
         adoption: ExtractionAdoption,
     ) -> Result<ChapterExtractionItem, ExtractionStoreError> {
-        if !expected_status.can_transition_to(ExtractionItemStatus::Accepted) {
+        target.validate_edit()?;
+        if !target
+            .expected_status
+            .can_transition_to(ExtractionItemStatus::Accepted)
+        {
             return Err(ExtractionStoreError::Conflict);
         }
         adoption.validate()?;
@@ -628,18 +686,14 @@ impl ProjectManager {
             .current
             .as_mut()
             .ok_or(ExtractionStoreError::NoProject)?;
-        if adoption
-            .project_id()
-            .is_some_and(|project_id| project_id != session.manifest.project_id)
+        if target.project_id != session.manifest.project_id
+            || adoption
+                .project_id()
+                .is_some_and(|project_id| project_id != session.manifest.project_id)
         {
             return Err(ExtractionStoreError::Conflict);
         }
-        session.database.adopt_extraction_item(
-            session.manifest.project_id,
-            id,
-            expected_status,
-            adoption,
-        )
+        session.database.adopt_extraction_item(target, adoption)
     }
 }
 
@@ -658,7 +712,17 @@ fn map_extraction_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChapterExtra
         final_object_id: row.get(6)?,
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
+        version: row.get(9)?,
     })
+}
+
+fn extraction_write_error(error: DatabaseError) -> ExtractionStoreError {
+    match error {
+        DatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows) => {
+            ExtractionStoreError::Conflict
+        }
+        other => ExtractionStoreError::Database(other),
+    }
 }
 
 fn parse_uuid(column: usize, value: &str) -> rusqlite::Result<Uuid> {
@@ -675,6 +739,471 @@ fn parse_uuid(column: usize, value: &str) -> rusqlite::Result<Uuid> {
 mod tests {
     use super::*;
 
+    fn entity_input(name: &str) -> EntityInput {
+        EntityInput {
+            id: None,
+            entity_type: EntityType::Character,
+            name: name.into(),
+            aliases: Vec::new(),
+            description: "description".into(),
+            fixed_attributes_json: "{}".into(),
+            tags: Vec::new(),
+            base_revision_id: None,
+            source_version: None,
+            expected_version: None,
+        }
+    }
+
+    struct Fixture {
+        manager: ProjectManager,
+        root: PathBuf,
+        target: ExtractionItemTarget,
+        anchor: EvidenceAnchor,
+    }
+
+    impl Fixture {
+        fn new(kind: ExtractionItemKind) -> Self {
+            let root = std::env::temp_dir().join(format!("extraction-cas-{}", Uuid::new_v4()));
+            let mut manager = ProjectManager::new();
+            let manifest = manager.create(&root, "CAS").unwrap();
+            let chapter = manager
+                .create_plan_node(None, PlanNodeKind::Chapter, "chapter".into())
+                .unwrap();
+            let revision = manager.save_manuscript(chapter.id,
+                r#"{"type":"doc","content":[{"type":"paragraph","attrs":{"blockId":"block"},"content":[{"type":"text","text":"character enters city"}]}]}"#.into(), "test".into()).unwrap();
+            let anchor = EvidenceAnchor {
+                id: Uuid::new_v4(),
+                project_id: manifest.project_id,
+                chapter_id: chapter.id,
+                source_revision_id: revision.id,
+                block_id: "block".into(),
+                start_offset: 0,
+                end_offset: 9,
+                source_version: format!("manuscript:{}", revision.id),
+                source_hash: revision.content_hash,
+                lifecycle_status: KnowledgeLifecycleStatus::Active,
+                created_by: "test".into(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            };
+            let proposal_id = Uuid::new_v4();
+            let target = ExtractionItemTarget {
+                id: Uuid::new_v4(),
+                project_id: manifest.project_id,
+                chapter_id: chapter.id,
+                expected_status: ExtractionItemStatus::PendingReview,
+                expected_version: 1,
+            };
+            manager
+                .create_chapter_extraction(
+                    ChapterExtractionProposal {
+                        id: proposal_id,
+                        project_id: manifest.project_id,
+                        chapter_id: chapter.id,
+                        source_revision_id: revision.id,
+                        ai_run_id: None,
+                        status: ChapterExtractionProposalStatus::PendingReview,
+                        items: vec![ChapterExtractionItem {
+                            id: target.id,
+                            proposal_id,
+                            kind,
+                            payload: serde_json::json!({"name":"A"}),
+                            evidence_anchor_id: anchor.id,
+                            status: target.expected_status,
+                            version: 1,
+                            final_object_id: None,
+                            created_at: String::new(),
+                            updated_at: String::new(),
+                        }],
+                        created_at: String::new(),
+                        updated_at: String::new(),
+                    },
+                    vec![anchor.clone()],
+                )
+                .unwrap();
+            Self {
+                manager,
+                root,
+                target,
+                anchor,
+            }
+        }
+
+        fn snapshot(&self) -> ChapterExtractionProposal {
+            self.manager
+                .list_chapter_extractions(self.target.chapter_id)
+                .unwrap()
+                .remove(0)
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            self.manager.close();
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn serialized_mutation_target_requires_scope_status_and_version() {
+        let target = serde_json::json!({
+            "id": Uuid::new_v4(), "projectId": Uuid::new_v4(), "chapterId": Uuid::new_v4(),
+            "expectedStatus": "PENDING_REVIEW", "expectedVersion": 1,
+        });
+        let decoded: ExtractionItemTarget = serde_json::from_value(target.clone()).unwrap();
+        assert_eq!(decoded.expected_version, 1);
+        for field in [
+            "id",
+            "projectId",
+            "chapterId",
+            "expectedStatus",
+            "expectedVersion",
+        ] {
+            let mut missing = target.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<ExtractionItemTarget>(missing).is_err());
+        }
+    }
+
+    #[test]
+    fn stale_same_status_writes_decisions_and_adoption_cannot_overwrite_or_create_objects() {
+        let mut f = Fixture::new(ExtractionItemKind::Entity);
+        let saved = f
+            .manager
+            .update_extraction_item_payload(f.target, serde_json::json!({"name":"B"}))
+            .unwrap();
+        assert_eq!(saved.version, 2);
+        let snapshot = f.snapshot();
+        assert!(matches!(
+            f.manager.get_extraction_item(f.target),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        assert!(matches!(
+            f.manager
+                .update_extraction_item_payload(f.target, serde_json::json!({"name":"C"})),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        for decision in [
+            ExtractionItemStatus::Deferred,
+            ExtractionItemStatus::Rejected,
+        ] {
+            assert!(matches!(
+                f.manager.decide_extraction_item(f.target, decision),
+                Err(ExtractionStoreError::Conflict)
+            ));
+        }
+        assert!(matches!(
+            f.manager
+                .adopt_extraction_item(f.target, ExtractionAdoption::Entity(entity_input("A"))),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        assert_eq!(f.snapshot(), snapshot);
+        assert!(f.manager.list_entities(false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn payload_reversion_does_not_restore_an_old_version() {
+        let mut f = Fixture::new(ExtractionItemKind::Entity);
+        f.manager
+            .update_extraction_item_payload(f.target, serde_json::json!({"name":"B"}))
+            .unwrap();
+        let saved = f
+            .manager
+            .update_extraction_item_payload(
+                ExtractionItemTarget {
+                    expected_version: 2,
+                    ..f.target
+                },
+                serde_json::json!({"name":"A"}),
+            )
+            .unwrap();
+        assert_eq!(saved.version, 3);
+        assert!(matches!(
+            f.manager
+                .update_extraction_item_payload(f.target, saved.payload.clone()),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        assert!(matches!(
+            f.manager
+                .adopt_extraction_item(f.target, ExtractionAdoption::Entity(entity_input("A"))),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        assert_eq!(f.snapshot().items[0], saved);
+    }
+
+    #[test]
+    fn mutations_check_scope_payload_and_accepted_decisions_cannot_bypass_adoption() {
+        let mut f = Fixture::new(ExtractionItemKind::Entity);
+        let snapshot = f.snapshot();
+        for target in [
+            ExtractionItemTarget {
+                project_id: Uuid::new_v4(),
+                ..f.target
+            },
+            ExtractionItemTarget {
+                chapter_id: Uuid::new_v4(),
+                ..f.target
+            },
+            ExtractionItemTarget {
+                id: Uuid::new_v4(),
+                ..f.target
+            },
+            ExtractionItemTarget {
+                expected_version: 0,
+                ..f.target
+            },
+        ] {
+            assert!(matches!(
+                f.manager.get_extraction_item(target),
+                Err(ExtractionStoreError::Conflict)
+            ));
+            assert!(matches!(
+                f.manager
+                    .update_extraction_item_payload(target, serde_json::json!({})),
+                Err(ExtractionStoreError::Conflict)
+            ));
+            assert!(matches!(
+                f.manager
+                    .decide_extraction_item(target, ExtractionItemStatus::Rejected),
+                Err(ExtractionStoreError::Conflict)
+            ));
+            assert!(matches!(
+                f.manager
+                    .adopt_extraction_item(target, ExtractionAdoption::Entity(entity_input("A"))),
+                Err(ExtractionStoreError::Conflict)
+            ));
+        }
+        for value in [
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!("text"),
+        ] {
+            assert!(matches!(
+                f.manager.update_extraction_item_payload(f.target, value),
+                Err(ExtractionStoreError::InvalidPayload)
+            ));
+        }
+        assert!(matches!(
+            f.manager
+                .decide_extraction_item(f.target, ExtractionItemStatus::Accepted),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        assert_eq!(f.snapshot(), snapshot);
+        assert!(f.manager.list_entities(false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn deferred_edits_increment_versions_and_terminal_items_cannot_be_mutated() {
+        let mut f = Fixture::new(ExtractionItemKind::Entity);
+        let deferred = f
+            .manager
+            .decide_extraction_item(f.target, ExtractionItemStatus::Deferred)
+            .unwrap();
+        assert_eq!(deferred.version, 2);
+        assert_eq!(
+            f.snapshot().status,
+            ChapterExtractionProposalStatus::Deferred
+        );
+        let target = ExtractionItemTarget {
+            expected_status: deferred.status,
+            expected_version: deferred.version,
+            ..f.target
+        };
+        let saved = f
+            .manager
+            .update_extraction_item_payload(target, serde_json::json!({"name":"B"}))
+            .unwrap();
+        assert_eq!(saved.version, 3);
+        let rejected = f
+            .manager
+            .decide_extraction_item(
+                ExtractionItemTarget {
+                    expected_version: 3,
+                    ..target
+                },
+                ExtractionItemStatus::Rejected,
+            )
+            .unwrap();
+        assert_eq!(rejected.version, 4);
+        let terminal = ExtractionItemTarget {
+            expected_status: rejected.status,
+            expected_version: rejected.version,
+            ..target
+        };
+        assert!(matches!(
+            f.manager
+                .update_extraction_item_payload(terminal, serde_json::json!({})),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        assert!(matches!(
+            f.manager
+                .decide_extraction_item(terminal, ExtractionItemStatus::Deferred),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        assert!(matches!(
+            f.manager
+                .adopt_extraction_item(terminal, ExtractionAdoption::Entity(entity_input("B"))),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        assert_eq!(f.snapshot().items[0], rejected);
+    }
+
+    #[test]
+    fn adoption_and_decision_failures_roll_back_objects_status_version_and_search() {
+        let mut f = Fixture::new(ExtractionItemKind::Entity);
+        let snapshot = f.snapshot();
+        f.manager.current.as_ref().unwrap().database.connection.execute_batch(
+            "CREATE TRIGGER fail_extraction_aggregate BEFORE UPDATE ON chapter_extraction_proposals
+             BEGIN SELECT RAISE(ABORT,'test aggregate failure'); END;").unwrap();
+        assert!(
+            f.manager
+                .decide_extraction_item(f.target, ExtractionItemStatus::Rejected)
+                .is_err()
+        );
+        assert!(
+            f.manager
+                .adopt_extraction_item(f.target, ExtractionAdoption::Entity(entity_input("A")))
+                .is_err()
+        );
+        assert_eq!(f.snapshot(), snapshot);
+        assert!(f.manager.list_entities(false).unwrap().is_empty());
+        let connection = &f.manager.current.as_ref().unwrap().database.connection;
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM search_index WHERE object_type='ENTITY'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        connection
+            .execute_batch("DROP TRIGGER fail_extraction_aggregate")
+            .unwrap();
+        let adopted = f
+            .manager
+            .adopt_extraction_item(f.target, ExtractionAdoption::Entity(entity_input("A")))
+            .unwrap();
+        assert_eq!(adopted.version, 2);
+        assert_eq!(f.manager.list_entities(false).unwrap().len(), 1);
+        let terminal = ExtractionItemTarget {
+            expected_status: adopted.status,
+            expected_version: adopted.version,
+            ..f.target
+        };
+        assert!(matches!(
+            f.manager
+                .update_extraction_item_payload(terminal, serde_json::json!({})),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        assert!(matches!(
+            f.manager
+                .adopt_extraction_item(terminal, ExtractionAdoption::Entity(entity_input("A"))),
+            Err(ExtractionStoreError::Conflict)
+        ));
+    }
+
+    #[test]
+    fn failed_payload_update_keeps_the_original_version_and_payload() {
+        let mut f = Fixture::new(ExtractionItemKind::Entity);
+        let snapshot = f.snapshot();
+        f.manager
+            .current
+            .as_ref()
+            .unwrap()
+            .database
+            .connection
+            .execute_batch(
+                "CREATE TRIGGER fail_extraction_payload BEFORE UPDATE ON chapter_extraction_items
+             BEGIN SELECT RAISE(ABORT,'test payload failure'); END;",
+            )
+            .unwrap();
+        assert!(
+            f.manager
+                .update_extraction_item_payload(f.target, serde_json::json!({"name":"B"}))
+                .is_err()
+        );
+        assert_eq!(f.snapshot(), snapshot);
+    }
+
+    #[test]
+    fn separate_connections_and_reopen_keep_cas_versions_and_evidence() {
+        let mut f = Fixture::new(ExtractionItemKind::Entity);
+        let mut other = ProjectManager::new();
+        other.open(&f.root).unwrap();
+        f.manager
+            .update_extraction_item_payload(f.target, serde_json::json!({"name":"B"}))
+            .unwrap();
+        assert!(matches!(
+            other.update_extraction_item_payload(f.target, serde_json::json!({"name":"C"})),
+            Err(ExtractionStoreError::Conflict)
+        ));
+        let saved = other
+            .update_extraction_item_payload(
+                ExtractionItemTarget {
+                    expected_version: 2,
+                    ..f.target
+                },
+                serde_json::json!({"name":"C"}),
+            )
+            .unwrap();
+        other.close();
+        f.manager.close();
+        f.manager.open(&f.root).unwrap();
+        assert_eq!(f.snapshot().items[0], saved);
+        let anchor = f.manager.list_evidence_anchors().unwrap().remove(0);
+        assert_eq!(anchor.id, f.anchor.id);
+        assert_eq!(anchor.source_hash, f.anchor.source_hash);
+    }
+
+    #[test]
+    fn adopted_fact_remains_a_pending_candidate_not_a_final_fact() {
+        let mut f = Fixture::new(ExtractionItemKind::Fact);
+        let candidate_id = Uuid::new_v4();
+        let adopted = f
+            .manager
+            .adopt_extraction_item(
+                f.target,
+                ExtractionAdoption::Fact(KnowledgeCandidate {
+                    id: candidate_id,
+                    project_id: f.target.project_id,
+                    chapter_id: f.target.chapter_id,
+                    proposal_id: None,
+                    candidate_status: CandidateStatus::Pending,
+                    review_decision: None,
+                    reviewer: None,
+                    reviewed_at: None,
+                    fact: Fact {
+                        knowledge_id: Uuid::new_v4(),
+                        project_id: f.target.project_id,
+                        knowledge_version: 1,
+                        subject: "character".into(),
+                        predicate: "enters".into(),
+                        object: "city".into(),
+                        source_revision_id: f.anchor.source_revision_id,
+                        evidence_anchor_ids: vec![f.anchor.id],
+                        lifecycle_status: KnowledgeLifecycleStatus::NeedsReview,
+                        created_by: "test".into(),
+                        created_at: String::new(),
+                        updated_at: String::new(),
+                    },
+                    created_at: String::new(),
+                    updated_at: String::new(),
+                }),
+            )
+            .unwrap();
+        assert_eq!(adopted.version, 2);
+        assert_eq!(adopted.final_object_id, Some(candidate_id.to_string()));
+        let candidates = f
+            .manager
+            .list_knowledge_candidates(f.target.chapter_id)
+            .unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].candidate_status, CandidateStatus::Pending);
+        assert!(f.manager.list_current_facts().unwrap().is_empty());
+    }
+
     #[test]
     fn extraction_candidates_keep_evidence_and_enforce_review_transitions() {
         let root = std::env::temp_dir().join(format!("ainovel-extraction-{}", Uuid::new_v4()));
@@ -685,6 +1214,13 @@ mod tests {
         let chapter = manager
             .create_plan_node(None, PlanNodeKind::Chapter, "第一章".into())
             .expect("create chapter");
+        let target = |id, expected_status, expected_version| ExtractionItemTarget {
+            id,
+            project_id: manifest.project_id,
+            chapter_id: chapter.id,
+            expected_status,
+            expected_version,
+        };
         let revision = manager
             .save_manuscript(
                 chapter.id,
@@ -727,6 +1263,7 @@ mod tests {
                 }),
                 evidence_anchor_id: anchor.id,
                 status: ExtractionItemStatus::PendingReview,
+                version: 1,
                 final_object_id: None,
                 created_at: String::new(),
                 updated_at: String::new(),
@@ -751,23 +1288,20 @@ mod tests {
 
         let updated = manager
             .update_extraction_item_payload(
-                item_id,
+                target(item_id, ExtractionItemStatus::PendingReview, 1),
                 serde_json::json!({
                     "entityType": "CHARACTER",
                     "name": "沈砚（雾城）",
                     "description": "第一次进入雾城"
                 }),
-                ExtractionItemStatus::PendingReview,
             )
             .expect("update extraction payload");
         assert_eq!(updated.payload["name"], "沈砚（雾城）");
 
         let deferred = manager
             .decide_extraction_item(
-                item_id,
-                ExtractionItemStatus::PendingReview,
+                target(item_id, ExtractionItemStatus::PendingReview, 2),
                 ExtractionItemStatus::Deferred,
-                None,
             )
             .expect("defer extraction item");
         assert_eq!(deferred.status, ExtractionItemStatus::Deferred);
@@ -777,25 +1311,22 @@ mod tests {
         );
 
         let accepted = manager
-            .decide_extraction_item(
-                item_id,
-                ExtractionItemStatus::Deferred,
-                ExtractionItemStatus::Accepted,
-                Some("entity-1".into()),
+            .adopt_extraction_item(
+                target(item_id, ExtractionItemStatus::Deferred, 3),
+                ExtractionAdoption::Entity(entity_input("沈砚（雾城）")),
             )
             .expect("accept extraction item");
         assert_eq!(accepted.status, ExtractionItemStatus::Accepted);
-        assert_eq!(accepted.final_object_id.as_deref(), Some("entity-1"));
+        assert!(accepted.final_object_id.is_some());
+        assert_eq!(accepted.version, 4);
         assert_eq!(
             manager.list_chapter_extractions(chapter.id).expect("list")[0].status,
             ChapterExtractionProposalStatus::Accepted
         );
         assert!(matches!(
             manager.decide_extraction_item(
-                item_id,
-                ExtractionItemStatus::PendingReview,
+                target(item_id, ExtractionItemStatus::PendingReview, 1),
                 ExtractionItemStatus::Rejected,
-                None,
             ),
             Err(ExtractionStoreError::Conflict)
         ));
@@ -814,6 +1345,13 @@ mod tests {
         let chapter = manager
             .create_plan_node(None, PlanNodeKind::Chapter, "第一章".into())
             .expect("create chapter");
+        let target = |id| ExtractionItemTarget {
+            id,
+            project_id: manifest.project_id,
+            chapter_id: chapter.id,
+            expected_status: ExtractionItemStatus::PendingReview,
+            expected_version: 1,
+        };
         let revision = manager
             .save_manuscript(
                 chapter.id,
@@ -910,6 +1448,7 @@ mod tests {
                             }),
                             evidence_anchor_id: anchor.id,
                             status: ExtractionItemStatus::PendingReview,
+                            version: 1,
                             final_object_id: None,
                             created_at: String::new(),
                             updated_at: String::new(),
@@ -925,6 +1464,7 @@ mod tests {
                             }),
                             evidence_anchor_id: anchor.id,
                             status: ExtractionItemStatus::PendingReview,
+                            version: 1,
                             final_object_id: None,
                             created_at: String::new(),
                             updated_at: String::new(),
@@ -940,6 +1480,7 @@ mod tests {
                             }),
                             evidence_anchor_id: anchor.id,
                             status: ExtractionItemStatus::PendingReview,
+                            version: 1,
                             final_object_id: None,
                             created_at: String::new(),
                             updated_at: String::new(),
@@ -962,7 +1503,7 @@ mod tests {
             relation_type: "盟友".into(),
             evidence_anchor_ids: vec![
                 manager
-                    .get_extraction_item(relation_item_id)
+                    .get_extraction_item(target(relation_item_id))
                     .expect("get relation item")
                     .evidence_anchor_id,
             ],
@@ -973,8 +1514,7 @@ mod tests {
         };
         let adopted_relation = manager
             .adopt_extraction_item(
-                relation_item_id,
-                ExtractionItemStatus::PendingReview,
+                target(relation_item_id),
                 ExtractionAdoption::Relation(relation),
             )
             .expect("adopt relation");
@@ -986,13 +1526,12 @@ mod tests {
 
         let event_id = Uuid::new_v4();
         let event_anchor_id = manager
-            .get_extraction_item(event_item_id)
+            .get_extraction_item(target(event_item_id))
             .expect("get event item")
             .evidence_anchor_id;
         let adopted_event = manager
             .adopt_extraction_item(
-                event_item_id,
-                ExtractionItemStatus::PendingReview,
+                target(event_item_id),
                 ExtractionAdoption::Event(Event {
                     id: event_id,
                     project_id: manifest.project_id,
@@ -1028,7 +1567,7 @@ mod tests {
             relation_type: "无效关系".into(),
             evidence_anchor_ids: vec![
                 manager
-                    .get_extraction_item(rejected_relation_item_id)
+                    .get_extraction_item(target(rejected_relation_item_id))
                     .expect("get rejected item")
                     .evidence_anchor_id,
             ],
@@ -1039,8 +1578,7 @@ mod tests {
         };
         assert!(matches!(
             manager.adopt_extraction_item(
-                rejected_relation_item_id,
-                ExtractionItemStatus::PendingReview,
+                target(rejected_relation_item_id),
                 ExtractionAdoption::Relation(failed_relation),
             ),
             Err(ExtractionStoreError::Knowledge(
@@ -1049,7 +1587,7 @@ mod tests {
         ));
         assert_eq!(
             manager
-                .get_extraction_item(rejected_relation_item_id)
+                .get_extraction_item(target(rejected_relation_item_id))
                 .expect("get pending item")
                 .status,
             ExtractionItemStatus::PendingReview

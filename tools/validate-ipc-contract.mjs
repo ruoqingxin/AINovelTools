@@ -29,6 +29,12 @@ export function findRegisteredCommands(source) {
   return new Set(handler[1].split(",").map((name) => name.trim()).filter(Boolean));
 }
 
+export function assertNoRetiredCommands(commands) {
+  const retired = ["save_manuscript", "save_manuscript_checked", "save_planning_section", "update_plan_node"];
+  const found = retired.filter((name) => commands.has(name));
+  if (found.length) throw new Error(`Retired IPC entry points: ${found.join(", ")}`);
+}
+
 export async function validateIpcContract() {
   const [rust, client] = await Promise.all([
     readFile(new URL("../apps/desktop/src-tauri/src/lib.rs", import.meta.url), "utf8"),
@@ -36,6 +42,8 @@ export async function validateIpcContract() {
   ]);
   const registered = findRegisteredCommands(rust);
   const commands = findClientCommands(client);
+  assertNoRetiredCommands(registered);
+  assertNoRetiredCommands(commands);
   const missing = [...commands].filter((name) => !registered.has(name));
   if (missing.length) throw new Error(`IPC contract mismatch: ${missing.join(", ")}`);
   for (const field of ["documentSchemaVersion", "baseRevisionId", "createdAt"]) {

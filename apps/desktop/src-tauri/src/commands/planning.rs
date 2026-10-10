@@ -40,21 +40,6 @@ pub(crate) fn save_planning_section_checked(
 }
 
 #[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn save_planning_section(
-    state: tauri::State<'_, ProjectState>,
-    section: novel_infrastructure::PlanningSection,
-) -> Result<novel_infrastructure::PlanningSection, ApiError> {
-    let mut manager = state
-        .manager
-        .lock()
-        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
-        .save_planning_section(section)
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
 pub(crate) fn enqueue_project_setting_summary_refresh(
     state: tauri::State<'_, ProjectState>,
 ) -> Result<novel_infrastructure::Job, ApiError> {
@@ -180,23 +165,6 @@ pub(crate) fn create_plan_node(
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
         .create_plan_node(parent_id, kind, title)
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn update_plan_node(
-    state: tauri::State<'_, ProjectState>,
-    id: uuid::Uuid,
-    title: String,
-    archived: bool,
-) -> Result<novel_infrastructure::PlanNode, ApiError> {
-    let mut manager = state
-        .manager
-        .lock()
-        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    manager
-        .update_plan_node(id, title, archived)
         .map_err(ApiError::from)
 }
 

@@ -14,6 +14,7 @@ import {
   updateExtractionItem,
   type ChapterExtractionItem,
   type ExtractionItemStatus,
+  type ExtractionItemTarget,
   type Fact,
 } from "../lib/tauri-client";
 import { AiModelNote } from "./ai-model-note";
@@ -70,6 +71,8 @@ function uuidValues(payload: Record<string, unknown>, key: string) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+type ExtractionEdit = { value: string; baseline: string; target: ExtractionItemTarget };
+
 export function ChapterExtractionPanel(props: { chapterId: string; active?: boolean; onPendingChange?: (pending: boolean) => void; onOpenFactReview?: () => void; onOpenManuscript?: () => void }) {
   const client = useQueryClient();
   const active = props.active !== false;
@@ -95,12 +98,71 @@ export function ChapterExtractionPanel(props: { chapterId: string; active?: bool
   const preference = resolveTaskPreference(aiPreferences.data, "knowledgeExtraction");
   const [guidance, setGuidance] = useState("");
   const [guidanceBaseline, setGuidanceBaseline] = useState("");
-  const edits = useCandidateEdits();
+  const [entries, setEntries] = useState<Record<string, ExtractionEdit>>({});
   const guidanceEdits = useCandidateEdits();
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useCandidateEditGuard(edits.dirty || guidanceEdits.dirty, busy !== null, props.onPendingChange);
+  useCandidateEditGuard(Object.values(entries).some((entry) => entry.value !== entry.baseline) || guidanceEdits.dirty, busy !== null, props.onPendingChange);
+
+  function itemTarget(item: ChapterExtractionItem): ExtractionItemTarget {
+    const proposal = proposals.data?.find((candidate) => candidate.id === item.proposalId);
+    if (!proposal || proposal.chapterId !== props.chapterId) throw new Error("候选不属于当前章节，请重新读取。");
+    return { id: item.id, projectId: proposal.projectId, chapterId: proposal.chapterId,
+      expectedStatus: item.status, expectedVersion: item.version };
+  }
+
+  function checkedTarget(item: ChapterExtractionItem) {
+    const target = itemTarget(item);
+    const entry = entries[item.id];
+    if (entry && entry.value !== entry.baseline
+      && (entry.target.expectedVersion !== item.version || entry.target.expectedStatus !== item.status
+        || entry.baseline !== JSON.stringify(item.payload, null, 2))) {
+      throw new Error("候选已有新内容或状态，本地修改仍保留。请核对后明确放弃修改并重读。");
+    }
+    return entry && entry.value !== entry.baseline ? entry.target : target;
+  }
+
+  function discardEdit(id: string) {
+    setEntries((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function acknowledgeEdit(id: string, submitted: string, saved: ChapterExtractionItem) {
+    const target = itemTarget(saved);
+    setEntries((current) => {
+      const entry = current[id];
+      if (!entry) return current;
+      const next = { ...current };
+      if (entry.value === submitted) delete next[id];
+      else next[id] = { value: entry.value, baseline: JSON.stringify(saved.payload, null, 2), target };
+      return next;
+    });
+  }
+
+  async function mutationFailed(cause: unknown) {
+    const conflict = typeof cause === "object" && cause !== null && "code" in cause && cause.code === "VERSION_CONFLICT";
+    setError(conflict ? "候选版本或状态已变化，本地修改仍保留。请核对后明确放弃修改并重读。" : errorMessage(cause));
+    await client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] });
+  }
+
+  async function reloadItem(id: string) {
+    if (!window.confirm("放弃这条候选的本地修改并读取最新版本吗？")) return;
+    setBusy(`reload:${id}`);
+    setError(null);
+    setNotice(null);
+    try {
+      await proposals.refetch({ throwOnError: true });
+      discardEdit(id);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   function parsePayload(value: string) {
     const payload: unknown = JSON.parse(value);
@@ -111,20 +173,25 @@ export function ChapterExtractionPanel(props: { chapterId: string; active?: bool
   }
 
   function itemDraft(item: ChapterExtractionItem) {
-    const entry = edits.entries[item.id];
+    const entry = entries[item.id];
     return entry && (entry.value !== entry.baseline || busy === `save:${item.id}`)
       ? entry.value : JSON.stringify(item.payload, null, 2);
   }
 
   function setItemDraft(item: ChapterExtractionItem, value: string) {
-    edits.edit(item.id, value, JSON.stringify(item.payload, null, 2));
+    const target = itemTarget(item);
+    setEntries((current) => {
+      const entry = current[item.id];
+      // Keep the original version while dirty, including typing during an outstanding save.
+      const retain = entry && (entry.value !== entry.baseline || busy === `save:${item.id}`);
+      return { ...current, [item.id]: { value,
+        baseline: retain ? entry.baseline : JSON.stringify(item.payload, null, 2),
+        target: retain ? entry.target : target } };
+    });
   }
 
   function checkedPayload(item: ChapterExtractionItem) {
-    const entry = edits.entries[item.id];
-    if (entry && entry.value !== entry.baseline && entry.baseline !== JSON.stringify(item.payload, null, 2)) {
-      throw new Error("候选已有新内容，本地修改仍保留。请复制需要保留的内容后，放弃修改并重新核对。");
-    }
+    checkedTarget(item);
     return parsePayload(itemDraft(item));
   }
 
@@ -194,38 +261,42 @@ export function ChapterExtractionPanel(props: { chapterId: string; active?: bool
   async function saveItem(item: ChapterExtractionItem) {
     setBusy(`save:${item.id}`);
     setError(null);
+    setNotice(null);
     try {
       const submitted = itemDraft(item);
       const payload = checkedPayload(item);
-      const saved = await updateExtractionItem({ id: item.id, payload, expectedStatus: item.status });
+      const saved = await updateExtractionItem({ target: checkedTarget(item), payload });
       await client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] });
-      edits.acknowledge(item.id, submitted, JSON.stringify(saved.payload, null, 2));
+      acknowledgeEdit(item.id, submitted, saved);
       setNotice("候选修改已保存。");
     } catch (cause) {
-      setError(errorMessage(cause));
+      await mutationFailed(cause);
     } finally {
       setBusy(null);
     }
   }
 
   async function decide(item: ChapterExtractionItem, decision: "DEFERRED" | "REJECTED") {
-    const changed = edits.entries[item.id]?.value !== edits.entries[item.id]?.baseline;
+    const changed = entries[item.id]?.value !== entries[item.id]?.baseline;
     if (decision === "REJECTED" && changed && !window.confirm("这条候选有未保存修改。拒绝将丢弃这些修改，确定继续吗？")) return;
     setBusy(`decide:${item.id}`);
     setError(null);
+    setNotice(null);
     try {
+      let target = checkedTarget(item);
       if (decision === "DEFERRED" && changed) {
         const submitted = itemDraft(item);
-        const saved = await updateExtractionItem({ id: item.id, payload: checkedPayload(item), expectedStatus: item.status });
+        const saved = await updateExtractionItem({ target, payload: checkedPayload(item) });
         await client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] });
-        edits.acknowledge(item.id, submitted, JSON.stringify(saved.payload, null, 2));
+        acknowledgeEdit(item.id, submitted, saved);
+        target = itemTarget(saved);
       }
-      await decideExtractionItem({ id: item.id, expectedStatus: item.status, decision });
-      edits.discard(item.id);
+      await decideExtractionItem({ target, decision });
+      discardEdit(item.id);
       await client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] });
       setNotice(decision === "DEFERRED" ? "候选已延期。" : "候选已拒绝。");
     } catch (cause) {
-      setError(errorMessage(cause));
+      await mutationFailed(cause);
     } finally {
       setBusy(null);
     }
@@ -234,20 +305,22 @@ export function ChapterExtractionPanel(props: { chapterId: string; active?: bool
   async function adopt(item: ChapterExtractionItem) {
     setBusy(`adopt:${item.id}`);
     setError(null);
+    setNotice(null);
     try {
+      let target = checkedTarget(item);
       const payload = checkedPayload(item);
-      if (edits.entries[item.id] && edits.entries[item.id]!.value !== edits.entries[item.id]!.baseline) {
+      if (entries[item.id] && entries[item.id]!.value !== entries[item.id]!.baseline) {
         const submitted = itemDraft(item);
         const saved = await updateExtractionItem({
-          id: item.id,
+          target,
           payload,
-          expectedStatus: item.status,
         });
         await client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] });
-        edits.acknowledge(item.id, submitted, JSON.stringify(saved.payload, null, 2));
+        acknowledgeEdit(item.id, submitted, saved);
+        target = itemTarget(saved);
       }
-      const adopted = await adoptExtractionItem({ id: item.id, expectedStatus: item.status });
-      edits.discard(item.id);
+      const adopted = await adoptExtractionItem({ target });
+      discardEdit(item.id);
       await Promise.all([
         client.invalidateQueries({ queryKey: ["chapter-extractions", props.chapterId] }),
         client.invalidateQueries({ queryKey: ["entities", false] }),
@@ -268,7 +341,7 @@ export function ChapterExtractionPanel(props: { chapterId: string; active?: bool
               : `已创建伏笔记录 ${adopted.finalObjectId?.slice(0, 8) ?? ""}。`);
       if (item.kind === "FACT") props.onOpenFactReview?.();
     } catch (cause) {
-      setError(errorMessage(cause));
+      await mutationFailed(cause);
     } finally {
       setBusy(null);
     }
@@ -298,9 +371,9 @@ export function ChapterExtractionPanel(props: { chapterId: string; active?: bool
         const anchor = anchors.data?.find((candidate) => candidate.id === item.evidenceAnchorId);
         const editable = item.status === "PENDING_REVIEW" || item.status === "DEFERRED";
         const payload = draftPayload(item);
-        const entry = edits.entries[item.id];
+        const entry = entries[item.id];
         const dirty = Boolean(entry && entry.value !== entry.baseline);
-        const locked = busy === `adopt:${item.id}` || busy === `decide:${item.id}`;
+        const locked = busy === `adopt:${item.id}` || busy === `decide:${item.id}` || busy === `reload:${item.id}`;
         return <article className="chapter-extraction-item" data-status={item.status.toLowerCase()} key={item.id}>
           <div className="chapter-extraction-item-heading">
             <div><span>{kindLabels[item.kind]}</span><strong>{itemTitle(item)}</strong></div>
@@ -320,9 +393,7 @@ export function ChapterExtractionPanel(props: { chapterId: string; active?: bool
           </div> : null}
           <textarea rows={5} value={itemDraft(item)} readOnly={!editable} onChange={(event) => setItemDraft(item, event.target.value)} aria-label={`${itemTitle(item)} payload`} />
           </fieldset>
-          {dirty ? <div className="inspector-actions candidate-edit-status"><span>{editable ? "候选修改未保存" : "候选状态已变化，本地修改仍保留"}</span><button type="button" className="secondary-action" disabled={busy !== null} onClick={() => {
-            if (window.confirm("放弃这条候选的本地修改吗？")) edits.discard(item.id);
-          }}>放弃修改</button></div> : null}
+          {dirty ? <div className="inspector-actions candidate-edit-status"><span>{editable ? "候选修改未保存" : "候选状态已变化，本地修改仍保留"}</span><button type="button" className="secondary-action" disabled={busy !== null} onClick={() => void reloadItem(item.id)}>放弃修改并重读</button></div> : null}
           <footer>
             <span>{anchor ? `${anchor.sourceVersion} · ${anchor.blockId}` : "证据待载入"}</span>
             {anchor ? <a href={manuscriptSourceHref(evidenceSourceRequest(anchor), `/writing?tab=extraction#${encodeURIComponent(props.chapterId)}`)}><BookOpenText size={14} />定位原文</a> : null}

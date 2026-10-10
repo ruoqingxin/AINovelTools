@@ -1193,6 +1193,15 @@ impl Database {
             )?;
             transaction.commit()?;
         }
+        if applied.unwrap_or(0) < 51 {
+            let transaction = self.connection.unchecked_transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE chapter_extraction_items
+                    ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK(version > 0);
+                 INSERT INTO schema_migrations (version, name) VALUES (51, 'extraction_item_versions');",
+            )?;
+            transaction.commit()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }
@@ -2158,6 +2167,132 @@ mod tests {
     }
 
     #[test]
+    fn migration_51_preserves_extraction_payloads_statuses_evidence_and_final_ids() {
+        let mut db = Database::in_memory().unwrap();
+        let project_id = Uuid::new_v4();
+        let chapter = db
+            .create_plan_node(None, PlanNodeKind::Chapter, "chapter".into())
+            .unwrap();
+        let revision = db
+            .save_manuscript_checked(
+                chapter.id,
+                None,
+                r#"{"type":"doc","content":[]}"#.into(),
+                "history".into(),
+            )
+            .unwrap();
+        let anchor = EvidenceAnchor {
+            id: Uuid::new_v4(),
+            project_id,
+            chapter_id: chapter.id,
+            source_revision_id: revision.id,
+            block_id: "original-block".into(),
+            start_offset: 0,
+            end_offset: 2,
+            source_version: revision.id.to_string(),
+            source_hash: revision.content_hash.clone(),
+            lifecycle_status: KnowledgeLifecycleStatus::Active,
+            created_by: "test".into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let proposal_id = Uuid::new_v4();
+        db.create_chapter_extraction(
+            &ChapterExtractionProposal {
+                id: proposal_id,
+                project_id,
+                chapter_id: chapter.id,
+                source_revision_id: revision.id,
+                ai_run_id: None,
+                status: ChapterExtractionProposalStatus::PartiallyAccepted,
+                items: [
+                    ExtractionItemStatus::PendingReview,
+                    ExtractionItemStatus::Deferred,
+                    ExtractionItemStatus::Accepted,
+                    ExtractionItemStatus::Rejected,
+                ]
+                .into_iter()
+                .map(|status| ChapterExtractionItem {
+                    id: Uuid::new_v4(),
+                    proposal_id,
+                    kind: ExtractionItemKind::Entity,
+                    payload: serde_json::json!({"name":"original", "status":status}),
+                    evidence_anchor_id: anchor.id,
+                    status,
+                    version: 1,
+                    final_object_id: None,
+                    created_at: String::new(),
+                    updated_at: String::new(),
+                })
+                .collect(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            },
+            &[anchor],
+        )
+        .unwrap();
+        db.connection.execute("UPDATE chapter_extraction_items SET final_object_id='historic-entity' WHERE status='ACCEPTED'", []).unwrap();
+        let original = db.list_chapter_extractions(project_id, chapter.id).unwrap();
+        db.connection
+            .execute_batch(
+                "ALTER TABLE chapter_extraction_items DROP COLUMN version;
+                 DELETE FROM schema_migrations WHERE version=51;",
+            )
+            .unwrap();
+        assert_eq!(db.health().unwrap().schema_version, 50);
+        db.migrate().unwrap();
+        assert_eq!(
+            db.list_chapter_extractions(project_id, chapter.id).unwrap(),
+            original
+        );
+        assert_eq!(
+            db.list_manuscript_revisions(chapter.id).unwrap()[0],
+            revision
+        );
+        assert_eq!(db.health().unwrap().schema_version, 51);
+        assert!(
+            db.connection
+                .execute("UPDATE chapter_extraction_items SET version=0", [])
+                .is_err()
+        );
+        db.migrate().unwrap();
+        assert_eq!(
+            db.list_chapter_extractions(project_id, chapter.id).unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn migration_51_failure_rolls_back_column_and_record_and_can_be_retried() {
+        let db = Database::in_memory().unwrap();
+        db.connection
+            .execute_batch(
+                "ALTER TABLE chapter_extraction_items DROP COLUMN version;
+                 DELETE FROM schema_migrations WHERE version=51;
+                 CREATE TRIGGER fail_extraction_migration BEFORE INSERT ON schema_migrations WHEN NEW.version=51
+                 BEGIN SELECT RAISE(ABORT,'migration failure'); END;",
+            )
+            .unwrap();
+        assert!(db.migrate().is_err());
+        assert!(db.connection.is_autocommit());
+        assert_eq!(db.health().unwrap().schema_version, 50);
+        assert_eq!(
+            db.connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('chapter_extraction_items') WHERE name='version'",
+                    [], |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        db.connection
+            .execute_batch("DROP TRIGGER fail_extraction_migration")
+            .unwrap();
+        db.migrate().unwrap();
+        assert_eq!(db.health().unwrap().schema_version, 51);
+    }
+
+    #[test]
     fn migration_50_preserves_existing_project_data_without_backfilling_references() {
         let mut db = Database::in_memory().unwrap();
         let chapter = db.create_plan_node(None, PlanNodeKind::Chapter, "chapter".into()).unwrap();
@@ -2166,7 +2301,8 @@ mod tests {
         let planning = db.save_planning_section_versioned(planning_section(), Some(0)).unwrap();
         db.connection.execute_batch(
             "DROP TABLE chapter_entity_references; DROP TABLE chapter_entity_reference_sets;
-             DELETE FROM schema_migrations WHERE version=50;",
+             ALTER TABLE chapter_extraction_items DROP COLUMN version;
+             DELETE FROM schema_migrations WHERE version>=50;",
         ).unwrap();
         assert_eq!(db.health().unwrap().schema_version, 49);
         db.migrate().unwrap();
@@ -2182,7 +2318,8 @@ mod tests {
         let db = Database::in_memory().unwrap();
         db.connection.execute_batch(
             "DROP TABLE chapter_entity_references; DROP TABLE chapter_entity_reference_sets;
-             DELETE FROM schema_migrations WHERE version=50;
+             ALTER TABLE chapter_extraction_items DROP COLUMN version;
+             DELETE FROM schema_migrations WHERE version>=50;
              CREATE TRIGGER fail_reference_migration BEFORE INSERT ON schema_migrations WHEN NEW.version=50
              BEGIN SELECT RAISE(ABORT,'migration failure'); END;",
         ).unwrap();
@@ -2217,6 +2354,7 @@ mod tests {
                 "DROP TABLE chapter_entity_references;
              DROP TABLE chapter_entity_reference_sets;
              DROP TABLE manuscript_drafts;
+             ALTER TABLE chapter_extraction_items DROP COLUMN version;
              ALTER TABLE planning_sections DROP COLUMN version;
              DELETE FROM schema_migrations WHERE version>=49;",
             )
@@ -2242,6 +2380,7 @@ mod tests {
                 "DROP TABLE chapter_entity_references;
              DROP TABLE chapter_entity_reference_sets;
              DROP TABLE manuscript_drafts;
+             ALTER TABLE chapter_extraction_items DROP COLUMN version;
              DELETE FROM schema_migrations WHERE version>=49;",
             )
             .unwrap();
@@ -2383,6 +2522,7 @@ mod tests {
                 DROP TABLE chapter_entity_references;
                 DROP TABLE chapter_entity_reference_sets;
                 DROP TABLE manuscript_drafts;
+                ALTER TABLE chapter_extraction_items DROP COLUMN version;
                 ALTER TABLE planning_sections DROP COLUMN version;
                 DELETE FROM schema_migrations WHERE version >= 40;
                 COMMIT;

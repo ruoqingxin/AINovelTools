@@ -91,6 +91,7 @@ const item: ChapterExtractionItem = {
   },
   evidenceAnchorId: "anchor-1",
   status: "PENDING_REVIEW",
+  version: 1,
   finalObjectId: null,
   createdAt: "0",
   updatedAt: "0",
@@ -107,6 +108,9 @@ const proposal: ChapterExtractionProposal = {
   createdAt: "0",
   updatedAt: "0",
 };
+
+const target = { id: item.id, projectId: proposal.projectId, chapterId: proposal.chapterId,
+  expectedStatus: item.status, expectedVersion: item.version };
 
 function renderPanel(onOpenFactReview?: () => void) {
   return render(
@@ -132,7 +136,11 @@ describe("ChapterExtractionPanel", () => {
       { id: "anchor-1", sourceVersion: "manuscript:revision-1", blockId: "block-1" },
     ]);
     mocks.listModelProfiles.mockResolvedValue([profile]);
-    mocks.updateExtractionItem.mockImplementation(async (input) => ({ ...item, payload: input.payload }));
+    mocks.updateExtractionItem.mockImplementation(async (input) => {
+      const saved = { ...item, payload: input.payload, version: input.target.expectedVersion + 1 };
+      mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [saved] }]);
+      return saved;
+    });
     mocks.adoptExtractionItem.mockResolvedValue({
       ...item,
       payload: { ...item.payload, fromKnowledgeId: "fact-1", toKnowledgeId: "fact-2" },
@@ -155,8 +163,7 @@ describe("ChapterExtractionPanel", () => {
 
     await waitFor(() =>
       expect(mocks.updateExtractionItem).toHaveBeenCalledWith({
-        id: "extraction-1",
-        expectedStatus: "PENDING_REVIEW",
+        target,
         payload: expect.objectContaining({
           fromKnowledgeId: "fact-1",
           toKnowledgeId: "fact-2",
@@ -164,8 +171,7 @@ describe("ChapterExtractionPanel", () => {
       }),
     );
     expect(mocks.adoptExtractionItem).toHaveBeenCalledWith({
-      id: "extraction-1",
-      expectedStatus: "PENDING_REVIEW",
+      target: { ...target, expectedVersion: 2 },
     });
   });
 
@@ -180,7 +186,7 @@ describe("ChapterExtractionPanel", () => {
     fireEvent.click(await screen.findByRole("button", { name: "采用" }));
     await waitFor(() => expect(openReview).toHaveBeenCalledOnce());
     expect(mocks.adoptExtractionItem).toHaveBeenCalledWith({
-      id: item.id, expectedStatus: "PENDING_REVIEW",
+      target,
     });
   });
 
@@ -220,12 +226,16 @@ describe("ChapterExtractionPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     await waitFor(() => expect(mocks.updateExtractionItem).toHaveBeenCalledOnce());
     fireEvent.change(input, { target: { value: newValue } });
-    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...item, payload: { relationType: "已提交" } }] }]);
-    await act(async () => finish({ ...item, payload: { relationType: "已提交" } }));
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...item, payload: { relationType: "已提交" }, version: 2 }] }]);
+    await act(async () => finish({ ...item, payload: { relationType: "已提交" }, version: 2 }));
     await screen.findByText("候选修改已保存。");
     expect(screen.getByRole("textbox", { name: /payload/ })).toHaveValue(newValue);
     expect(pending).toHaveBeenLastCalledWith(true);
     expect(screen.getByText("候选修改未保存")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    await waitFor(() => expect(mocks.updateExtractionItem).toHaveBeenLastCalledWith({
+      target: { ...target, expectedVersion: 2 }, payload: JSON.parse(newValue),
+    }));
   });
 
   it("requires confirmation before rejection and saves edits before deferring", async () => {
@@ -237,7 +247,7 @@ describe("ChapterExtractionPanel", () => {
       expect(mocks.decideExtractionItem).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "延期" }));
       await waitFor(() => expect(mocks.decideExtractionItem).toHaveBeenCalledWith({
-        id: item.id, expectedStatus: item.status, decision: "DEFERRED",
+        target: { ...target, expectedVersion: 2 }, decision: "DEFERRED",
       }));
       expect(mocks.updateExtractionItem).toHaveBeenCalledWith(expect.objectContaining({ payload: { relationType: "合作" } }));
       expect(mocks.updateExtractionItem.mock.invocationCallOrder[0]).toBeLessThan(mocks.decideExtractionItem.mock.invocationCallOrder[0]!);
@@ -247,7 +257,7 @@ describe("ChapterExtractionPanel", () => {
   it("retains edits through a server refetch and refuses to overwrite a known changed payload", async () => {
     renderPanel();
     fireEvent.change(await screen.findByLabelText("沈砚 · 盟友 · 顾临 payload"), { target: { value: '{"relationType":"本地"}' } });
-    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...item, payload: { relationType: "外部更新" } }] }]);
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...item, payload: { relationType: "外部更新" }, version: 2 }] }]);
     fireEvent.click(screen.getByRole("button", { name: "刷新" }));
     await screen.findByLabelText("未命名候选 payload");
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
@@ -273,7 +283,7 @@ describe("ChapterExtractionPanel", () => {
     const factItem = { ...item, kind: "FACT", payload: { subject: "沈砚", predicate: "进入", object: "雾城" } };
     mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [factItem] }]);
     mocks.updateExtractionItem.mockImplementation(async (input) => {
-      const saved = { ...factItem, payload: input.payload };
+      const saved = { ...factItem, payload: input.payload, version: input.target.expectedVersion + 1 };
       mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [saved] }]);
       return saved;
     });
@@ -285,5 +295,84 @@ describe("ChapterExtractionPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "采用" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("采用失败");
     expect(JSON.parse((screen.getByRole("textbox", { name: /payload/ }) as HTMLTextAreaElement).value).object).toBe("内城");
+  });
+
+  it.each(["保存修改", "采用", "延期", "拒绝"])("keeps the original baseline after an A-B-A server change: %s", async (command) => {
+    const entity = { ...item, kind: "ENTITY", payload: { name: "A" } };
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [entity] }]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      renderPanel();
+      fireEvent.change(await screen.findByLabelText("A payload"), { target: { value: '{"name":"本地"}' } });
+      mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...entity, version: 3 }] }]);
+      fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+      await waitFor(() => expect(mocks.listChapterExtractions).toHaveBeenCalledTimes(2));
+      await act(async () => {});
+      fireEvent.change(screen.getByLabelText("A payload"), { target: { value: '{"name":"本地后续"}' } });
+      fireEvent.click(screen.getByRole("button", { name: command }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("候选已有新内容或状态");
+      expect(mocks.updateExtractionItem).not.toHaveBeenCalled();
+      expect(mocks.adoptExtractionItem).not.toHaveBeenCalled();
+      expect(mocks.decideExtractionItem).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("A payload")).toHaveValue('{"name":"本地后续"}');
+    } finally { confirm.mockRestore(); }
+  });
+
+  it("refreshes an unseen backend conflict without replacing edits and reloads only on explicit discard", async () => {
+    renderPanel();
+    fireEvent.change(await screen.findByLabelText("沈砚 · 盟友 · 顾临 payload"), { target: { value: '{"relationType":"本地"}' } });
+    mocks.updateExtractionItem.mockRejectedValueOnce({ code: "VERSION_CONFLICT", message: "stale version" });
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...item, payload: { name: "远端" }, version: 2 }] }]);
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("候选版本或状态已变化");
+    expect(await screen.findByLabelText("远端 payload")).toHaveValue('{"relationType":"本地"}');
+    expect(mocks.updateExtractionItem).toHaveBeenCalledWith({ target, payload: { relationType: "本地" } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "放弃修改并重读" }));
+      expect(screen.getByLabelText("远端 payload")).toHaveValue('{"relationType":"本地"}');
+      confirm.mockReturnValue(true);
+      fireEvent.click(screen.getByRole("button", { name: "放弃修改并重读" }));
+      await waitFor(() => expect(screen.queryByText("候选修改未保存")).not.toBeInTheDocument());
+      expect(screen.getByLabelText("远端 payload")).toHaveValue(JSON.stringify({ name: "远端" }, null, 2));
+      fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+      await waitFor(() => expect(mocks.updateExtractionItem).toHaveBeenLastCalledWith({
+        target: { ...target, expectedVersion: 2 }, payload: { name: "远端" },
+      }));
+    } finally { confirm.mockRestore(); }
+  });
+
+  it("retains edits when explicit reload fails or a remote decision makes the item terminal", async () => {
+    renderPanel();
+    fireEvent.change(await screen.findByLabelText("沈砚 · 盟友 · 顾临 payload"), { target: { value: '{"relationType":"本地"}' } });
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...item, status: "ACCEPTED", version: 2 }] }]);
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await screen.findByText("候选状态已变化，本地修改仍保留");
+    expect(screen.getByRole("textbox", { name: /payload/ })).toHaveValue('{"relationType":"本地"}');
+    expect(screen.queryByRole("button", { name: "采用" })).not.toBeInTheDocument();
+    mocks.listChapterExtractions.mockRejectedValueOnce(new Error("读取失败"));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "放弃修改并重读" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("读取失败");
+      expect(screen.getByRole("textbox", { name: /payload/ })).toHaveValue('{"relationType":"本地"}');
+    } finally { confirm.mockRestore(); }
+  });
+
+  it("uses the save receipt version even if a refresh already sees a newer remote version before adoption", async () => {
+    const entity = { ...item, kind: "ENTITY", payload: { name: "A" } };
+    mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [entity] }]);
+    mocks.updateExtractionItem.mockImplementation(async (input) => {
+      const saved = { ...entity, payload: input.payload, version: 2 };
+      mocks.listChapterExtractions.mockResolvedValue([{ ...proposal, items: [{ ...saved, payload: { name: "远端" }, version: 3 }] }]);
+      return saved;
+    });
+    mocks.adoptExtractionItem.mockRejectedValueOnce({ code: "VERSION_CONFLICT", message: "stale" });
+    renderPanel();
+    fireEvent.change(await screen.findByLabelText("A payload"), { target: { value: '{"name":"提交"}' } });
+    fireEvent.click(screen.getByRole("button", { name: "采用" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("候选版本或状态已变化");
+    expect(mocks.adoptExtractionItem).toHaveBeenCalledWith({ target: { ...target, expectedVersion: 2 } });
+    expect(await screen.findByLabelText("远端 payload")).toHaveValue(JSON.stringify({ name: "远端" }, null, 2));
   });
 });

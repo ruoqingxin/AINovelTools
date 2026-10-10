@@ -105,11 +105,10 @@ pub(crate) async fn extract_entities_from_text(
             ("sourceText", source_text.as_str()),
         ],
     );
-    context.estimated_input_tokens = u32::try_from(
-        context.system_prompt.chars().count() + context.user_prompt.chars().count(),
-    )
-    .unwrap_or(u32::MAX)
-    .min(input_token_budget);
+    context.estimated_input_tokens =
+        u32::try_from(context.system_prompt.chars().count() + context.user_prompt.chars().count())
+            .unwrap_or(u32::MAX)
+            .min(input_token_budget);
     let run_id = {
         let mut manager = state
             .manager
@@ -326,11 +325,10 @@ pub(crate) async fn extract_chapter_candidates(
         ],
     );
     EXTRACTION_PROMPT_VERSION.clone_into(&mut context.prompt_version);
-    context.estimated_input_tokens = u32::try_from(
-        context.system_prompt.chars().count() + context.user_prompt.chars().count(),
-    )
-    .unwrap_or(u32::MAX)
-    .min(input_token_budget);
+    context.estimated_input_tokens =
+        u32::try_from(context.system_prompt.chars().count() + context.user_prompt.chars().count())
+            .unwrap_or(u32::MAX)
+            .min(input_token_budget);
 
     let run_id = {
         let mut manager = state
@@ -551,6 +549,7 @@ pub(crate) async fn extract_chapter_candidates(
             payload,
             evidence_anchor_id: anchor_id,
             status: novel_infrastructure::ExtractionItemStatus::PendingReview,
+            version: 1,
             final_object_id: None,
             created_at: String::new(),
             updated_at: String::new(),
@@ -615,24 +614,22 @@ pub(crate) fn list_chapter_extractions(
 #[tauri::command]
 pub(crate) fn update_extraction_item(
     state: tauri::State<'_, ProjectState>,
-    id: uuid::Uuid,
+    target: novel_infrastructure::ExtractionItemTarget,
     payload: serde_json::Value,
-    expected_status: novel_infrastructure::ExtractionItemStatus,
 ) -> Result<novel_infrastructure::ChapterExtractionItem, ApiError> {
     let mut manager = state
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
-        .update_extraction_item_payload(id, payload, expected_status)
+        .update_extraction_item_payload(target, payload)
         .map_err(ApiError::from)
 }
 
 #[tauri::command]
 pub(crate) fn decide_extraction_item(
     state: tauri::State<'_, ProjectState>,
-    id: uuid::Uuid,
-    expected_status: novel_infrastructure::ExtractionItemStatus,
+    target: novel_infrastructure::ExtractionItemTarget,
     decision: novel_infrastructure::ExtractionItemStatus,
 ) -> Result<novel_infrastructure::ChapterExtractionItem, ApiError> {
     if !matches!(
@@ -650,44 +647,35 @@ pub(crate) fn decide_extraction_item(
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
-        .decide_extraction_item(id, expected_status, decision, None)
+        .decide_extraction_item(target, decision)
         .map_err(ApiError::from)
 }
 
 #[tauri::command]
 pub(crate) fn adopt_extraction_item(
     state: tauri::State<'_, ProjectState>,
-    id: uuid::Uuid,
-    expected_status: novel_infrastructure::ExtractionItemStatus,
+    target: novel_infrastructure::ExtractionItemTarget,
 ) -> Result<novel_infrastructure::ChapterExtractionItem, ApiError> {
-    let item = {
-        let manager = state
-            .manager
-            .lock()
-            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-        manager.get_extraction_item(id).map_err(ApiError::from)?
-    };
-    if item.status != expected_status {
-        return Err(ApiError {
-            code: "VERSION_CONFLICT",
-            message: "候选状态已变化，请刷新后重试".to_owned(),
-        });
-    }
-    let anchor = {
-        let manager = state
-            .manager
-            .lock()
-            .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-        manager
-            .list_evidence_anchors()
-            .map_err(ApiError::from)?
-            .into_iter()
-            .find(|anchor| anchor.id == item.evidence_anchor_id)
-            .ok_or_else(|| ApiError {
-                code: "NOT_FOUND",
-                message: "候选对应的正文证据不存在".to_owned(),
-            })?
-    };
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    let item = manager
+        .get_extraction_item(target)
+        .map_err(ApiError::from)?;
+    let anchor = manager
+        .list_evidence_anchors()
+        .map_err(ApiError::from)?
+        .into_iter()
+        .find(|anchor| {
+            anchor.id == item.evidence_anchor_id
+                && anchor.project_id == target.project_id
+                && anchor.chapter_id == target.chapter_id
+        })
+        .ok_or_else(|| ApiError {
+            code: "NOT_FOUND",
+            message: "候选对应的正文证据不存在或不属于当前章节".to_owned(),
+        })?;
     let adoption = match item.kind {
         novel_infrastructure::ExtractionItemKind::Entity => {
             let entity_type = item
@@ -809,12 +797,8 @@ pub(crate) fn adopt_extraction_item(
             )
         }
     };
-    let mut manager = state
-        .manager
-        .lock()
-        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
     manager
-        .adopt_extraction_item(id, expected_status, adoption)
+        .adopt_extraction_item(target, adoption)
         .map_err(ApiError::from)
 }
 

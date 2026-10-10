@@ -162,13 +162,17 @@ export type ChapterExtractionProposalStatus =
   | "REJECTED";
 export type ChapterExtractionItem = {
   id: string; proposalId: string; kind: ExtractionItemKind; payload: Record<string, unknown>;
-  evidenceAnchorId: string; status: ExtractionItemStatus; finalObjectId: string | null;
+  evidenceAnchorId: string; status: ExtractionItemStatus; version: number; finalObjectId: string | null;
   createdAt: string; updatedAt: string;
 };
 export type ChapterExtractionProposal = {
   id: string; projectId: string; chapterId: string; sourceRevisionId: string;
   aiRunId: string | null; status: ChapterExtractionProposalStatus;
   items: ChapterExtractionItem[]; createdAt: string; updatedAt: string;
+};
+export type ExtractionItemTarget = {
+  id: string; projectId: string; chapterId: string;
+  expectedStatus: ExtractionItemStatus; expectedVersion: number;
 };
 
 export type DiscussionScopeKind = "PROJECT" | "VOLUME" | "CHAPTER" | "SCENE" | "SELECTION";
@@ -583,17 +587,17 @@ export function listChapterExtractions(chapterId: string) {
   return invoke<ChapterExtractionProposal[]>("list_chapter_extractions", { chapterId });
 }
 export function updateExtractionItem(input: {
-  id: string; payload: Record<string, unknown>; expectedStatus: ExtractionItemStatus;
+  target: ExtractionItemTarget; payload: Record<string, unknown>;
 }) {
   return invoke<ChapterExtractionItem>("update_extraction_item", input);
 }
 export function decideExtractionItem(input: {
-  id: string; expectedStatus: ExtractionItemStatus; decision: "DEFERRED" | "REJECTED";
+  target: ExtractionItemTarget; decision: "DEFERRED" | "REJECTED";
 }) {
   return invoke<ChapterExtractionItem>("decide_extraction_item", input);
 }
 export function adoptExtractionItem(input: {
-  id: string; expectedStatus: ExtractionItemStatus;
+  target: ExtractionItemTarget;
 }) {
   return invoke<ChapterExtractionItem>("adopt_extraction_item", input);
 }
@@ -768,10 +772,6 @@ export function createPlanNode(input: {
   return invoke<PlanNode>("create_plan_node", input);
 }
 
-export function updatePlanNode(input: { id: string; title: string; archived: boolean }) {
-  return invoke<PlanNode>("update_plan_node", input);
-}
-
 export function updatePlanNodeChecked(input: { id: string; title: string; archived: boolean; expectedVersion: number }) {
   return invoke<PlanNode>("update_plan_node_checked", input);
 }
@@ -841,13 +841,6 @@ export function clearRecoveryLogs(chapterId: string) {
   return invoke<void>("clear_recovery_logs", { chapterId });
 }
 
-export function saveManuscript(input: { chapterId: string; documentJson: string; creationReason: string }) {
-  return invoke<ManuscriptRevision>("save_manuscript", input);
-}
-
-export function saveManuscriptChecked(input: { chapterId: string; baseRevisionId?: string; documentJson: string; creationReason: string }) {
-  return invoke<ManuscriptRevision>("save_manuscript_checked", input);
-}
 export function enqueueChapterSummaryRefresh(chapterId: string) {
   return invoke<Job>("enqueue_chapter_summary_refresh", { chapterId });
 }
