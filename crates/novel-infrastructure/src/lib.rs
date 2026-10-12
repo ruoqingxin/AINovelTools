@@ -40,6 +40,7 @@ mod discussion_store;
 mod entity_store;
 mod extraction_store;
 mod knowledge_store;
+mod manuscript_export;
 mod manuscript_source_store;
 mod materials_store;
 mod review_contract;
@@ -82,6 +83,10 @@ pub use extraction_store::{
     ExtractionStoreError,
 };
 pub use knowledge_store::KnowledgeStoreError;
+pub use manuscript_export::{
+    ManuscriptExportChapter, ManuscriptExportError, ManuscriptExportFormat, ManuscriptExportInput,
+    ManuscriptExportReceipt, ManuscriptExportScope, ManuscriptExportSkippedChapter,
+};
 pub use manuscript_source_store::{
     ManuscriptSource, ManuscriptSourceError, ManuscriptSourceRequest,
 };

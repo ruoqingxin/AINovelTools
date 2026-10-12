@@ -5,7 +5,7 @@
 - 字段和枚举以 Rust 实际 Serde DTO 为准，相关类型派生 `schemars::JsonSchema`，不维护第二份字段清单。
 - `apps/desktop/src-tauri/ipc_build.rs` 使用 `syn` 读取实际 `#[tauri::command]` 签名和 `generate_handler!` 登记。未登记命令、漏生成命令或重复名称会令生成器编译失败。
 - Tauri 注入的 `tauri::State`、`AppHandle`、`Window`、`WebviewWindow` 不属于 IPC 请求；其他参数按命令实际字段命名生成请求对象。
-- 实际 `emit` 调用中的字符串事件名和显式 struct 负载一起收集；事件结构变化会进入同一份契约。当前为 139 个命令、3 个事件。
+- 实际 `emit` 调用中的字符串事件名和显式 struct 负载一起收集；事件结构变化会进入同一份契约。当前为 140 个命令、3 个事件。
 - `ipc-contract` 功能只在生成与验证时启用，`ipc-schema` 二进制只输出 schema，不启动 Tauri 窗口、项目库或模型调用。
 
 ## 生成链路
@@ -39,6 +39,7 @@ pnpm build
 - `flatten` 使用实际扁平字段；Rust 数组 `[&str; 3]` 生成三元素字符串 tuple，不伪造固定字符串值。
 - Rust 的普通 `String`、`&str` 不擅自收窄成 UI 字面量 union。UUID、整数范围等 schema 约束仍由后端处理，不把 TS 类型当成运行时校验器。
 - `serde_json::Value` 保留为 `unknown`。提取面板在读取对象字段前显式确认非空对象且非数组；采用和保存继续使用既有后端内容验证。
+- 正文导出使用带 `kind` 标签的 BOOK/CHAPTER 范围，项目、格式和范围必填，CHAPTER 必填章节 ID；后端拒绝额外字段。回执必填实际章节/修订 ID、跳过章节与草稿计数，不接收编辑器正文或任意输出路径。
 - `AiTaskPreference` 有手写 Serde 适配。其 schema 明确复用真实的旧 UUID/null/详细输入 DTO 与规范化输出 DTO，并通过实际序列化回归核对；不把旧输入格式套在响应上。
 - 没有 `Result` 的命令错误契约为 `null`；String 错误与 `ApiError` 分开生成。调用失败仍原样拒绝 Promise，捕获值继续作为 `unknown` 处理。
 

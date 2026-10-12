@@ -249,6 +249,10 @@ export function currentManuscript(chapterId: string) {
   return invoke("current_manuscript", { chapterId });
 }
 
+export function exportManuscript(input: IpcRequests["export_manuscript"]["input"]) {
+  return invoke("export_manuscript", { input });
+}
+
 export function listManuscriptRevisions(chapterId: string) {
   return invoke("list_manuscript_revisions", { chapterId });
 }

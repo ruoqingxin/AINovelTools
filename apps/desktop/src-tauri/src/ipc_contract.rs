@@ -88,7 +88,7 @@ mod tests {
         };
         assert_eq!(keys("requests"), keys("responses"));
         assert_eq!(keys("requests"), keys("errors"));
-        assert_eq!(keys("requests").len(), 139);
+        assert_eq!(keys("requests").len(), 140);
         assert_eq!(
             keys("events"),
             ["ai-task-attempt", "ai-task-chunk", "ai-task-started"]
@@ -150,6 +150,45 @@ mod tests {
         assert!(required(profile, "secretRef"));
         assert!(required(profile, "hasSecret"));
         assert!(request["properties"].get("secretRef").is_none());
+    }
+
+    #[test]
+    fn manuscript_export_contract_requires_project_scope_and_revision_receipts() {
+        let schema = super::schema();
+        let input = definition(&schema, "requests", "ManuscriptExportInput");
+        for field in ["expectedProjectId", "scope", "format"] {
+            assert!(required(input, field));
+        }
+        assert_eq!(input["additionalProperties"], false);
+        let scope = definition(&schema, "requests", "ManuscriptExportScope");
+        let variants = scope["oneOf"].as_array().unwrap();
+        assert_eq!(variants.len(), 2);
+        for variant in variants {
+            assert!(required(variant, "kind"));
+            assert_eq!(variant["additionalProperties"], false);
+            if variant["properties"]["kind"]["const"] == "CHAPTER" {
+                assert!(required(variant, "chapterId"));
+            } else {
+                assert_eq!(variant["properties"]["kind"]["const"], "BOOK");
+                assert!(variant["properties"].get("chapterId").is_none());
+            }
+        }
+        let chapter = definition(&schema, "responses", "ManuscriptExportChapter");
+        for field in ["chapterId", "revisionId", "title"] {
+            assert!(required(chapter, field));
+        }
+        let receipt = definition(&schema, "responses", "ManuscriptExportReceipt");
+        for field in [
+            "projectId",
+            "scope",
+            "format",
+            "path",
+            "chapters",
+            "skippedChapters",
+            "draftChapterCount",
+        ] {
+            assert!(required(receipt, field));
+        }
     }
 
     #[test]

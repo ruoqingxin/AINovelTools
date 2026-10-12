@@ -16,6 +16,28 @@ impl ApiError {
     }
 }
 
+impl From<novel_infrastructure::ManuscriptExportError> for ApiError {
+    fn from(error: novel_infrastructure::ManuscriptExportError) -> Self {
+        use novel_infrastructure::ManuscriptExportError;
+        let code = match error {
+            ManuscriptExportError::NoProject => "NO_PROJECT_OPEN",
+            ManuscriptExportError::WrongProject => "SOURCE_MISMATCH",
+            ManuscriptExportError::InvalidTarget => "NOT_FOUND",
+            ManuscriptExportError::InvalidStructure | ManuscriptExportError::InvalidDocument(_) => {
+                "INVALID_DOCUMENT"
+            }
+            ManuscriptExportError::NoSavedManuscript => "NO_SAVED_MANUSCRIPT",
+            ManuscriptExportError::InvalidDirectory => "INVALID_INPUT",
+            ManuscriptExportError::Database(_) => "DATABASE_ERROR",
+            ManuscriptExportError::Io(_) => "FILE_SYSTEM_ERROR",
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
 impl From<novel_infrastructure::ManuscriptSourceError> for ApiError {
     fn from(error: novel_infrastructure::ManuscriptSourceError) -> Self {
         use novel_infrastructure::ManuscriptSourceError;

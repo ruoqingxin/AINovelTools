@@ -11,6 +11,11 @@ export function verifyIpcTypeContracts() {
     id: "item", projectId: "project", chapterId: "chapter", expectedStatus: "PENDING_REVIEW", expectedVersion: 1,
   };
   void invoke("adopt_extraction_item", { target });
+  void invoke("export_manuscript", { input: { expectedProjectId: "project", format: "TXT", scope: { kind: "BOOK" } } });
+  // @ts-expect-error Export project identity is mandatory.
+  void invoke("export_manuscript", { input: { format: "TXT", scope: { kind: "BOOK" } } });
+  // @ts-expect-error A chapter export cannot silently fall back to the entire book.
+  void invoke("export_manuscript", { input: { expectedProjectId: "project", format: "TXT", scope: { kind: "CHAPTER" } } });
   const nodes: Promise<IpcResponses["list_plan_nodes"]> = invoke("list_plan_nodes");
   void nodes;
   // @ts-expect-error Command names come only from the Rust registration.

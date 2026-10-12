@@ -14,6 +14,13 @@ export type InputAiProposalStatus = "PENDING" | "ACCEPTED" | "PARTIALLY_ACCEPTED
 export type InputDiscussionCandidateStatus = "PENDING" | "PROMOTED" | "DISMISSED";
 export type InputJobType = "BACKUP" | "RESTORE_VERIFY" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX" | "REFRESH_CHAPTER_SUMMARY" | "REFRESH_PROJECT_SETTING_SUMMARY" | "AI_PLANNING_GENERATE" | "AI_PLANNING_EXTRACT";
 export type InputAiTaskKind = "discussion" | "discussionDesign" | "workDesign" | "outline" | "volumePlanning" | "chapterSplit" | "chapterPlan" | "consistencyReview" | "writing" | "knowledgeExtraction";
+export type InputManuscriptExportFormat = "TXT" | "MARKDOWN";
+export type InputManuscriptExportScope = {
+    kind: "BOOK";
+} | {
+    chapterId: string;
+    kind: "CHAPTER";
+};
 export type InputReviewPurpose = "ADMISSION" | "MANUSCRIPT";
 export type InputAiProposalFeedbackRating = "HELPFUL" | "NOT_HELPFUL";
 export type InputAiTaskPreference = string | InputAiTaskPreferenceDetails | null;
@@ -47,6 +54,13 @@ export type ModelCapability = "CHAT" | "EMBEDDING";
 export type PrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
 export type ModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
 export type KnowledgeConflictKind = "DUPLICATE_FACT" | "CONTRADICTORY_OBJECT";
+export type ManuscriptExportFormat = "TXT" | "MARKDOWN";
+export type ManuscriptExportScope = {
+    kind: "BOOK";
+} | {
+    chapterId: string;
+    kind: "CHAPTER";
+};
 export type ChapterExtractionProposalStatus = "PENDING_REVIEW" | "PARTIALLY_ACCEPTED" | "DEFERRED" | "ACCEPTED" | "REJECTED";
 export type FeatureStatus = "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED";
 export type ChangeSetStatus = "DRAFT" | "IN_REVIEW" | "BLOCKED" | "FINALIZED" | "REJECTED";
@@ -111,6 +125,7 @@ export type IpcErrors = {
     enqueue_job: ApiError;
     enqueue_planning_ai_job: ApiError;
     enqueue_project_setting_summary_refresh: ApiError;
+    export_manuscript: ApiError;
     extract_chapter_candidates: ApiError;
     extract_entities_from_text: ApiError;
     feature_catalog: null;
@@ -274,6 +289,7 @@ export type IpcRequests = {
     enqueue_job: InputArgsEnqueueJob;
     enqueue_planning_ai_job: InputArgsEnqueuePlanningAiJob;
     enqueue_project_setting_summary_refresh: InputArgsEnqueueProjectSettingSummaryRefresh;
+    export_manuscript: InputArgsExportManuscript;
     extract_chapter_candidates: InputArgsExtractChapterCandidates;
     extract_entities_from_text: InputArgsExtractEntitiesFromText;
     feature_catalog: InputArgsFeatureCatalog;
@@ -672,6 +688,14 @@ export type InputPlanningAiJobInput = {
     userPromptSnapshot?: string | null;
 };
 export type InputArgsEnqueueProjectSettingSummaryRefresh = {};
+export type InputArgsExportManuscript = {
+    input: InputManuscriptExportInput;
+};
+export type InputManuscriptExportInput = {
+    expectedProjectId: string;
+    format: InputManuscriptExportFormat;
+    scope: InputManuscriptExportScope;
+};
 export type InputArgsExtractChapterCandidates = {
     input: InputExtractChapterCandidatesInput;
 };
@@ -1191,6 +1215,7 @@ export type IpcResponses = {
     enqueue_job: Job;
     enqueue_planning_ai_job: Job;
     enqueue_project_setting_summary_refresh: Job;
+    export_manuscript: ManuscriptExportReceipt;
     extract_chapter_candidates: ChapterExtractionProposal;
     extract_entities_from_text: ExtractedEntity[];
     feature_catalog: FeatureDescriptor[];
@@ -1593,6 +1618,24 @@ export type KnowledgeConflict = {
     objects: string[];
     predicate: string;
     subject: string;
+};
+export type ManuscriptExportReceipt = {
+    chapters: ManuscriptExportChapter[];
+    draftChapterCount: number;
+    format: ManuscriptExportFormat;
+    path: string;
+    projectId: string;
+    scope: ManuscriptExportScope;
+    skippedChapters: ManuscriptExportSkippedChapter[];
+};
+export type ManuscriptExportChapter = {
+    chapterId: string;
+    revisionId: string;
+    title: string;
+};
+export type ManuscriptExportSkippedChapter = {
+    chapterId: string;
+    title: string;
 };
 export type ChapterExtractionProposal = {
     aiRunId: string | null;

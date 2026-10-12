@@ -56,9 +56,9 @@ use commands::knowledge::{
 };
 use commands::manuscript::{
     clear_recovery_logs, commit_manuscript_draft, current_manuscript, current_manuscript_draft,
-    discard_manuscript_draft, enqueue_chapter_summary_refresh, get_manuscript_source,
-    list_all_recovery_logs, list_manuscript_revisions, list_recovery_logs, merge_manuscript,
-    save_manuscript_draft, save_recovery_log,
+    discard_manuscript_draft, enqueue_chapter_summary_refresh, export_manuscript,
+    get_manuscript_source, list_all_recovery_logs, list_manuscript_revisions, list_recovery_logs,
+    merge_manuscript, save_manuscript_draft, save_recovery_log,
 };
 use commands::materials::{
     get_summary_material, get_writing_card, list_summary_materials, list_writing_cards,
@@ -157,6 +157,7 @@ pub fn run() {
             update_plan_node_checked,
             move_plan_node,
             current_manuscript,
+            export_manuscript,
             current_manuscript_draft,
             save_manuscript_draft,
             discard_manuscript_draft,

@@ -526,9 +526,9 @@ textarea:focus-visible,
 .chapter-split-ai-heading h3 { margin:2px 0 0; color:#30496f; font-size:14px; }
 .chapter-split-ai-heading p { margin:5px 0 0; color:#8294b1; font-size:10px; line-height:1.5; }
 .chapter-split-ai-heading > small { flex:0 0 auto; color:#4f7fe0; font-size:10px; font-weight:700; }
-.chapter-split-controls { display:grid; grid-template-columns:minmax(220px,1.4fr) 140px minmax(180px,1fr); align-items:end; gap:8px; }
-.chapter-split-controls label { display:grid; gap:5px; color:#526b91; font-size:10px; font-weight:600; }
-.chapter-split-controls select, .chapter-split-controls input { min-width:0; height:36px; padding:0 10px; border:1px solid #c6d5eb; border-radius:7px; color:#405a7f; background:#fff; font:inherit; font-size:11px; }
+.chapter-split-controls { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); align-items:end; gap:8px; }
+.chapter-split-controls label { display:grid; min-width:0; gap:5px; color:#526b91; font-size:10px; font-weight:600; }
+.chapter-split-controls select, .chapter-split-controls input { width:100%; min-width:0; height:36px; padding:0 10px; border:1px solid #c6d5eb; border-radius:7px; color:#405a7f; background:#fff; font:inherit; font-size:11px; }
 .chapter-split-controls select:focus, .chapter-split-controls input:focus { border-color:#7fa6f6; outline:2px solid rgba(79,127,224,.12); }
 .chapter-split-progress { display:grid; gap:2px; min-height:36px; align-content:center; padding:0 10px; border:1px solid #d8e3f2; border-radius:7px; color:#7183a0; background:#f6f9fe; }
 .chapter-split-progress span, .chapter-split-progress small { font-size:9px; }

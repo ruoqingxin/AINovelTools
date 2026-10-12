@@ -1,6 +1,19 @@
 use crate::{ApiError, ProjectState};
 
 #[tauri::command]
+pub(crate) fn export_manuscript(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_infrastructure::ManuscriptExportInput,
+) -> Result<novel_infrastructure::ManuscriptExportReceipt, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .export_manuscript(input)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn get_manuscript_source(
     state: tauri::State<'_, ProjectState>,
     request: novel_infrastructure::ManuscriptSourceRequest,

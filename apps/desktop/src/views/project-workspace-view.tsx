@@ -6,6 +6,7 @@ import { cancelJob, createPlanNode, errorMessage, getAuditFlowSettings, getCurre
 import { useJobs } from "../lib/jobs-query";
 import { AiModelNote } from "./ai-model-note";
 import { ChapterFocusHeader } from "./chapter-focus-header";
+import { ManuscriptExportPanel } from "./manuscript-export-panel";
 import { ChapterCreationWorkspace } from "./chapter-creation-workspace";
 import { useChapterManuscript } from "./use-chapter-manuscript";
 import { usePlanningDraft } from "./use-planning-draft";
@@ -512,11 +513,20 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 
   return (
     <section className="project-workspace">
-      <div className="workspace-heading">
-        {isChapterMode ? null : <p className="eyebrow">项目规划</p>}
-        <h1>{isChapterMode ? "创作" : "把想法推进成可写的故事"}</h1>
-        {!isChapterMode ? <p className="workspace-lede">作品设定、故事大纲和分卷规划</p> : null}
-        {returnTo && (!isChapterMode || !selected) ? <a className="secondary-action workspace-return-link" href={returnTo}><ArrowLeft size={15} />返回来源</a> : null}
+      <div className="workspace-heading workspace-heading-with-action">
+        <div>
+          {isChapterMode ? null : <p className="eyebrow">项目规划</p>}
+          <h1>{isChapterMode ? "创作" : "把想法推进成可写的故事"}</h1>
+          {!isChapterMode ? <p className="workspace-lede">作品设定、故事大纲和分卷规划</p> : null}
+          {returnTo && (!isChapterMode || !selected) ? <a className="secondary-action workspace-return-link" href={returnTo}><ArrowLeft size={15} />返回来源</a> : null}
+        </div>
+        {currentProject.data ? <ManuscriptExportPanel
+          key={`${currentProject.data.projectId}:${selected?.id ?? ""}`}
+          projectId={currentProject.data.projectId}
+          chapter={selected?.kind === "CHAPTER" && !selected.archived ? { id: selected.id, title: selected.title } : undefined}
+          chapterDirty={chapterDirty}
+          saving={savingDraft}
+        /> : null}
       </div>
 
       {nodes.isPending ? <p className="plan-loading">正在加载规划…</p> : null}

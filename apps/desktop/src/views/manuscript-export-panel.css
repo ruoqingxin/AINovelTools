@@ -1,0 +1,112 @@
+.manuscript-export {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: flex-end;
+}
+
+.manuscript-export > summary {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.manuscript-export > summary::-webkit-details-marker {
+  display: none;
+}
+
+.manuscript-export > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.manuscript-export-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 20;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 5px 16px #20252218;
+}
+
+.manuscript-export-panel form,
+.manuscript-export-panel label,
+.manuscript-export-result {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.manuscript-export-panel form {
+  gap: 12px;
+}
+
+.manuscript-export-panel strong {
+  font-size: 13px;
+}
+
+.manuscript-export-panel label,
+.manuscript-export-result {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.manuscript-export-panel select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
+
+.manuscript-export-panel button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.manuscript-export-panel button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.manuscript-export-panel .project-error,
+.manuscript-export-result {
+  margin: 12px 0 0;
+}
+
+.manuscript-export-result code {
+  color: var(--accent-strong);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.manuscript-export-result ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
