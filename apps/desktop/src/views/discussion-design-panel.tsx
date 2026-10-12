@@ -9,6 +9,7 @@ import {
   type EntityType, type ModelProfile, type AiTaskPreference,
 } from "../lib/tauri-client";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { useProjectTransition } from "../shell/project-actions-provider";
 import { AiModelNote } from "./ai-model-note";
 import type { AiTaskSettingsScope } from "../lib/ai-task-preferences";
 
@@ -239,6 +240,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
     queryFn: () => listDiscussionDraftRevisions(sessionId), enabled: showHistory,
   });
   const dirty = Boolean(workspace && saved && JSON.stringify(workspace) !== JSON.stringify(saved));
+  const projectTransitioning = useProjectTransition();
   useUnsavedChangesGuard(dirty, "构思草稿尚未保存。");
   const totalChars = workspace
     ? chars(workspace.draft.chosen) + chars(workspace.draft.alternatives) + chars(workspace.draft.questions)
@@ -311,10 +313,10 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
   }, [client, sessionId, totalChars, workspace]);
 
   useEffect(() => {
-    if (!dirty || busy || error || totalChars > DISCUSSION_LIMITS.draftChars) return;
+    if (projectTransitioning || !dirty || busy || error || totalChars > DISCUSSION_LIMITS.draftChars) return;
     const timer = window.setTimeout(() => { void save(); }, 1200);
     return () => window.clearTimeout(timer);
-  }, [busy, dirty, error, save, totalChars]);
+  }, [projectTransitioning, busy, dirty, error, save, totalChars]);
 
   async function summarize() {
     if (!workspace || !profile?.hasSecret || busy || conversationBusy || !hasContent) return;

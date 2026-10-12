@@ -3,7 +3,9 @@ import {
   createRoute,
   createRouter,
   lazyRouteComponent,
+  Navigate,
   useRouterState,
+  useSearch,
 } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { AppShell } from "./shell/app-shell";
@@ -47,9 +49,18 @@ function RouteErrorView({ error, reset }: { error: Error; reset: () => void }) {
 
 function ProjectGate({ children }: { children: ReactNode }) {
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
-  if (project.isPending) return <p className="route-loading">正在加载项目…</p>;
+  if (project.isPending) return <p className="route-loading">正在读取作品…</p>;
   if (project.isError) throw project.error;
   return project.data ? children : <EmptyProjectView />;
+}
+
+function ProjectIndexView() {
+  const { manage } = useSearch({ from: "/" });
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
+  if (manage === "1") return <EmptyProjectView />;
+  if (project.isPending) return <p className="route-loading">正在读取作品…</p>;
+  if (project.isError) throw project.error;
+  return project.data ? <Navigate to="/writing" replace /> : <EmptyProjectView />;
 }
 
 function PlanningEntryView() {
@@ -85,7 +96,8 @@ const rootRoute = createRootRoute({
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: EmptyProjectView,
+  validateSearch: (search: Record<string, unknown>) => ({ manage: search.manage === "1" || search.manage === 1 ? "1" : undefined }),
+  component: ProjectIndexView,
 });
 
 const planningRoute = createRoute({
@@ -115,15 +127,15 @@ const discussionRoute = createRoute({
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/knowledge",
-  component: StoryBibleView,
+  component: () => <ProjectGate><StoryBibleView /></ProjectGate>,
 });
 const reviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/review", component: ReviewEntryView });
 const knowledgeReviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/review", component: ReviewEntryView });
-const knowledgeRecordsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/records", component: KnowledgeRecordsView });
-const authorSettingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/settings", component: AuthorSettingsView });
-const materialsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/materials", component: MaterialsView });
-const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", component: SearchView });
-const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: JobsView });
+const knowledgeRecordsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/records", component: () => <ProjectGate><KnowledgeRecordsView /></ProjectGate> });
+const authorSettingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/settings", component: () => <ProjectGate><AuthorSettingsView /></ProjectGate> });
+const materialsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/materials", component: () => <ProjectGate><MaterialsView /></ProjectGate> });
+const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", component: () => <ProjectGate><SearchView /></ProjectGate> });
+const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: () => <ProjectGate><JobsView /></ProjectGate> });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsView });
 
 const routeTree = rootRoute.addChildren([indexRoute, planningRoute, chaptersRoute, writingRoute, discussionRoute, knowledgeRoute, reviewRoute, knowledgeReviewRoute, knowledgeRecordsRoute, authorSettingsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);

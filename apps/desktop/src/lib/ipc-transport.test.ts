@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { invoke, listen } from "./ipc-transport";
+import { invoke, listen, waitForPendingCommands } from "./ipc-transport";
 
 const transport = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: transport.invoke }));
@@ -41,4 +41,32 @@ it("preserves typed event subscriptions, null payload fields and unlisten handle
   expect(await listen("ai-task-attempt", handler)).toBe(unlisten);
   expect(transport.listen).toHaveBeenCalledExactlyOnceWith("ai-task-attempt", handler, undefined);
   expect(handler).toHaveBeenCalledWith({ event: "ai-task-attempt", id: 1, payload });
+});
+
+it("waits for an existing native command and its chained follow-up before switching projects", async () => {
+  let completeFirst!: (value: unknown) => void;
+  let completeSecond!: (value: unknown) => void;
+  transport.invoke
+    .mockImplementationOnce(() => new Promise((resolve) => { completeFirst = resolve; }))
+    .mockImplementationOnce(() => new Promise((resolve) => { completeSecond = resolve; }));
+  const operation = invoke("bootstrap_status").then(() => invoke("health_query"));
+  const finished = vi.fn();
+  const idle = waitForPendingCommands().then(finished);
+  await Promise.resolve();
+  expect(finished).not.toHaveBeenCalled();
+  completeFirst({});
+  await vi.waitFor(() => expect(transport.invoke).toHaveBeenCalledTimes(2));
+  expect(finished).not.toHaveBeenCalled();
+  completeSecond({});
+  await Promise.all([operation, idle]);
+  expect(finished).toHaveBeenCalledOnce();
+});
+
+it("does not block project switching forever when an existing command fails", async () => {
+  const error = new Error("native request failed");
+  transport.invoke.mockRejectedValue(error);
+  const request = invoke("bootstrap_status");
+  const rejection = expect(request).rejects.toBe(error);
+  await waitForPendingCommands();
+  await rejection;
 });

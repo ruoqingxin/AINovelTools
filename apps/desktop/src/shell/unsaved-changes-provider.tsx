@@ -6,6 +6,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -18,9 +19,15 @@ type GuardEntry = {
 type UnsavedChangesContextValue = {
   register: (id: string, dirty: boolean, message: string) => void;
   unregister: (id: string) => void;
+  confirmLeave: () => Promise<boolean>;
 };
 
 const UnsavedChangesContext = createContext<UnsavedChangesContextValue | null>(null);
+
+export function useConfirmLeave() {
+  const context = useContext(UnsavedChangesContext);
+  return context?.confirmLeave ?? (() => Promise.resolve(true));
+}
 
 export function useUnsavedChangesGuard(dirty: boolean, message = "当前内容有未保存修改。") {
   const context = useContext(UnsavedChangesContext);
@@ -42,9 +49,29 @@ function UnsavedChangesDialog({
   onStay: () => void;
   onLeave: () => void;
 }) {
+  const dialog = useRef<HTMLElement>(null);
+  const previousFocus = useRef(document.activeElement);
+  useEffect(() => () => {
+    if (previousFocus.current instanceof HTMLElement && previousFocus.current.isConnected) previousFocus.current.focus();
+  }, []);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onStay();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onStay();
+      }
+      if (event.key === "Tab") {
+        const buttons = dialog.current?.querySelectorAll<HTMLButtonElement>("button");
+        const first = buttons?.[0];
+        const last = buttons?.[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -53,6 +80,7 @@ function UnsavedChangesDialog({
   return (
     <div className="unsaved-dialog-backdrop">
       <section
+        ref={dialog}
         className="unsaved-dialog"
         role="alertdialog"
         aria-modal="true"
@@ -73,32 +101,44 @@ function UnsavedChangesDialog({
 
 export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<Record<string, GuardEntry>>({});
+  const entriesRef = useRef(entries);
+  const leaveResolver = useRef<((allowed: boolean) => void) | null>(null);
+  const [leaveMessage, setLeaveMessage] = useState<string | null>(null);
+  useEffect(() => () => { leaveResolver.current?.(false); }, []);
 
   const register = useCallback((id: string, dirty: boolean, message: string) => {
-    setEntries((current) => {
-      const existing = current[id];
-      if (existing?.dirty === dirty && existing.message === message) return current;
-      return { ...current, [id]: { dirty, message } };
-    });
+    const current = entriesRef.current;
+    const existing = current[id];
+    if (existing?.dirty === dirty && existing.message === message) return;
+    const next = { ...current, [id]: { dirty, message } };
+    entriesRef.current = next;
+    setEntries(next);
   }, []);
 
   const unregister = useCallback((id: string) => {
-    setEntries((current) => {
-      if (!(id in current)) return current;
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
+    const current = entriesRef.current;
+    if (!(id in current)) return;
+    const next = { ...current };
+    delete next[id];
+    entriesRef.current = next;
+    setEntries(next);
   }, []);
 
-  const contextValue = useMemo(() => ({ register, unregister }), [register, unregister]);
+  const confirmLeave = useCallback(() => {
+    if (leaveResolver.current) return Promise.resolve(false);
+    const entry = Object.values(entriesRef.current).find((item) => item.dirty);
+    if (!entry) return Promise.resolve(true);
+    setLeaveMessage(entry.message);
+    return new Promise<boolean>((resolve) => { leaveResolver.current = resolve; });
+  }, []);
+  const contextValue = useMemo(() => ({ register, unregister, confirmLeave }), [register, unregister, confirmLeave]);
   const dirtyEntry = Object.values(entries).find((entry) => entry.dirty);
   const dirty = Boolean(dirtyEntry);
   const shouldBlock = useCallback(
     ({ current, next }: { current: { pathname: string }; next: { pathname: string } }) => (
-      dirty && current.pathname !== next.pathname
+      Object.values(entriesRef.current).some((entry) => entry.dirty) && current.pathname !== next.pathname
     ),
-    [dirty],
+    [],
   );
   const blocker = useBlocker({
     shouldBlockFn: shouldBlock,
@@ -107,10 +147,20 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
     withResolver: true,
   });
 
+  function finishLeave(allowed: boolean) {
+    const resolve = leaveResolver.current;
+    leaveResolver.current = null;
+    setLeaveMessage(null);
+    resolve?.(allowed);
+  }
+
   return (
     <UnsavedChangesContext.Provider value={contextValue}>
       {children}
-      {blocker.status === "blocked" ? (
+      {leaveMessage !== null ? (
+        <UnsavedChangesDialog message={leaveMessage}
+          onStay={() => finishLeave(false)} onLeave={() => finishLeave(true)} />
+      ) : blocker.status === "blocked" ? (
         <UnsavedChangesDialog
           message={dirtyEntry?.message ?? "当前内容有未保存修改。"}
           onStay={blocker.reset}

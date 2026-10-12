@@ -8,6 +8,7 @@ import {
   saveRecoveryLog, type ManuscriptRevision, type MergeResult,
 } from "../lib/tauri-client";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { useProjectTransition } from "../shell/project-actions-provider";
 import type { ManuscriptWorkspaceTab } from "./manuscript-workspace-tabs";
 import { candidateReviewTransferKey, documentToJson, writingCandidateTransferKey } from "./project-workspace-utils";
 import { manuscriptQuery } from "../lib/manuscript-query";
@@ -94,6 +95,7 @@ export function useChapterManuscript({
 
   useUnsavedChangesGuard((draftNeedsPersistence || savingDraft) && !transferringCandidate, "当前章节草稿尚未保存在本地。");
 
+  const projectTransitioning = useProjectTransition();
   useEffect(() => {
     setSnapshot({ chapterId: "", documentJson: "", baseDocumentJson: "", baseRevisionId: undefined });
     setManuscriptTab(initialTab);
@@ -148,12 +150,12 @@ export function useChapterManuscript({
   }, [history.data, compareLeftId, compareRightId]);
 
   useEffect(() => {
-    if (!draftNeedsPersistence || savingDraft || savingLocalDraft || draftStorageError) return;
+    if (projectTransitioning || !draftNeedsPersistence || savingDraft || savingLocalDraft || draftStorageError) return;
     const timer = window.setTimeout(() => {
       if (!savingFormal.current) void persistLocalDraft();
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [draftNeedsPersistence, draft, snapshot.baseRevisionId, savingDraft, savingLocalDraft, persistenceTick, draftStorageError]);
+  }, [projectTransitioning, draftNeedsPersistence, draft, snapshot.baseRevisionId, savingDraft, savingLocalDraft, persistenceTick, draftStorageError]);
 
   async function persistLocalDraft() {
     const currentWriter = writer.current;

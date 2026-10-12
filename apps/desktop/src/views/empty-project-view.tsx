@@ -1,10 +1,8 @@
-import { ArrowRight, BookOpenText, FilePlus2, FolderOpen, ListTree, PenLine, Sparkles } from "lucide-react";
-import { save, open } from "@tauri-apps/plugin-dialog";
+import { ArrowRight, BookOpenText, FilePlus2, FolderOpen, PenLine } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
-  createProject,
   createPlanNode,
   errorMessage,
   getCurrentProject,
@@ -12,16 +10,12 @@ import {
   listRecentProjects,
   listPlanNodes,
   listPlanningSections,
-  openProject,
   savePlanningSection,
-  type RecentProject,
   type PlanningSection,
 } from "../lib/tauri-client";
-
-function projectNameFromPath(path: string) {
-  const normalized = path.replace(/[\\/]+$/, "");
-  return normalized.split(/[\\/]/).pop() || "未命名工程";
-}
+import { useProjectActions } from "../shell/project-actions-provider";
+import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { lastWritingChapterKey, resolveDefaultWritingChapter } from "./project-workspace-utils";
 
 function lastOpenedLabel(timestamp: string) {
   const seconds = Number(timestamp);
@@ -34,13 +28,17 @@ function lastOpenedLabel(timestamp: string) {
 
 export function EmptyProjectView() {
   const queryClient = useQueryClient();
-  const [busy, setBusy] = useState<"create" | "open" | null>(null);
+  const navigate = useNavigate();
+  const actions = useProjectActions();
+  const [starting, setStarting] = useState(false);
+  const busy = actions.busy ?? (starting ? "create" : null);
   const [quickStartOpen, setQuickStartOpen] = useState(false);
   const [quickStartBaseline, setQuickStartBaseline] = useState<PlanningSection[] | null>(null);
   const [premise, setPremise] = useState("");
   const [scale, setScale] = useState("");
   const [volumeDirection, setVolumeDirection] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [createdChapter, setCreatedChapter] = useState<string | null>(null);
   const recentProjects = useQuery({
     queryKey: ["recent-projects"],
     queryFn: listRecentProjects,
@@ -54,8 +52,12 @@ export function EmptyProjectView() {
     queryFn: listPlanNodes,
     enabled: Boolean(currentProject.data),
   });
-  const firstChapter = planNodes.data?.find(
-    (node) => node.kind === "CHAPTER" && !node.archived,
+  let rememberedId = "";
+  try {
+    if (currentProject.data) rememberedId = window.localStorage.getItem(lastWritingChapterKey(currentProject.data.projectId)) ?? "";
+  } catch { /* Position memory is optional when browser storage is unavailable. */ }
+  const firstChapter = resolveDefaultWritingChapter(
+    (planNodes.data ?? []).filter((node) => node.kind === "CHAPTER" && !node.archived), "", rememberedId,
   );
   const planning = useQuery({
     queryKey: ["planning-sections"], queryFn: listPlanningSections,
@@ -68,56 +70,11 @@ export function EmptyProjectView() {
       setPremise((current) => current || planning.data.find((item) => item.id === "seed-premise")?.content || "");
     }
   }, [quickStartOpen, quickStartBaseline, planning.data]);
-
-  async function handleCreate() {
-    setBusy("create");
-    setError(null);
-    try {
-      const path = await save({
-        title: "选择小说工程位置",
-        defaultPath: "NovelProject",
-      });
-      if (typeof path !== "string" || !path) return;
-      await createProject(path, projectNameFromPath(path));
-      await invalidateProjectQueries(queryClient);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleOpen() {
-    setBusy("open");
-    setError(null);
-    try {
-      const path = await open({
-        title: "打开小说工程",
-        directory: true,
-        multiple: false,
-      });
-      if (typeof path !== "string" || !path) return;
-      await openProject(path);
-      await invalidateProjectQueries(queryClient);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleOpenRecent(project: RecentProject) {
-    setBusy("open");
-    setError(null);
-    try {
-      await openProject(project.root);
-      await invalidateProjectQueries(queryClient);
-    } catch (cause) {
-      setError(`无法打开“${project.name}”：${errorMessage(cause)}`);
-    } finally {
-      setBusy(null);
-    }
-  }
+  useUnsavedChangesGuard(starting || quickStartOpen && Boolean(premise.trim() || scale || volumeDirection.trim()),
+    starting ? "第一章正在创建。" : "第一章的创作方向尚未提交。");
+  useEffect(() => {
+    if (createdChapter) void navigate({ to: "/writing", hash: createdChapter });
+  }, [createdChapter, navigate]);
 
   async function handleQuickStart() {
     if (!currentProject.data || !premise.trim() || quickStartBaseline === null) return;
@@ -127,7 +84,7 @@ export function EmptyProjectView() {
       baseline.set(saved.id, saved);
       setQuickStartBaseline([...baseline.values()]);
     }
-    setBusy("create");
+    setStarting(true);
     setError(null);
     try {
       let nodes = planNodes.data ?? [];
@@ -198,66 +155,40 @@ export function EmptyProjectView() {
         parentId: firstVolume.id,
       });
       await invalidateProjectQueries(queryClient);
-      window.location.assign(`/writing#${chapter.id}`);
+      setQuickStartOpen(false);
+      setCreatedChapter(chapter.id);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
-      setBusy(null);
+      setStarting(false);
     }
   }
 
   return (
-    <section className="empty-project-view">
-      <div className="workspace-heading">
-        <p className="eyebrow">项目工作区</p>
-        <h1>小说工程</h1>
-        <p className="workspace-lede">从一个念头开始，逐步整理设定、搭建大纲，再进入正文。你不需要一次想清楚整本小说。</p>
-      </div>
-
-      <div className="project-actions" aria-label="项目操作">
-        <button className="primary-action" type="button" disabled={busy !== null} onClick={handleCreate}>
+    <section className="empty-project-view project-manager">
+      <div className="workspace-heading project-manager-heading">
+        <h1>作品管理</h1>
+      <div className="project-actions" aria-label="作品操作">
+        {firstChapter ? <Link to="/writing" hash={firstChapter.id} className="primary-action"><BookOpenText size={15} />继续写作</Link>
+          : currentProject.data ? <button type="button" className="primary-action" disabled={busy !== null}
+            aria-expanded={quickStartOpen} onClick={() => setQuickStartOpen((value) => !value)}><PenLine size={15} />创建第一章</button> : null}
+        <button className={currentProject.data ? "secondary-action" : "primary-action"} type="button" disabled={busy !== null} onClick={() => void actions.create()}>
           <FilePlus2 size={17} />
-          {busy === "create" ? "创建中…" : "新建工程"}
+          {actions.busy === "create" ? "创建中…" : "新建作品"}
         </button>
-        <button className="secondary-action" type="button" disabled={busy !== null} onClick={handleOpen}>
+        <button className="secondary-action" type="button" disabled={busy !== null} onClick={() => void actions.open()}>
           <FolderOpen size={17} />
-          {busy === "open" ? "打开中…" : "打开工程"}
+          {actions.busy === "open" ? "打开中…" : "打开作品"}
         </button>
+      </div>
       </div>
 
       {error ? <p className="project-error" role="alert">{error}</p> : null}
 
-      {!currentProject.data ? <div className="first-start-guide" aria-label="开始创作步骤">
-        <div className="first-start-guide-heading">
-          <div className="first-start-guide-icon" aria-hidden="true"><Sparkles size={18} /></div>
-          <div><strong>第一次使用？按这个顺序开始</strong><span>每一步都可以随时修改，不会锁死你的故事。</span></div>
-        </div>
-        <ol>
-          <li><b>01</b><span><strong>新建工程</strong>选择一个文件夹保存小说资料。</span></li>
-          <li><b>02</b><span><strong>写下故事核心</strong>先回答“谁想要什么，为什么现在必须行动”。</span></li>
-          <li><b>03</b><span><strong>创建第一章</strong>设定和大纲不完整也没关系，边写边补。</span></li>
-        </ol>
-        <p className="first-start-guide-tip"><ArrowRight size={14} />建议从“作品设定”开始，系统会给你可选择的候选，不用面对空白页。</p>
-      </div> : null}
-
-      {currentProject.data ? (
-        <div className="current-project-panel">
-          <div className="current-project-icon" aria-hidden="true"><FolderOpen size={20} strokeWidth={1.6} /></div>
-          <div>
-            <span>当前工程</span>
-            <strong>{currentProject.data.name}</strong>
-          </div>
-          <div className="current-project-actions">
-            {firstChapter ? <a href={`/writing#${firstChapter.id}`} className="primary-action"><BookOpenText size={15} />继续写作</a> : null}
-            <Link to="/planning" className="secondary-action current-project-open">
-              <ListTree size={15} />一起规划
-            </Link>
-            {!firstChapter ? <button type="button" className="primary-action" onClick={() => setQuickStartOpen((value) => !value)}><PenLine size={15} />先写一段看看</button> : null}
-          </div>
-          {!firstChapter && quickStartOpen ? <form className="quick-writing-start" onSubmit={(event) => { event.preventDefault(); void handleQuickStart(); }}>
+      {currentProject.data && !firstChapter && quickStartOpen ? <form className="quick-writing-start" onSubmit={(event) => { event.preventDefault(); void handleQuickStart(); }}>
             {planning.isPending ? <p role="status">正在读取已有规划…</p> : null}
             {planning.isError ? <p className="project-error" role="alert">{errorMessage(planning.error)}</p> : null}
-            <div className="section-heading"><div><h2>先写一段看看</h2><p>一句话核心是唯一必填项，规模和第一卷方向都可以保留未知。</p></div></div>
+            <div className="section-heading"><h2>创建第一章</h2></div>
             <label className="quick-writing-wide"><span>一句话核心</span><textarea rows={3} value={premise} onChange={(event) => setPremise(event.target.value)} placeholder="例如：一个能看见因果线的少年，在灵气枯竭的世界里被卷入一场跨越百年的旧案。" autoFocus /></label>
             <div className="entity-form-grid">
               <label>大致规模（可选）<select value={scale} onChange={(event) => setScale(event.target.value)}><option value="">先不定</option><option value="短篇，1 至 5 万字">短篇</option><option value="中篇，10 至 30 万字">中篇</option><option value="长篇，50 至 150 万字">长篇</option><option value="超长篇，150 万字以上">超长篇</option></select></label>
@@ -265,14 +196,14 @@ export function EmptyProjectView() {
             </div>
             <div className="inspector-actions"><button type="submit" className="primary-action" disabled={!premise.trim() || busy !== null || quickStartBaseline === null}><ArrowRight size={15} />{busy === "create" ? "创建中…" : "创建第一章并开始写"}</button><button type="button" className="secondary-action" onClick={() => setQuickStartOpen(false)} disabled={busy !== null}>取消</button></div>
           </form> : null}
-        </div>
-      ) : null}
 
       <div className="recent-projects">
         <div className="section-heading">
-          <h2>最近使用</h2>
-          <span>{recentProjects.data?.length ?? 0} 个工程</span>
+          <h2>最近作品</h2>
+          <span>{recentProjects.data?.length ?? 0} 部</span>
         </div>
+        {recentProjects.isError ? <div className="project-error" role="alert">无法读取最近作品：{errorMessage(recentProjects.error)}
+          <button type="button" className="secondary-action" onClick={() => void recentProjects.refetch()}>重试</button></div> : null}
         {recentProjects.data?.length ? (
           <div className="recent-project-list">
             {recentProjects.data.map((project) => (
@@ -281,7 +212,7 @@ export function EmptyProjectView() {
                 type="button"
                 className="recent-project-row"
                 disabled={busy !== null}
-                onClick={() => void handleOpenRecent(project)}
+                onClick={() => void actions.openRecent(project)}
               >
                 <FolderOpen size={18} strokeWidth={1.6} />
                 <span className="recent-project-copy">
@@ -299,7 +230,7 @@ export function EmptyProjectView() {
             <div className="empty-list-icon" aria-hidden="true">
               <FolderOpen size={21} strokeWidth={1.5} />
             </div>
-            <p>{recentProjects.isPending ? "正在加载最近工程…" : "最近打开的工程会显示在这里"}</p>
+            <p>{recentProjects.isPending ? "正在读取最近作品…" : recentProjects.isError ? "最近作品暂不可用" : "暂无最近作品"}</p>
           </div>
         )}
       </div>

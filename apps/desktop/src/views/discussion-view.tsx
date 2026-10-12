@@ -428,8 +428,7 @@ export function DiscussionView() {
     .map((item) => [item.id, item])).values()];
   return <div className="discussion-workspace" data-mobile-view={mobileView}>
     <div className="workspace-heading">
-      <p className="eyebrow">作品共创</p>
-      <h1>灵感共创</h1>
+      <h1>构思</h1>
     </div>
     <div className="discussion-layout">
       <section className="discussion-sidebar" aria-label="讨论会话">

@@ -515,9 +515,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     <section className="project-workspace">
       <div className="workspace-heading workspace-heading-with-action">
         <div>
-          {isChapterMode ? null : <p className="eyebrow">项目规划</p>}
-          <h1>{isChapterMode ? "创作" : "把想法推进成可写的故事"}</h1>
-          {!isChapterMode ? <p className="workspace-lede">作品设定、故事大纲和分卷规划</p> : null}
+          <h1>{isChapterMode ? "写作" : "大纲"}</h1>
           {returnTo && (!isChapterMode || !selected) ? <a className="secondary-action workspace-return-link" href={returnTo}><ArrowLeft size={15} />返回来源</a> : null}
         </div>
         {currentProject.data ? <ManuscriptExportPanel

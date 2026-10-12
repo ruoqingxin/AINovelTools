@@ -256,7 +256,7 @@ export function JobsView() {
         };
 
   return <section className="jobs-view">
-    <div className="workspace-heading workspace-heading-with-action"><div><p className="eyebrow">后台工作</p><h1>任务</h1><p className="workspace-lede">规划、正文创作、知识提炼和系统维护记录都可以在这里查看。</p></div>{recordView === "JOBS" ? <button className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => runNextJob())} disabled={action.isPending}><Play size={15} />执行下一项系统任务</button> : <a className="secondary-action" href="/settings#ai-usage">查看用量与预算</a>}</div>
+    <div className="workspace-heading workspace-heading-with-action"><div><h1>后台活动</h1></div>{recordView === "JOBS" ? <button className="secondary-action" type="button" onClick={() => void action.mutateAsync(() => runNextJob())} disabled={action.isPending}><Play size={15} />执行下一项系统任务</button> : <a className="secondary-action" href="/settings#ai-usage">查看用量与预算</a>}</div>
     <div className="jobs-view-switch" role="tablist" aria-label="任务记录类型">
       <button type="button" role="tab" aria-selected={recordView === "JOBS"} data-active={recordView === "JOBS" || undefined} onClick={() => selectRecordView("JOBS")}>后台任务</button>
       <button type="button" role="tab" aria-selected={recordView === "AI_RUNS"} data-active={recordView === "AI_RUNS" || undefined} onClick={() => selectRecordView("AI_RUNS")}>AI 运行记录</button>

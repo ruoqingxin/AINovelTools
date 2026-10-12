@@ -95,9 +95,7 @@ export function ReviewCenterView() {
 
   return <section className="review-center-view">
     <div className="workspace-heading">
-      <p className="eyebrow">审核中心</p>
-      <h1>审核</h1>
-      <p className="workspace-lede">处理需要集中确认的事项：创作前确认准入，候选区内容集中审核，知识提取后确认事实。</p>
+      <h1>待办</h1>
     </div>
 
     <ol className="review-flow" aria-label="审核流程">

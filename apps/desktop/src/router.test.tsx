@@ -16,6 +16,12 @@ vi.mock("./views/project-workspace-view", () => ({
 vi.mock("./views/discussion-view", () => ({ DiscussionView: () => <p>Discussion</p> }));
 vi.mock("./views/review-center-view", () => ({ ReviewCenterView: () => <p>Review</p> }));
 vi.mock("./views/settings-view", () => ({ SettingsView: () => <p>Settings</p> }));
+vi.mock("./views/story-bible-view", () => ({ StoryBibleView: () => <p>Materials entities</p> }));
+vi.mock("./views/materials-view", () => ({ MaterialsView: () => <p>Materials references</p> }));
+vi.mock("./views/knowledge-records-view", () => ({ KnowledgeRecordsView: () => <p>Materials records</p> }));
+vi.mock("./views/author-settings-view", () => ({ AuthorSettingsView: () => <p>Materials settings</p> }));
+vi.mock("./views/search-view", () => ({ SearchView: () => <p>Search</p> }));
+vi.mock("./views/jobs-view", () => ({ JobsView: () => <p>Activity</p> }));
 vi.mock("./views/manuscript-source-view", () => ({ ManuscriptSourceView: () => <p>Verified source</p> }));
 vi.mock("./views/discussion-source-view", () => ({ DiscussionSourceView: () => <p>Verified discussion source</p> }));
 
@@ -53,14 +59,23 @@ describe("project routes", () => {
     ["/review", "Review"],
     ["/knowledge/review", "Review"],
     ["/settings", "Settings"],
+    ["/knowledge", "Materials entities"],
+    ["/knowledge/materials", "Materials references"],
+    ["/knowledge/records", "Materials records"],
+    ["/knowledge/settings", "Materials settings"],
+    ["/search", "Search"],
+    ["/jobs", "Activity"],
+    ["/", "Workspace writing"],
+    ["/?manage=1", "No project"],
   ])("loads %s on demand", async (path, label) => {
     renderRoute(path);
     expect(await screen.findByText(label)).toBeVisible();
   });
 
-  it("shows the project entry when no project is open", async () => {
+  it.each(["/", "/writing", "/knowledge", "/knowledge/materials", "/knowledge/records", "/knowledge/settings", "/search", "/jobs"])
+  ("shows the project entry on %s when no project is open", async (path) => {
     mocks.getCurrentProject.mockResolvedValue(null);
-    renderRoute("/writing");
+    renderRoute(path);
     expect(await screen.findByText("No project")).toBeVisible();
     expect(screen.queryByText("Workspace writing")).not.toBeInTheDocument();
   });
