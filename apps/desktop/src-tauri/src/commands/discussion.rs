@@ -395,6 +395,7 @@ pub(crate) async fn summarize_discussion_design(
         false,
         false,
         Arc::new(AtomicBool::new(false)),
+        |_, _| Ok(()),
         |_| {},
     )
     .await
@@ -694,6 +695,7 @@ pub(crate) async fn ask_project_discussion(
         false,
         false,
         cancelled,
+        |_, _| Ok(()),
         |_| {},
     )
     .await

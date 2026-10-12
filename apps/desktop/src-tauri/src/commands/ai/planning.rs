@@ -1377,6 +1377,7 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         true,
         false,
         Arc::clone(&cancelled),
+        |_, _| Ok(()),
         move |chunk| {
             received_chars += chunk.chars().count();
             let progress = u8::try_from(35 + (received_chars / 120).min(50)).unwrap_or(u8::MAX);

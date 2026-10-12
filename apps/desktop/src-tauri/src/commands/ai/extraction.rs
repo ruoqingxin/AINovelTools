@@ -151,6 +151,7 @@ pub(crate) async fn extract_entities_from_text(
         false,
         false,
         Arc::new(AtomicBool::new(false)),
+        |_, _| Ok(()),
         |_| {},
     )
     .await;
@@ -372,6 +373,7 @@ pub(crate) async fn extract_chapter_candidates(
         false,
         false,
         Arc::new(AtomicBool::new(false)),
+        |_, _| Ok(()),
         |_| {},
     )
     .await;

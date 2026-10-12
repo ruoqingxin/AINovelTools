@@ -331,7 +331,7 @@ fn should_try_fallback(error: &novel_infrastructure::AiError) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn generate_with_task_fallback<F>(
+pub(crate) async fn generate_with_task_fallback<F, G>(
     state: &ProjectState,
     preference: &novel_infrastructure::AiTaskPreference,
     primary: &novel_infrastructure::ModelProfile,
@@ -341,10 +341,16 @@ pub(crate) async fn generate_with_task_fallback<F>(
     stream: bool,
     disable_thinking: bool,
     cancelled: Arc<AtomicBool>,
+    mut on_fallback: G,
     mut on_chunk: F,
 ) -> Result<AiGenerationOutcome, novel_infrastructure::AiError>
 where
     F: FnMut(&str) + Send,
+    G: FnMut(
+            &novel_infrastructure::ModelProfile,
+            &str,
+        ) -> Result<(), novel_infrastructure::AiError>
+        + Send,
 {
     match state
         .gateway
@@ -370,6 +376,9 @@ where
         }),
         Err(error) if !should_try_fallback(&error) => Err(error),
         Err(primary_error) => {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(novel_infrastructure::AiError::Cancelled);
+            }
             let Some(fallback_id) = preference
                 .fallback_profile_id
                 .filter(|profile_id| *profile_id != primary.id)
@@ -397,6 +406,10 @@ where
                 .ok_or(novel_infrastructure::AiError::MissingSecret)
                 .and_then(novel_infrastructure::SecretStore::get)?;
             let fallback_reason = primary_error.code().to_owned();
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(novel_infrastructure::AiError::Cancelled);
+            }
+            on_fallback(&fallback, &fallback_reason)?;
             let generation = state
                 .gateway
                 .generate_with_options_detailed(
@@ -435,6 +448,31 @@ fn truncate_text_to_char_budget(value: &str, char_budget: usize, marker: &str) -
 
 #[cfg(test)]
 mod task_generation_options_tests {
+    #[test]
+    fn fallback_policy_does_not_turn_cancellation_or_authentication_into_another_request() {
+        use novel_infrastructure::AiError;
+        for error in [
+            AiError::RateLimited,
+            AiError::Timeout,
+            AiError::ProviderUnavailable,
+            AiError::Network,
+            AiError::InvalidResponse,
+        ] {
+            assert!(super::should_try_fallback(&error));
+        }
+        for error in [
+            AiError::Cancelled,
+            AiError::Authentication,
+            AiError::MissingSecret,
+            AiError::PrivacyPolicy,
+            AiError::OutputLengthLimit,
+            AiError::ContentFiltered,
+            AiError::StreamInterrupted,
+        ] {
+            assert!(!super::should_try_fallback(&error));
+        }
+    }
+
     #[test]
     fn applies_recommended_defaults_without_overriding_explicit_values() {
         let recommended = super::task_generation_options(

@@ -1,4 +1,9 @@
 use super::*;
+use eventsource_stream::{EventStreamError, Eventsource};
+
+#[cfg(test)]
+#[path = "gateway_tests.rs"]
+mod tests;
 
 pub struct ModelGateway {
     client: reqwest::Client,
@@ -206,6 +211,39 @@ impl ModelGateway {
         stream: bool,
         disable_thinking: bool,
         cancelled: Arc<AtomicBool>,
+        on_chunk: F,
+    ) -> Result<GenerationOutput, AiError>
+    where
+        F: FnMut(&str) + Send,
+    {
+        // Cancelling drops the request/body future, including during silent
+        // providers and retry backoff, not just when another chunk arrives.
+        tokio::select! {
+            biased;
+            () = wait_for_cancellation(&cancelled) => Err(AiError::Cancelled),
+            result = self.generate_response(
+                profile, secret, context, options, stream, disable_thinking,
+                Arc::clone(&cancelled), on_chunk,
+            ) => {
+                if cancelled.load(Ordering::Relaxed) {
+                    Err(AiError::Cancelled)
+                } else {
+                    result
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn generate_response<F>(
+        &self,
+        profile: &ModelProfile,
+        secret: Option<&str>,
+        context: &ContextPackage,
+        options: GenerationOptions,
+        stream: bool,
+        disable_thinking: bool,
+        cancelled: Arc<AtomicBool>,
         mut on_chunk: F,
     ) -> Result<GenerationOutput, AiError>
     where
@@ -265,6 +303,12 @@ impl ModelGateway {
             }
         }
         Err(AiError::ProviderUnavailable)
+    }
+}
+
+async fn wait_for_cancellation(cancelled: &AtomicBool) {
+    while !cancelled.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(25)).await;
     }
 }
 
@@ -518,12 +562,19 @@ async fn read_non_streaming<F>(
 where
     F: FnMut(&str),
 {
-    let value: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|_| AiError::InvalidResponse)?;
-    let output = message_content(&value).ok_or(AiError::InvalidResponse)?;
-    let finish_reason = response_finish_reason(&value).map(ToOwned::to_owned);
+    let value: serde_json::Value = response.json().await.map_err(response_error)?;
+    json_generation(&value, on_chunk)
+}
+
+fn json_generation<F>(
+    value: &serde_json::Value,
+    on_chunk: &mut F,
+) -> Result<GenerationOutput, AiError>
+where
+    F: FnMut(&str),
+{
+    let output = message_content(value).ok_or(AiError::InvalidResponse)?;
+    let finish_reason = response_finish_reason(value).map(ToOwned::to_owned);
     let completion =
         classify_finish_reason(finish_reason.as_deref()).unwrap_or(GenerationCompletion::Complete);
     on_chunk(&output);
@@ -531,66 +582,75 @@ where
         output,
         completion,
         finish_reason,
-        usage: response_usage(&value),
+        usage: response_usage(value),
     })
 }
 
 async fn read_stream<F>(
-    response: reqwest::Response,
+    mut response: reqwest::Response,
     cancelled: Arc<AtomicBool>,
     on_chunk: &mut F,
 ) -> Result<GenerationOutput, AiError>
 where
     F: FnMut(&str),
 {
-    let mut bytes = response.bytes_stream();
-    let mut raw = Vec::new();
-    while let Some(chunk) = bytes.next().await {
-        if cancelled.load(Ordering::Relaxed) {
-            return Err(AiError::Cancelled);
+    if response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("application/json"))
+        })
+    {
+        return read_non_streaming(response, on_chunk).await;
+    }
+    // Some compatible providers return JSON even for stream=true without
+    // identifying it in Content-Type. Keep that existing compatibility.
+    let mut prefix = Vec::new();
+    let is_json = loop {
+        let Some(chunk) = response.chunk().await.map_err(response_error)? else {
+            return Err(AiError::InvalidResponse);
+        };
+        let first = chunk
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace());
+        prefix.push(chunk);
+        if let Some(first) = first {
+            break first == b'{';
         }
-        let chunk = chunk.map_err(|error| {
-            if error.is_timeout() {
-                AiError::Timeout
-            } else {
-                AiError::Network
-            }
-        })?;
-        raw.extend_from_slice(&chunk);
+    };
+    if is_json {
+        let mut body = prefix.into_iter().flatten().collect::<Vec<_>>();
+        body.extend_from_slice(&response.bytes().await.map_err(response_error)?);
+        let value = serde_json::from_slice(&body).map_err(|_| AiError::InvalidResponse)?;
+        return json_generation(&value, on_chunk);
     }
-
-    let body = String::from_utf8_lossy(&raw);
-    let trimmed = body.trim();
-    if trimmed.starts_with('{') {
-        let value: serde_json::Value =
-            serde_json::from_str(trimmed).map_err(|_| AiError::InvalidResponse)?;
-        let output = message_content(&value).ok_or(AiError::InvalidResponse)?;
-        let finish_reason = response_finish_reason(&value).map(ToOwned::to_owned);
-        let completion = classify_finish_reason(finish_reason.as_deref())
-            .unwrap_or(GenerationCompletion::Complete);
-        on_chunk(&output);
-        return Ok(GenerationOutput {
-            output,
-            completion,
-            finish_reason,
-            usage: response_usage(&value),
-        });
-    }
-
+    let bytes =
+        futures_util::stream::iter(prefix.into_iter().map(Ok)).chain(response.bytes_stream());
+    let mut events = bytes.eventsource();
     let mut output = String::new();
     let mut finish_reason = None;
     let mut usage = None;
     let mut saw_done = false;
-    for line in body.lines() {
-        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
-            continue;
-        };
+    while let Some(event) = events.next().await {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(AiError::Cancelled);
+        }
+        let event = event.map_err(|error| match error {
+            EventStreamError::Transport(error) => response_error(error),
+            EventStreamError::Utf8(_) | EventStreamError::Parser(_) => AiError::InvalidResponse,
+        })?;
+        let data = event.data.trim();
         if data.is_empty() {
             continue;
         }
         if data == "[DONE]" {
             saw_done = true;
-            continue;
+            break;
         }
         let value: serde_json::Value =
             serde_json::from_str(data).map_err(|_| AiError::InvalidResponse)?;
@@ -621,6 +681,16 @@ where
         finish_reason,
         usage,
     })
+}
+
+fn response_error(error: reqwest::Error) -> AiError {
+    if error.is_timeout() {
+        AiError::Timeout
+    } else if error.is_decode() {
+        AiError::InvalidResponse
+    } else {
+        AiError::Network
+    }
 }
 
 fn map_status(status: StatusCode) -> AiError {

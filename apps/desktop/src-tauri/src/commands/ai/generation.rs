@@ -245,13 +245,13 @@ async fn generate_writing_proposal(
         }
         return Err(error);
     }
-    let _ = app.emit("ai-task-started", AiTaskStarted { task_id });
     let cancelled = Arc::new(AtomicBool::new(false));
     state
         .ai_cancellations
         .lock()
         .map_err(|_| ApiError::internal("AI cancellation mutex poisoned"))?
         .insert(task_id, Arc::clone(&cancelled));
+    let _ = app.emit("ai-task-started", AiTaskStarted { task_id });
     let result = generate_with_task_fallback(
         state,
         &task_preference,
@@ -262,6 +262,36 @@ async fn generate_writing_proposal(
         stream,
         false,
         Arc::clone(&cancelled),
+        |fallback, reason| {
+            let mut manager = state
+                .manager
+                .lock()
+                .map_err(|_| novel_infrastructure::AiError::ProviderUnavailable)?;
+            sync_model_profile(&mut manager, fallback)
+                .map_err(|_| novel_infrastructure::AiError::InvalidResponse)?;
+            manager.record_ai_task_fallback(task_id, fallback.id, reason)?;
+            let (endpoint, body) = state.gateway.request_preview_with_options(
+                fallback,
+                &context,
+                stream,
+                false,
+                generation_options,
+            );
+            let body = serde_json::to_string_pretty(&body)
+                .map_err(|_| novel_infrastructure::AiError::ContextSerialization)?;
+            manager.record_ai_run_request(task_id, &endpoint, &body)?;
+            drop(manager);
+            let _ = app.emit(
+                "ai-task-attempt",
+                AiTaskAttempt {
+                    task_id,
+                    attempt: 2,
+                    profile_name: fallback.name.clone(),
+                    fallback_reason: Some(reason.to_owned()),
+                },
+            );
+            Ok(())
+        },
         |chunk| {
             let _ = app.emit(
                 "ai-task-chunk",
@@ -302,30 +332,6 @@ async fn generate_writing_proposal(
                     code: error.code(),
                     message,
                 });
-            }
-            if let Some(fallback) = outcome.fallback_profile.as_ref() {
-                let reason = outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN");
-                sync_model_profile(&mut manager, fallback)?;
-                let _ = manager.record_ai_task_fallback(task_id, fallback.id, reason);
-                let (endpoint, request_body) = state.gateway.request_preview_with_options(
-                    fallback,
-                    &context,
-                    stream,
-                    false,
-                    generation_options,
-                );
-                if let Ok(request_body) = serde_json::to_string_pretty(&request_body) {
-                    let _ = manager.record_ai_run_request(task_id, &endpoint, &request_body);
-                }
-                let _ = app.emit(
-                    "ai-task-attempt",
-                    AiTaskAttempt {
-                        task_id,
-                        attempt: 2,
-                        profile_name: fallback.name.clone(),
-                        fallback_reason: Some(reason.to_owned()),
-                    },
-                );
             }
             manager
                 .complete_ai_task(task_id, &context, outcome.output, outcome.usage.as_ref())

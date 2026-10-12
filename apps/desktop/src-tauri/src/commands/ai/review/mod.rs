@@ -180,13 +180,13 @@ pub(super) async fn generate_consistency_review_proposal(
         }
         return Err(error);
     }
-    let _ = app.emit("ai-task-started", AiTaskStarted { task_id });
     let cancelled = Arc::new(AtomicBool::new(false));
     state
         .ai_cancellations
         .lock()
         .map_err(|_| ApiError::internal("AI cancellation mutex poisoned"))?
         .insert(task_id, Arc::clone(&cancelled));
+    let _ = app.emit("ai-task-started", AiTaskStarted { task_id });
     let claim_outcome = generate_with_task_fallback(
         state,
         &task_preference,
@@ -197,6 +197,7 @@ pub(super) async fn generate_consistency_review_proposal(
         stream,
         true,
         Arc::clone(&cancelled),
+        |_, _| Ok(()),
         |chunk| {
             let _ = app.emit(
                 "ai-task-chunk",
@@ -364,6 +365,7 @@ pub(super) async fn generate_consistency_review_proposal(
             false,
             true,
             Arc::clone(&cancelled),
+            |_, _| Ok(()),
             |_| {},
         )
         .await;
