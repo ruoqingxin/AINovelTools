@@ -1,15 +1,11 @@
-import { ArchiveRestore, Check, ChevronLeft, ChevronRight, Plus, Search, Settings2, Trash2 } from "lucide-react";
+import { ArchiveRestore, Check, ChevronLeft, ChevronRight, Plus, Settings2, Trash2 } from "lucide-react";
 import type { PlanNode } from "../lib/tauri-client";
 import { kindLabels } from "./project-workspace-utils";
 
 type ChapterFocusHeaderProps = {
   canMoveToRoot: boolean;
-  chapterDirty: boolean;
-  chapterJumpOptions: PlanNode[];
   chapterNodes: PlanNode[];
-  chapterSearch: string;
   editTitle: string;
-  manuscriptReady: boolean;
   moveCandidates: PlanNode[];
   moveParentId: string;
   nextChapter: PlanNode | null;
@@ -19,11 +15,9 @@ type ChapterFocusHeaderProps = {
   onMoveParentChange: (value: string) => void;
   onCreateScene: (chapterId: string) => Promise<void>;
   onSave: () => Promise<void>;
-  onSearchChange: (value: string) => void;
   onSelectNode: (node: PlanNode) => boolean | void;
   onToggleArchived: (node: PlanNode) => Promise<void>;
   previousChapter: PlanNode | null;
-  savingDraft: boolean;
   selected: PlanNode;
   selectedChapterIndex: number;
   selectedVolume: PlanNode | undefined;
@@ -31,18 +25,13 @@ type ChapterFocusHeaderProps = {
 };
 
 export function ChapterFocusHeader(props: ChapterFocusHeaderProps) {
-  const copyButtonLabel = props.savingDraft ? "保存中…" : props.chapterDirty ? "未保存" : props.manuscriptReady ? "已保存" : "新章节";
   return <div className="chapter-focus-header">
     <div className="chapter-focus-copy">
       <span>{props.selectedVolume ? `${props.selectedVolume.title} · ` : ""}第 {props.selectedChapterIndex + 1} / {props.chapterNodes.length} 章</span>
-      <div><h2>{props.selected.title}</h2><span className="save-state" data-state={props.savingDraft ? "saving" : props.chapterDirty ? "dirty" : props.manuscriptReady ? "saved" : "empty"}>{copyButtonLabel}</span></div>
+      <div><h2>{props.selected.title}</h2></div>
     </div>
     <div className="chapter-focus-actions">
       <button type="button" className="icon-command" onClick={() => props.previousChapter && props.onSelectNode(props.previousChapter)} disabled={!props.previousChapter} aria-label="上一章" title="上一章"><ChevronLeft size={16} /></button>
-      {props.workspaceMode === "writing" ? <details className="chapter-jump-menu"><summary><Search size={14} />查找章节</summary><div className="chapter-jump-panel">
-        <label><Search size={14} /><input value={props.chapterSearch} onChange={(event) => props.onSearchChange(event.target.value)} placeholder="输入章节名称" aria-label="搜索章节" /></label>
-        <div>{props.chapterJumpOptions.length ? props.chapterJumpOptions.map((chapter) => <button type="button" data-selected={chapter.id === props.selected.id || undefined} key={chapter.id} onClick={(event) => { if (props.onSelectNode(chapter)) { props.onSearchChange(""); event.currentTarget.closest("details")?.removeAttribute("open"); } }}><span>第 {props.chapterNodes.findIndex((item) => item.id === chapter.id) + 1} 章</span><strong>{chapter.title}</strong></button>) : <p>没有找到匹配章节</p>}</div>
-      </div></details> : null}
       <button type="button" className="icon-command" onClick={() => props.nextChapter && props.onSelectNode(props.nextChapter)} disabled={!props.nextChapter} aria-label="下一章" title="下一章"><ChevronRight size={16} /></button>
       {props.workspaceMode !== "planning" ? <>{props.workspaceMode === "chapters" ? <button type="button" className="secondary-action" onClick={() => void props.onCreateScene(props.selected.id)}><Plus size={14} />拆分场景</button> : null}<details className="chapter-settings-menu"><summary><Settings2 size={15} />章节设置</summary><div className="chapter-settings-panel">
         <label>章节名称<input value={props.editTitle} onChange={(event) => props.onEditTitleChange(event.target.value)} aria-label="编辑节点标题" /></label>

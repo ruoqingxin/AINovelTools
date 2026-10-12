@@ -80,18 +80,24 @@ describe("exact planning navigation", () => {
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
 
-  it("keeps planning admission intact for an exact outline link", async () => {
+  it("allows manual outline editing without complete planning or an AI model", async () => {
     mocks.listPlanNodes.mockResolvedValue([{ ...scene, id: "outline-1", kind: "OUTLINE", title: "大纲" }]);
     renderPlan("?planNode=outline-1&targetProject=project-1");
-    expect(await screen.findByText("故事大纲尚未开放")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "保存规划" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "编辑规划" })).toBeEnabled());
+    expect(screen.queryByText("故事大纲尚未开放")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑规划" }));
+    expect(screen.getByLabelText("规划草稿")).not.toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
   });
 
   it("keeps dirty plan edits when returning to the same target after a cancelled node switch", async () => {
     mocks.listPlanNodes.mockResolvedValue([scene, { ...scene, id: "scene-2", title: "离别" }]);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     renderPlan();
-    const input = await screen.findByDisplayValue("场景的正式计划");
+    expect(await screen.findByDisplayValue("场景的正式计划")).toHaveAttribute("readonly");
+    await waitFor(() => expect(screen.getByRole("button", { name: "编辑规划" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "编辑规划" }));
+    const input = screen.getByLabelText("规划草稿");
     await act(async () => {});
     fireEvent.change(input, { target: { value: "作者尚未保存的计划" } });
     await waitFor(() => expect(input).toHaveValue("作者尚未保存的计划"));
@@ -213,5 +219,57 @@ describe("exact planning navigation", () => {
     expect(confirm).toHaveBeenCalled();
     expect(screen.getByLabelText("拆章节目标分卷")).toHaveValue("volume");
     expect(editor).toHaveValue("第3章·作者修改｜新目标");
+  });
+
+  it("creates only selected volumes atomically after explicitly confirming unselected candidates", async () => {
+    const { source, parent } = batchSetup();
+    mocks.adoptPlanBatch.mockResolvedValue({ nodes: [], source: { ...source, pendingContent: "", version: 8 } });
+    await screen.findByLabelText("候选1名称");
+    await waitFor(() => expect(screen.getByLabelText("候选1名称")).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("候选1名称"), { target: { value: "作者改名" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "创建第2卷·追查" }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 1 个分卷" }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("候选区会清空"));
+    expect(mocks.adoptPlanBatch).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 1 个分卷" }));
+    await waitFor(() => expect(mocks.adoptPlanBatch).toHaveBeenCalledWith(expect.objectContaining({
+      parentId: parent.id, expectedSourceVersion: 7, expectedParentRevision: 4,
+      candidates: [{ title: "第1卷·作者改名", content: "阶段目标" }],
+      source: expect.objectContaining({ pendingContent: "第1卷·作者改名｜阶段目标" }),
+    })));
+  });
+
+  it("does not parse chapter names mentioned inside an edited structured plan as extra candidates", async () => {
+    const { source } = batchSetup(true);
+    mocks.adoptPlanBatch.mockResolvedValue({ nodes: [], source: { ...source, pendingContent: "", version: 8 } });
+    await screen.findByLabelText("候选1计划");
+    await waitFor(() => expect(screen.getByLabelText("候选1计划")).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("候选1计划"), { target: { value: "与第9章·重逢的线索呼应" } });
+    expect(screen.getByRole("button", { name: "采用并创建 2 章" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 2 章" }));
+    await waitFor(() => expect(mocks.adoptPlanBatch).toHaveBeenCalledWith(expect.objectContaining({
+      candidates: [{ title: "第1章·入城", content: "与第9章·重逢的线索呼应" }, { title: "第2章·问路", content: "发现冲突" }],
+    })));
+  });
+
+  it("adopts only selected chapters while preserving the formal source and its version", async () => {
+    const { source, parent } = batchSetup(true);
+    mocks.adoptPlanBatch.mockResolvedValue({ nodes: [], source: { ...source, pendingContent: "", version: 8 } });
+    await waitFor(() => expect(screen.getByLabelText("候选1名称")).toBeEnabled());
+    fireEvent.click(screen.getByRole("checkbox", { name: "创建第2章·问路" }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 1 章" }));
+    expect(mocks.adoptPlanBatch).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("本批候选区会清空"));
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 1 章" }));
+    await waitFor(() => expect(mocks.adoptPlanBatch).toHaveBeenCalledWith({
+      expectedProjectId: "project-1", parentId: parent.id, expectedParentRevision: 3, expectedSourceVersion: 7,
+      source, candidates: [{ title: "第1章·入城", content: "寻找线索" }],
+    }));
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
 });

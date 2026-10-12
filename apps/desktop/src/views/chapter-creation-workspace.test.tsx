@@ -88,7 +88,7 @@ describe("ChapterCreationWorkspace", () => {
     render(<ChapterCreationWorkspace {...makeProps()} pendingChapterPlan="讨论送来的候选" />);
     expect(screen.getByRole("tab", { name: "本章计划" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("讨论送来的候选")).toBeVisible();
-    expect(screen.getByLabelText("章节执行卡")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "本章计划" })).toBeVisible();
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ active: false, mode: "create" }));
   });
 
@@ -97,6 +97,8 @@ describe("ChapterCreationWorkspace", () => {
     render(<ChapterCreationWorkspace {...makeProps(state)} />);
     expect(screen.getByText("共享编辑器")).toBeVisible();
     expect(screen.getByRole("button", { name: "保存正文" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "展开写作助手" })).toBeVisible();
+    expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ active: false }));
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ editor: state.editor, draft: state.draft }));
     fireEvent.click(screen.getByRole("button", { name: "检查正文" }));
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -109,18 +111,19 @@ describe("ChapterCreationWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "就地修改" }));
     expect(state.setManuscriptTab).toHaveBeenCalledWith("candidate");
     fireEvent.click(screen.getByRole("button", { name: "就地查看计划" }));
-    expect(screen.getByLabelText("章节执行卡")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "本章计划" })).toBeVisible();
   });
 
   it("preserves AI input through assistant tabs and collapsing the assistant", () => {
     render(<ChapterCreationWorkspace {...makeProps()} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
     fireEvent.change(screen.getByLabelText("AI 补充意见"), { target: { value: "保持克制" } });
     fireEvent.click(screen.getByRole("tab", { name: "本章计划" }));
-    fireEvent.click(screen.getByRole("tab", { name: "AI 创作" }));
+    fireEvent.click(screen.getByRole("tab", { name: "AI 写作" }));
     expect(screen.getByLabelText("AI 补充意见")).toHaveValue("保持克制");
-    fireEvent.click(screen.getByRole("button", { name: "收起创作助手" }));
+    fireEvent.click(screen.getByRole("button", { name: "收起写作助手" }));
     expect(screen.getByLabelText("AI 补充意见")).not.toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "展开创作助手" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
     expect(screen.getByLabelText("AI 补充意见")).toHaveValue("保持克制");
     fireEvent.click(screen.getByRole("button", { name: "处理准入" }));
     expect(screen.getByLabelText("检查对象")).toHaveValue("admission");
@@ -134,11 +137,12 @@ describe("ChapterCreationWorkspace", () => {
         onPlanChange={setPlan} onSavePlan={savePlan} />;
     }
     render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
     fireEvent.click(screen.getByRole("tab", { name: "本章计划" }));
-    fireEvent.change(screen.getByLabelText("章节执行卡"), { target: { value: "在城门发生冲突" } });
-    fireEvent.click(screen.getByRole("tab", { name: "AI 创作" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "本章计划" }), { target: { value: "在城门发生冲突" } });
+    fireEvent.click(screen.getByRole("tab", { name: "AI 写作" }));
     fireEvent.click(screen.getByRole("tab", { name: "本章计划" }));
-    expect(screen.getByLabelText("章节执行卡")).toHaveValue("在城门发生冲突");
+    expect(screen.getByRole("textbox", { name: "本章计划" })).toHaveValue("在城门发生冲突");
     fireEvent.click(screen.getByRole("button", { name: "保存计划" }));
     expect(savePlan).toHaveBeenCalledOnce();
     expect(screen.getByText("共享编辑器")).toBeVisible();
@@ -150,17 +154,18 @@ describe("ChapterCreationWorkspace", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const view = render(<ChapterCreationWorkspace {...props} pendingChapterPlan="新的执行卡"
       planDirty onAdoptPlan={adopt} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
     fireEvent.click(screen.getByRole("tab", { name: "本章计划" }));
     fireEvent.click(screen.getByRole("button", { name: "载入编辑" }));
     expect(props.onPlanChange).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "采用执行卡" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认为本章计划" }));
     expect(adopt).not.toHaveBeenCalled();
     confirm.mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "载入编辑" }));
     expect(props.onPlanChange).toHaveBeenCalledWith("新的执行卡");
     view.rerender(<ChapterCreationWorkspace {...props} pendingChapterPlan="新的执行卡"
       onAdoptPlan={adopt} />);
-    fireEvent.click(screen.getByRole("button", { name: "采用执行卡" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认为本章计划" }));
     expect(adopt).toHaveBeenCalledOnce();
     confirm.mockRestore();
   });
@@ -184,6 +189,7 @@ describe("ChapterCreationWorkspace", () => {
     const auditFlow = { admission: false, manuscript: false, knowledge: false };
     const view = render(<ChapterCreationWorkspace {...props} auditFlow={auditFlow} />);
     expect(screen.queryByRole("button", { name: "检查正文" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
     fireEvent.click(screen.getByRole("tab", { name: "检查" }));
     expect(screen.getByText("此类检查已关闭。")).toBeVisible();
     expect(screen.getByRole("button", { name: "保存正文" })).toBeEnabled();
@@ -214,7 +220,6 @@ describe("ChapterCreationWorkspace", () => {
     render(<ChapterCreationWorkspace {...makeProps(state)} />);
     fireEvent.click(screen.getByRole("button", { name: "恢复草稿" }));
     expect(state.recoverLatest).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole("button", { name: "收起创作助手" }));
     fireEvent.click(screen.getByRole("button", { name: "更新章节记忆" }));
     expect(state.refreshChapterMemory).toHaveBeenCalledOnce();
   });
@@ -241,9 +246,10 @@ describe("ChapterCreationWorkspace", () => {
 
   it("deactivates collapsed AI and lazily mounts readiness and review purposes", () => {
     render(<ChapterCreationWorkspace {...makeProps()} />);
-    fireEvent.click(screen.getByRole("button", { name: "收起创作助手" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
+    fireEvent.click(screen.getByRole("button", { name: "收起写作助手" }));
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "create", active: false }));
-    fireEvent.click(screen.getByRole("button", { name: "展开创作助手" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
     fireEvent.click(screen.getByRole("tab", { name: "本章计划" }));
     expect(panels.ai.mock.calls.some(([props]) => props.mode === "readiness")).toBe(false);
     fireEvent.click(screen.getByRole("tab", { name: "检查" }));

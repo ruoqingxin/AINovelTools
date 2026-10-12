@@ -77,6 +77,7 @@ describe("project switching", () => {
     setup(true);
     fireEvent.click(screen.getByText("recent"));
     await screen.findByRole("alertdialog");
+    await act(async () => {});
     const stay = screen.getByRole("button", { name: "继续编辑" });
     const leave = screen.getByRole("button", { name: "放弃修改并离开" });
     expect(stay).toHaveFocus();

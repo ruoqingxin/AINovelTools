@@ -1,4 +1,4 @@
-import { BookOpenText, ClipboardList, PanelRightClose, PanelRightOpen, RefreshCw, Save, ShieldCheck, Sparkles } from "lucide-react";
+import { BookOpenText, ClipboardList, History, Library, MoreHorizontal, PanelRightClose, PanelRightOpen, RefreshCw, Save, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { AuditFlowSettings, PlanNode } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
@@ -7,7 +7,6 @@ import { KnowledgeReviewView } from "./knowledge-review-view";
 import { ManuscriptCandidateEditor } from "./manuscript-candidate-editor";
 import { ManuscriptReader } from "./manuscript-reader";
 import { ManuscriptVersionsPanel } from "./manuscript-versions-panel";
-import { ManuscriptWorkspaceTabs } from "./manuscript-workspace-tabs";
 import { documentCharacterCount, documentToText, formatSavedAt } from "./project-workspace-utils";
 import type { useChapterManuscript } from "./use-chapter-manuscript";
 import { WorkspaceTabs } from "./workspace-tabs";
@@ -15,11 +14,12 @@ import "./chapter-creation-workspace.css";
 import { PlanningDiscussionSources } from "./planning-discussion-sources";
 import { ChapterEntityReferencePanel } from "./chapter-entity-references";
 import { sourceReturnTo } from "../lib/manuscript-source";
+import { useWideWorkspace, WorkspacePanel } from "./workspace-panel";
 
 type AssistantTab = "ai" | "plan" | "review";
 
 const assistantTabs = [
-  { value: "ai", label: "AI 创作", icon: Sparkles },
+  { value: "ai", label: "AI 写作", icon: Sparkles },
   { value: "plan", label: "本章计划", icon: ClipboardList },
   { value: "review", label: "检查", icon: ShieldCheck },
 ] as const;
@@ -32,6 +32,7 @@ export function ChapterCreationWorkspace({
   volumePlan,
   planDirty,
   savingPlan,
+  planReady = true,
   onPlanChange,
   onSavePlan,
   onAdoptPlan,
@@ -46,6 +47,7 @@ export function ChapterCreationWorkspace({
   volumePlan: string;
   planDirty: boolean;
   savingPlan: boolean;
+  planReady?: boolean;
   onPlanChange: (value: string) => void;
   onSavePlan: () => Promise<void>;
   onAdoptPlan?: () => Promise<void>;
@@ -56,7 +58,9 @@ export function ChapterCreationWorkspace({
   const [assistantTab, setAssistantTab] = useState<AssistantTab>(() =>
     new URLSearchParams(window.location.search).get("assistant") === "plan" ? "plan" : "ai");
   const [visitedAssistantTabs, setVisitedAssistantTabs] = useState<AssistantTab[]>([assistantTab]);
-  const [assistantOpen, setAssistantOpen] = useState(true);
+  const [assistantOpen, setAssistantOpen] = useState(() =>
+    new URLSearchParams(window.location.search).get("assistant") === "plan");
+  const assistantDocked = useWideWorkspace(1280);
   const [reviewPurpose, setReviewPurpose] = useState<"admission" | "manuscript">("manuscript");
   const [knowledgeTab, setKnowledgeTab] = useState<"extraction" | "facts">(() =>
     new URLSearchParams(window.location.search).get("knowledge") === "facts" ? "facts" : "extraction");
@@ -105,23 +109,30 @@ export function ChapterCreationWorkspace({
     draft: state.draft,
     editor: state.editor,
     onReturnToEditor: () => state.setManuscriptTab("candidate"),
-    onOpenChapterPlan: () => selectAssistantTab("plan"),
+    onOpenChapterPlan: () => { selectAssistantTab("plan"); setAssistantOpen(true); },
   };
 
   return <div className="creation-workspace" data-assistant-open={assistantOpen}>
     <div className="creation-main">
       <div className="creation-navigation">
-        <ManuscriptWorkspaceTabs
-          value={state.manuscriptTab}
-          onChange={state.setManuscriptTab}
-          recoveryCount={state.recovery.data?.length ?? 0}
-          candidateDirty={state.chapterDirty}
-        />
-        <button type="button" className="icon-command" title={assistantOpen ? "收起创作助手" : "展开创作助手"}
-          aria-label={assistantOpen ? "收起创作助手" : "展开创作助手"} aria-expanded={assistantOpen}
+        <div className="creation-mode" role="group" aria-label="正文模式">
+          <button type="button" aria-pressed={state.manuscriptTab !== "manuscript"}
+            onClick={() => state.setManuscriptTab("candidate")}>编辑</button>
+          <button type="button" aria-pressed={state.manuscriptTab === "manuscript"}
+            onClick={() => state.setManuscriptTab("manuscript")}>阅读</button>
+        </div>
+        <div className="creation-local-tools">
+          <button type="button" className="icon-command" title="历史版本" aria-label="历史版本"
+            onClick={() => state.setManuscriptTab("versions")}><History size={17} />
+            {state.recovery.data?.length ? <span className="tool-count">{state.recovery.data.length}</span> : null}</button>
+          <button type="button" className="icon-command" title="本章知识" aria-label="本章知识"
+            onClick={() => state.setManuscriptTab("extraction")}><Library size={17} /></button>
+        <button type="button" className="icon-command" title={assistantOpen ? "收起写作助手" : "展开写作助手"}
+          aria-label={assistantOpen ? "收起写作助手" : "展开写作助手"} aria-expanded={assistantOpen}
           onClick={() => setAssistantOpen((open) => !open)}>
           {assistantOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
         </button>
+        </div>
       </div>
       {state.manuscript.isError ? <p className="project-error" role="alert">无法读取正文：{state.manuscript.error.message}</p> : null}
       {state.manuscript.isPending ? <p className="plan-empty" role="status">正在加载正文…</p> : null}
@@ -138,11 +149,11 @@ export function ChapterCreationWorkspace({
         <button type="button" className="secondary-action" onClick={() => void state.refreshChapterMemory()}
           disabled={state.refreshingChapterMemory}><RefreshCw size={14} />{state.refreshingChapterMemory ? "提交中…" : "更新章节记忆"}</button>
       </div> : null}
-      {state.draftReady && state.manuscriptTab === "candidate" ? <div
-        className="creation-edit-panel" id="manuscript-panel-candidate" role="tabpanel" aria-labelledby="manuscript-tab-candidate">
+      {state.draftReady && state.manuscriptTab !== "manuscript" ? <div
+        className="creation-edit-panel" id="manuscript-panel-candidate" role="region" aria-label="正文编辑">
         <div className="creation-document-heading">
           <h3>正文编辑</h3>
-          <span>{documentCharacterCount(state.draft)} 字 · {state.chapterDirty ? "本地草稿" : state.manuscript.data ? "已保存正文" : "新章节"}</span>
+          <span>{documentCharacterCount(state.draft)} 字</span>
         </div>
         {state.editor ? <ManuscriptCandidateEditor editor={state.editor} /> : <p className="plan-empty">正在加载编辑器…</p>}
         {state.mergeResult ? <div className="merge-panel" role="status">
@@ -155,13 +166,13 @@ export function ChapterCreationWorkspace({
         </div> : null}
         <div className="creation-savebar">
           <span>{state.savingDraft ? "正在保存正文…" : state.savingLocalDraft ? "正在保存草稿…"
-            : state.draftStorageError ? "草稿保存失败" : state.draftNeedsPersistence ? "草稿待保存"
-            : state.chapterDirty ? "本地草稿已保存" : "无待保存修改"}</span>
+            : state.draftStorageError ? "草稿保护失败" : state.draftNeedsPersistence ? "草稿保护中"
+            : state.chapterDirty ? "草稿已保护 · 正文待保存" : state.manuscript.data ? "正文已保存" : "尚未保存正文"}</span>
           <div>
-            {state.chapterDirty ? <button type="button" className="secondary-action" onClick={() => void state.discardLocalDraft()}
-              disabled={state.savingDraft}>放弃草稿</button> : null}
-            {state.chapterDirty && state.manuscript.data ? <button type="button" className="secondary-action"
-              onClick={() => void state.mergeDraft()} disabled={state.savingDraft}>检查冲突</button> : null}
+            {state.chapterDirty ? <details className="creation-more"><summary title="更多正文操作" aria-label="更多正文操作"><MoreHorizontal size={17} /></summary>
+              <div><button type="button" onClick={() => void state.discardLocalDraft()} disabled={state.savingDraft}>放弃草稿</button>
+                {state.manuscript.data ? <button type="button" onClick={() => void state.mergeDraft()} disabled={state.savingDraft}>检查冲突</button> : null}</div>
+            </details> : null}
             {auditFlow?.manuscript !== false ? <button type="button" className="secondary-action"
               onClick={() => openReview("manuscript")} disabled={!hasDraft}><ShieldCheck size={14} />检查正文</button> : null}
             <button type="button" className="primary-action" onClick={() => void state.saveDraft()}
@@ -170,7 +181,7 @@ export function ChapterCreationWorkspace({
         </div>
       </div> : null}
       {state.manuscript.isSuccess && state.manuscriptTab === "manuscript" ? <div
-        className="creation-reader-panel" id="manuscript-panel-manuscript" role="tabpanel" aria-labelledby="manuscript-tab-manuscript">
+        className="creation-reader-panel" id="manuscript-panel-manuscript" role="region" aria-label="已保存正文">
         <div className="creation-document-heading"><h3>已保存正文</h3>
           <span>{state.manuscript.data ? formatSavedAt(state.manuscript.data.createdAt) : "尚无版本"}</span>
         </div>
@@ -179,6 +190,7 @@ export function ChapterCreationWorkspace({
           <button type="button" className="primary-action" onClick={() => state.setManuscriptTab("candidate")}>开始写作</button>
         </div>}
       </div> : null}
+      <WorkspacePanel open={state.manuscriptTab === "versions"} title="历史版本" onClose={() => state.setManuscriptTab("candidate")}>
       {state.manuscriptTab === "versions" ? <>
         {state.history.isPending ? <p className="plan-empty" role="status">正在加载版本…</p> : null}
         {state.history.isError ? <p className="project-error" role="alert">{state.history.error.message}</p> : null}
@@ -195,8 +207,10 @@ export function ChapterCreationWorkspace({
           recovery={state.recovery.data ?? []}
         /> : null}
       </> : null}
+      </WorkspacePanel>
+      <WorkspacePanel open={knowledgeActive} title="本章知识" onClose={() => state.setManuscriptTab("candidate")}>
       {knowledgeActive || extractionVisited || factsVisited ? <div className="creation-knowledge-panel" hidden={!knowledgeActive}
-        id="manuscript-panel-extraction" role="tabpanel" aria-labelledby="manuscript-tab-extraction">
+        id="manuscript-panel-extraction" role="region" aria-label="本章知识内容">
         <div className="creation-knowledge-switch" role="group" aria-label="本章知识">
           <button type="button" aria-pressed={knowledgeTab === "extraction"} onClick={() => setKnowledgeTab("extraction")}>提取候选</button>
           <button type="button" aria-pressed={knowledgeTab === "facts"} onClick={() => setKnowledgeTab("facts")}>事实审核</button>
@@ -220,9 +234,11 @@ export function ChapterCreationWorkspace({
         </p> : null}
         </div>
       </div> : null}
+      </WorkspacePanel>
     </div>
-    <aside className="creation-assistant" aria-label="创作助手" hidden={!assistantOpen}>
-      <WorkspaceTabs prefix="assistant" label="创作助手页签" value={assistantTab} tabs={assistantTabs} onChange={selectAssistantTab} />
+    <WorkspacePanel open={assistantOpen} docked={assistantDocked} title="写作助手" className="creation-assistant"
+      onClose={() => setAssistantOpen(false)}>
+      <WorkspaceTabs prefix="assistant" label="写作助手页签" value={assistantTab} tabs={assistantTabs} onChange={selectAssistantTab} />
       <div id="assistant-panel-ai" role="tabpanel" aria-labelledby="assistant-tab-ai" hidden={assistantTab !== "ai"}>
         {state.draftReady ? <AiWritingPanel {...aiProps}
           active={assistantOpen && assistantTab === "ai"} onPendingChange={pendingCallbacks.ai}
@@ -231,13 +247,13 @@ export function ChapterCreationWorkspace({
       <div id="assistant-panel-plan" role="tabpanel" aria-labelledby="assistant-tab-plan" hidden={assistantTab !== "plan"}>
         {visitedAssistantTabs.includes("plan") ? <div className="creation-plan">
           {volume ? <details><summary>{volume.title}</summary><p>{volumePlan.trim() || "尚未填写分卷规划"}</p></details> : null}
-          <label htmlFor="creation-chapter-plan">章节执行卡</label>
-          <textarea id="creation-chapter-plan" rows={12} value={chapterPlan} onChange={(event) => onPlanChange(event.target.value)}
+          <label htmlFor="creation-chapter-plan">本章计划</label>
+          <textarea id="creation-chapter-plan" disabled={!planReady} rows={12} value={chapterPlan} onChange={(event) => onPlanChange(event.target.value)}
             placeholder="本章目标、冲突、关键行动和结尾钩子" />
           <button type="button" className="primary-action" onClick={() => void onSavePlan()}
-            disabled={savingPlan || !planDirty || !chapterPlan.trim()}><Save size={14} />{savingPlan ? "保存中…" : "保存计划"}</button>
+            disabled={!planReady || savingPlan || !planDirty || !chapterPlan.trim()}><Save size={14} />{savingPlan ? "保存中…" : "保存计划"}</button>
           {pendingChapterPlan?.trim() ? <div className="creation-plan-candidate">
-            <strong>执行卡候选</strong>
+            <strong>计划候选</strong>
             <pre>{pendingChapterPlan}</pre>
             <div>
               <button type="button" className="secondary-action" onClick={() => {
@@ -247,17 +263,17 @@ export function ChapterCreationWorkspace({
               {onAdoptPlan ? <button type="button" className="primary-action" onClick={() => {
                 if (planDirty && !window.confirm("当前章节计划有未保存修改。采用候选会替换这些修改，确定继续吗？")) return;
                 void onAdoptPlan();
-              }} disabled={savingPlan}>采用执行卡</button> : null}
+              }} disabled={savingPlan}>确认为本章计划</button> : null}
             </div>
           </div> : null}
-          <a href="/planning">全书规划</a>
+          <a href="/planning">全书大纲</a>
           {referenceReturn ? <a href={referenceReturn}>返回来源</a> : null}
           <ChapterEntityReferencePanel chapterId={chapter.id} active={assistantOpen && assistantTab === "plan"}
             onPendingChange={pendingCallbacks.references} />
           <PlanningDiscussionSources sectionId={`plan-node:${chapter.id}`} active={assistantOpen && assistantTab === "plan"}
             returnTo={`/writing?assistant=plan#${encodeURIComponent(chapter.id)}`} />
           <details onToggle={(event) => setReadinessOpen(event.currentTarget.open)}>
-            <summary>写作准备</summary>
+            <summary>生成前检查</summary>
             {readinessOpen ? <AiWritingPanel {...aiProps} mode="readiness" active={assistantOpen && assistantTab === "plan"} /> : null}
           </details>
         </div> : null}
@@ -270,7 +286,7 @@ export function ChapterCreationWorkspace({
               setReviewPurpose(purpose);
               setVisitedReviews((items) => items.includes(purpose) ? items : [...items, purpose]);
             }}>
-              <option value="manuscript">当前正文草稿</option><option value="admission">创作准入</option>
+              <option value="manuscript">当前正文草稿</option><option value="admission">生成前检查</option>
             </select>
           </label>
           {!reviewEnabled ? <p className="plan-empty">此类检查已关闭。<a href="/settings#writing-admission">审核设置</a></p> : null}
@@ -281,6 +297,6 @@ export function ChapterCreationWorkspace({
           </div>) : <p className="plan-empty">等待正文就绪…</p>}
         </> : null}
       </div>
-    </aside>
+    </WorkspacePanel>
   </div>;
 }

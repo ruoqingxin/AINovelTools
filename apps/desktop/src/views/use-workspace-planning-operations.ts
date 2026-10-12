@@ -26,6 +26,10 @@ type WorkspacePlanningOptions = {
     batchSize: number;
   };
   onError: (error: string | null) => void;
+  excludedVolumes?: ReadonlySet<string>;
+  excludedChapters?: ReadonlySet<string>;
+  volumeCandidates?: Array<{ title: string; content: string }>;
+  chapterCandidates?: Array<{ title: string; content: string }>;
   onVolumesAdopted: (firstVolumeId: string, hasNewEdits: boolean) => void;
 };
 
@@ -38,7 +42,6 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
   const { volume: chapterSplitVolume, profile: chapterSplitProfile, preference: chapterSplitPreference,
     guidance: chapterSplitGuidance, busy: chapterSplitJobBusy, sectionId: chapterSplitSectionId,
     targetCount: chapterSplitTargetCount, existingCount: chapterSplitExistingCount, batchSize: chapterSplitBatchSize } = options.splitGeneration;
-  const nodePlanDraft = nodeDraft.form.content;
   const nodePlanPendingDraft = nodeDraft.form.pendingContent;
   const chapterSplitPendingDraft = splitDraft.form.pendingContent;
   const [savingNodePlan, setSavingNodePlan] = useState(false);
@@ -49,14 +52,15 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
 
   async function saveNodePlan() {
     if (!selected || selected.kind === "WORK_DESIGN") return;
-    const value = selected.kind === "OUTLINE" && nodePlanTab === "pending" ? nodePlanPendingDraft : nodePlanDraft;
-    if (!value.trim()) return;
     const snapshot = nodeDraft.beginSave();
     if (!snapshot) return;
     setSavingNodePlan(true);
     setError(null);
     try {
-      const saved = await savePlanningSection({ ...snapshot.form, version: snapshot.baseline.version, ...(selected.kind === "OUTLINE" && nodePlanTab === "pending" ? { pendingContent: snapshot.form.pendingContent.trim(), storyState: "AI_SUGGESTED" as const } : { content: snapshot.form.content.trim(), storyState: "CONFIRMED" as const }) });
+      const pending = selected.kind !== "CHAPTER" && nodePlanTab === "pending";
+      const saved = await savePlanningSection({ ...snapshot.form, version: snapshot.baseline.version,
+        ...(pending ? { pendingContent: snapshot.form.pendingContent.trim() }
+          : { content: snapshot.form.content.trim(), storyState: selected.kind === "CHAPTER" ? "CONFIRMED" as const : snapshot.form.storyState }) });
       nodeDraft.acknowledge(snapshot, saved);
       cacheSavedSection(saved);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
@@ -126,11 +130,13 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
 
   async function adoptChapterSplitPlan() {
     if (!chapterSplitVolume || savingNodePlan || !projectId) return;
-    const candidates = parseChapterPlanCandidates(chapterSplitPendingDraft);
+    const parsed = options.chapterCandidates ?? parseChapterPlanCandidates(chapterSplitPendingDraft);
+    const candidates = parsed.filter((candidate) => !options.excludedChapters?.has(candidate.title));
     if (!candidates.length) {
       setError("没有识别到可创建的章节，请按“第X章·标题｜本章目标｜关键冲突｜结尾钩子”的格式检查候选。");
       return;
     }
+    if (candidates.length < parsed.length && !window.confirm(`仅创建已勾选的 ${candidates.length} 章，未勾选的 ${parsed.length - candidates.length} 条候选将不采用；本批候选区会清空。继续吗？`)) return;
     const volumeChapterTitles = new Set(chapterNodes.filter((chapter) => chapter.parentId === chapterSplitVolume.id).map((chapter) => chapter.title));
     const newCandidates = candidates.filter((candidate) => !volumeChapterTitles.has(candidate.title));
     if (!newCandidates.length) {
@@ -173,7 +179,8 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
     if (!snapshot) return;
     setSavingNodePlan(true);
     try {
-      const saved = await savePlanningSection({ ...snapshot.form, version: snapshot.baseline.version, content: pending.trim(), pendingContent: "", storyState: "CONFIRMED" });
+      const saved = await savePlanningSection({ ...snapshot.form, version: snapshot.baseline.version, content: pending.trim(), pendingContent: "",
+        storyState: snapshot.form.storyState === "LOCKED" ? "LOCKED" : "CONFIRMED" });
       nodeDraft.acknowledge(snapshot, saved);
       cacheSavedSection(saved);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
@@ -194,11 +201,13 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
 
   async function adoptVolumeManagerPlan() {
     if (!selected || selected.kind !== "VOLUME_MANAGER" || savingNodePlan || !projectId) return;
-    const candidates = parseVolumePlanCandidates(nodePlanPendingDraft);
+    const parsed = options.volumeCandidates ?? parseVolumePlanCandidates(nodePlanPendingDraft);
+    const candidates = parsed.filter((candidate) => !options.excludedVolumes?.has(candidate.title));
     if (!candidates.length) {
       setError("没有识别到可创建的分卷，请按“第X卷·标题｜阶段目标｜主要矛盾｜卷末转折”的格式填写。");
       return;
     }
+    if (candidates.length < parsed.length && !window.confirm(`仅创建已勾选的 ${candidates.length} 卷，未勾选的 ${parsed.length - candidates.length} 条候选将不采用；本批候选区会清空。继续吗？`)) return;
     const existingTitles = new Set(volumeNodes.filter((node) => node.parentId === selected.id).map((node) => node.title));
     const newCandidates = candidates.filter((candidate) => !existingTitles.has(candidate.title));
     if (!newCandidates.length) {
@@ -216,7 +225,8 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
         parentId: selected.id,
         expectedParentRevision: selected.revision,
         expectedSourceVersion: snapshot.baseline.version ?? 0,
-        source: snapshot.form,
+        source: candidates.length === parsed.length ? snapshot.form
+          : { ...snapshot.form, pendingContent: candidates.map((candidate) => `${candidate.title}｜${candidate.content}`).join("\n") },
         candidates,
       });
       const firstCreatedVolumeId = created[0]?.id ?? "";

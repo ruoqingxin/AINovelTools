@@ -76,15 +76,15 @@ export function AiConsistencyReviewList(props: {
 }) {
   const { reviews: pendingReviews, active, reviewingManuscript, partialTexts, reviewPolicy,
     generationLocked, canRunConsistencyCheck, decidingProposalId } = props;
-  return <>{pendingReviews.length ? <section className="consistency-review-list" id="consistency-review-list" aria-label={reviewingManuscript ? "正文候选审核结果" : "创作准入结果"}>
-      <div className="section-heading"><h3><ShieldCheck size={14} />{reviewingManuscript ? "正文候选审核结果" : "创作准入结果"}</h3><span>{pendingReviews.length} 条 · 只读报告</span></div>
+  return <>{pendingReviews.length ? <section className="consistency-review-list" id="consistency-review-list" aria-label={reviewingManuscript ? "正文草稿检查结果" : "生成前检查结果"}>
+      <div className="section-heading"><h3><ShieldCheck size={14} />{reviewingManuscript ? "正文草稿检查结果" : "生成前检查结果"}</h3><span>{pendingReviews.length} 条 · 只读报告</span></div>
       {pendingReviews.map(({ proposal, validation, consistency, consistencyFreshness, hasReviewTrace }) => {
         const needsInput = validation.status === "NEEDS_INPUT";
         const stale = consistencyFreshness === "STALE";
         const text = partialTexts[proposal.id] ?? proposal.outputText;
         const targets = needsInput ? findWritingGapTargets(text) : [];
         return <article className="proposal consistency-review" data-state={stale ? "stale" : needsInput ? "needs-input" : undefined} data-verdict={consistency?.verdict.toLowerCase()} key={proposal.id}>
-          <div className="proposal-meta"><strong>{reviewingManuscript ? "正文候选审核" : "创作准入"}</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{stale ? `审核已过期 · 原判断：${consistency ? consistencyVerdictLabels[consistency.verdict] : "需补资料"}` : consistency ? consistencyVerdictLabels[consistency.verdict] : needsInput ? "需补资料" : validation.status === "VALID" ? "审核完成" : validation.status === "WARNING" ? "需要检查" : "无效结果"} · {validation.characterCount} 字</span></div>
+          <div className="proposal-meta"><strong>{reviewingManuscript ? "正文草稿检查" : "生成前检查"}</strong><span className="proposal-validation" data-status={validation.status.toLowerCase()}>{stale ? `审核已过期 · 原判断：${consistency ? consistencyVerdictLabels[consistency.verdict] : "需补资料"}` : consistency ? consistencyVerdictLabels[consistency.verdict] : needsInput ? "需补资料" : validation.status === "VALID" ? "审核完成" : validation.status === "WARNING" ? "需要检查" : "无效结果"} · {validation.characterCount} 字</span></div>
           {validation.messages.length ? <div className="proposal-validation-messages">{validation.messages.map((message) => <span key={message}>{message}</span>)}</div> : null}
           {stale ? <div className="consistency-stale-notice"><strong>审核依据已经变化</strong><span>{reviewingManuscript ? "候选内容、章节执行卡、正式依据或审核模型配置已与生成报告时不同。这份候选审核报告仅作历史参考。" : reviewPolicy === "REQUIRED" ? "严格准入会暂停正文生成，直到按当前内容重新审核。" : "章节执行卡、正式依据或审核模型配置已与生成报告时不同。这份准入报告不再参与写作准入。"}</span></div> : needsInput ? <div className="proposal-needs-input"><strong>{reviewingManuscript ? "当前资料不足以完成候选审核" : "当前资料不足以判断准入"}</strong><span>请先补齐审核报告列出的正式设定，再重新运行审核。</span></div> : null}
           {consistency ? <>
@@ -107,19 +107,19 @@ export function AiConsistencyReviewList(props: {
                 ? reviewingManuscript
                   ? props.onReturnToEditor
                     ? <button type="button" className="primary-action" onClick={props.onReturnToEditor}>返回编辑</button>
-                    : <a className="primary-action" href={`/writing#${props.chapterId}`}>返回候选区修改</a>
+                    : <a className="primary-action" href={`/writing#${props.chapterId}`}>返回编辑</a>
                   : props.onOpenChapterPlan
                     ? <button type="button" className="primary-action" onClick={props.onOpenChapterPlan}>查看本章计划</button>
-                    : <a className="primary-action" href={`/chapters#${props.chapterId}`}>查看设定与执行卡</a>
+                    : <a className="primary-action" href={`/writing?assistant=plan#${encodeURIComponent(props.chapterId)}`}>查看本章计划</a>
                 : null}
             {!stale && needsInput && targets.length ? targets.map((target) =>
               target.id === "chapter-plan" && props.onOpenChapterPlan
                 ? <button type="button" className="primary-action" onClick={props.onOpenChapterPlan} key={target.id}>{target.label}</button>
-                : <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>,
+                : <a className="primary-action" href={target.id === "chapter-plan" ? `/writing?assistant=plan#${encodeURIComponent(props.chapterId)}` : target.href} key={target.id}>{target.label}</a>,
             ) : null}
             <button type="button" className="secondary-action" onClick={() => props.onCloseReview(proposal)} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭审核</button>
           </div>
         </article>;
       })}
-    </section> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>{reviewingManuscript ? "当前没有候选审核报告" : "当前没有创作准入报告"}</strong><span>{reviewingManuscript ? "候选区写作或修改后可反复审核；人物状态、规则、时间线和叙述问题会集中显示在这里。" : "检查后会明确当前是否可以生成正文，以及还需要补齐哪些设定。"}</span></div></div>}</>;
+    </section> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><strong>暂无检查报告</strong></div>}</>;
 }

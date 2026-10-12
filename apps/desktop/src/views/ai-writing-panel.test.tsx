@@ -207,9 +207,9 @@ describe("AiWritingPanel consistency review", () => {
     expect(screen.getByText("角色姓名未确定")).toBeVisible();
     expect(screen.getByText("依据：主角卡尚未建立")).toBeVisible();
     expect(screen.getByText("建议：先建立主角卡并确认姓名。")).toBeVisible();
-    expect(screen.getByRole("link", { name: "查看设定与执行卡" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "查看本章计划" })).toHaveAttribute(
       "href",
-      "/chapters#chapter-1",
+      "/writing?assistant=plan#chapter-1",
     );
     expect(screen.getByRole("button", { name: "关闭审核" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "生成整章初稿" })).not.toBeInTheDocument();
@@ -411,7 +411,7 @@ describe("AiWritingPanel consistency review", () => {
       </QueryClientProvider>,
     );
 
-    const reviewButton = screen.getByRole("button", { name: "审核当前候选" });
+    const reviewButton = screen.getByRole("button", { name: "检查正文草稿" });
     await waitFor(() => expect(reviewButton).toBeEnabled());
     await waitFor(() =>
       expect(mocks.listAiProposals).toHaveBeenCalledWith(
@@ -462,7 +462,7 @@ describe("AiWritingPanel consistency review", () => {
     );
 
     expect(await screen.findByText(/严格准入/)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "前往创作准入处理" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开生成前检查" }));
     expect(openAdmissionReview).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.getByRole("button", { name: "生成新版整章" })).toBeDisabled());
     expect(screen.queryByRole("button", { name: "生成续写候选" })).not.toBeInTheDocument();
@@ -627,11 +627,11 @@ describe("AiWritingPanel consistency review", () => {
     await waitFor(() => expect(pending).toHaveBeenLastCalledWith(true));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     try {
-      fireEvent.click(screen.getByRole("button", { name: "放弃候选" }));
+      fireEvent.click(screen.getByRole("button", { name: "不采用" }));
       expect(mocks.decideAiProposal).not.toHaveBeenCalled();
       expect(screen.getByLabelText("AI 创作整章候选文本")).toHaveValue("编辑后的候选");
       confirm.mockReturnValue(true);
-      fireEvent.click(screen.getByRole("button", { name: "放弃候选" }));
+      fireEvent.click(screen.getByRole("button", { name: "不采用" }));
       await waitFor(() => expect(mocks.decideAiProposal).toHaveBeenCalledOnce());
       await waitFor(() => expect(pending).toHaveBeenLastCalledWith(false));
     } finally { confirm.mockRestore(); }
@@ -676,7 +676,7 @@ describe("AiWritingPanel consistency review", () => {
     </QueryClientProvider>);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     try {
-      fireEvent.click(await screen.findByRole("button", { name: "采用到正文草稿" }));
+      fireEvent.click(await screen.findByRole("button", { name: "替换整章" }));
       await waitFor(() => expect(mocks.decideAiProposal).toHaveBeenCalledOnce());
       text = "请求期间的新正文";
       mocks.listAiProposals.mockResolvedValue([]);
@@ -692,6 +692,31 @@ describe("AiWritingPanel consistency review", () => {
       expect(setContent).toHaveBeenCalledOnce();
       await waitFor(() => expect(pending).toHaveBeenLastCalledWith(false));
     } finally { confirm.mockRestore(); }
+  });
+
+  it("keeps selected-text commands disabled until a live selection exists and sends only that selection", async () => {
+    mocks.listAiProposals.mockReset().mockResolvedValue([]);
+    const listeners = new Map<string, () => void>();
+    let selectionText = "";
+    const editor = {
+      getJSON: () => ({ type: "doc", content: [] }), getText: () => "整章正文",
+      state: { selection: { from: 1, to: 5 }, doc: { textBetween: () => selectionText } },
+      on: (name: string, callback: () => void) => listeners.set(name, callback),
+      off: vi.fn(),
+    } as unknown as NonNullable<Parameters<typeof AiWritingPanel>[0]["editor"]>;
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AiWritingPanel chapterId="chapter-1" chapterTitle="入城" chapterPlan="" volumeId="" volumePlan="" draft="正文" editor={editor} />
+    </QueryClientProvider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "生成新版整章" })).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("AI 写作操作"), { target: { value: "REWRITE" } });
+    expect(screen.getByRole("button", { name: "改写选区" })).toBeDisabled();
+    expect(screen.getByText("尚未选择正文片段")).toBeVisible();
+    selectionText = "铜铃响起";
+    act(() => listeners.get("selectionUpdate")!());
+    fireEvent.click(screen.getByRole("button", { name: "改写选区" }));
+    await waitFor(() => expect(mocks.generateAiProposal).toHaveBeenCalledWith(expect.objectContaining({
+      action: "REWRITE", selection: "铜铃响起", chapterId: "chapter-1",
+    })));
   });
 
   it("retains feedback typed during submission when hidden and later reopened", async () => {

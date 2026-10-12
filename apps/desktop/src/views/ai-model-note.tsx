@@ -22,6 +22,7 @@ export function AiModelNote(props: {
   preference?: AiTaskPreference;
   runMultiplier?: number;
   active?: boolean;
+  compact?: boolean;
 }) {
   const usage = useQuery({
     queryKey: ["ai-usage-summary", 30],
@@ -63,17 +64,23 @@ export function AiModelNote(props: {
   const projectProjection = budget.data?.projectLimitMicros && projectedMicros !== null
     ? budgetWarning("项目", project, projectedMicros, budget.data.projectLimitMicros)
     : null;
-  return <div className="ai-model-note" data-state={modelState}>
+  return <div className="ai-model-note" data-state={modelState} data-compact={props.compact || undefined}>
     <Cpu size={14} />
     <span>
-      <small>{props.taskLabel}模型{tuning.length ? ` · ${tuning.join(" · ")}` : ""}</small>
+      <small>{props.taskLabel}模型{!props.compact && tuning.length ? ` · ${tuning.join(" · ")}` : ""}</small>
       <strong>{props.profile ? `${props.profile.name} · ${props.profile.modelId}` : "未配置可用聊天模型"}</strong>
     </span>
     <a href={aiTaskSettingsHref(props.taskKey, props.settingsScope)}>调整</a>
     {props.taskKey ? <div className="ai-model-note-preflight">
       <span>{usage.isPending ? "正在读取历史费用…" : estimate ? nextRunCostLabel(estimate, null, runMultiplier) : "预估样本不足"}</span>
-      {props.preference?.prompt.context.inputTokenBudget ? <span>输入预算 {props.preference.prompt.context.inputTokenBudget.toLocaleString()} tokens</span> : null}
-      <span data-custom={differences.length > 0 || undefined}>{differences.length ? `配置差异：${differences.join("、")}` : "配置差异：使用推荐值"}</span>
+      {props.compact ? <details><summary>参数</summary>
+        {tuning.length ? <span>{tuning.join(" · ")}</span> : null}
+        {props.preference?.prompt.context.inputTokenBudget ? <span>输入预算 {props.preference.prompt.context.inputTokenBudget.toLocaleString()} tokens</span> : null}
+        <span>{differences.length ? `配置差异：${differences.join("、")}` : "使用推荐值"}</span>
+      </details> : <>
+        {props.preference?.prompt.context.inputTokenBudget ? <span>输入预算 {props.preference.prompt.context.inputTokenBudget.toLocaleString()} tokens</span> : null}
+        <span data-custom={differences.length > 0 || undefined}>{differences.length ? `配置差异：${differences.join("、")}` : "配置差异：使用推荐值"}</span>
+      </>}
       {dailyProjection ? <span data-warning>{dailyProjection}</span> : null}
       {projectProjection ? <span data-warning>{projectProjection}</span> : null}
     </div> : null}

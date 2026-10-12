@@ -60,6 +60,20 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
   const chapterSummaries = useQuery({ queryKey: ["summary-materials"], queryFn: listSummaryMaterials, enabled: active && isCreationMode });
   const summaryJobs = useJobs({ enabled: active && isCreationMode });
   const [instruction, setInstruction] = useState("");
+  const [writingAction, setWritingAction] = useState<Exclude<AiAction, "CONSISTENCY_CHECK">>("DRAFT");
+  const [selectionAvailable, setSelectionAvailable] = useState(false);
+  useEffect(() => {
+    const editor = props.editor;
+    if (!editor || typeof editor.on !== "function") return;
+    const update = () => {
+      const { from, to } = editor.state.selection;
+      setSelectionAvailable(Boolean(editor.state.doc.textBetween(from, to, "\n").trim()));
+    };
+    update();
+    editor.on("selectionUpdate", update);
+    editor.on("update", update);
+    return () => { editor.off("selectionUpdate", update); editor.off("update", update); };
+  }, [props.editor]);
   const [instructionBaseline, setInstructionBaseline] = useState("");
   const deferredInstruction = useDeferredValue(instruction);
   const currentDocumentJson = reviewingManuscript && props.editor
@@ -229,33 +243,42 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
     : Boolean(props.chapterPlan.trim() || currentDraftAvailable);
   const writingActionBlocked = (action: AiAction) =>
     consistencyBlocked && (action === "DRAFT" || action === "CONTINUE");
-  return <section className="ai-panel" aria-label={isReadinessMode ? "创作准备" : isReviewMode ? reviewingManuscript ? "正文候选审核" : "创作准入" : "AI 创作"}>
+  return <section className="ai-panel" aria-label={isReadinessMode ? "生成前检查" : isReviewMode ? reviewingManuscript ? "正文草稿检查" : "生成前检查" : "AI 写作"}>
     {isReadinessMode ? <>
-      <div className="section-heading ai-stage-heading"><div><h2><ClipboardCheck size={15} />创作准备</h2><p>集中检查正式设定、人物卡和章节执行卡，缺少的内容可在这里补齐。</p></div><span>生成正文前</span></div>
+      <div className="section-heading ai-stage-heading"><h2><ClipboardCheck size={15} />生成前检查</h2></div>
       <WritingReadinessPanel active={active} chapterId={props.chapterId} chapterTitle={props.chapterTitle} volumeId={props.volumeId} volumePlan={props.volumePlan} readiness={readiness} loading={readinessLoading} sections={planningSections.data ?? []} onOpenChapterPlan={props.onOpenChapterPlan} />
     </> : null}
 
     {isCreationMode ? <>
-      <div className="section-heading ai-stage-heading"><div><h2><Sparkles size={15} />AI 创作</h2><p>填写本章补充意见，生成正文，并在候选写入草稿前完成确认。</p></div><div className="proposal-heading-actions"><span>{chapterSummary || chapterSummaryJob ? chapterSummaryStatus : "尚未生成章节记忆"}</span><button type="button" className="secondary-action" onClick={() => void refreshChapterMemory()} disabled={!visibleDraftAvailable || Boolean(chapterSummaryJob)}><RefreshCw size={14} />更新章节记忆</button>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
-      <AiModelNote active={active} taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
-      {consistencyNotice ? <div className="consistency-admission creation-admission" data-state={consistencyNotice.state}><span>{consistencyNotice.text}</span>{consistencyBlocked && props.onOpenAdmissionReview ? <button type="button" className="secondary-action" onClick={props.onOpenAdmissionReview}>前往创作准入处理</button> : null}</div> : null}
+      <div className="section-heading ai-stage-heading"><div className="proposal-heading-actions"><span>{chapterSummary || chapterSummaryJob ? chapterSummaryStatus : "尚未生成章节记忆"}</span><button type="button" className="secondary-action" onClick={() => void refreshChapterMemory()} disabled={!visibleDraftAvailable || Boolean(chapterSummaryJob)}><RefreshCw size={14} />更新章节记忆</button>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
+      <AiModelNote compact active={active} taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
+      {consistencyNotice ? <div className="consistency-admission creation-admission" data-state={consistencyNotice.state}><span>{consistencyNotice.text}</span>{consistencyBlocked && props.onOpenAdmissionReview ? <button type="button" className="secondary-action" onClick={props.onOpenAdmissionReview}>打开生成前检查</button> : null}</div> : null}
       <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>
-      <p className="ai-request-hint">系统会把这段意见与章节执行卡、写作规则和正文上下文一起编译成模型消息。</p>
       <div className="ai-creation-options">
-        <div className="ai-draft-action"><div><strong>{visibleDraftAvailable ? "重新生成整章草稿" : "按章节执行卡生成整章"}</strong><span>{visibleDraftAvailable ? "适合整体推翻当前草稿。采用候选时会明确提示整章替换。" : "根据章节目标、关键冲突、结尾钩子和项目上下文生成完整初稿。"}</span></div><button type="button" className="primary-action" onClick={() => void runAction("DRAFT")} disabled={generationLocked || !selectedChatProfile?.hasSecret || writingActionBlocked("DRAFT")} title={consistencyBlocked ? "先处理创作准入中的阻断问题并关闭报告" : undefined}><Sparkles size={14} />{visibleDraftAvailable ? "生成新版整章" : "生成整章草稿"}</button></div>
+        <label className="ai-writing-mode">操作<select aria-label="AI 写作操作" value={writingAction}
+          onChange={(event) => setWritingAction(event.target.value as typeof writingAction)}>
+          <option value="DRAFT">整章生成</option><option value="CONTINUE">续写</option><option value="REWRITE">选区改写</option>
+          <option value="POLISH">选区润色</option><option value="SUMMARIZE">章节摘要</option>
+        </select></label>
+        {(writingAction === "REWRITE" || writingAction === "POLISH") && !selectionAvailable ? <p role="status">尚未选择正文片段</p> : null}
+        <button type="button" className="primary-action" onClick={() => void runAction(writingAction)}
+          disabled={generationLocked || !props.editor || !selectedChatProfile?.hasSecret || writingActionBlocked(writingAction)
+            || (writingAction === "REWRITE" || writingAction === "POLISH") && !selectionAvailable
+            || (writingAction === "CONTINUE" || writingAction === "SUMMARIZE") && !visibleDraftAvailable}
+          title={writingActionBlocked(writingAction) ? "先处理生成前检查中的阻断问题" : undefined}><Sparkles size={14} />
+          {writingAction === "DRAFT" ? visibleDraftAvailable ? "生成新版整章" : "生成整章草稿"
+            : writingAction === "CONTINUE" ? "生成续写" : writingAction === "REWRITE" ? "改写选区" : writingAction === "POLISH" ? "润色选区" : "生成摘要"}</button>
       </div>
     </> : null}
 
     {isReviewMode ? <>
-      <div className="section-heading ai-stage-heading"><div><h2><ShieldCheck size={15} />{reviewingManuscript ? "正文候选审核" : "创作准入"}</h2><p>{reviewingManuscript ? "检查候选区当前未同步的内容是否与人物状态、世界规则、时间线、既定事实和执行卡一致。" : "生成正文前，检查章节执行卡、正式设定和已有草稿是否足以支撑本次创作。"}</p></div><span>{reviewingManuscript ? "同步前检查" : "生成前检查"}</span></div>
-      <section className="ai-consistency-action" aria-label={reviewingManuscript ? "发起正文候选审核" : "发起创作准入检查"}>
-      <AiModelNote active={active} taskLabel={reviewingManuscript ? "正文候选审核" : "创作准入"} taskKey="consistencyReview" profile={reviewProfile} preference={reviewPreference} />
+      <section className="ai-consistency-action" aria-label={reviewingManuscript ? "发起正文草稿检查" : "发起生成前检查"}>
+      <AiModelNote compact active={active} taskLabel={reviewingManuscript ? "正文草稿检查" : "生成前检查"} taskKey="consistencyReview" profile={reviewProfile} preference={reviewPreference} />
       <div className="ai-consistency-action-bar">
-        <div><strong>{reviewingManuscript ? "审核当前候选" : "检查本次创作条件"}</strong><span>{reviewingManuscript ? "以候选区当前内容为主体，对照章节执行卡和正式知识；候选修改后，旧报告会自动过期。" : "对照分卷规划和正式知识检查执行卡；已有正文时也会纳入，结果用于生成准入。"}</span></div>
-        <button type="button" className="secondary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={generationLocked || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />{reviewingManuscript ? "审核当前候选" : "检查创作条件"}</button>
+        <button type="button" className="secondary-action" onClick={() => void runAction("CONSISTENCY_CHECK")} disabled={generationLocked || !reviewProfile?.hasSecret || !canRunConsistencyCheck}><ShieldCheck size={14} />{reviewingManuscript ? "检查正文草稿" : "检查创作条件"}</button>
       </div>
       {error ? <p className="project-error ai-review-error" role="alert" aria-live="assertive">{error}</p> : null}
-      {reviewingManuscript && !currentDraftAvailable ? <p className="consistency-admission" data-state="needs_input">请先填写候选内容，再运行候选审核。</p> : null}
+      {reviewingManuscript && !currentDraftAvailable ? <p className="consistency-admission" data-state="needs_input">正文草稿为空，无法检查。</p> : null}
       {consistencyNotice ? <p className="consistency-admission" data-state={consistencyNotice.state}>{consistencyNotice.text}</p> : null}
       </section>
     </> : null}
@@ -309,7 +332,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
           <button type="button" disabled={feedbackBusyId !== null || decidingProposalId !== null} data-active={feedback?.rating === "HELPFUL" || undefined} onClick={() => void submitFeedback(proposal, "HELPFUL")} title="标记为有帮助"><ThumbsUp size={13} />有帮助</button>
           <button type="button" disabled={feedbackBusyId !== null || decidingProposalId !== null} data-active={feedback?.rating === "NOT_HELPFUL" || undefined} onClick={() => void submitFeedback(proposal, "NOT_HELPFUL")} title="标记为需改进"><ThumbsDown size={13} />需改进</button>
         </div></details> : null}
-        <div className="ai-actions">{needsInput ? <>{needsInputTargets.length ? needsInputTargets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/chapters#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : <a className="primary-action" href="/planning">打开作品规划</a>}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭</button></> : <><button type="button" className="primary-action" onClick={() => void decide(proposal, "ACCEPTED")} disabled={decidingProposalId !== null} title={proposal.action === "DRAFT" && visibleDraftAvailable ? "采用后将替换当前正文草稿" : undefined}><Check size={14} />{decidingProposalId === proposal.id ? "处理中…" : proposal.action === "SUMMARIZE" ? "保留摘要" : proposal.action === "DRAFT" ? "采用到正文草稿" : proposal.action === "CONTINUE" ? "追加到正文草稿" : "应用到正文草稿"}</button><button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />放弃候选</button></>}</div>
+        <div className="ai-actions">{needsInput ? <>{needsInputTargets.length ? needsInputTargets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/writing?assistant=plan#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : <a className="primary-action" href="/planning">打开作品规划</a>}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />不采用</button></> : <><button type="button" className="primary-action" onClick={() => void decide(proposal, "ACCEPTED")} disabled={decidingProposalId !== null} title={proposal.action === "DRAFT" && visibleDraftAvailable ? "采用后将替换当前正文草稿" : undefined}><Check size={14} />{decidingProposalId === proposal.id ? "处理中…" : proposal.action === "SUMMARIZE" ? "保留摘要" : proposal.action === "DRAFT" ? "替换整章" : proposal.action === "CONTINUE" ? "插入末尾" : "替换选区"}</button><button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />不采用</button></>}</div>
       </article>;
       })}
       {compareReviews.length === 2 ? <section className="proposal-compare">
@@ -322,7 +345,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
           </div>)}
         </div>
       </section> : null}
-      </> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>当前没有正文候选待确认</strong><span>{pendingReviews.length ? "检查报告已移到“创作准入”页签，这里只保留可以写入正文的候选。" : "生成结果会先停在这里，你确认后才会写入正文。"}</span></div></div>}
+      </> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><strong>暂无正文候选</strong></div>}
       {retainedEditIds.map((id) => <article className="proposal" key={`retained-${id}`}>
         <p role="status">候选已不在待确认列表，本地修改仍保留。</p>
         {textEdits.entries[id] ? <textarea readOnly value={textEdits.entries[id]!.value} aria-label="保留的候选文本修改" /> : null}
