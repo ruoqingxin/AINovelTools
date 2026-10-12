@@ -1,0 +1,13 @@
+{
+  "productName": "AI Novel Tools Acceptance",
+  "identifier": "com.ainoveltools.acceptance",
+  "bundle": {
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English"]
+      }
+    }
+  }
+}

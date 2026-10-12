@@ -12,10 +12,13 @@
     "build": "pnpm check:ipc && pnpm --filter @ainoveltools/desktop build",
     "generate:ipc": "node tools/generate-ipc-types.mjs",
     "check:ipc": "node tools/generate-ipc-types.mjs --check && node --test tools/validate-ipc-contract.test.mjs tools/generate-ipc-types.test.mjs && node tools/validate-ipc-contract.mjs",
-    "check": "pnpm check:ipc && pnpm -r check && cargo clippy --workspace --all-targets --features ainoveltools-desktop/ipc-contract -- -D warnings",
-    "test": "pnpm check:ipc && pnpm -r check && pnpm -r test && cargo test --workspace --features ainoveltools-desktop/ipc-contract",
+    "check": "pnpm check:ipc && pnpm test:desktop-acceptance-tools && pnpm -r check && cargo clippy --workspace --all-targets --features ainoveltools-desktop/ipc-contract -- -D warnings",
+    "test": "pnpm check:ipc && pnpm test:desktop-acceptance-tools && pnpm -r check && pnpm -r test && cargo test --workspace --features ainoveltools-desktop/ipc-contract",
     "test:desktop-recovery": "node tools/desktop-recovery-smoke.mjs",
     "test:desktop-model": "node tools/desktop-model-smoke.mjs",
+    "test:desktop-files": "node tools/desktop-file-smoke.mjs",
+    "test:desktop-install": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/desktop-install-smoke.ps1",
+    "test:desktop-acceptance-tools": "node --test tools/desktop-acceptance.test.mjs",
     "tauri": "pnpm --filter @ainoveltools/desktop tauri"
   },
   "devDependencies": {
