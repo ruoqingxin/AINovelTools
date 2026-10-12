@@ -4,6 +4,16 @@ use super::*;
 #[path = "backup_tests.rs"]
 mod backup_tests;
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishedBackupManifest {
+    job_id: Uuid,
+    project_id: Uuid,
+    schema_version: i64,
+    format_version: u32,
+    files: std::collections::BTreeMap<String, String>,
+}
+
 fn job_type_str(value: JobType) -> &'static str {
     match value {
         JobType::Backup => "BACKUP",
@@ -449,6 +459,11 @@ impl ProjectManager {
             .ok_or_else(|| std::io::Error::other("no project is open"))?;
         let target = session.root.join("snapshots").join(job.id.to_string());
         if target.exists() {
+            // Directory publication and the job receipt cannot share a SQLite
+            // transaction. A recovered claim may reconcile its own valid output.
+            if job.status == JobStatus::Running && job.attempt_count > 1 {
+                return self.verify_published_backup(&target, job);
+            }
             return Err(std::io::ErrorKind::AlreadyExists.into());
         }
         let staging =
@@ -464,6 +479,109 @@ impl ProjectManager {
             let _ = std::fs::remove_dir_all(&staging);
         }
         result
+    }
+
+    fn verify_published_backup(&self, target: &Path, job: &Job) -> Result<(), std::io::Error> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("no project is open"))?;
+        if !std::fs::symlink_metadata(target)?.file_type().is_dir()
+            || !std::fs::symlink_metadata(target.join("manifest.json"))?
+                .file_type()
+                .is_file()
+        {
+            return Err(std::io::Error::other("published backup must not redirect"));
+        }
+        let manifest: PublishedBackupManifest =
+            serde_json::from_slice(&std::fs::read(target.join("manifest.json"))?)
+                .map_err(std::io::Error::other)?;
+        if manifest.job_id != job.id
+            || manifest.project_id != session.manifest.project_id
+            || manifest.schema_version != CURRENT_SCHEMA_VERSION
+            || manifest.format_version != 1
+        {
+            return Err(std::io::Error::other("published backup metadata mismatch"));
+        }
+        for name in manifest.files.keys() {
+            let path = Path::new(name);
+            if (name != "project.json"
+                && name != "project.sqlite"
+                && !name.starts_with("attachments/"))
+                || name.contains('\\')
+                || name
+                    .split('/')
+                    .any(|part| part.is_empty() || part == "." || part == "..")
+                || path
+                    .components()
+                    .any(|part| !matches!(part, std::path::Component::Normal(_)))
+            {
+                return Err(std::io::Error::other("invalid backup file path"));
+            }
+        }
+        let mut actual = std::collections::BTreeSet::from([
+            "project.json".to_owned(),
+            "project.sqlite".to_owned(),
+        ]);
+        let attachments = target.join("attachments");
+        let mut directories = Vec::new();
+        match std::fs::symlink_metadata(&attachments) {
+            Ok(metadata) if metadata.file_type().is_dir() => directories.push(attachments),
+            Ok(_) => {
+                return Err(std::io::Error::other(
+                    "backup attachments must not redirect",
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        while let Some(directory) = directories.pop() {
+            for entry in std::fs::read_dir(directory)? {
+                let entry = entry?;
+                let file_type = entry.file_type()?;
+                if file_type.is_dir() {
+                    directories.push(entry.path());
+                } else if file_type.is_file() {
+                    actual.insert(
+                        entry
+                            .path()
+                            .strip_prefix(target)
+                            .map_err(std::io::Error::other)?
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                    );
+                } else {
+                    return Err(std::io::Error::other(
+                        "backup attachments must not redirect",
+                    ));
+                }
+            }
+        }
+        if actual != manifest.files.keys().cloned().collect() {
+            return Err(std::io::Error::other("published backup file set mismatch"));
+        }
+        let canonical_target = target.canonicalize()?;
+        for (name, expected) in &manifest.files {
+            let path = target.join(name);
+            if !std::fs::symlink_metadata(&path)?.file_type().is_file()
+                || !path.canonicalize()?.starts_with(&canonical_target)
+            {
+                return Err(std::io::Error::other("backup file must not redirect"));
+            }
+            let bytes = std::fs::read(path)?;
+            if format!("sha256:{:x}", Sha256::digest(bytes)) != *expected {
+                return Err(std::io::Error::other(format!(
+                    "backup hash mismatch: {name}"
+                )));
+            }
+        }
+        let project: ProjectManifest =
+            serde_json::from_slice(&std::fs::read(target.join("project.json"))?)
+                .map_err(std::io::Error::other)?;
+        if project.project_id != session.manifest.project_id {
+            return Err(std::io::Error::other("backup project id mismatch"));
+        }
+        Ok(())
     }
 
     fn write_backup_snapshot(&self, target: &Path, job: &Job) -> Result<(), std::io::Error> {
