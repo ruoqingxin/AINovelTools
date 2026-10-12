@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::Manager;
 
+mod browser_dialogs;
 mod commands;
 mod errors;
 mod state;
@@ -91,7 +92,7 @@ pub fn run() {
         novel_infrastructure::ProjectManager::new_with_recent_projects(recent_projects_path());
     let _ = project_manager.restore_last_project();
     tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(browser_dialogs::init())
         .manage(ProjectState {
             manager: Mutex::new(project_manager),
             model_profiles: Mutex::new(model_profiles),

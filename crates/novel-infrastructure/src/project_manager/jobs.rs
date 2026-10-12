@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "backup_tests.rs"]
+mod backup_tests;
+
 fn job_type_str(value: JobType) -> &'static str {
     match value {
         JobType::Backup => "BACKUP",
@@ -444,15 +448,40 @@ impl ProjectManager {
             .as_ref()
             .ok_or_else(|| std::io::Error::other("no project is open"))?;
         let target = session.root.join("snapshots").join(job.id.to_string());
-        std::fs::create_dir_all(&target)?;
+        if target.exists() {
+            return Err(std::io::ErrorKind::AlreadyExists.into());
+        }
+        let staging =
+            session
+                .root
+                .join("snapshots")
+                .join(format!(".{}-{}.partial", job.id, Uuid::new_v4()));
+        std::fs::create_dir(&staging)?;
+        let result = self
+            .write_backup_snapshot(&staging, job)
+            .and_then(|()| std::fs::rename(&staging, &target));
+        if result.is_err() {
+            let _ = std::fs::remove_dir_all(&staging);
+        }
+        result
+    }
+
+    fn write_backup_snapshot(&self, target: &Path, job: &Job) -> Result<(), std::io::Error> {
+        let session = self
+            .current
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("no project is open"))?;
         std::fs::copy(
             session.root.join("project.json"),
             target.join("project.json"),
         )?;
-        std::fs::copy(
-            session.root.join("project.sqlite"),
-            target.join("project.sqlite"),
-        )?;
+        // Copy committed SQLite pages, including WAL contents, without relying
+        // on a checkpoint that other readers or writers can prevent.
+        session
+            .database
+            .connection
+            .backup(rusqlite::MAIN_DB, target.join("project.sqlite"), None)
+            .map_err(std::io::Error::other)?;
         let mut files = serde_json::Map::new();
         for relative in ["project.json", "project.sqlite"] {
             let bytes = std::fs::read(target.join(relative))?;
@@ -497,6 +526,12 @@ impl ProjectManager {
             }
         }
         std::fs::write(target.join("manifest.json"), serde_json::to_vec_pretty(&serde_json::json!({"jobId": job.id, "projectId": session.manifest.project_id, "schemaVersion": CURRENT_SCHEMA_VERSION, "formatVersion": 1, "files": files})).unwrap_or_default())?;
+        for file in walk_files(target)? {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(file)?
+                .sync_all()?;
+        }
         Ok(())
     }
 

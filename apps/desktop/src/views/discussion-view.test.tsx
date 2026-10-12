@@ -671,7 +671,7 @@ describe("DiscussionView", () => {
     await waitFor(() => expect(composer).toBeEnabled());
     const suffix = scope === "PROJECT" ? "&scope=PROJECT" : "";
     await waitFor(() => expect(document.querySelector(`a[href="/settings#ai-task-models?task=discussion${suffix}"]`)).not.toBeNull());
-    expect(document.querySelector(`a[href="/settings#ai-task-models?task=discussionDesign${suffix}"]`)).not.toBeNull();
+    await waitFor(() => expect(document.querySelector(`a[href="/settings#ai-task-models?task=discussionDesign${suffix}"]`)).not.toBeNull());
     fireEvent.change(composer, { target: { value: "继续讨论灯的代价。" } });
     fireEvent.click(screen.getByRole("button", { name: "发送讨论" }));
     await waitFor(() => expect(mocks.askProjectDiscussion).toHaveBeenCalledWith({
