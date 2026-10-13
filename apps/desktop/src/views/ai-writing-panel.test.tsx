@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getAiUsageSummary: vi.fn(),
   getWritingReviewPolicy: vi.fn(),
   getAuditFlowSettings: vi.fn(),
+  getDiscussionSource: vi.fn(),
   listSummaryMaterials: vi.fn(),
   listen: vi.fn(),
   listAiRuns: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("../lib/tauri-client", async () => {
     getAiUsageSummary: mocks.getAiUsageSummary,
     getWritingReviewPolicy: mocks.getWritingReviewPolicy,
     getAuditFlowSettings: mocks.getAuditFlowSettings,
+    getDiscussionSource: mocks.getDiscussionSource,
     listSummaryMaterials: mocks.listSummaryMaterials,
     listAiRuns: mocks.listAiRuns,
     listAiProposals: mocks.listAiProposals,
@@ -122,7 +124,7 @@ const review: AiProposalReview = {
 };
 
 describe("AiWritingPanel consistency review", () => {
-  afterEach(() => cleanup());
+  afterEach(() => { cleanup(); window.history.replaceState(null, "", "/"); });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -162,6 +164,38 @@ describe("AiWritingPanel consistency review", () => {
       omittedItems: [],
       stageRequests: [],
     } satisfies ReviewTrace);
+  });
+
+  it("loads a chapter-bound discussion fragment as editable writing requirements without generating", async () => {
+    window.history.replaceState(null, "", "/writing?planNode=chapter-1&targetProject=project-1&writingCandidate=fragment-1");
+    mocks.listAiProposals.mockReset();
+    mocks.listAiProposals.mockResolvedValue([]);
+    mocks.getDiscussionSource.mockResolvedValue({
+      session: { projectId: "project-1" },
+      candidate: { id: "fragment-1", kind: "NOTE", status: "PENDING", targetSectionId: "plan-node:chapter-1", content: "先写雨夜接到旧电话。" },
+    });
+    render(<QueryClientProvider client={new QueryClient()}>
+      <AiWritingPanel chapterId="chapter-1" chapterTitle="第一章" chapterPlan="" volumeId="" volumePlan="" draft="" editor={null} />
+    </QueryClientProvider>);
+    await waitFor(() => expect(screen.getByLabelText("本次写作要求")).toHaveValue("先写雨夜接到旧电话。"));
+    fireEvent.change(screen.getByLabelText("本次写作要求"), { target: { value: "改为午后接到电话。" } });
+    expect(screen.getByLabelText("本次写作要求")).toHaveValue("改为午后接到电话。");
+    expect(mocks.generateAiProposal).not.toHaveBeenCalled();
+    expect(mocks.getDiscussionSource).toHaveBeenCalledWith({ candidateId: "fragment-1", projectId: "project-1" });
+  });
+
+  it("does not load a discussion fragment bound to another chapter", async () => {
+    window.history.replaceState(null, "", "/writing?planNode=chapter-1&targetProject=project-1&writingCandidate=fragment-1");
+    mocks.getDiscussionSource.mockResolvedValue({
+      session: { projectId: "project-1" },
+      candidate: { id: "fragment-1", kind: "NOTE", status: "PENDING", targetSectionId: "plan-node:chapter-2", content: "其他章节的秘密。" },
+    });
+    render(<QueryClientProvider client={new QueryClient()}>
+      <AiWritingPanel chapterId="chapter-1" chapterTitle="第一章" chapterPlan="" volumeId="" volumePlan="" draft="" editor={null} />
+    </QueryClientProvider>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("不属于当前章节");
+    expect(screen.getByLabelText("本次写作要求")).toHaveValue("");
+    expect(mocks.generateAiProposal).not.toHaveBeenCalled();
   });
 
   it("runs a read-only review with the dedicated task settings", async () => {

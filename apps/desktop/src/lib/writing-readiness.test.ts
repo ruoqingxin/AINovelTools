@@ -169,18 +169,31 @@ describe("auditChapterPlan", () => {
     expect(notices).toEqual([]);
   });
 
-  it("reports explicit perspective conflicts and missing structural signals", () => {
+  it("reports only an explicit conflict with a confirmed perspective", () => {
     const notices = auditChapterPlan({
       chapterPlan: "本章目标是让主角选择调查旧案并发现异常记录。采用第一人称。",
       volumePlan: "",
-      sections: [section("frame-narrative", "第三人称有限视角")],
+      sections: [{ ...section("frame-narrative", "第三人称有限视角"), storyState: "CONFIRMED" }],
     });
 
-    expect(notices.map((notice) => notice.id)).toEqual([
-      "volume-plan",
-      "narrative-perspective",
-      "chapter-conflict",
-      "chapter-hook",
-    ]);
+    expect(notices.map((notice) => notice.id)).toEqual(["narrative-perspective"]);
+  });
+
+  it("accepts a loose scene idea without structural signals or a volume plan", () => {
+    expect(auditChapterPlan({ chapterPlan: "雨夜收到十年前的一通电话。", volumePlan: "", sections: [] })).toEqual([]);
+    expect(auditChapterPlan({
+      chapterPlan: "第一人称写开场。", volumePlan: "",
+      sections: [section("frame-narrative", "", "第三人称")],
+    })).toEqual([]);
+  });
+
+  it("uses the current book preference before the older narrative reference", () => {
+    expect(auditChapterPlan({
+      chapterPlan: "第三人称写雨夜。", volumePlan: "",
+      sections: [
+        { ...section("seed-tone", "第三人称有限视角"), storyState: "CONFIRMED" },
+        { ...section("frame-narrative", "第一人称"), storyState: "CONFIRMED" },
+      ],
+    })).toEqual([]);
   });
 });

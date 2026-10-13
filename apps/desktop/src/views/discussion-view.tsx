@@ -6,6 +6,7 @@ import {
   askProjectDiscussion,
   createDiscussionCandidate,
   createDiscussionSession,
+  createPlanNode,
   dismissDiscussionCandidate,
   errorMessage,
   getProjectAiTaskOverrides,
@@ -119,7 +120,9 @@ export function DiscussionView() {
   const [collectingId, setCollectingId] = useState<string | null>(null);
   const [collectionTargets, setCollectionTargets] = useState<Record<string, string>>({});
   const collectedSources = useRef(new Set<string>());
-  const [candidateTargetId, setCandidateTargetId] = useState("seed-premise");
+  const [candidateTargetId, setCandidateTargetId] = useState("seed-tone");
+  const [writingChapterId, setWritingChapterId] = useState("");
+  const [writingDestination, setWritingDestination] = useState<string | null>(null);
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({});
   const latestCandidateDrafts = useRef(candidateDrafts);
   latestCandidateDrafts.current = candidateDrafts;
@@ -144,6 +147,10 @@ export function DiscussionView() {
   const targetOptions = [...planningOptions, ...nodeTargets];
   const nodeTitles = new Map(nodeTargets.map((node) => [node.id, node.label]));
   const targetKind = (id: string | null) => (nodes.data ?? []).find((node) => `plan-node:${node.id}` === id)?.kind;
+  const writingChapters = (nodes.data ?? []).filter((node) => !node.archived && node.kind === "CHAPTER");
+  const chosenChapterId = writingChapterId || (activeSession?.scopeKind === "CHAPTER"
+    && writingChapters.some((node) => node.id === activeSession.scopeId) ? activeSession.scopeId : "")
+    || writingChapters[0]?.id || "";
   const messages = useQuery({
     queryKey: ["discussion-messages", sessionId],
     queryFn: () => listDiscussionMessages(sessionId!),
@@ -163,6 +170,7 @@ export function DiscussionView() {
     setLoadingHistory(false);
     autoScroll.current = true;
     setPlanningDestination(null);
+    setWritingDestination(null);
     if (!sessionId) return;
     try {
       const stored = localStorage.getItem(`discussion-composer:${sessionId}`);
@@ -398,6 +406,62 @@ export function DiscussionView() {
     }
   }
 
+  async function useFragment(messageItem: DiscussionMessage, destination: string) {
+    if (!sessionId || !activeSession || busy || designPending) return;
+    const content = candidateDrafts[messageItem.id] ?? messageItem.content;
+    if (!content.trim()) return;
+    const chapter = writingChapters.find((node) => node.id === chosenChapterId);
+    if (destination === "CHAPTER_WRITING" && !chapter) {
+      setError("请选择要写的章节。");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setPlanningDestination(null);
+    setWritingDestination(null);
+    try {
+      let targetSectionId = "seed-tone";
+      if (destination === "STORY_DIRECTION") {
+        const outline = (nodes.data ?? []).find((node) => node.kind === "OUTLINE" && !node.archived)
+          ?? await createPlanNode({ kind: "OUTLINE", title: "故事方向" });
+        targetSectionId = `plan-node:${outline.id}`;
+        await client.invalidateQueries({ queryKey: ["plan-nodes"] });
+      } else if (chapter && destination === "CHAPTER_WRITING") {
+        targetSectionId = `plan-node:${chapter.id}`;
+      } else if (destination === "BOOK_PREFERENCES"
+        && !(nodes.data ?? []).some((node) => node.kind === "WORK_DESIGN" && !node.archived)) {
+        await createPlanNode({ kind: "WORK_DESIGN", title: "本书偏好" });
+        await client.invalidateQueries({ queryKey: ["plan-nodes"] });
+      }
+      const candidate = await createDiscussionCandidate({
+        sessionId, messageId: messageItem.id,
+        kind: destination === "CHAPTER_WRITING" ? "NOTE" : destination === "BOOK_PREFERENCES" ? "SETTING" : "PLANNING",
+        content: content.trim(), targetSectionId,
+      });
+      // Save a source-linked note, not a chapter plan or a formal project fact.
+      if (destination === "CHAPTER_WRITING" && chapter) {
+        const params = new URLSearchParams({
+          planNode: chapter.id, targetProject: activeSession.projectId, assistant: "ai", writingCandidate: candidate.id,
+          returnTo: `/discussion#${sessionId}`,
+        });
+        setWritingDestination(`/writing?${params}`);
+        setNotice("片段已保留，将作为本章写作要求，不会改动章节计划或正文。");
+      } else {
+        const promoted = await promoteDiscussionCandidate({ id: candidate.id, expectedStatus: candidate.status });
+        setPlanningDestination(planningTargetHref(targetSectionId, activeSession.projectId,
+          destination === "STORY_DIRECTION" ? "OUTLINE" : undefined));
+        setNotice(promoted.status === "PROMOTED" ? "片段已送入待采用区，当前笔记和正式设定未改变。" : "片段已保留。");
+        await client.invalidateQueries({ queryKey: ["planning-sections"] });
+        await client.invalidateQueries({ queryKey: ["planning-discussion-sources"] });
+      }
+      finishCollection(messageItem, content);
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally {
+      await client.invalidateQueries({ queryKey: ["discussion-candidates", sessionId] });
+      setBusy(false);
+    }
+  }
+
   async function promote(candidate: DiscussionCandidate) {
     setBusy(true);
     setError(null);
@@ -509,7 +573,8 @@ export function DiscussionView() {
           {error ? <p className="project-error" role="alert">{error}</p> : null}
         </section> : null}
         {candidates.isError ? <p className="project-error" role="alert">{errorMessage(candidates.error)}</p> : null}
-        {notice && showSessions ? <p className="project-notice" role="status">{notice}{planningDestination ? <a href={planningDestination}>打开规划待定区</a> : null}</p> : null}
+        {notice && showSessions ? <p className="project-notice" role="status">{notice}{planningDestination ? <a href={planningDestination}>打开待采用内容</a> : null}
+          {writingDestination ? <a href={writingDestination}>打开本章写作</a> : null}</p> : null}
         {error && showSessions && !showSessionForm ? <p className="project-error" role="alert">{error}</p> : null}
         {candidates.data?.length ? <details className="discussion-candidate-drawer">
           <summary>收集记录 <span>{candidates.data.length} 条</span></summary>
@@ -520,6 +585,12 @@ export function DiscussionView() {
               <div className="discussion-candidate-links">
                 <a href={discussionSourceHref({ candidateId: candidate.id, sessionId: candidate.sessionId, projectId: activeSession?.projectId },
                   `/discussion#${encodeURIComponent(candidate.sessionId)}`)}><MessageSquareText size={12} />查看讨论来源</a>
+                {activeSession && candidate.kind === "NOTE" && candidate.status !== "DISMISSED" && targetKind(candidate.targetSectionId) === "CHAPTER"
+                  ? <a href={`/writing?${new URLSearchParams({
+                    planNode: candidate.targetSectionId!.slice("plan-node:".length),
+                    targetProject: activeSession.projectId, assistant: "ai", writingCandidate: candidate.id,
+                    returnTo: `/discussion#${candidate.sessionId}`,
+                  })}`}><ArrowUpRight size={12} />打开本章写作</a> : null}
                 {candidate.status === "PROMOTED" && (candidate.kind === "PLANNING" || candidate.kind === "SETTING")
                   && candidate.targetSectionId && candidate.promotedObjectId === candidate.targetSectionId ? <a
                     href={planningTargetHref(candidate.targetSectionId, activeSession?.projectId, targetKind(candidate.targetSectionId))}><ArrowUpRight size={12} />打开规划待定区</a> : null}
@@ -549,7 +620,8 @@ export function DiscussionView() {
           <AiModelNote taskLabel="共创讨论" taskKey="discussion" settingsScope={projectOverrides.data?.discussion ? "PROJECT" : "GLOBAL"} profile={profile} preference={preference} />
         </details>
         {notice && !showSessions ? <p className="project-notice" role="status">{notice}
-          {planningDestination ? <a className="discussion-notice-link" href={planningDestination}><ArrowUpRight size={14} />打开规划待定区</a> : null}</p> : null}
+          {planningDestination ? <a className="discussion-notice-link" href={planningDestination}><ArrowUpRight size={14} />打开待采用内容</a> : null}
+          {writingDestination ? <a className="discussion-notice-link" href={writingDestination}><ArrowUpRight size={14} />打开本章写作</a> : null}</p> : null}
         {error && !showSessions ? <p className="project-error" role="alert">{error}</p> : null}
         <div className="discussion-messages" ref={messagesRef} aria-busy={busy || messages.isFetching}
           onScroll={(event) => {
@@ -583,12 +655,21 @@ export function DiscussionView() {
                 <div>
                   <label><span>收集到</span><select aria-label="收集到" value={selectedKind} disabled={busy} onChange={(event) => setCollectionTargets((current) => ({ ...current, [messageItem.id]: event.target.value }))}>
                     <option value="">选择去向</option><option value="chosen">已选定内容</option><option value="alternatives">备选方向</option><option value="questions">未决问题</option>
+                    <option value="BOOK_PREFERENCES">记为本书偏好</option><option value="STORY_DIRECTION">记入故事方向</option><option value="CHAPTER_WRITING">用于本章</option>
                     <option value="NOTE">{candidateKindLabels.NOTE}</option><option value="PLANNING">{candidateKindLabels.PLANNING}</option><option value="SETTING">{candidateKindLabels.SETTING}</option><option value="FORESHADOWING">{candidateKindLabels.FORESHADOWING}</option></select></label>
+                  {selectedKind === "CHAPTER_WRITING" ? <label><span>章节</span>
+                    <select aria-label="片段目标章节" value={chosenChapterId} disabled={busy} onChange={(event) => setWritingChapterId(event.target.value)}>
+                      {!writingChapters.length ? <option value="">尚无章节</option> : null}
+                      {writingChapters.map((node) => <option key={node.id} value={node.id}>{node.title}</option>)}
+                    </select></label> : null}
                   {needsTarget ? <label><span>目标规划项</span><select aria-label="目标规划项" value={candidateTargetId} disabled={busy} onChange={(event) => setCandidateTargetId(event.target.value)}>{targetOptions.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}</select></label> : null}
                   <button type="button" className="primary-action" onClick={() => {
                     if (selectedKind === "chosen" || selectedKind === "alternatives" || selectedKind === "questions") void collectIntoDraft(messageItem, selectedKind);
+                    else if (["BOOK_PREFERENCES", "STORY_DIRECTION", "CHAPTER_WRITING"].includes(selectedKind)) void useFragment(messageItem, selectedKind);
                     else if (selectedKind) void saveCandidate(messageItem, selectedKind as DiscussionCandidateKind);
-                  }} disabled={busy || !selectedKind || !(candidateDrafts[messageItem.id] ?? messageItem.content).trim() || designPending && ["chosen", "alternatives", "questions"].includes(selectedKind)}><Save size={12} />确认收集</button>
+                  }} disabled={busy || !selectedKind || !(candidateDrafts[messageItem.id] ?? messageItem.content).trim()
+                    || selectedKind === "CHAPTER_WRITING" && !chosenChapterId
+                    || designPending && ["chosen", "alternatives", "questions", "BOOK_PREFERENCES", "STORY_DIRECTION", "CHAPTER_WRITING"].includes(selectedKind)}><Save size={12} />确认收集</button>
                   <button type="button" className="secondary-action" disabled={busy} onClick={() => {
                     if (candidateDrafts[messageItem.id] !== undefined && candidateDrafts[messageItem.id] !== messageItem.content && !window.confirm("放弃尚未收集的片段修改吗？")) return;
                     setCollectingId(null); setCandidateDrafts((current) => { const next = { ...current }; delete next[messageItem.id]; return next; });

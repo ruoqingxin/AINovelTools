@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   askProjectDiscussion: vi.fn(),
   createDiscussionCandidate: vi.fn(),
   createDiscussionSession: vi.fn(),
+  createPlanNode: vi.fn(),
   dismissDiscussionCandidate: vi.fn(),
   getAiTaskPreferences: vi.fn(),
   getProjectAiTaskOverrides: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock("../lib/tauri-client", async () => {
     askProjectDiscussion: mocks.askProjectDiscussion,
     createDiscussionCandidate: mocks.createDiscussionCandidate,
     createDiscussionSession: mocks.createDiscussionSession,
+    createPlanNode: mocks.createPlanNode,
     dismissDiscussionCandidate: mocks.dismissDiscussionCandidate,
     getAiTaskPreferences: mocks.getAiTaskPreferences,
     getProjectAiTaskOverrides: mocks.getProjectAiTaskOverrides,
@@ -139,6 +141,42 @@ async function openCollector(target = "SETTING") {
 }
 
 describe("DiscussionView", () => {
+  it("uses a chat fragment for a chapter without creating or confirming a chapter plan", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    mocks.listPlanNodes.mockResolvedValue([{
+      id: "chapter-1", kind: "CHAPTER", title: "第一章", archived: false, parentId: null, revision: 1, sortOrder: 0,
+    }]);
+    renderView();
+    await openCollector("CHAPTER_WRITING");
+    expect(screen.getByLabelText("片段目标章节")).toHaveValue("chapter-1");
+    fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
+    const link = await screen.findByRole("link", { name: "打开本章写作" });
+    const url = new URL(link.getAttribute("href")!, window.location.origin);
+    expect(url.pathname).toBe("/writing");
+    expect(url.searchParams.get("planNode")).toBe("chapter-1");
+    expect(url.searchParams.get("writingCandidate")).toBe("candidate-created");
+    expect(url.searchParams.get("targetProject")).toBe("project-1");
+    expect(mocks.createDiscussionCandidate).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "NOTE", targetSectionId: "plan-node:chapter-1", content: assistantMessage.content,
+    }));
+    expect(mocks.promoteDiscussionCandidate).not.toHaveBeenCalled();
+  });
+
+  it("keeps book preference fragments as candidates rather than formal settings", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    mocks.promoteDiscussionCandidate.mockResolvedValue({
+      id: "candidate-created", status: "PROMOTED", targetSectionId: "seed-tone",
+    });
+    renderView();
+    await openCollector("BOOK_PREFERENCES");
+    fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
+    await screen.findByRole("link", { name: "打开待采用内容" });
+    expect(mocks.createDiscussionCandidate).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "SETTING", targetSectionId: "seed-tone",
+    }));
+    expect(mocks.promoteDiscussionCandidate).toHaveBeenCalledWith({ id: "candidate-created", expectedStatus: "PENDING" });
+  });
+
   afterEach(() => cleanup());
 
   beforeEach(() => {
@@ -363,7 +401,7 @@ describe("DiscussionView", () => {
         expectedStatus: "PENDING",
       }),
     );
-    const destination = await screen.findByRole("link", { name: "打开规划待定区" });
+    const destination = await screen.findByRole("link", { name: "打开待采用内容" });
     const target = new URL(destination.getAttribute("href")!, window.location.origin);
     expect(target.pathname).toBe("/planning");
     expect(target.searchParams.get("discussionTarget")).toBe("engine-theme");

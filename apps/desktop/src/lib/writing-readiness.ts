@@ -171,16 +171,12 @@ export function auditChapterPlan(input: {
   if (!plan) return [];
 
   const notices: WritingPreflightNotice[] = [];
-  if (!input.volumePlan.trim()) {
-    notices.push({
-      id: "volume-plan",
-      label: "所属分卷规划缺失",
-      detail: "执行卡没有可承接的分卷目标，生成正文前建议先补齐分卷阶段任务和卷末转折。",
-    });
-  }
-
   const narrativeSection = input.sections.find((section) => section.id === "frame-narrative");
-  const formalPerspectives = affirmedNarrativePerspectives(narrativeSection?.content ?? "");
+  const preferenceSection = input.sections.find((section) => section.id === "seed-tone");
+  const formalPerspectivesFor = (section?: PlanningSection) => section
+    && ["CONFIRMED", "LOCKED"].includes(section.storyState) ? affirmedNarrativePerspectives(section.content) : [];
+  const preferencePerspectives = formalPerspectivesFor(preferenceSection);
+  const formalPerspectives = preferencePerspectives.length ? preferencePerspectives : formalPerspectivesFor(narrativeSection);
   const planPerspectives = affirmedNarrativePerspectives(plan);
   const conflictingPerspective = formalPerspectives.find(
     (perspective) => planPerspectives.length > 0 && !planPerspectives.includes(perspective),
@@ -193,41 +189,6 @@ export function auditChapterPlan(input: {
     });
   }
 
-  const structuralChecks = [
-    {
-      id: "chapter-goal",
-      label: "本章目标",
-      detail: "未识别到明确目标，正文可能缺少本章要完成的推进任务。",
-      pattern: /目标|目的|任务|要完成|要获得|需要/,
-    },
-    {
-      id: "chapter-conflict",
-      label: "冲突推进",
-      detail: "未识别到明确阻碍或对抗，场景可能缺少持续张力。",
-      pattern: /冲突|阻碍|对抗|争夺|威胁|对手|敌人/,
-    },
-    {
-      id: "chapter-turn",
-      label: "关键行动与转折",
-      detail: "未识别到关键选择、发现或局面变化，章节可能只复述信息。",
-      pattern: /行动|选择|决定|发现|反转|转折|改变/,
-    },
-    {
-      id: "chapter-hook",
-      label: "结尾钩子",
-      detail: "未识别到章末悬念、伏笔或下一章接口，衔接可能偏弱。",
-      pattern: /钩子|悬念|伏笔|线索|留下|未完/,
-    },
-  ];
-  for (const check of structuralChecks) {
-    if (!check.pattern.test(plan)) {
-      notices.push({
-        id: check.id,
-        label: check.label,
-        detail: check.detail,
-      });
-    }
-  }
   return notices;
 }
 

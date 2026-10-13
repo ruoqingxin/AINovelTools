@@ -26,6 +26,54 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("planning content editor", () => {
+  it("saves book preferences directly with version checks and retains old candidates", async () => {
+    const preferences = {
+      ...emptyPlanningSection("seed-tone"), version: 7, storyState: "LOCKED" as const,
+      content: "原篇幅和基调", pendingContent: "旧候选仍保留",
+    };
+    mocks.listPlanningSections.mockResolvedValue([preferences]);
+    render(<QueryClientProvider client={new QueryClient()}>
+      <StoryPlanningWorkbench selectedSectionId="seed-tone" /></QueryClientProvider>);
+    const editor = await screen.findByLabelText("篇幅、风格与边界");
+    await waitFor(() => expect(editor).toBeEnabled());
+    expect(editor).not.toHaveAttribute("readonly");
+    fireEvent.change(editor, { target: { value: "约 20 万字，轻松，第三人称。" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
+    await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
+      id: "seed-tone", content: "约 20 万字，轻松，第三人称。", pendingContent: "旧候选仍保留",
+      version: 7, storyState: "LOCKED",
+    })));
+    expect(screen.getByLabelText("笔记状态")).not.toBeVisible();
+  });
+
+  it("does not replace book preference edits when a checked save fails", async () => {
+    mocks.listPlanningSections.mockResolvedValue([]);
+    mocks.savePlanningSection.mockRejectedValue(new Error("版本冲突"));
+    render(<QueryClientProvider client={new QueryClient()}>
+      <StoryPlanningWorkbench selectedSectionId="seed-tone" /></QueryClientProvider>);
+    const editor = await screen.findByLabelText("篇幅、风格与边界");
+    await waitFor(() => expect(editor).toBeEnabled());
+    fireEvent.change(editor, { target: { value: "先写短篇，结局未定。" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("版本冲突");
+    expect(editor).toHaveValue("先写短篇，结局未定。");
+  });
+
+  it("does not turn an author-reserved note into a formal setting on ordinary save", async () => {
+    mocks.listPlanningSections.mockResolvedValue([{
+      ...emptyPlanningSection("seed-tone"), content: "作者尚未公开的偏好", storyState: "AUTHOR_RESERVED", version: 6,
+    }]);
+    render(<QueryClientProvider client={new QueryClient()}>
+      <StoryPlanningWorkbench selectedSectionId="seed-tone" /></QueryClientProvider>);
+    const editor = await screen.findByLabelText("篇幅、风格与边界");
+    await waitFor(() => expect(editor).toBeEnabled());
+    fireEvent.change(editor, { target: { value: "修改私有偏好，仍不公开。" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
+    await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
+      storyState: "AUTHOR_RESERVED", content: "修改私有偏好，仍不公开。", version: 6,
+    })));
+  });
+
   it("uses one save area for draft content and author state with the original version", async () => {
     setup();
     expect(await screen.findByRole("textbox", { name: "正式规划" })).toHaveAttribute("readonly");

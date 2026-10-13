@@ -252,7 +252,7 @@ export function ChapterCreationWorkspace({
           {volume ? <details><summary>{volume.title}</summary><p>{volumePlan.trim() || "尚未填写分卷规划"}</p></details> : null}
           <label htmlFor="creation-chapter-plan">本章计划</label>
           <textarea id="creation-chapter-plan" disabled={!planReady} rows={12} value={chapterPlan} onChange={(event) => onPlanChange(event.target.value)}
-            placeholder="本章目标、冲突、关键行动和结尾钩子" />
+            placeholder="本章想写的情境、事件或接下来的一步…" />
           <button type="button" className="primary-action" onClick={() => void onSavePlan()}
             disabled={!planReady || savingPlan || !planDirty || !chapterPlan.trim()}><Save size={14} />{savingPlan ? "保存中…" : "保存计划"}</button>
           {pendingChapterPlan?.trim() ? <div className="creation-plan-candidate">

@@ -7,7 +7,7 @@ pub(super) const WRITING_SETTING_SECTIONS: [(&str, &str); 15] = [
     ("seed-premise", "核心前提与开局情境"),
     ("seed-genre-promise", "类型、题材与阅读承诺"),
     ("seed-hook", "核心卖点与独特钩子"),
-    ("seed-tone", "基调、尺度与篇幅体量"),
+    ("seed-tone", "本书偏好：篇幅、风格与边界"),
     ("engine-protagonist", "主角目标与内在需求"),
     ("engine-antagonism", "对抗系统与升级机制"),
     ("engine-stakes", "赌注、代价与失败后果"),
@@ -26,7 +26,7 @@ const SETTING_TRUNCATION_MARKER: &str = "\n[正式设定片段已按上下文预
 const MAX_SUMMARY_CONTEXT_CHARS: usize = 1_200;
 const DISCUSSION_BACKGROUND_SECTIONS: [(&str, &str); 4] = [
     ("seed-genre-promise", "题材与阅读体验"),
-    ("seed-tone", "基调与尺度"),
+    ("seed-tone", "本书偏好"),
     ("frame-setting", "世界背景与重要规则"),
     ("seed-premise", "核心前提"),
 ];
@@ -59,7 +59,9 @@ impl ProjectManager {
         let has_character_card = entity_records
             .iter()
             .any(|(entity, _)| entity.entity_type == EntityType::Character);
-        let setting_context = build_writing_setting_context(&planning_sections, has_character_card);
+        let mut setting_context =
+            build_writing_setting_context(&planning_sections, has_character_card);
+        setting_context.push_str(&self.story_direction_context(&planning_sections, 1_400));
         let setting_source_revision = source_revision("planning:writing-context", &setting_context);
         candidates.push(build_candidate(
             ContextCandidateKind::ProjectSetting,
@@ -415,6 +417,44 @@ impl ProjectManager {
 
         candidates
     }
+
+    pub(crate) fn story_direction_context(
+        &self,
+        sections: &[PlanningSection],
+        max_chars: usize,
+    ) -> String {
+        let nodes = self.list_plan_nodes().unwrap_or_default();
+        let mut output = String::new();
+        for node in nodes
+            .iter()
+            .filter(|node| node.kind == PlanNodeKind::Outline && !node.archived)
+            .take(2)
+        {
+            let id = format!("plan-node:{}", node.id);
+            let Some(section) = sections.iter().find(|section| {
+                section.id == id
+                    && !section.content.trim().is_empty()
+                    && matches!(
+                        section.story_state,
+                        PlanningStoryState::Confirmed | PlanningStoryState::Locked
+                    )
+            }) else {
+                continue;
+            };
+            let _ = write!(
+                output,
+                "\n故事方向笔记「{}」（{}；不代表正文已经发生）：\n{}\n",
+                node.title,
+                if section.story_state == PlanningStoryState::Locked {
+                    "作者已锁定，遵守此方向；改变须作者明确授权"
+                } else {
+                    "作者采用的方向参考，不是必须兑现的全书剧本"
+                },
+                truncate_setting_content(section.content.trim(), max_chars)
+            );
+        }
+        output
+    }
 }
 
 fn truncate_summary_for_context(value: &str) -> String {
@@ -512,8 +552,13 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
         .map(|section| (section.id.as_str(), section))
         .collect::<std::collections::HashMap<_, _>>();
     let narrative_person = formal_by_id
-        .get("frame-narrative")
-        .and_then(|section| detect_narrative_person(&section.content));
+        .get("seed-tone")
+        .and_then(|section| detect_narrative_person(&section.content))
+        .or_else(|| {
+            formal_by_id
+                .get("frame-narrative")
+                .and_then(|section| detect_narrative_person(&section.content))
+        });
 
     let mut output = String::new();
     if formal_by_id.is_empty() && !has_character_card {
@@ -524,7 +569,7 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
         );
     }
     output.push_str(
-        "未决内容规则：未记录、明确未知、暂不决定、作者保留和 AI 建议都是有效状态。不得把未列出的信息补成已确认事实；可以提出候选，但必须明确标注为建议。\n",
+        "创作空间规则：未记录的内容可以在候选正文中自由创造，不要求先补齐设定或章节计划。不得声称新生成内容是已确认事实；正文候选不夹入建议标记。明确未知、暂不决定和作者保留属于作者边界，秘密不得自行补定或揭示。AI 备选不得自动成为正式知识。\n",
     );
     if !has_character_card {
         output
@@ -537,7 +582,9 @@ fn build_writing_setting_context(sections: &[PlanningSection], has_character_car
     }
     if let Some(person) = narrative_person {
         let narrative = formal_by_id
-            .get("frame-narrative")
+            .get("seed-tone")
+            .filter(|section| detect_narrative_person(&section.content).is_some())
+            .or_else(|| formal_by_id.get("frame-narrative"))
             .map_or("", |section| section.content.trim());
         let _ = write!(
             output,
@@ -999,6 +1046,102 @@ mod tests {
         assert!(empty.contains("尚无已确认作品设定"));
         assert!(empty.contains("继续构思"));
         assert!(!empty.contains("玄幻"));
+    }
+
+    #[test]
+    fn book_preferences_define_perspective_without_requiring_other_planning() {
+        let sections = [
+            section(
+                "seed-tone",
+                PlanningStoryState::Confirmed,
+                "约20万字，轻松，第三人称有限视角。",
+                "",
+            ),
+            section(
+                "frame-narrative",
+                PlanningStoryState::Confirmed,
+                "第一人称",
+                "",
+            ),
+        ];
+        let context = build_writing_setting_context(&sections, false);
+        assert!(context.contains("本作品固定使用第三人称"));
+        assert!(context.contains("未记录的内容可以在候选正文中自由创造"));
+        assert!(context.contains("秘密不得自行补定或揭示"));
+        assert!(context.contains("约20万字"));
+    }
+
+    #[test]
+    fn adopted_story_notes_reach_writing_and_discussion_but_candidates_and_archived_notes_do_not() {
+        let root =
+            std::path::PathBuf::from("target").join(format!("free-planning-{}", Uuid::new_v4()));
+        let mut manager = ProjectManager::new();
+        manager.create(&root, "自由创作").expect("project");
+        let outline = manager
+            .create_plan_node(None, PlanNodeKind::Outline, "故事方向".into())
+            .expect("outline");
+        manager
+            .save_planning_section(section(
+                &format!("plan-node:{}", outline.id),
+                PlanningStoryState::Confirmed,
+                "雨夜接到十年前的电话，结局暂不决定。",
+                "未采用的外星战争",
+            ))
+            .expect("save");
+        let sections = manager.list_planning_sections().expect("sections");
+        let direction = manager.story_direction_context(&sections, 1_400);
+        assert!(direction.contains("雨夜接到十年前的电话"));
+        assert!(direction.contains("不是必须兑现的全书剧本"));
+        assert!(!direction.contains("外星战争"));
+        let discussion = manager
+            .assemble_discussion_context(&novel_application::DiscussionContextInput {
+                scope_label: "自由构思".into(),
+                scope_content: String::new(),
+                history: String::new(),
+                user_message: "下一段怎么写？".into(),
+                input_token_budget: 4_096,
+                focus: None,
+            })
+            .expect("discussion");
+        assert!(discussion.user_prompt.contains("十年前的电话"));
+        let input = novel_application::AssembleContextInput {
+            chapter_id: Uuid::nil(),
+            target_revision_id: None,
+            action: AiAction::Draft,
+            chapter_title: "第一章".into(),
+            chapter_plan: String::new(),
+            volume_plan: String::new(),
+            document_json: r#"{"type":"doc","content":[]}"#.into(),
+            selection: None,
+            instruction: Some("写雨夜开场。".into()),
+            input_token_budget: 4_096,
+        };
+        let candidates = manager.collect_context_candidates(&input, &[]);
+        assert!(
+            candidates.iter().any(|candidate| candidate
+                .evidence
+                .chunk
+                .content
+                .contains("十年前的电话"))
+        );
+        manager
+            .save_planning_section(section(
+                &format!("plan-node:{}", outline.id),
+                PlanningStoryState::Locked,
+                "电话来源不得改变。",
+                "",
+            ))
+            .expect("lock direction");
+        let locked = manager
+            .story_direction_context(&manager.list_planning_sections().expect("sections"), 1_400);
+        assert!(locked.contains("作者已锁定"));
+        assert!(locked.contains("改变须作者明确授权"));
+        manager
+            .update_plan_node(outline.id, outline.title, true)
+            .expect("archive");
+        assert!(manager.story_direction_context(&sections, 1_400).is_empty());
+        manager.close();
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

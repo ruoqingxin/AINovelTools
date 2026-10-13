@@ -60,7 +60,9 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
       const pending = selected.kind !== "CHAPTER" && nodePlanTab === "pending";
       const saved = await savePlanningSection({ ...snapshot.form, version: snapshot.baseline.version,
         ...(pending ? { pendingContent: snapshot.form.pendingContent.trim() }
-          : { content: snapshot.form.content.trim(), storyState: selected.kind === "CHAPTER" ? "CONFIRMED" as const : snapshot.form.storyState }) });
+          : { content: snapshot.form.content.trim(), storyState: selected.kind === "CHAPTER" ? "CONFIRMED" as const
+            : selected.kind === "OUTLINE" && ["UNSET", "AI_SUGGESTED"].includes(snapshot.form.storyState)
+              ? "CONFIRMED" as const : snapshot.form.storyState }) });
       nodeDraft.acknowledge(snapshot, saved);
       cacheSavedSection(saved);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });

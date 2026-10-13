@@ -933,8 +933,8 @@ fn context_assembly_includes_formal_settings_and_preserves_unknown_state() {
             .user_prompt
             .contains("人物卡状态：尚未建立人物实体卡")
     );
-    assert!(package.user_prompt.contains("未决内容规则"));
-    assert!(package.user_prompt.contains("可以提出候选"));
+    assert!(package.user_prompt.contains("创作空间规则"));
+    assert!(package.user_prompt.contains("可以在候选正文中自由创造"));
     assert!(package.user_prompt.contains("未决与作者保留边界"));
     assert!(package.user_prompt.contains("结局状态与承诺兑现：暂不决定"));
     assert!(

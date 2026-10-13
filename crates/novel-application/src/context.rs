@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROMPT_VERSION: &str = "r5.1-writing-v1";
+pub const PROMPT_VERSION: &str = "r5.1-writing-v2";
 const DISCUSSION_PROMPT_VERSION: &str = "r5.1-discussion-v3";
 const TRUNCATION_MARKER: &str = "[已按 TokenBudget 截断]";
 
@@ -931,10 +931,10 @@ fn task_contract_definition(action: AiAction) -> TaskContractDefinition {
     match action {
         AiAction::Draft => TaskContractDefinition {
             role: AiTaskRole::DraftWriter,
-            goal: "依据章节执行卡、项目上下文和作者要求创作本章完整初稿。",
+            goal: "依据作者本轮灵感、写作要求、已有正文和可用项目上下文创作本章完整初稿；章节计划可选。",
             target_type: "CHAPTER",
             acceptance_criteria: &[
-                "完整覆盖章节执行卡中的目标、关键行动、冲突变化和结尾钩子。",
+                "优先落实作者本轮写作要求；提供章节计划时参考它，未提供时从当前灵感展开，不要求先补计划或全书大纲。",
                 "正文内部的场景、人物行动和因果推进连贯，可直接进入候选审核。",
                 "叙述人称和视角边界必须与正式设定一致；同一章节多次生成不得随机切换人称。",
                 "只输出完整章节正文。",
@@ -1012,7 +1012,7 @@ fn build_task_contract(input: &AssembleContextInput) -> AiTaskContract {
                 .to_owned()
         }
         _ => {
-            "生成前检查 [P1 作品正式设定与生成前判断]；未记录、未知、暂不决定和作者保留都是有效状态，不要求先补全规划。可以把未决内容作为候选提出，但不得把推测写成已确认事实；只有用户指令或当前正文与已锁定正式内容直接冲突时，才说明冲突并给出可选处理。" .to_owned()
+            "未记录的内容是创作空间，不是资料缺陷。可在候选正文中创造新人物、事件和细节，不因缺少人物卡、章节计划、分卷规划或结局而拒绝写作，也不在正文夹入建议标记。新生成内容仅是候选，不自动成为已批准的项目事实。明确未知、暂不决定和作者保留项按作者边界处理，特别是保留秘密不得擅自补定或揭示。遵守已确认的本书偏好、正式设定与规则和已有正文；故事方向是可调整的参考，不是必须兑现的全书剧本。".to_owned()
         }
     };
     AiTaskContract {

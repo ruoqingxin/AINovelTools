@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/react";
 import { Ban, Check, ClipboardCheck, Columns2, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
-import { useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import {
   cancelAiTask,
   enqueueChapterSummaryRefresh,
   errorMessage,
   getAuditFlowSettings,
+  getDiscussionSource,
   generateAiProposal,
   getWritingReviewPolicy,
   listAiProposals,
@@ -29,6 +30,7 @@ import { actionLabels, aiFailureMessage, buildLineDiff, consistencyAdmission, do
 import { useAiTaskStream } from "./use-ai-task-stream";
 import { useAiProposalActions } from "./use-ai-proposal-actions";
 import { AiConsistencyReviewList } from "./ai-consistency-review-list";
+import { discussionSourceHref } from "../lib/discussion-source";
 
 function isChapterSummaryJobFor(job: Job, chapterId: string) {
   if (job.jobType !== "REFRESH_CHAPTER_SUMMARY") return false;
@@ -60,6 +62,30 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
   const chapterSummaries = useQuery({ queryKey: ["summary-materials"], queryFn: listSummaryMaterials, enabled: active && isCreationMode });
   const summaryJobs = useJobs({ enabled: active && isCreationMode });
   const [instruction, setInstruction] = useState("");
+  const writingParams = new URLSearchParams(window.location.search);
+  const writingCandidateId = writingParams.get("writingCandidate");
+  const writingProjectId = writingParams.get("targetProject");
+  const fragmentEnabled = active && isCreationMode && Boolean(writingCandidateId && writingProjectId)
+    && writingParams.get("planNode") === props.chapterId;
+  const writingFragment = useQuery({
+    queryKey: ["writing-discussion-fragment", writingProjectId, props.chapterId, writingCandidateId],
+    queryFn: async () => {
+      const source = await getDiscussionSource({ candidateId: writingCandidateId!, projectId: writingProjectId! });
+      if (source.session.projectId !== writingProjectId || source.candidate.kind !== "NOTE"
+        || source.candidate.status === "DISMISSED" || source.candidate.targetSectionId !== `plan-node:${props.chapterId}`) {
+        throw new Error("讨论片段不属于当前章节，未载入其他内容。");
+      }
+      return source;
+    },
+    enabled: fragmentEnabled, retry: false,
+  });
+  const loadedFragment = useRef<string | null>(null);
+  useEffect(() => {
+    const source = writingFragment.data;
+    if (!fragmentEnabled || !source || loadedFragment.current === source.candidate.id) return;
+    loadedFragment.current = source.candidate.id;
+    setInstruction((current) => [current.trim(), source.candidate.content].filter(Boolean).join("\n\n"));
+  }, [fragmentEnabled, writingFragment.data]);
   const [writingAction, setWritingAction] = useState<Exclude<AiAction, "CONSISTENCY_CHECK">>("DRAFT");
   const [selectionAvailable, setSelectionAvailable] = useState(false);
   useEffect(() => {
@@ -115,6 +141,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
   useEffect(() => { setError(null); }, [props.chapterId]);
 
   async function runAction(action: AiAction) {
+    if (fragmentEnabled && writingFragment.isPending) return;
     const consistencyCheck = action === "CONSISTENCY_CHECK";
     const taskKey = consistencyCheck ? "consistencyReview" : "writing";
     const chatProfile = resolveTaskChatProfile(profiles.data, aiPreferences.data, taskKey);
@@ -253,7 +280,12 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
       <div className="section-heading ai-stage-heading"><div className="proposal-heading-actions"><span>{chapterSummary || chapterSummaryJob ? chapterSummaryStatus : "尚未生成章节记忆"}</span><button type="button" className="secondary-action" onClick={() => void refreshChapterMemory()} disabled={!visibleDraftAvailable || Boolean(chapterSummaryJob)}><RefreshCw size={14} />更新章节记忆</button>{lastApplied ? <button type="button" onClick={undoLastApplied}><RotateCcw size={12} />撤销“{lastApplied.label}”</button> : null}</div></div>
       <AiModelNote compact active={active} taskLabel="正文书写" taskKey="writing" profile={selectedChatProfile} preference={selectedChatPreference} />
       {consistencyNotice ? <div className="consistency-admission creation-admission" data-state={consistencyNotice.state}><span>{consistencyNotice.text}</span>{consistencyBlocked && props.onOpenAdmissionReview ? <button type="button" className="secondary-action" onClick={props.onOpenAdmissionReview}>打开生成前检查</button> : null}</div> : null}
-      <label className="ai-instruction">本章补充意见<textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：让冲突逐步升级，保留主角的克制感；控制在 3000 字左右，结尾留下身份线索" /></label>
+      {fragmentEnabled && writingFragment.isPending ? <p role="status">正在读取讨论片段…</p> : null}
+      {fragmentEnabled && writingFragment.isError ? <p className="project-error" role="alert">{errorMessage(writingFragment.error)}</p> : null}
+      {fragmentEnabled && writingFragment.data ? <a className="discussion-notice-link" href={discussionSourceHref({
+        candidateId: writingFragment.data.candidate.id, projectId: writingProjectId!,
+      }, `${window.location.pathname}${window.location.search}`)}>讨论来源</a> : null}
+      <label className="ai-instruction">本次写作要求<textarea aria-label="本次写作要求" rows={4} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="一个情境、一段刚聊出的方向，或希望接下来发生的事…" /></label>
       <div className="ai-creation-options">
         <label className="ai-writing-mode">操作<select aria-label="AI 写作操作" value={writingAction}
           onChange={(event) => setWritingAction(event.target.value as typeof writingAction)}>
@@ -262,7 +294,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
         </select></label>
         {(writingAction === "REWRITE" || writingAction === "POLISH") && !selectionAvailable ? <p role="status">尚未选择正文片段</p> : null}
         <button type="button" className="primary-action" onClick={() => void runAction(writingAction)}
-          disabled={generationLocked || !props.editor || !selectedChatProfile?.hasSecret || writingActionBlocked(writingAction)
+          disabled={generationLocked || fragmentEnabled && writingFragment.isPending || !props.editor || !selectedChatProfile?.hasSecret || writingActionBlocked(writingAction)
             || (writingAction === "REWRITE" || writingAction === "POLISH") && !selectionAvailable
             || (writingAction === "CONTINUE" || writingAction === "SUMMARIZE") && !visibleDraftAvailable}
           title={writingActionBlocked(writingAction) ? "先处理生成前检查中的阻断问题" : undefined}><Sparkles size={14} />

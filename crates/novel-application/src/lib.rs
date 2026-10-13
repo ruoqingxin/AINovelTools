@@ -187,7 +187,7 @@ mod tests {
             input_token_budget: 1_024,
         };
         let package = super::ContextAssembler::assemble(&input).expect("assemble contract");
-        assert_eq!(package.prompt_version, "r5.1-writing-v1");
+        assert_eq!(package.prompt_version, "r5.1-writing-v2");
         assert_eq!(package.task_contract.role, super::AiTaskRole::DraftWriter);
         assert!(
             package

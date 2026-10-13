@@ -1,9 +1,7 @@
 import { ChevronDown, ChevronRight, Eye, EyeOff, Plus } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import type { PlanNode, PlanningSection } from "../lib/tauri-client";
-import { isPlanningSectionSettled } from "../lib/writing-readiness";
 import {
-  essentialPlanningSectionIds,
   planningSectionGroups,
   planningStoryStateLabels,
 } from "./story-planning-workbench";
@@ -19,7 +17,6 @@ type ProjectPlanTreeProps = {
   onSelectPlanningSection: (node: PlanNode, sectionId: string) => void;
   onToggleArchived: () => void;
   onTogglePlanningGroup: (groupId: string) => void;
-  onToggleWorkDesign: () => void;
   planningSections: PlanningSection[];
   rootNodeFor: (kind: PlanNode["kind"]) => PlanNode | undefined;
   selectedId: string | null;
@@ -27,7 +24,6 @@ type ProjectPlanTreeProps = {
   showArchived: boolean;
   unorganizedRoots: PlanNode[];
   visibleNodes: PlanNode[];
-  workDesignExpanded: boolean;
   onCreateChapter?: () => void;
 };
 
@@ -38,10 +34,33 @@ export function ProjectPlanTree(props: ProjectPlanTreeProps) {
     const isTopLevelPlanningNode = node.parentId === null && isRootKind(node.kind);
     return (
       <div key={node.id}>
-        <button type="button" className="plan-row" data-kind={node.kind.toLowerCase()} data-selected={props.selectedId === node.id && node.kind !== "WORK_DESIGN" || undefined} data-archived={node.archived || undefined} style={{ paddingLeft: `${10 + depth * 22}px` }} onClick={() => { props.onSelectNode(node); if (node.kind === "WORK_DESIGN") props.onToggleWorkDesign(); }}>
-          {node.kind === "WORK_DESIGN" ? props.workDesignExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} /> : null}{!isTopLevelPlanningNode ? <span className="plan-kind">{kindLabels[node.kind]}</span> : null}<span className="plan-title">{node.kind === "WORK_DESIGN" ? "作品定位" : node.kind === "OUTLINE" ? "故事主线" : node.kind === "VOLUME_MANAGER" ? "分卷与章节" : node.title}</span>
+        <button type="button" className="plan-row" data-kind={node.kind.toLowerCase()}
+          data-selected={props.selectedId === node.id && (node.kind !== "WORK_DESIGN" || props.selectedPlanningSectionId === "seed-tone") || undefined}
+          data-archived={node.archived || undefined} style={{ paddingLeft: `${10 + depth * 22}px` }} onClick={() => props.onSelectNode(node)}>
+          {!isTopLevelPlanningNode ? <span className="plan-kind">{kindLabels[node.kind]}</span> : null}<span className="plan-title">{node.kind === "WORK_DESIGN" ? "本书偏好" : node.kind === "OUTLINE" ? "故事方向" : node.kind === "VOLUME_MANAGER" ? "分卷与章节" : node.title}</span>
         </button>
-        {node.kind === "WORK_DESIGN" && !node.archived && props.workDesignExpanded ? <div className="plan-design-tree">{planningSectionGroups.map((group) => { const expanded = props.expandedPlanningGroups.has(group.id); return <div className="plan-design-group" key={group.id}><button type="button" className="plan-design-group-heading" aria-expanded={expanded} onClick={() => props.onTogglePlanningGroup(group.id)}>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<strong>{group.label}</strong><span>{group.children.filter((item) => isPlanningSectionSettled(sectionsById.get(item.id))).length}/{group.children.length}</span></button>{expanded ? group.children.map((item) => { const section = sectionsById.get(item.id); const completed = isPlanningSectionSettled(section); const essential = essentialPlanningSectionIds.includes(item.id as (typeof essentialPlanningSectionIds)[number]); return <button type="button" className="plan-design-item" data-selected={props.selectedId === node.id && props.selectedPlanningSectionId === item.id || undefined} key={item.id} onClick={() => props.onSelectPlanningSection(node, item.id)}><span>{item.label}</span><small>{completed && section ? planningStoryStateLabels[section.storyState] : essential ? "核心" : "待明确"}</small></button>; }) : null}</div>; })}</div> : null}
+        {node.kind === "WORK_DESIGN" && !node.archived ? <details className="plan-reference-tree"
+          open={props.selectedId === node.id && props.selectedPlanningSectionId !== "seed-tone"}>
+          <summary>规划参考</summary>
+          <div className="plan-design-tree">{planningSectionGroups.map((group) => {
+            const expanded = props.expandedPlanningGroups.has(group.id);
+            return <div className="plan-design-group" key={group.id}>
+              <button type="button" className="plan-design-group-heading" aria-expanded={expanded}
+                onClick={() => props.onTogglePlanningGroup(group.id)}>
+                {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<strong>{group.label}</strong>
+              </button>
+              {expanded ? group.children.filter((item) => item.id !== "seed-tone").map((item) => {
+                const section = sectionsById.get(item.id);
+                return <button type="button" className="plan-design-item"
+                  data-selected={props.selectedId === node.id && props.selectedPlanningSectionId === item.id || undefined}
+                  key={item.id} onClick={() => props.onSelectPlanningSection(node, item.id)}>
+                  <span>{item.label}</span>{section?.content.trim() || section?.pendingContent.trim()
+                    ? <small>{planningStoryStateLabels[section.storyState]}</small> : null}
+                </button>;
+              }) : null}
+            </div>;
+          })}</div>
+        </details> : null}
         {node.kind === "VOLUME_MANAGER" ? <ChapterDirectory nodes={props.visibleNodes.filter((item) => item.parentId === node.id || props.visibleNodes.some((volume) => volume.kind === "VOLUME" && volume.parentId === node.id && volume.id === item.parentId))}
           selectedId={props.selectedId} onSelect={props.onSelectNode} onCreate={() => props.onCreateChapter?.()} />
           : (childrenByParent.get(node.id) ?? []).filter((child) => props.chapterMode || child.kind !== "SCENE").map((child) => renderNode(child, depth + 1))}
@@ -56,7 +75,7 @@ export function ProjectPlanTree(props: ProjectPlanTreeProps) {
           const root = props.rootNodeFor(rootKind);
           return (
             <section className="plan-root-section" key={rootKind}>
-              {root ? renderNode(root) : <button type="button" className="plan-preset-row" onClick={() => void props.onCreateStarterNode(rootKind, label)}><Plus size={14} /><span>{rootKind === "WORK_DESIGN" ? "作品定位" : rootKind === "OUTLINE" ? "故事主线" : "分卷与章节"}</span></button>}
+              {root ? renderNode(root) : <button type="button" className="plan-preset-row" onClick={() => void props.onCreateStarterNode(rootKind, label)}><Plus size={14} /><span>{rootKind === "WORK_DESIGN" ? "本书偏好" : rootKind === "OUTLINE" ? "故事方向" : "分卷与章节"}</span></button>}
             </section>
           );
         })}

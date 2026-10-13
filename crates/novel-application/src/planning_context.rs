@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-pub const PLANNING_PROMPT_VERSION: &str = "planning-v6";
+pub const PLANNING_PROMPT_VERSION: &str = "planning-v7";
 
 const CORE_PROJECT_SECTION_IDS: [&str; 6] = [
     "seed-premise",

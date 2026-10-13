@@ -111,3 +111,13 @@
   .compact-plan-savebar label, .compact-plan-savebar > div { width: 100%; }
   .writing-planning-workspace .volume-manager-targets, .writing-planning-workspace .chapter-split-controls { grid-template-columns: minmax(0, 1fr); }
 }
+.free-planning-editor { display: grid; gap: 12px; }
+.free-planning-editor > label { display: grid; gap: 8px; color: #405675; font-size: 13px; }
+.free-planning-editor textarea { width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: white; color: #34435a; font: inherit; font-size: 14px; line-height: 1.8; resize: vertical; box-sizing: border-box; }
+.free-planning-editor textarea:focus { outline: 2px solid #c7dafb; outline-offset: 1px; }
+.free-planning-candidate { border-top: 1px solid var(--line); padding-top: 12px; }
+.free-planning-candidate summary { margin-bottom: 12px; cursor: pointer; font-size: 13px; }
+.free-planning-candidate button { margin-top: 8px; }
+.plan-reference-tree { margin: 8px 0 0 10px; }
+.plan-reference-tree > summary { color: #66758b; cursor: pointer; font-size: 12px; padding: 8px 0; }
+.planning-start-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }

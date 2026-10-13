@@ -83,11 +83,37 @@ describe("exact planning navigation", () => {
   it("allows manual outline editing without complete planning or an AI model", async () => {
     mocks.listPlanNodes.mockResolvedValue([{ ...scene, id: "outline-1", kind: "OUTLINE", title: "大纲" }]);
     renderPlan("?planNode=outline-1&targetProject=project-1");
-    await waitFor(() => expect(screen.getByRole("button", { name: "编辑规划" })).toBeEnabled());
+    const note = await screen.findByLabelText("故事方向笔记");
+    await waitFor(() => expect(note).toBeEnabled());
     expect(screen.queryByText("故事大纲尚未开放")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "编辑规划" }));
-    expect(screen.getByLabelText("规划草稿")).not.toHaveAttribute("readonly");
-    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
+    expect(note).not.toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: "保存笔记" })).toBeDisabled();
+    mocks.savePlanningSection.mockImplementation(async (section) => ({ ...section, version: 1 }));
+    fireEvent.change(note, { target: { value: "先写一个接到旧电话的开场，结局不定。" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
+    await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
+      id: "plan-node:outline-1", content: "先写一个接到旧电话的开场，结局不定。", storyState: "CONFIRMED", version: 0,
+    })));
+  });
+
+  it("keeps old planning notes behind optional references without completion pressure", async () => {
+    const work = { ...scene, id: "work", kind: "WORK_DESIGN" as const, title: "原作品设定" };
+    mocks.listPlanNodes.mockResolvedValue([work]);
+    mocks.listPlanningSections.mockResolvedValue([{
+      id: "engine-ending", content: "旧结局仍保留", pendingContent: "", storyState: "CONFIRMED",
+      rationale: "", consequence: "", references: [], updatedAt: "", version: 3,
+    }]);
+    renderPlan("?discussionTarget=seed-tone&targetProject=project-1");
+    await screen.findByLabelText("篇幅、风格与边界");
+    expect(screen.queryByText("核心")).not.toBeInTheDocument();
+    expect(screen.queryByText("待明确")).not.toBeInTheDocument();
+    const reference = screen.getByText("规划参考").closest("details")!;
+    expect(reference).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("规划参考"));
+    fireEvent.click(screen.getByRole("button", { name: "故事驱动" }));
+    fireEvent.click(screen.getByRole("button", { name: /结局状态与承诺兑现/ }));
+    expect(await screen.findByDisplayValue("旧结局仍保留")).toBeVisible();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
 
   it("keeps dirty plan edits when returning to the same target after a cancelled node switch", async () => {

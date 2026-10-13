@@ -12,7 +12,8 @@ impl ProjectManager {
         input: &DiscussionContextInput,
     ) -> Vec<ContextCandidate> {
         let sections = self.list_planning_sections().unwrap_or_default();
-        let background = build_discussion_setting_context(&sections);
+        let mut background = build_discussion_setting_context(&sections);
+        background.push_str(&self.story_direction_context(&sections, 200));
         let revision = source_revision("planning:discussion-background", &background);
         let mut candidates = vec![build_candidate(
             ContextCandidateKind::ProjectSetting,

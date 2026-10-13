@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyAiTaskPreferences } from "../lib/ai-task-preferences";
 import { assessWritingReadiness } from "../lib/writing-readiness";
@@ -63,7 +63,7 @@ describe("WritingReadinessPanel", () => {
     mocks.retryJob.mockResolvedValue({});
   });
 
-  it("submits an AI planning job for a missing creation requirement", async () => {
+  it("does not show missing settings or a completion score", async () => {
     const readiness = assessWritingReadiness({
       sections: [],
       hasCharacterCard: false,
@@ -83,19 +83,10 @@ describe("WritingReadinessPanel", () => {
       </QueryClientProvider>,
     );
 
-    const row = (await screen.findByText("核心前提与开局情境")).closest("article");
-    expect(row).not.toBeNull();
-    fireEvent.click(await within(row!).findByRole("button", { name: "AI 补这项" }));
-
-    await waitFor(() =>
-      expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledWith(
-        expect.objectContaining({
-          profileId: profile.id,
-          sectionId: "seed-premise",
-          taskKey: "workDesign",
-        }),
-      ),
-    );
+    await screen.findByText("未发现明确的人称冲突。");
+    expect(screen.queryByText("核心前提与开局情境")).not.toBeInTheDocument();
+    expect(screen.queryByText(/%|项创作依据|缺失/)).not.toBeInTheDocument();
+    expect(mocks.enqueuePlanningAiJob).not.toHaveBeenCalled();
   });
 
   it("generates a chapter execution card with available volume context", async () => {
@@ -133,16 +124,17 @@ describe("WritingReadinessPanel", () => {
       </QueryClientProvider>,
     );
 
-    const row = (await screen.findByText("章节执行卡")).closest("article");
-    expect(row).not.toBeNull();
-    fireEvent.click(await within(row!).findByRole("button", { name: "AI 生成执行卡" }));
+    fireEvent.click(screen.getByText("本章计划（可选）"));
+    const button = screen.getByRole("button", { name: "生成本章计划候选" });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
 
     await waitFor(() =>
       expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledWith(
         expect.objectContaining({
           profileId: profile.id,
           sectionId: "plan-node:chapter-1",
-          sectionTitle: "第1章·入城·章节执行卡",
+          sectionTitle: "第1章·入城·本章计划",
           taskKey: "chapterPlan",
           userGuidance: expect.stringContaining("第一卷目标"),
         }),
@@ -170,9 +162,10 @@ describe("WritingReadinessPanel", () => {
       </QueryClientProvider>,
     );
 
-    const row = (await screen.findByText("章节执行卡")).closest("article");
-    expect(row).not.toBeNull();
-    fireEvent.click(await within(row!).findByRole("button", { name: "AI 生成执行卡" }));
+    fireEvent.click(screen.getByText("本章计划（可选）"));
+    const button = screen.getByRole("button", { name: "生成本章计划候选" });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
 
     await waitFor(() =>
       expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledWith(
