@@ -1,12 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, BookOpenText, RefreshCw } from "lucide-react";
+import { ArrowLeft, BookOpenText, Pencil, RefreshCw } from "lucide-react";
+import { useState } from "react";
 import { materialHref, parseMaterialTarget, summaryManuscriptHref } from "../lib/knowledge-navigation";
 import { sourceReturnTo } from "../lib/manuscript-source";
 import { errorMessage, getCurrentProject, getSummaryMaterial, getWritingCard } from "../lib/tauri-client";
 import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import "./material-detail-view.css";
+import "./library-workspace.css";
+import { automaticSummary, MaterialEditor, SummaryActions } from "./material-controls";
 
 export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<typeof parseMaterialTarget>> }) {
+  const [editing, setEditing] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject, staleTime: 30_000 });
   const valid = Boolean(target.kind && target.id && target.projectId && project.data?.projectId === target.projectId);
   const summary = useQuery({
@@ -28,12 +33,12 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
   const sourceHref = currentSummary ? summaryManuscriptHref(currentSummary, selfHref) : null;
   const unavailable = !project.isPending && !project.isError && !valid;
 
-  return <section className="materials-view material-detail-view">
-    <div className="workspace-heading"><p className="eyebrow">知识资料</p><h1>{target.kind === "SUMMARY" ? "当前摘要" : "当前写作卡片"}</h1>
+  return <section className="materials-view material-detail-view library-workspace">
+    <div className="workspace-heading"><h1>{target.kind === "SUMMARY" ? "当前摘要" : "当前写作卡片"}</h1>
       <div className="material-detail-actions">
         {returnTo ? <a className="secondary-action" href={returnTo}><ArrowLeft size={15} />返回来源</a> : null}
         <a className="secondary-action" href="/knowledge/materials"><BookOpenText size={15} />资料管理</a>
-        {valid ? <button className="secondary-action" type="button" disabled={result.isFetching} onClick={() => void result.refetch()}><RefreshCw size={15} />刷新当前内容</button> : null}
+        {valid ? <button className="secondary-action" type="button" disabled={editing || actionBusy || result.isFetching} onClick={() => void result.refetch()}><RefreshCw size={15} />刷新当前内容</button> : null}
       </div>
     </div>
     <KnowledgeSectionNav />
@@ -44,15 +49,22 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
     </div> : null}
     {item && !result.isError ? <div className="material-detail-body">
       <h2>{currentCard?.title ?? (currentSummary?.generationMode === "EXTRACTIVE_AUTO" ? "章节记忆" : currentSummary?.generationMode === "EXTRACTIVE_AUTO_SETTINGS" ? "设定概览" : currentSummary?.generationMode === "EXTRACTIVE_AUTO_PROJECT" ? "项目概览" : "参考摘要")}</h2>
-      <dl className="material-detail-metadata">
+      {editing && project.data && target.kind ? <MaterialEditor key={item.id} kind={target.kind} projectId={project.data.projectId}
+        summary={currentSummary ?? undefined} card={currentCard ?? undefined} onCancel={() => setEditing(false)}
+        onSaved={(id) => { if (id !== item.id) window.location.assign(materialHref("SUMMARY", id, target.projectId, returnTo ?? undefined)); else setEditing(false); }} /> : <>
+      <details className="library-advanced"><summary>来源与高级信息</summary><dl className="material-detail-metadata">
         <div><dt>对象</dt><dd><code>{item.id}</code></dd></div>
         <div><dt>来源标识</dt><dd><code>{item.sourceVersion ?? "无"}</code></dd></div>
         <div><dt>更新于</dt><dd>{item.updatedAt}</dd></div>
         {currentSummary ? <div><dt>状态</dt><dd>{currentSummary.lifecycleStatus === "ACTIVE" ? "有效" : currentSummary.lifecycleStatus === "CANDIDATE" ? "AI 候选" : "已失效"}</dd></div> : null}
         {currentCard ? <div><dt>状态 / 范围</dt><dd>{currentCard.enabled ? "已启用" : "已停用"} · {currentCard.scope}</dd></div> : null}
-      </dl>
+      </dl></details>
       <p className="material-detail-content">{item.content}</p>
+      <div className="library-actions"><button type="button" className="secondary-action" disabled={actionBusy} onClick={() => setEditing(true)}><Pencil size={15} />
+        {currentSummary && automaticSummary(currentSummary) ? "编辑参考副本" : "编辑资料"}</button></div>
+      {currentSummary ? <SummaryActions item={currentSummary} onBusyChange={setActionBusy} /> : null}
       {sourceHref ? <a className="secondary-action" href={sourceHref}><BookOpenText size={15} />查看摘要来源正文</a> : null}
+      </>}
     </div> : null}
   </section>;
 }

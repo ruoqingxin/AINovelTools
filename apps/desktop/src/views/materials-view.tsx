@@ -1,130 +1,74 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Save } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Pencil, Plus, Search } from "lucide-react";
 import { useState } from "react";
-import {
-  errorMessage,
-  enqueueProjectSettingSummaryRefresh,
-  listJobs,
-  listSummaryMaterials,
-  listWritingCards,
-  rebuildSummaryMaterial,
-  setSummaryMaterialLifecycle,
-  setWritingCardEnabled,
-  upsertSummaryMaterial,
-  upsertWritingCard,
-  type SummaryKind,
-  type WritingCard,
-} from "../lib/tauri-client";
+import { errorMessage, getCurrentProject, listSummaryMaterials, listWritingCards } from "../lib/tauri-client";
 import { KnowledgeSectionNav } from "./knowledge-section-nav";
-import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
-import { parseMaterialTarget } from "../lib/knowledge-navigation";
+import { parseMaterialTarget, summaryManuscriptHref } from "../lib/knowledge-navigation";
 import { MaterialDetailView } from "./material-detail-view";
-
-const emptyCard: WritingCard = { id: "", projectId: "", cardType: "STYLE_RULE", title: "", content: "", sourceVersion: null, scope: "PROJECT", enabled: true, sortOrder: 0, createdAt: "", updatedAt: "" };
-
-const summaryKindLabels: Record<SummaryKind, string> = {
-  CHAPTER: "章节",
-  CHARACTER: "人物",
-  SETTING: "设定",
-};
-
-function summaryLabel(item: { kind: SummaryKind; generationMode: string }) {
-  if (item.generationMode === "EXTRACTIVE_AUTO") return "章节记忆";
-  if (item.generationMode === "EXTRACTIVE_AUTO_PROJECT") return "项目概览";
-  if (item.generationMode === "EXTRACTIVE_AUTO_SETTINGS") return "设定概览";
-  return `参考摘要 · ${summaryKindLabels[item.kind]}`;
-}
-
-function cardSignature(card: WritingCard) {
-  return JSON.stringify({
-    cardType: card.cardType,
-    title: card.title,
-    content: card.content,
-    scope: card.scope,
-  });
-}
+import { automaticSummary, MaterialEditor, SummaryActions, summaryLabel, summaryStatus } from "./material-controls";
+import "./library-workspace.css";
 
 export function MaterialsView() {
   const target = parseMaterialTarget(window.location.search);
   return target ? <MaterialDetailView target={target} /> : <MaterialsManager />;
 }
-
 function MaterialsManager() {
-  const client = useQueryClient();
   const summaries = useQuery({ queryKey: ["summary-materials"], queryFn: listSummaryMaterials });
-  const jobs = useQuery({
-    queryKey: ["jobs", 100],
-    queryFn: listJobs,
-    refetchInterval: (query) => query.state.data?.some((job) => job.jobType === "REFRESH_PROJECT_SETTING_SUMMARY" && (job.status === "QUEUED" || job.status === "RUNNING")) ? 1_000 : false,
-  });
   const cards = useQuery({ queryKey: ["writing-cards"], queryFn: () => listWritingCards() });
-  const [summary, setSummary] = useState({ kind: "CHAPTER" as SummaryKind, content: "", sourceVersion: "" });
-  const [card, setCard] = useState<WritingCard>(emptyCard);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const summaryDirty = summary.kind !== "CHAPTER"
-    || Boolean(summary.sourceVersion.trim())
-    || Boolean(summary.content.trim());
-  const cardDirty = cardSignature(card) !== cardSignature(emptyCard);
-  const autoSettingSummary = (summaries.data ?? []).find((item) => item.generationMode === "EXTRACTIVE_AUTO_SETTINGS");
-  const settingRefreshJob = (jobs.data ?? []).find((job) => job.jobType === "REFRESH_PROJECT_SETTING_SUMMARY" && (job.status === "QUEUED" || job.status === "RUNNING"));
-  const settingSummaryStatus = settingRefreshJob?.status === "RUNNING"
-    ? "设定记忆更新中"
-    : settingRefreshJob ? "设定记忆等待更新"
-    : autoSettingSummary?.lifecycleStatus === "ACTIVE" ? "设定记忆最新" : "设定记忆已过期";
-  useUnsavedChangesGuard(summaryDirty || cardDirty, summaryDirty ? "当前摘要有未保存内容。" : "当前写作卡片有未保存内容。");
-
-  async function refresh(key: string[]) {
-    await client.invalidateQueries({ queryKey: key });
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
+  const [kind, setKind] = useState<"SUMMARY" | "CARD">("SUMMARY");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [editorState, setEditorState] = useState({ dirty: false, busy: false });
+  const [actionBusy, setActionBusy] = useState(false);
+  const summary = kind === "SUMMARY" ? summaries.data?.find((item) => item.id === selectedId) : undefined;
+  const card = kind === "CARD" ? cards.data?.find((item) => item.id === selectedId) : undefined;
+  const query = kind === "SUMMARY" ? summaries : cards;
+  const items = (kind === "SUMMARY" ? (summaries.data ?? []).map((item) => ({ id: item.id, title: summaryLabel(item), content: item.content, state: summaryStatus(item) }))
+    : (cards.data ?? []).map((item) => ({ id: item.id, title: item.title, content: item.content, state: `${item.enabled ? "已启用" : "已停用"} · ${item.cardType === "STYLE_RULE" ? "风格规则" : "写作技巧"}` })))
+    .filter((item) => `${item.title} ${item.content}`.toLowerCase().includes(search.trim().toLowerCase()));
+  function leaveEditor() { return !actionBusy && !editorState.busy && (!editing || !editorState.dirty || window.confirm("放弃尚未保存的资料修改吗？")); }
+  function choose(id: string | null) {
+    if (!leaveEditor()) return;
+    setSelectedId(id); setCreating(false); setEditing(false); setEditorState({ dirty: false, busy: false });
   }
-
-  async function runItemAction(action: () => Promise<unknown>, key: string[], success: string) {
-    try {
-      await action();
-      await refresh(key);
-      setNotice(success);
-      setError(null);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
-
-  async function saveSummary() {
-    try {
-      await upsertSummaryMaterial({ id: crypto.randomUUID(), projectId: "", kind: summary.kind, precision: "L0", sourceId: null, sourceVersion: summary.sourceVersion || null, content: summary.content, generationMode: "MANUAL_REFERENCE", lifecycleStatus: "ACTIVE", createdAt: "", updatedAt: "" });
-      setSummary((value) => ({ ...value, content: "" })); setNotice("摘要已保存"); setError(null); await client.invalidateQueries({ queryKey: ["summary-materials"] });
-    } catch (cause) { setError(errorMessage(cause)); }
-  }
-  async function saveCard() {
-    try {
-      await upsertWritingCard({ ...card, id: card.id || crypto.randomUUID(), projectId: card.projectId || "", createdAt: "", updatedAt: "" });
-      setCard(emptyCard); setNotice("卡片已保存"); setError(null); await client.invalidateQueries({ queryKey: ["writing-cards"] });
-    } catch (cause) { setError(errorMessage(cause)); }
-  }
-  async function refreshSettingMemory() {
-    try {
-      await enqueueProjectSettingSummaryRefresh();
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["summary-materials"] }),
-        client.invalidateQueries({ queryKey: ["jobs"] }),
-      ]);
-      setNotice("设定记忆已加入后台队列");
-      setError(null);
-    } catch (cause) { setError(errorMessage(cause)); }
-  }
-  return <section className="materials-view">
-    <div className="workspace-heading"><p className="eyebrow">知识资料</p><h1>摘要与写作卡片</h1><p className="workspace-lede">维护章节记忆、设定概览和参考摘要；摘要用于导航，正式设定与知识记录才是写作依据。</p><div className="workspace-heading-actions"><span>{autoSettingSummary || settingRefreshJob ? settingSummaryStatus : "尚未生成设定记忆"}</span><button type="button" className="secondary-action" onClick={() => void refreshSettingMemory()} disabled={Boolean(settingRefreshJob)}><RefreshCw size={15} />更新设定记忆</button></div></div>
-    <KnowledgeSectionNav />
-    {notice ? <p className="project-notice" role="status">{notice}</p> : null}{error ? <p className="project-error" role="alert">{error}</p> : null}
-    <div className="materials-layout">
-      <div className="materials-panel"><div className="section-heading"><h2>新建参考摘要</h2><span>{summaries.data?.length ?? 0} 条</span></div>
-        <div className="entity-form-grid"><label>关联内容<select value={summary.kind} onChange={(e) => setSummary({ ...summary, kind: e.target.value as SummaryKind })}><option value="CHAPTER">章节</option><option value="CHARACTER">人物</option><option value="SETTING">设定</option></select></label><label className="entity-form-wide">来源标识<input value={summary.sourceVersion} onChange={(e) => setSummary({ ...summary, sourceVersion: e.target.value })} placeholder="例如：chapter:2" /></label><label className="entity-form-wide">摘要内容<textarea rows={6} value={summary.content} onChange={(e) => setSummary({ ...summary, content: e.target.value })} /></label></div><button type="button" className="primary-action" onClick={() => void saveSummary()} disabled={!summary.content.trim()}><Save size={15} />保存摘要</button>
-        <div className="materials-list">{summaries.data?.map((item) => <div className="material-row" key={item.id}><strong>{summaryLabel(item)}</strong><span>{item.content}</span><small>{item.sourceVersion ?? "暂无来源"} · <span className={item.lifecycleStatus === "CANDIDATE" ? "material-candidate" : undefined}>{item.lifecycleStatus === "ACTIVE" ? "有效" : item.lifecycleStatus === "CANDIDATE" ? "AI 候选" : "已失效"}</span></small><div className="material-actions"><button type="button" className="secondary-action" onClick={() => void runItemAction(() => setSummaryMaterialLifecycle(item.id, item.lifecycleStatus === "ACTIVE" ? "STALE" : "ACTIVE"), ["summary-materials"], item.lifecycleStatus === "ACTIVE" ? "摘要已标记失效" : "摘要已恢复有效")}>{item.lifecycleStatus === "ACTIVE" ? "标记失效" : "恢复摘要"}</button><button type="button" className="secondary-action" onClick={() => void runItemAction(() => setSummaryMaterialLifecycle(item.id, item.lifecycleStatus === "CANDIDATE" ? "ACTIVE" : "CANDIDATE"), ["summary-materials"], item.lifecycleStatus === "CANDIDATE" ? "摘要已设为有效" : "摘要已标记候选")}>{item.lifecycleStatus === "CANDIDATE" ? "设为有效" : "标记候选"}</button><button type="button" className="secondary-action" onClick={() => void runItemAction(() => rebuildSummaryMaterial(item.id), ["summary-materials"], "摘要已恢复为有效")}>恢复为有效</button></div></div>)}</div>
-      </div>
-      <div className="materials-panel"><div className="section-heading"><h2>写作卡片</h2><span>{cards.data?.length ?? 0} 条</span></div>
-        <div className="entity-form-grid"><label>卡片类型<select value={card.cardType} onChange={(e) => setCard({ ...card, cardType: e.target.value as WritingCard["cardType"] })}><option value="STYLE_RULE">风格规则</option><option value="TECHNIQUE">写作技巧</option></select></label><label>作用范围<input value={card.scope} onChange={(e) => setCard({ ...card, scope: e.target.value })} /></label><label className="entity-form-wide">标题<input value={card.title} onChange={(e) => setCard({ ...card, title: e.target.value })} /></label><label className="entity-form-wide">内容<textarea rows={6} value={card.content} onChange={(e) => setCard({ ...card, content: e.target.value })} /></label></div><button type="button" className="primary-action" onClick={() => void saveCard()} disabled={!card.title.trim() || !card.content.trim()}><Save size={15} />保存卡片</button>
-        <div className="materials-list">{cards.data?.map((item) => <div className="material-row" key={item.id}><strong>{item.cardType === "STYLE_RULE" ? "风格规则" : "写作技巧"} · {item.title}</strong><span>{item.content}</span><small>{item.enabled ? "已启用" : "已停用"} · {item.scope}</small><label className="material-order">排序<input type="number" value={item.sortOrder} onChange={(e) => { const next = Number(e.target.value); if (Number.isFinite(next)) void runItemAction(() => upsertWritingCard({ ...item, sortOrder: next }), ["writing-cards"], "卡片排序已更新"); }} /></label><button type="button" className="secondary-action" onClick={() => void runItemAction(() => setWritingCardEnabled(item.id, !item.enabled), ["writing-cards"], item.enabled ? "卡片已停用" : "卡片已启用")}>{item.enabled ? "停用" : "启用"}此卡片</button></div>)}</div>
-      </div>
+  return <section className="materials-view library-workspace">
+    <div className="workspace-heading"><h1>参考资料</h1></div><KnowledgeSectionNav />
+    <div className="library-toolbar">
+      <div className="creation-mode" role="group" aria-label="参考资料类型">{(["SUMMARY", "CARD"] as const).map((value) =>
+        <button type="button" key={value} disabled={editorState.busy || actionBusy} aria-pressed={kind === value} onClick={() => {
+          if (value === kind || !leaveEditor()) return;
+          setKind(value); setSelectedId(null); setEditing(false); setCreating(false); setSearch(""); setEditorState({ dirty: false, busy: false });
+        }}>{value === "SUMMARY" ? "摘要与记忆" : "写作卡片"}</button>)}</div>
+      <label className="search-field"><Search size={15} /><input aria-label="搜索参考资料" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索资料" /></label>
+      <button type="button" className="primary-action" disabled={!project.data || editorState.busy || actionBusy} onClick={() => {
+        if (!leaveEditor()) return;
+        setSelectedId(null); setCreating(true); setEditing(true);
+      }}><Plus size={15} />{kind === "SUMMARY" ? "新建参考摘要" : "新建卡片"}</button>
     </div>
+    {project.isError ? <p role="alert" className="project-error">{errorMessage(project.error)}<button type="button" onClick={() => void project.refetch()}>重试</button></p> : null}
+    <div className="library-layout"><aside className="library-list" aria-label="参考资料列表">
+      {query.isPending ? <p role="status">正在读取资料…</p> : null}
+      {query.isError ? <p role="alert" className="project-error">{errorMessage(query.error)}<button type="button" onClick={() => void query.refetch()}>重试</button></p> : null}
+      {query.isSuccess && !items.length ? <p className="plan-empty">暂无匹配资料</p> : null}
+      {items.map((item) => <button key={item.id} type="button" className="library-item" disabled={editorState.busy || actionBusy} data-selected={selectedId === item.id} onClick={() => choose(item.id)}>
+        <strong>{item.title}</strong><span>{item.content.slice(0, 90)}</span><small>{item.state}</small></button>)}
+    </aside><div className="library-detail">
+      {editing && project.data ? <><h2>{creating ? kind === "SUMMARY" ? "新建参考摘要" : "新建卡片" : summary && automaticSummary(summary) ? "另存为参考摘要" : "编辑资料"}</h2>
+        <MaterialEditor key={`${kind}:${selectedId ?? "new"}`} kind={kind} projectId={project.data.projectId} summary={summary} card={card}
+          onStateChange={setEditorState}
+          onSaved={(id) => { setSelectedId(id); setCreating(false); setEditing(false); setEditorState({ dirty: false, busy: false }); }} onCancel={() => { setEditing(false); setCreating(false); setEditorState({ dirty: false, busy: false }); }} />
+      </> : summary || card ? <>
+        <h2>{card?.title ?? summaryLabel(summary!)}</h2><p className="library-meta">{summary ? summaryStatus(summary) : card?.enabled ? "已启用" : "已停用"}</p>
+        <p className="library-content">{summary?.content ?? card?.content}</p>
+        <button type="button" className="secondary-action" disabled={actionBusy} onClick={() => setEditing(true)}><Pencil size={15} />{summary && automaticSummary(summary) ? "编辑参考副本" : "编辑资料"}</button>
+        {summary ? <SummaryActions key={summary.id} item={summary} onBusyChange={setActionBusy} /> : null}
+        {summary && summaryManuscriptHref(summary, "/knowledge/materials") ? <div className="library-actions"><a className="secondary-action" href={summaryManuscriptHref(summary, "/knowledge/materials")!}>查看来源正文</a></div> : null}
+        <details className="library-advanced"><summary>来源与高级信息</summary><p>来源 <code>{summary?.sourceVersion ?? card?.sourceVersion ?? "未指定"}</code></p>
+          {card ? <p>作用范围 <code>{card.scope}</code> · 排序 {card.sortOrder}</p> : null}</details>
+      </> : <div className="library-empty"><p>选择一条参考资料</p></div>}
+    </div></div>
   </section>;
 }

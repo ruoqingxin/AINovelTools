@@ -77,11 +77,11 @@ describe("StoryBibleView", () => {
     mocks.listEntityCards.mockResolvedValue([card, { ...card, entity: { ...card.entity, id: "other-entity" } }]);
     mocks.listEntityRevisions.mockResolvedValue([{ ...card.revision, id: "obsolete", name: "错误旧名字" }]);
     renderView();
-    expect(await screen.findByDisplayValue("沈砚")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "沈砚" })).toBeVisible();
     expect(screen.getByRole("link", { name: "返回来源" })).toHaveAttribute("href", "/writing?assistant=plan#chapter-1");
     expect(mocks.listEntityRevisions).toHaveBeenCalledWith("entity-1");
     expect(mocks.listEntityRevisions).not.toHaveBeenCalledWith("other-entity");
-    expect(screen.getByDisplayValue("沈砚")).not.toHaveValue("错误旧名字");
+    expect(screen.queryByLabelText("名称")).not.toBeInTheDocument();
   });
 
   it.each(["?entity=missing&targetProject=project-1", "?entity=entity-1&targetProject=wrong", "?entity="])(
@@ -99,6 +99,7 @@ describe("StoryBibleView", () => {
     window.history.replaceState(null, "", "/knowledge?entity=entity-1");
     mocks.listEntityCards.mockResolvedValue([card]);
     const client = renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "编辑实体" }));
     const input = await screen.findByDisplayValue("沈砚");
     fireEvent.change(input, { target: { value: "本地修改" } });
     const next = { entity: { ...card.entity, version: 2, currentRevisionId: "revision-2" },
@@ -121,6 +122,7 @@ describe("StoryBibleView", () => {
     let resolve!: (entity: EntityCard["entity"]) => void;
     mocks.upsertEntity.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
     renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "编辑实体" }));
     const input = await screen.findByDisplayValue("沈砚");
     fireEvent.change(input, { target: { value: "提交快照" } });
     fireEvent.click(screen.getByRole("button", { name: "保存为新修订" }));
@@ -145,7 +147,8 @@ describe("StoryBibleView", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByRole("heading", { name: "设定资料" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "人物与世界" })).toBeVisible();
+    expect(screen.queryByLabelText("名称")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "章节审核" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "搜索实体" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "实体类型筛选" })).toBeVisible();
@@ -159,6 +162,8 @@ describe("StoryBibleView", () => {
       </QueryClientProvider>,
     );
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "新建实体" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "新建实体" }));
     fireEvent.change(screen.getAllByPlaceholderText("例如：林澈")[0], { target: { value: "林澈" } });
     const saveButton = screen.getAllByRole("button", { name: "创建实体" }).find((button) => !button.hasAttribute("disabled"));
     fireEvent.click(saveButton!);
@@ -175,7 +180,8 @@ describe("StoryBibleView", () => {
     ]);
     mocks.listEntityCards.mockResolvedValue([card]);
     renderView();
-    fireEvent.change(await screen.findByLabelText("名称"), { target: { value: "导入主题" } });
+    fireEvent.click(screen.getByRole("button", { name: "从文件导入" }));
+    fireEvent.change(await screen.findByLabelText("提炼主题"), { target: { value: "导入主题" } });
     fireEvent.change(screen.getByLabelText("简要概述"), { target: { value: "力量体系" } });
     fireEvent.change(screen.getByLabelText("适用范围"), { target: { value: "本书人物" } });
     const file = new File(["资料原文"], "资料.md", { type: "text/markdown" });
@@ -202,7 +208,7 @@ describe("StoryBibleView", () => {
     expect(screen.getByDisplayValue("作者修改甲")).toBeDisabled();
     expect(document.querySelector('input[type="file"]')).toBeDisabled();
     expect(screen.getByRole("button", { name: /沈砚/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "创建实体" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "新建实体" })).toBeDisabled();
     await act(async () => { resolve([card.entity, { ...card.entity, id: "entity-2" }]); });
     expect(await screen.findByText("已从“资料.md”导入 2 条人物信息")).toBeVisible();
     expect(screen.queryByDisplayValue("作者修改甲")).not.toBeInTheDocument();
@@ -234,5 +240,19 @@ describe("StoryBibleView", () => {
     fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
     expect(screen.getByText("资料.md")).toBeVisible();
     expect(screen.getByDisplayValue("候选乙")).toBeVisible();
+  });
+  it("uses correct alias/tag fields and restores the saved detail after cancellation", async () => {
+    mocks.listEntityCards.mockResolvedValue([card]);
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: /沈砚/ }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑实体" }));
+    expect(screen.getByLabelText("别名")).toHaveValue("小沈");
+    expect(screen.queryByLabelText("简要概述")).not.toBeVisible();
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "未保存姓名" } });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(await screen.findByRole("heading", { name: "沈砚" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "未保存姓名" })).not.toBeInTheDocument();
+    expect(mocks.upsertEntity).not.toHaveBeenCalled();
   });
 });

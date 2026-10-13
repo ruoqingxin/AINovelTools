@@ -1,7 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookMarked, Link2, Milestone, Pencil, Plus, Save, Sparkles, UserRoundCheck } from "lucide-react";
-import { useMemo, useState } from "react";
-import type { KeyboardEvent } from "react";
+import { Link2, Milestone, Pencil, Plus, Save, Search, Sparkles, UserRoundCheck } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import {
   createBelief,
   createEvent,
@@ -24,6 +23,8 @@ import {
 } from "../lib/tauri-client";
 import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { manuscriptSourceHref } from "../lib/manuscript-source";
+import "./library-workspace.css";
 
 type RecordTab = "relations" | "events" | "beliefs" | "foreshadowings";
 
@@ -38,6 +39,10 @@ export function KnowledgeRecordsView() {
   const client = useQueryClient();
   const [tab, setTab] = useState<RecordTab>("relations");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editVersion, setEditVersion] = useState(0);
+  const [search, setSearch] = useState("");
+  const inFlight = useRef(false);
   const [lifecycleFilter, setLifecycleFilter] = useState<"ALL" | KnowledgeLifecycleStatus>("ALL");
   const [lifecycleStatus, setLifecycleStatus] = useState<KnowledgeLifecycleStatus>("ACTIVE");
   const [evidenceIds, setEvidenceIds] = useState<string[]>([]);
@@ -83,14 +88,14 @@ export function KnowledgeRecordsView() {
     if (tab === "events") return (events.data ?? []).map((item) => ({ id: item.id, title: item.name, detail: item.occurredAt, status: item.lifecycleStatus, evidence: item.evidenceAnchorIds.length, version: item.eventVersion }));
     if (tab === "beliefs") return (beliefs.data ?? []).map((item) => ({ id: item.id, title: item.proposition, detail: `持有者 ${factLabels.get(item.holderKnowledgeId) ?? item.holderKnowledgeId}`, status: item.lifecycleStatus, evidence: item.evidenceAnchorIds.length, version: item.beliefVersion }));
     return (foreshadowings.data ?? []).map((item) => ({ id: item.id, title: item.title, detail: item.targetChapterId ? `目标章节 ${chapterList.find((chapter) => chapter.id === item.targetChapterId)?.title ?? item.targetChapterId}` : "尚未指定目标章节", status: `${item.lifecycleStatus} · ${item.status}`, evidence: item.evidenceAnchorIds.length, version: item.foreshadowingVersion }));
-  }, [beliefs.data, chapterList, events.data, factLabels, foreshadowings.data, relations.data, tab]).filter((item) => lifecycleFilter === "ALL" || item.status === lifecycleFilter || item.status.startsWith(`${lifecycleFilter} ·`));
-  const recordDirty = Boolean(evidenceIds.length)
-    || lifecycleStatus !== "ACTIVE"
-    || Boolean(relation.fromKnowledgeId || relation.toKnowledgeId || relation.relationType.trim())
-    || Boolean(event.name.trim() || event.occurredAt || event.participantFactIds.length)
-    || Boolean(belief.holderKnowledgeId || belief.proposition.trim())
-    || Boolean(foreshadowing.title.trim() || foreshadowing.targetChapterId || foreshadowing.status !== "PLANTED");
-  useUnsavedChangesGuard(recordDirty, "当前知识记录有未保存内容。");
+  }, [beliefs.data, chapterList, events.data, factLabels, foreshadowings.data, relations.data, tab]);
+  const visibleRecords = content.filter((item) => (lifecycleFilter === "ALL" || item.status === lifecycleFilter || item.status.startsWith(`${lifecycleFilter} ·`))
+    && `${item.title} ${item.detail}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const draftSignature = JSON.stringify({ fields: { relations: relation, events: event, beliefs: belief, foreshadowings: foreshadowing }[tab], evidenceIds, lifecycleStatus });
+  const [baseline, setBaseline] = useState(draftSignature);
+  const recordDirty = editing && draftSignature !== baseline;
+  useUnsavedChangesGuard(recordDirty || busy, "当前剧情记录有未保存内容或正在保存。");
+  function mayLeave() { return !inFlight.current && (!recordDirty || window.confirm("当前剧情记录有未保存内容，确定放弃吗？")); }
 
   function toggle(values: string[], id: string, update: (next: string[]) => void) {
     update(values.includes(id) ? values.filter((item) => item !== id) : [...values, id]);
@@ -104,7 +109,7 @@ export function KnowledgeRecordsView() {
     return Boolean(foreshadowing.title.trim() && foreshadowing.status.trim());
   }
 
-  function startNew() {
+  function reset(nextTab = tab) {
     setSelectedId(null);
     setLifecycleStatus("ACTIVE");
     setEvidenceIds([]);
@@ -114,57 +119,67 @@ export function KnowledgeRecordsView() {
     setForeshadowing({ title: "", targetChapterId: "", status: "PLANTED" });
     setError(null);
     setNotice(null);
+    setEditVersion(0);
+    setBaseline(JSON.stringify({ fields: {
+      relations: { fromKnowledgeId: "", toKnowledgeId: "", relationType: "" },
+      events: { name: "", occurredAt: "", participantFactIds: [] },
+      beliefs: { holderKnowledgeId: "", proposition: "" },
+      foreshadowings: { title: "", targetChapterId: "", status: "PLANTED" },
+    }[nextTab], evidenceIds: [], lifecycleStatus: "ACTIVE" }));
+  }
+  function startNew() {
+    if (!mayLeave()) return;
+    reset(); setEditing(true);
   }
 
   function switchTab(nextTab: RecordTab) {
     if (nextTab === tab) return;
-    if (recordDirty && !window.confirm("当前知识记录有未保存内容，确定切换类型吗？")) return;
+    if (!mayLeave()) return;
     setTab(nextTab);
-    startNew();
-  }
-
-  function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
-    if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = tabs.length - 1;
-    if (nextIndex === null) return;
-    event.preventDefault();
-    const next = tabs[nextIndex]!;
-    switchTab(next.id);
-    requestAnimationFrame(() => document.getElementById(`knowledge-record-tab-${next.id}`)?.focus());
+    reset(nextTab); setEditing(false); setSearch("");
   }
 
   function startEdit(id: string) {
+    if (!mayLeave()) return;
     const relationRecord = (relations.data ?? []).find((item) => item.id === id);
     const eventRecord = (events.data ?? []).find((item) => item.id === id);
     const beliefRecord = (beliefs.data ?? []).find((item) => item.id === id);
     const foreshadowingRecord = (foreshadowings.data ?? []).find((item) => item.id === id);
     if (tab === "relations" && relationRecord) {
-      setRelation({ fromKnowledgeId: relationRecord.fromKnowledgeId, toKnowledgeId: relationRecord.toKnowledgeId, relationType: relationRecord.relationType });
+      const fields = { fromKnowledgeId: relationRecord.fromKnowledgeId, toKnowledgeId: relationRecord.toKnowledgeId, relationType: relationRecord.relationType };
+      setRelation(fields);
+      setEditVersion(relationRecord.relationVersion);
+      setBaseline(JSON.stringify({ fields, evidenceIds: relationRecord.evidenceAnchorIds, lifecycleStatus: relationRecord.lifecycleStatus }));
       setEvidenceIds(relationRecord.evidenceAnchorIds);
       setLifecycleStatus(relationRecord.lifecycleStatus);
     } else if (tab === "events" && eventRecord) {
-      setEvent({ name: eventRecord.name, occurredAt: eventRecord.occurredAt, participantFactIds: eventRecord.participantFactIds });
+      const fields = { name: eventRecord.name, occurredAt: eventRecord.occurredAt, participantFactIds: eventRecord.participantFactIds };
+      setEvent(fields); setEditVersion(eventRecord.eventVersion);
+      setBaseline(JSON.stringify({ fields, evidenceIds: eventRecord.evidenceAnchorIds, lifecycleStatus: eventRecord.lifecycleStatus }));
       setEvidenceIds(eventRecord.evidenceAnchorIds);
       setLifecycleStatus(eventRecord.lifecycleStatus);
     } else if (tab === "beliefs" && beliefRecord) {
-      setBelief({ holderKnowledgeId: beliefRecord.holderKnowledgeId, proposition: beliefRecord.proposition });
+      const fields = { holderKnowledgeId: beliefRecord.holderKnowledgeId, proposition: beliefRecord.proposition };
+      setBelief(fields); setEditVersion(beliefRecord.beliefVersion);
+      setBaseline(JSON.stringify({ fields, evidenceIds: beliefRecord.evidenceAnchorIds, lifecycleStatus: beliefRecord.lifecycleStatus }));
       setEvidenceIds(beliefRecord.evidenceAnchorIds);
       setLifecycleStatus(beliefRecord.lifecycleStatus);
     } else if (tab === "foreshadowings" && foreshadowingRecord) {
-      setForeshadowing({ title: foreshadowingRecord.title, targetChapterId: foreshadowingRecord.targetChapterId ?? "", status: foreshadowingRecord.status });
+      const fields = { title: foreshadowingRecord.title, targetChapterId: foreshadowingRecord.targetChapterId ?? "", status: foreshadowingRecord.status };
+      setForeshadowing(fields); setEditVersion(foreshadowingRecord.foreshadowingVersion);
+      setBaseline(JSON.stringify({ fields, evidenceIds: foreshadowingRecord.evidenceAnchorIds, lifecycleStatus: foreshadowingRecord.lifecycleStatus }));
       setEvidenceIds(foreshadowingRecord.evidenceAnchorIds);
       setLifecycleStatus(foreshadowingRecord.lifecycleStatus);
     }
     setSelectedId(id);
     setError(null);
     setNotice(null);
+    setEditing(true);
   }
 
   async function save() {
-    if (!project.data || !canSave()) return;
+    if (!project.data || !canSave() || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -173,64 +188,89 @@ export function KnowledgeRecordsView() {
       projectId: project.data.projectId,
       evidenceAnchorIds: evidenceIds,
       lifecycleStatus,
-      createdBy: "desktop-user",
-      createdAt: "",
+      createdBy: activeRecord?.createdBy ?? "desktop-user",
+      createdAt: activeRecord?.createdAt ?? "",
       updatedAt: "",
     };
+    const activeVersion = editVersion;
     try {
+      if ((await getCurrentProject())?.projectId !== project.data.projectId) throw new Error("作品已切换，未保存记录。");
       if (tab === "relations") {
         const value = { ...common, relationVersion: activeVersion + 1, fromKnowledgeId: relation.fromKnowledgeId, toKnowledgeId: relation.toKnowledgeId, relationType: relation.relationType.trim() };
-        if (activeRecord) await updateRelation(value, activeVersion); else await createRelation(value);
+        if (selectedId) await updateRelation(value, activeVersion); else await createRelation(value);
         setRelation({ fromKnowledgeId: "", toKnowledgeId: "", relationType: "" });
       } else if (tab === "events") {
         const value = { ...common, eventVersion: activeVersion + 1, name: event.name.trim(), occurredAt: event.occurredAt, participantFactIds: event.participantFactIds };
-        if (activeRecord) await updateEvent(value, activeVersion); else await createEvent(value);
+        if (selectedId) await updateEvent(value, activeVersion); else await createEvent(value);
         setEvent({ name: "", occurredAt: "", participantFactIds: [] });
       } else if (tab === "beliefs") {
         const value = { ...common, beliefVersion: activeVersion + 1, holderKnowledgeId: belief.holderKnowledgeId, proposition: belief.proposition.trim() };
-        if (activeRecord) await updateBelief(value, activeVersion); else await createBelief(value);
+        if (selectedId) await updateBelief(value, activeVersion); else await createBelief(value);
         setBelief({ holderKnowledgeId: "", proposition: "" });
       } else {
         const value = { ...common, foreshadowingVersion: activeVersion + 1, title: foreshadowing.title.trim(), targetChapterId: foreshadowing.targetChapterId || null, status: foreshadowing.status.trim() };
-        if (activeRecord) await updateForeshadowing(value, activeVersion); else await createForeshadowing(value);
+        if (selectedId) await updateForeshadowing(value, activeVersion); else await createForeshadowing(value);
         setForeshadowing({ title: "", targetChapterId: "", status: "PLANTED" });
       }
       setEvidenceIds([]);
       setSelectedId(null);
+      setEditing(false);
       await client.invalidateQueries({ queryKey: [tab] });
       setNotice(activeRecord ? `已追加为 v${activeVersion + 1}` : `已创建${tabs.find((item) => item.id === tab)?.label}记录`);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
       setBusy(false);
+      inFlight.current = false;
     }
   }
 
   return (
-    <section className="story-bible-view knowledge-records-view">
+    <section className="story-bible-view knowledge-records-view library-workspace">
       <div className="workspace-heading">
-        <p className="eyebrow">知识资料</p>
-        <h1>知识记录</h1>
-        <p className="workspace-lede">创建并查看关系、事件、信念和伏笔；每条记录保留独立版本与证据锚点。</p>
+        <h1>剧情记录</h1>
       </div>
       <KnowledgeSectionNav />
-      <div className="knowledge-record-tabs" role="tablist" aria-label="知识记录类型">
-        {tabs.map(({ id, label, icon: Icon }, index) => <button key={id} id={`knowledge-record-tab-${id}`} type="button" role="tab" aria-selected={tab === id} tabIndex={tab === id ? 0 : -1} data-active={tab === id || undefined} onClick={() => switchTab(id)} onKeyDown={(event) => moveTabFocus(event, index)}><Icon size={15} />{label}</button>)}
-      </div>
-      <div className="story-bible-toolbar knowledge-record-filter">
+      <div className="library-toolbar">
+        <select aria-label="记录类型" value={tab} disabled={busy} onChange={(event) => switchTab(event.target.value as RecordTab)}>{tabs.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}</select>
         <select value={lifecycleFilter} onChange={(event) => setLifecycleFilter(event.target.value as "ALL" | KnowledgeLifecycleStatus)} aria-label="审核状态筛选">
           <option value="ALL">全部审核状态</option>
           <option value="ACTIVE">有效</option>
           <option value="NEEDS_REVIEW">待复核</option>
           <option value="ARCHIVED">已归档</option>
         </select>
+        <label className="search-field"><Search size={15} /><input aria-label="搜索剧情记录" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索记录" /></label>
+        <button type="button" className="primary-action" disabled={busy || !project.data} onClick={startNew}><Plus size={15} />新建记录</button>
       </div>
       {error ? <p className="project-error" role="alert">{error}</p> : null}
       {notice ? <p className="project-notice" role="status">{notice}</p> : null}
 
-      <div className="knowledge-record-workbench">
-        <form className="knowledge-record-form" onSubmit={(form) => { form.preventDefault(); void save(); }}>
-          <div className="section-heading"><h2>{activeRecord ? `编辑${tabs.find((item) => item.id === tab)?.label}记录` : `新建${tabs.find((item) => item.id === tab)?.label}记录`}</h2><span>{activeRecord ? `当前 v${activeVersion}` : `${evidenceIds.length} 条证据`}</span></div>
+      {project.isError ? <p role="alert" className="project-error">{errorMessage(project.error)}</p> : null}
+      <div className="library-layout">
+        <aside className="library-list" aria-label="剧情记录列表">
+          {query.isError ? <p className="project-error" role="alert">无法加载记录：{errorMessage(query.error)}<button type="button" onClick={() => void query.refetch()}>重试</button></p> : null}
+          {query.isPending ? <p className="plan-empty">正在加载记录…</p> : null}
+          {!query.isPending && !visibleRecords.length ? <p className="plan-empty">暂无匹配的{tabs.find((item) => item.id === tab)?.label}记录。</p> : null}
+          {visibleRecords.map((item) => <button type="button" className="library-item" data-selected={selectedId === item.id} disabled={busy} key={item.id} onClick={() => {
+            if (item.id === selectedId || !mayLeave()) return;
+            setSelectedId(item.id); setEditing(false); setError(null); setNotice(null);
+          }}><strong>{item.title}</strong><span>{item.detail}</span><small>v{item.version} · {item.status.replace("ACTIVE", "有效").replace("NEEDS_REVIEW", "待复核").replace("ARCHIVED", "已归档").replace("PLANTED", "已埋设").replace("ADVANCING", "推进中").replace("RESOLVED", "已回收")} · {item.evidence} 条证据</small></button>)}
+        </aside>
+        <div className="library-detail">
+        {!editing && activeRecord ? <>
+          <h2>{content.find((item) => item.id === selectedId)?.title}</h2><p className="library-content">{content.find((item) => item.id === selectedId)?.detail}</p>
+          <p className="library-meta">v{activeVersion} · {activeRecord.evidenceAnchorIds.length} 条证据</p>
+          <button type="button" className="secondary-action" onClick={() => startEdit(activeRecord.id)}><Pencil size={15} />编辑记录</button>
+          <div className="library-evidence">{activeRecord.evidenceAnchorIds.map((id) => {
+            const anchor = anchors.data?.find((item) => item.id === id);
+            return anchor ? <a key={id} href={manuscriptSourceHref({ projectId: project.data?.projectId, evidenceAnchorId: id }, "/knowledge/records")}>
+              {chapterList.find((chapter) => chapter.id === anchor.chapterId)?.title ?? "未命名章节"} · 查看来源证据</a> : <p key={id}>证据暂不可用</p>;
+          })}</div>
+        </> : !editing ? <div className="library-empty"><p>选择一条剧情记录</p></div> : null}
+        {editing ? <form className="library-form" onSubmit={(form) => { form.preventDefault(); void save(); }}>
+          <div className="section-heading"><h2>{selectedId ? `编辑${tabs.find((item) => item.id === tab)?.label}记录` : `新建${tabs.find((item) => item.id === tab)?.label}记录`}</h2><span>{selectedId ? `编辑基于 v${editVersion}` : `${evidenceIds.length} 条证据`}</span></div>
+          {selectedId && editVersion !== activeVersion ? <p role="status" className="project-notice">记录已有新版本，本地修改仍保留。保存时将检查版本冲突。</p> : null}
+          <fieldset className="entity-import-lock library-form" disabled={busy}>
           {tab === "relations" ? <div className="entity-form-grid">
             <label>起点事实<select value={relation.fromKnowledgeId} onChange={(item) => setRelation((current) => ({ ...current, fromKnowledgeId: item.target.value }))}><option value="">选择当前事实</option>{(facts.data ?? []).map((item) => <option key={item.knowledgeId} value={item.knowledgeId}>{factLabels.get(item.knowledgeId)}</option>)}</select></label>
             <label>终点事实<select value={relation.toKnowledgeId} onChange={(item) => setRelation((current) => ({ ...current, toKnowledgeId: item.target.value }))}><option value="">选择当前事实</option>{(facts.data ?? []).map((item) => <option key={item.knowledgeId} value={item.knowledgeId}>{factLabels.get(item.knowledgeId)}</option>)}</select></label>
@@ -257,15 +297,11 @@ export function KnowledgeRecordsView() {
               <option value="ARCHIVED">归档</option>
             </select></label>
           </div>
-          <fieldset className="knowledge-select-list"><legend>证据锚点</legend>{anchors.isPending ? <span>正在加载证据…</span> : null}{!anchors.isPending && !(anchors.data ?? []).length ? <span>尚无证据锚点，请先在正文事实审核流程中建立证据。</span> : null}{(anchors.data ?? []).map((item) => <label key={item.id}><input type="checkbox" checked={evidenceIds.includes(item.id)} onChange={() => toggle(evidenceIds, item.id, setEvidenceIds)} />章节 {item.chapterId.slice(0, 8)} · 区块 {item.blockId}</label>)}</fieldset>
-          <div className="inspector-actions"><button type="submit" className="primary-action" disabled={!canSave()}><Save size={15} />{busy ? "保存中…" : activeRecord ? `保存为 v${activeVersion + 1}` : `创建${tabs.find((item) => item.id === tab)?.label}`}</button>{activeRecord ? <button type="button" className="secondary-action" onClick={startNew} disabled={busy}><Plus size={15} />新建记录</button> : null}</div>
-        </form>
-
-        <div className="knowledge-record-list">
-          {query.isError ? <p className="project-error" role="alert">无法加载记录：{errorMessage(query.error)}</p> : null}
-          {query.isPending ? <p className="plan-empty">正在加载记录…</p> : null}
-          {!query.isPending && !content.length ? <p className="plan-empty">暂无已创建的{tabs.find((item) => item.id === tab)?.label}记录。</p> : null}
-          {content.map((item) => <article className="knowledge-record-row" key={item.id}><div><strong>{item.title}</strong><span>{item.detail}</span></div><div><span className="entity-type-badge">v{item.version} · {item.status}</span><span className="knowledge-evidence"><BookMarked size={13} />{item.evidence}</span><button type="button" className="icon-command" aria-label={`编辑${item.title}`} title="编辑并追加新版本" onClick={() => startEdit(item.id)}><Pencil size={14} /></button></div></article>)}
+          <fieldset className="knowledge-select-list"><legend>证据锚点</legend>{anchors.isPending ? <span>正在加载证据…</span> : null}{anchors.isError ? <span role="alert">{errorMessage(anchors.error)}</span> : null}{!anchors.isPending && !(anchors.data ?? []).length ? <span>尚无证据锚点，请先在正文事实审核流程中建立证据。</span> : null}{(anchors.data ?? []).map((item, index) => <label key={item.id}><input type="checkbox" checked={evidenceIds.includes(item.id)} onChange={() => toggle(evidenceIds, item.id, setEvidenceIds)} />{chapterList.find((chapter) => chapter.id === item.chapterId)?.title ?? "未命名章节"} · 证据 {index + 1}</label>)}</fieldset>
+          <div className="inspector-actions"><button type="submit" className="primary-action" disabled={!canSave()}><Save size={15} />{busy ? "保存中…" : selectedId ? `保存为 v${editVersion + 1}` : `创建${tabs.find((item) => item.id === tab)?.label}`}</button>
+            <button type="button" className="secondary-action" disabled={busy} onClick={() => { if (mayLeave()) setEditing(false); }}>取消</button></div>
+          </fieldset>
+        </form> : null}
         </div>
       </div>
     </section>

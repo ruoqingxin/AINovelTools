@@ -33,6 +33,8 @@ import { DiscussionDesignPanel, discussionTopics } from "./discussion-design-pan
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { discussionSourceHref, planningTargetHref } from "../lib/discussion-source";
 import "./discussion-source.css";
+import { WorkspacePanel, useWideWorkspace } from "./workspace-panel";
+import "./discussion-workspace.css";
 
 const planningOptions = planningSectionGroups.flatMap((group) => group.children);
 
@@ -105,11 +107,19 @@ export function DiscussionView() {
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [designPending, setDesignPending] = useState(false);
-  const [mobileView, setMobileView] = useState<"chat" | "draft">("chat");
-  const [draftFocus, setDraftFocus] = useState<{ field: "chosen" | "alternatives" } | null>(null);
+  const [showDraft, setShowDraft] = useState(false);
+  const [showSessions, setShowSessions] = useState(false);
+  const wide = useWideWorkspace(1100);
+  const [draftFocus, setDraftFocus] = useState<{ field: "chosen" | "alternatives" | "questions" } | null>(null);
+  const [collectingId, setCollectingId] = useState<string | null>(null);
+  const [collectionTargets, setCollectionTargets] = useState<Record<string, string>>({});
+  const collectedSources = useRef(new Set<string>());
   const [candidateTargetId, setCandidateTargetId] = useState("seed-premise");
-  const [candidateKinds, setCandidateKinds] = useState<Record<string, DiscussionCandidateKind>>({});
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({});
+  const latestCandidateDrafts = useRef(candidateDrafts);
+  latestCandidateDrafts.current = candidateDrafts;
+  const collectionTrigger = useRef<HTMLButtonElement | null>(null);
+  const draftReturnFocus = useRef<HTMLElement | null>(null);
   const [reviewAnchorIds, setReviewAnchorIds] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
@@ -174,7 +184,8 @@ export function DiscussionView() {
     setCandidateDrafts({});
     setSessionId(id);
     setDraftFocus(null);
-    setMobileView("chat");
+    setShowDraft(false);
+    setCollectingId(null);
     window.history.replaceState(null, "", id ? `#${id}` : window.location.pathname);
   }
 
@@ -190,25 +201,48 @@ export function DiscussionView() {
     finally { setLoadingHistory(false); }
   }
 
-  async function rememberIdea(item: DiscussionMessage) {
-    if (!sessionId || designPending) return;
+  function openCollector(item: DiscussionMessage, trigger: HTMLButtonElement) {
+    if (creatingSession) return;
+    collectionTrigger.current = trigger;
     const selection = window.getSelection();
     const parent = selection?.anchorNode?.parentElement?.closest(".discussion-message");
     const content = parent?.getAttribute("data-message-id") === item.id
       && selection?.toString().trim() ? selection.toString().trim() : item.content;
-    const field = item.role === "USER" ? "chosen" : "alternatives";
+    if (content !== item.content) setCandidateDrafts((current) => ({ ...current, [item.id]: current[item.id] ?? content }));
+    setCollectingId(item.id);
+  }
+  function finishCollection(item: DiscussionMessage, content: string) {
+    if ((latestCandidateDrafts.current[item.id] ?? item.content) !== content) return;
+    setCandidateDrafts((current) => { const next = { ...current }; delete next[item.id]; return next; });
+    setCollectingId((current) => current === item.id ? null : current);
+    collectionTrigger.current?.focus();
+  }
+  async function collectIntoDraft(item: DiscussionMessage, field: "chosen" | "alternatives" | "questions") {
+    if (!sessionId || busy || designPending) return;
+    const content = candidateDrafts[item.id] ?? item.content;
+    if (!content.trim()) return;
     setBusy(true);
     setError(null);
+    const sourceKey = JSON.stringify([sessionId, item.id, field, content]);
     try {
       const workspace = await getDiscussionWorkspace(sessionId);
       const draft = { ...workspace.draft, [field]: [workspace.draft[field], content].filter(Boolean).join("\n\n") };
+      if (Array.from(Object.values(draft).join("")).length > DISCUSSION_LIMITS.draftChars) throw new Error("构思草稿合计最多 50000 字，请拆成多个讨论。");
+      // Keep a message-linked source even if the subsequent workspace CAS fails.
+      if (!collectedSources.current.has(sourceKey)) {
+        await createDiscussionCandidate({ sessionId, messageId: item.id, kind: "NOTE", content: content.trim() });
+        collectedSources.current.add(sourceKey);
+        await client.invalidateQueries({ queryKey: ["discussion-candidates", sessionId] });
+      }
       const next = await saveDiscussionWorkspace({ ...workspace, draft });
       client.setQueryData(["discussion-workspace", sessionId], next);
       await client.invalidateQueries({ queryKey: ["discussion-draft-revisions", sessionId] });
       setDraftFocus({ field });
-      setMobileView("draft");
-      setNotice(field === "chosen" ? "已记入选定内容。" : "已记入备选方向。");
-    } catch (cause) { setError(errorMessage(cause)); }
+      draftReturnFocus.current = collectionTrigger.current;
+      setShowDraft(true);
+      finishCollection(item, content);
+      setNotice(`已收集到${field === "chosen" ? "已选定内容" : field === "alternatives" ? "备选方向" : "未决问题"}，讨论来源已保留。`);
+    } catch (cause) { setError(`${errorMessage(cause)}${collectedSources.current.has(sourceKey) ? " 片段来源已保留在收集记录中，草稿未写入；可重试，不会重复保存来源。" : ""}`); }
     finally { setBusy(false); }
   }
 
@@ -225,8 +259,9 @@ export function DiscussionView() {
       setSessionId(session.id);
       window.history.replaceState(null, "", `#${session.id}`);
       setShowSessionForm(false);
+      setShowSessions(false);
       setDraftFocus(null);
-      setMobileView("chat");
+      setShowDraft(false);
       await client.invalidateQueries({ queryKey: ["discussion-sessions"] });
     }).catch((cause) => {
       setError(errorMessage(cause));
@@ -282,9 +317,11 @@ export function DiscussionView() {
       setCandidateDrafts({});
       setSessionId(session.id);
       setDraftFocus(null);
-      setMobileView("chat");
+      setShowDraft(false);
+      setCollectingId(null);
       window.history.replaceState(null, "", `#${session.id}`);
       setShowSessionForm(false);
+      setShowSessions(false);
       await client.invalidateQueries({ queryKey: ["discussion-sessions"] });
       setNotice("已建立新的讨论会话。");
     } catch (cause) {
@@ -323,7 +360,7 @@ export function DiscussionView() {
   }
 
   async function saveCandidate(messageItem: DiscussionMessage, kind: DiscussionCandidateKind) {
-    if (!sessionId) return;
+    if (!sessionId || busy) return;
     const content = candidateDrafts[messageItem.id] ?? messageItem.content;
     if (!content.trim()) {
       setError("候选内容不能为空。");
@@ -344,12 +381,7 @@ export function DiscussionView() {
         content: content.trim(),
         ...(needsTarget ? { targetSectionId: candidateTargetId } : {}),
       });
-      setCandidateDrafts((current) => {
-        if (current[messageItem.id] !== content) return current;
-        const next = { ...current };
-        delete next[messageItem.id];
-        return next;
-      });
+      finishCollection(messageItem, content);
       await client.invalidateQueries({ queryKey: ["discussion-candidates", sessionId] });
       setNotice(kind === "NOTE" ? "已保存为临时笔记。" : "已保存为候选内容，确认前不会进入规划。");
     } catch (cause) {
@@ -426,11 +458,21 @@ export function DiscussionView() {
 
   const visibleMessages = [...new Map([...olderMessages, ...(messages.data ?? [])]
     .map((item) => [item.id, item])).values()];
-  return <div className="discussion-workspace" data-mobile-view={mobileView}>
+  return <div className="discussion-workspace discussion-stage-three" data-draft-open={showDraft && wide}>
     <div className="workspace-heading">
       <h1>构思</h1>
+      <div className="library-actions">
+        <button type="button" className="secondary-action" onClick={() => setShowSessions(true)}><MessageSquareText size={15} />讨论列表</button>
+        <button type="button" className="secondary-action" disabled={busy} onClick={() => {
+          setShowSessionForm((current) => !current); setShowSessions(true); setError(null);
+        }}><Plus size={15} />新建讨论</button>
+        <button type="button" className="secondary-action" aria-expanded={showDraft} onClick={(event) => {
+          draftReturnFocus.current = event.currentTarget; setShowDraft((current) => !current);
+        }}><BookmarkPlus size={15} />构思草稿</button>
+      </div>
     </div>
     <div className="discussion-layout">
+      <WorkspacePanel open={showSessions} title="讨论与收集" onClose={() => setShowSessions(false)}>
       <section className="discussion-sidebar" aria-label="讨论会话">
         <div className="discussion-session-toolbar">
           <label className="discussion-session-picker"><MessageSquareText size={16} /><span>当前讨论</span>
@@ -439,13 +481,7 @@ export function DiscussionView() {
           </select>
           </label>
           <span className="discussion-session-count">{sessions.data?.length ?? 0} 个讨论</span>
-          <button type="button" className="secondary-action discussion-create-toggle" onClick={() => {
-            setShowSessionForm((current) => !current);
-            setError(null);
-          }}
-            disabled={busy} aria-expanded={showSessionForm} aria-controls="discussion-session-form">
-            {showSessionForm ? <X size={14} /> : <Plus size={14} />}{showSessionForm ? "取消新建" : "新建讨论"}
-          </button>
+          {showSessionForm ? <button type="button" className="secondary-action" disabled={busy} onClick={() => setShowSessionForm(false)}><X size={14} />取消新建</button> : null}
         </div>
         {sessions.isError ? <p className="project-error" role="alert">{errorMessage(sessions.error)}
           <button type="button" className="secondary-action" onClick={() => void sessions.refetch()}>重试</button>
@@ -464,8 +500,10 @@ export function DiscussionView() {
           {error ? <p className="project-error" role="alert">{error}</p> : null}
         </section> : null}
         {candidates.isError ? <p className="project-error" role="alert">{errorMessage(candidates.error)}</p> : null}
+        {notice && showSessions ? <p className="project-notice" role="status">{notice}{planningDestination ? <a href={planningDestination}>打开规划待定区</a> : null}</p> : null}
+        {error && showSessions && !showSessionForm ? <p className="project-error" role="alert">{error}</p> : null}
         {candidates.data?.length ? <details className="discussion-candidate-drawer">
-          <summary>候选内容 <span>{candidates.data.length} 条</span></summary>
+          <summary>收集记录 <span>{candidates.data.length} 条</span></summary>
           <div className="discussion-candidate-list">
             {(candidates.data ?? []).map((candidate) => <article className="discussion-candidate" data-status={candidate.status.toLowerCase()} key={candidate.id}>
               <div><strong>{candidateKindLabels[candidate.kind]}</strong><small>{candidateTarget(candidate, nodeTitles)}</small></div>
@@ -490,10 +528,7 @@ export function DiscussionView() {
           </div>
         </details> : null}
       </section>
-      <div className="discussion-mobile-tabs" role="tablist" aria-label="共创视图">
-        <button type="button" role="tab" aria-selected={mobileView === "chat"} onClick={() => setMobileView("chat")}>讨论</button>
-        <button type="button" role="tab" aria-selected={mobileView === "draft"} onClick={() => setMobileView("draft")}>构思草稿</button>
-      </div>
+      </WorkspacePanel>
       <section className="discussion-thread" aria-label="讨论消息">
         <section className="discussion-thread-heading">
           <div><MessageSquareText size={17} /><div><strong>{activeSession?.title ?? "正在准备讨论"}</strong><span>{activeSession ? `${discussionScopeLabel(activeSession.scopeKind)} · ${visibleMessages.length} 条消息` : "会话加载中"}</span></div></div>
@@ -504,9 +539,9 @@ export function DiscussionView() {
           <summary><Cpu size={13} /><span>{profile?.hasSecret ? profile.modelId : "模型未就绪"}</span><span>模型与费用</span></summary>
           <AiModelNote taskLabel="共创讨论" taskKey="discussion" settingsScope={projectOverrides.data?.discussion ? "PROJECT" : "GLOBAL"} profile={profile} preference={preference} />
         </details>
-        {notice ? <p className="project-notice" role="status">{notice}
+        {notice && !showSessions ? <p className="project-notice" role="status">{notice}
           {planningDestination ? <a className="discussion-notice-link" href={planningDestination}><ArrowUpRight size={14} />打开规划待定区</a> : null}</p> : null}
-        {error && !showSessionForm ? <p className="project-error" role="alert">{error}</p> : null}
+        {error && !showSessions ? <p className="project-error" role="alert">{error}</p> : null}
         <div className="discussion-messages" ref={messagesRef} aria-busy={busy || messages.isFetching}
           onScroll={(event) => {
             const element = event.currentTarget;
@@ -519,14 +554,14 @@ export function DiscussionView() {
           {messages.isPending && sessionId ? <p className="plan-empty">正在加载讨论…</p> : visibleMessages.map((messageItem) => <article className="discussion-message" data-role={messageItem.role.toLowerCase()} data-message-id={messageItem.id} key={messageItem.id}>
             <header><strong>{messageLabel(messageItem)}</strong><small>{messageItem.contextVersion ? `上下文 ${messageItem.contextVersion.slice(0, 8)}` : "未绑定生成上下文"}</small></header>
             <div className="discussion-message-content">{messageItem.content}</div>
-            <button type="button" className="secondary-action discussion-remember" title="选中消息片段时只记录选中的内容"
-              disabled={busy || designPending} onClick={() => void rememberIdea(messageItem)}>
-              <BookmarkPlus size={12} />{messageItem.role === "USER" ? "记入选定内容" : "记入备选方向"}
+            <button type="button" className="secondary-action discussion-remember" title="收集当前消息或选中的片段" aria-expanded={collectingId === messageItem.id}
+              disabled={busy || designPending} onClick={(event) => openCollector(messageItem, event.currentTarget)}>
+              <BookmarkPlus size={12} />收集片段
             </button>
-            {messageItem.role === "ASSISTANT" ? (() => {
-              const selectedKind = candidateKinds[messageItem.id] ?? "SETTING";
+            {collectingId === messageItem.id ? (() => {
+              const selectedKind = collectionTargets[messageItem.id] ?? "";
               const needsTarget = selectedKind === "PLANNING" || selectedKind === "SETTING";
-              return <details className="discussion-message-actions"><summary>保存片段为候选</summary>
+              return <section className="discussion-message-actions">
                 <textarea rows={3} value={candidateDrafts[messageItem.id] ?? messageItem.content} onChange={(event) => {
                   const value = event.target.value;
                   setCandidateDrafts((current) => {
@@ -535,13 +570,22 @@ export function DiscussionView() {
                     else next[messageItem.id] = value;
                     return next;
                   });
-                }} disabled={creatingSession} aria-label="转为候选时使用的内容" />
+                }} disabled={creatingSession} aria-label="收集内容" />
                 <div>
-                  <label><span>保存类型</span><select value={selectedKind} onChange={(event) => setCandidateKinds((current) => ({ ...current, [messageItem.id]: event.target.value as DiscussionCandidateKind }))}><option value="NOTE">{candidateKindLabels.NOTE}</option><option value="PLANNING">{candidateKindLabels.PLANNING}</option><option value="SETTING">{candidateKindLabels.SETTING}</option><option value="FORESHADOWING">{candidateKindLabels.FORESHADOWING}</option></select></label>
-                  {needsTarget ? <label><span>目标规划项</span><select value={candidateTargetId} onChange={(event) => setCandidateTargetId(event.target.value)}>{targetOptions.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}</select></label> : null}
-                  <button type="button" className="primary-action" onClick={() => void saveCandidate(messageItem, selectedKind)} disabled={busy}><Save size={12} />保存候选</button>
+                  <label><span>收集到</span><select aria-label="收集到" value={selectedKind} disabled={busy} onChange={(event) => setCollectionTargets((current) => ({ ...current, [messageItem.id]: event.target.value }))}>
+                    <option value="">选择去向</option><option value="chosen">已选定内容</option><option value="alternatives">备选方向</option><option value="questions">未决问题</option>
+                    <option value="NOTE">{candidateKindLabels.NOTE}</option><option value="PLANNING">{candidateKindLabels.PLANNING}</option><option value="SETTING">{candidateKindLabels.SETTING}</option><option value="FORESHADOWING">{candidateKindLabels.FORESHADOWING}</option></select></label>
+                  {needsTarget ? <label><span>目标规划项</span><select aria-label="目标规划项" value={candidateTargetId} disabled={busy} onChange={(event) => setCandidateTargetId(event.target.value)}>{targetOptions.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}</select></label> : null}
+                  <button type="button" className="primary-action" onClick={() => {
+                    if (selectedKind === "chosen" || selectedKind === "alternatives" || selectedKind === "questions") void collectIntoDraft(messageItem, selectedKind);
+                    else if (selectedKind) void saveCandidate(messageItem, selectedKind as DiscussionCandidateKind);
+                  }} disabled={busy || !selectedKind || !(candidateDrafts[messageItem.id] ?? messageItem.content).trim() || designPending && ["chosen", "alternatives", "questions"].includes(selectedKind)}><Save size={12} />确认收集</button>
+                  <button type="button" className="secondary-action" disabled={busy} onClick={() => {
+                    if (candidateDrafts[messageItem.id] !== undefined && candidateDrafts[messageItem.id] !== messageItem.content && !window.confirm("放弃尚未收集的片段修改吗？")) return;
+                    setCollectingId(null); setCandidateDrafts((current) => { const next = { ...current }; delete next[messageItem.id]; return next; });
+                  }}>取消</button>
                 </div>
-              </details>;
+              </section>;
             })() : null}
           </article>)}
           {!messages.isPending && !messages.isError && !visibleMessages.length ? <div className="discussion-empty">
@@ -571,10 +615,14 @@ export function DiscussionView() {
         </section>
         {!profile?.hasSecret ? <p className="project-error" role="alert">请先在设置中配置可用的共创讨论模型。</p> : null}
       </section>
+      <WorkspacePanel open={showDraft} docked={wide} title="构思草稿" onClose={() => {
+        setShowDraft(false); requestAnimationFrame(() => draftReturnFocus.current?.focus());
+      }} className="discussion-notebook">
       {sessionId ? <DiscussionDesignPanel key={sessionId} sessionId={sessionId} profile={designProfile}
         settingsScope={projectOverrides.data?.discussionDesign ? "PROJECT" : "GLOBAL"}
-        preference={designPreference} hasDiscussion={visibleMessages.length > 0} conversationBusy={busy}
+        preference={designPreference} conversationBusy={busy}
         draftFocus={draftFocus} onPendingChange={setDesignPending} /> : null}
+      </WorkspacePanel>
     </div>
   </div>;
 }

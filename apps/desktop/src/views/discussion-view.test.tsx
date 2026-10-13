@@ -131,6 +131,12 @@ function renderView() {
     </QueryClientProvider>,
   );
 }
+function openNotebook() { fireEvent.click(screen.getByRole("button", { name: "构思草稿" })); }
+async function openCollector(target = "SETTING") {
+  const buttons = await screen.findAllByRole("button", { name: "收集片段" });
+  fireEvent.click(buttons[buttons.length - 1]!);
+  fireEvent.change(screen.getByLabelText("收集到"), { target: { value: target } });
+}
 
 describe("DiscussionView", () => {
   afterEach(() => cleanup());
@@ -303,14 +309,14 @@ describe("DiscussionView", () => {
       selector: ".discussion-message-content",
     })).closest("article");
     expect(reply).not.toBeNull();
-    fireEvent.click(within(reply!).getByText("保存片段为候选"));
-    fireEvent.change(within(reply!).getByLabelText("保存类型"), {
+    fireEvent.click(within(reply!).getByRole("button", { name: "收集片段" }));
+    fireEvent.change(within(reply!).getByLabelText("收集到"), {
       target: { value: "PLANNING" },
     });
     fireEvent.change(within(reply!).getByLabelText("目标规划项"), {
       target: { value: "engine-theme" },
     });
-    fireEvent.click(within(reply!).getByRole("button", { name: "保存候选" }));
+    fireEvent.click(within(reply!).getByRole("button", { name: "确认收集" }));
 
     await waitFor(() =>
       expect(mocks.createDiscussionCandidate).toHaveBeenCalledWith({
@@ -348,8 +354,8 @@ describe("DiscussionView", () => {
       foreshadowingCandidate,
     ]);
     renderView();
-
-    fireEvent.click(await screen.findByText(/候选内容/));
+    fireEvent.click(screen.getByRole("button", { name: "讨论列表" }));
+    fireEvent.click(await screen.findByText(/收集记录/));
     fireEvent.click(await screen.findByRole("button", { name: "写入规划待定区" }));
     await waitFor(() =>
       expect(mocks.promoteDiscussionCandidate).toHaveBeenCalledWith({
@@ -388,11 +394,11 @@ describe("DiscussionView", () => {
     const chapter = { id: "chapter-1", kind: "CHAPTER", title: "入城", archived: false, parentId: null, sortOrder: 0, revision: 1 };
     mocks.listPlanNodes.mockResolvedValue([chapter, { ...chapter, id: "archived", title: "旧章", archived: true }]);
     renderView();
-    fireEvent.click(await screen.findByText("保存片段为候选"));
+    await openCollector();
     expect(await screen.findByRole("option", { name: "章节执行卡 · 入城" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "章节执行卡 · 旧章" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("目标规划项"), { target: { value: "plan-node:chapter-1" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存候选" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
     await waitFor(() => expect(mocks.createDiscussionCandidate).toHaveBeenCalledWith(expect.objectContaining({
       targetSectionId: "plan-node:chapter-1",
     })));
@@ -403,10 +409,10 @@ describe("DiscussionView", () => {
     mocks.createDiscussionCandidate.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
     mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
     renderView();
-    fireEvent.click(await screen.findByText("保存片段为候选"));
-    const input = screen.getByLabelText("转为候选时使用的内容");
+    await openCollector();
+    const input = screen.getByLabelText("收集内容");
     fireEvent.change(input, { target: { value: "提交快照" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存候选" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
     await waitFor(() => expect(mocks.createDiscussionCandidate).toHaveBeenCalled());
     fireEvent.change(input, { target: { value: "保存期间新增的编辑" } });
     resolve({});
@@ -422,8 +428,8 @@ describe("DiscussionView", () => {
       mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
       mocks.createDiscussionSession.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
       renderView();
-      fireEvent.click(await screen.findByText("保存片段为候选"));
-      const input = screen.getByLabelText("转为候选时使用的内容");
+      await openCollector();
+      const input = screen.getByLabelText("收集内容");
       fireEvent.change(input, { target: { value: "未保存的片段" } });
       fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
       fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
@@ -444,12 +450,13 @@ describe("DiscussionView", () => {
       mocks.listDiscussionSessions.mockResolvedValue([session, { ...session, id: "session-2", title: "另一讨论" }]);
       mocks.createDiscussionCandidate.mockRejectedValueOnce(new Error("保存失败"));
       renderView();
-      fireEvent.click(await screen.findByText("保存片段为候选"));
-      const input = screen.getByLabelText("转为候选时使用的内容");
+      await openCollector();
+      const input = screen.getByLabelText("收集内容");
       fireEvent.change(input, { target: { value: "未保存候选" } });
-      fireEvent.click(screen.getByRole("button", { name: "保存候选" }));
+      fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("保存失败");
       expect(input).toHaveValue("未保存候选");
+      fireEvent.click(screen.getByRole("button", { name: "讨论列表" }));
       const selector = screen.getByLabelText("选择讨论会话");
       fireEvent.change(selector, { target: { value: "session-2" } });
       expect(selector).toHaveValue(session.id);
@@ -459,9 +466,10 @@ describe("DiscussionView", () => {
       await waitFor(() => expect(selector).toHaveValue("session-2"));
       const count = confirm.mock.calls.length;
       fireEvent.change(selector, { target: { value: session.id } });
-      await screen.findByLabelText("转为候选时使用的内容");
+      fireEvent.click(screen.getByRole("button", { name: "关闭讨论与收集" }));
+      await openCollector();
       expect(confirm).toHaveBeenCalledTimes(count);
-      expect(screen.getByLabelText("转为候选时使用的内容")).toHaveValue(assistantMessage.content);
+      expect(screen.getByLabelText("收集内容")).toHaveValue(assistantMessage.content);
     } finally { confirm.mockRestore(); }
   });
 
@@ -477,6 +485,7 @@ describe("DiscussionView", () => {
 
   it("autosaves selected ideas and preserves over-limit drafts without truncation", async () => {
     renderView();
+    openNotebook();
     const chosen = await screen.findByLabelText("已选定内容");
     fireEvent.change(chosen, { target: { value: "灯只能储存三句话。" } });
     await waitFor(() => expect(mocks.saveDiscussionWorkspace).toHaveBeenCalledWith(
@@ -518,13 +527,13 @@ describe("DiscussionView", () => {
   it("records an AI suggestion as an alternative without confirming it", async () => {
     mocks.listDiscussionMessages.mockResolvedValue([userMessage, assistantMessage]);
     renderView();
-    const button = await screen.findByRole("button", { name: "记入备选方向" });
-    await waitFor(() => expect(button).toBeEnabled());
-    fireEvent.click(button);
+    await openCollector("alternatives");
+    fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
     await waitFor(() => expect(mocks.saveDiscussionWorkspace).toHaveBeenCalledWith(
       expect.objectContaining({ draft: { chosen: "", alternatives: assistantMessage.content, questions: "" } }),
     ));
     expect(await screen.findByRole("textbox", { name: "备选方向" })).toHaveValue(assistantMessage.content);
+    expect(mocks.createDiscussionCandidate).toHaveBeenCalledWith(expect.objectContaining({ messageId: assistantMessage.id, kind: "NOTE" }));
     expect(mocks.confirmDiscussionDesign).not.toHaveBeenCalled();
   });
 
@@ -534,6 +543,7 @@ describe("DiscussionView", () => {
       draft: { chosen: "关闭前未保存的能力规则。", alternatives: "", questions: "" },
     }));
     renderView();
+    openNotebook();
     expect(await screen.findByLabelText("已选定内容")).toHaveValue("关闭前未保存的能力规则。");
     await waitFor(() => expect(mocks.saveDiscussionWorkspace).toHaveBeenCalledWith(
       expect.objectContaining({ draft: expect.objectContaining({ chosen: "关闭前未保存的能力规则。" }) }),
@@ -556,7 +566,10 @@ describe("DiscussionView", () => {
       mocks.listDiscussionDesignProposals.mockResolvedValue([proposal]);
       return proposal;
     });
+    mocks.getDiscussionWorkspace.mockResolvedValue({ sessionId: session.id, topicKind: "ITEM", version: 0, linkedEntityId: null,
+      draft: { chosen: "只能储存三句话。", alternatives: "", questions: "" } });
     renderView();
+    openNotebook();
     fireEvent.click(await screen.findByRole("button", { name: "整理为实体与设定" }));
     await waitFor(() => expect(mocks.summarizeDiscussionDesign).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: session.id, expectedWorkspaceVersion: 0 }),
@@ -580,8 +593,10 @@ describe("DiscussionView", () => {
     renderView();
     await screen.findByRole("heading", { name: "这次想构思什么？" });
     expect(screen.queryByLabelText("标题")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "已选定内容" })).not.toBeInTheDocument();
+    openNotebook();
     expect(screen.getByRole("button", { name: "整理为实体与设定" })).toBeDisabled();
-    expect(screen.getByText("暂无可整理内容")).toBeInTheDocument();
+    expect(screen.getByText("尚无已选定内容")).toBeInTheDocument();
     expect(screen.getByText("模型与费用").closest("details")).not.toHaveAttribute("open");
     fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
     expect(screen.getByLabelText("标题")).toBeInTheDocument();
@@ -605,6 +620,7 @@ describe("DiscussionView", () => {
 
   it("switches draft fields accessibly while preserving edits", async () => {
     renderView();
+    openNotebook();
     const chosen = await screen.findByRole("textbox", { name: "已选定内容" });
     fireEvent.change(chosen, { target: { value: "最多储存三句话。" } });
     const tablist = screen.getByRole("tablist", { name: "构思内容" });
@@ -636,13 +652,13 @@ describe("DiscussionView", () => {
   it("returns to alternatives each time an idea is recorded, even after another field was selected", async () => {
     mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
     renderView();
-    const record = await screen.findByRole("button", { name: "记入备选方向" });
-    await waitFor(() => expect(record).toBeEnabled());
+    await openCollector("alternatives");
+    const record = screen.getByRole("button", { name: "确认收集" });
     fireEvent.click(record);
     expect(await screen.findByRole("textbox", { name: "备选方向" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "未决问题" }));
-    await waitFor(() => expect(record).toBeEnabled());
-    fireEvent.click(record);
+    await openCollector("alternatives");
+    fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
     expect(await screen.findByRole("textbox", { name: "备选方向" })).toBeInTheDocument();
   });
 
@@ -661,12 +677,15 @@ describe("DiscussionView", () => {
     mocks.getAiTaskPreferences.mockResolvedValue(preferences);
     mocks.listModelProfiles.mockResolvedValue([profile, designProfile]);
     mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    mocks.getDiscussionWorkspace.mockResolvedValue({ sessionId: session.id, topicKind: "ITEM", version: 0, linkedEntityId: null,
+      draft: { chosen: "灯只能储存三句话。", alternatives: "", questions: "" } });
     mocks.summarizeDiscussionDesign.mockResolvedValue({
       id: "independent-proposal", sessionId: session.id, workspaceVersion: 0,
       entities: [], sourceMessageIds: [assistantMessage.id], contextVersion: "context",
       omittedMessageCount: 0, status: "PENDING", promotedEntityIds: [], createdAt: "",
     });
     renderView();
+    openNotebook();
     const composer = await screen.findByLabelText("讨论内容");
     await waitFor(() => expect(composer).toBeEnabled());
     const suffix = scope === "PROJECT" ? "&scope=PROJECT" : "";
@@ -684,5 +703,45 @@ describe("DiscussionView", () => {
     await waitFor(() => expect(mocks.summarizeDiscussionDesign).toHaveBeenCalledWith(expect.objectContaining({
       profileId: designProfile.id, temperature: 0.2, maxOutputTokens: 3072,
     })));
+  });
+  it("requires an explicit collection target and lets authors choose an AI fragment as selected content", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "收集片段" }));
+    expect(screen.getByRole("button", { name: "确认收集" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("收集内容"), { target: { value: "作者明确采用的片段" } });
+    fireEvent.change(screen.getByLabelText("收集到"), { target: { value: "chosen" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
+    await waitFor(() => expect(mocks.saveDiscussionWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+      draft: { chosen: "作者明确采用的片段", alternatives: "", questions: "" },
+    })));
+    expect(mocks.confirmDiscussionDesign).not.toHaveBeenCalled();
+  });
+  it("keeps source provenance after workspace failure and retries without duplicating the source", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    mocks.saveDiscussionWorkspace.mockRejectedValueOnce(new Error("草稿版本冲突"));
+    renderView();
+    await openCollector("questions");
+    fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("片段来源已保留");
+    expect(screen.getByLabelText("收集内容")).toHaveValue(assistantMessage.content);
+    expect(mocks.createDiscussionCandidate).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
+    await screen.findByRole("textbox", { name: "未决问题" });
+    expect(mocks.createDiscussionCandidate).toHaveBeenCalledTimes(1);
+    expect(mocks.saveDiscussionWorkspace).toHaveBeenLastCalledWith(expect.objectContaining({
+      draft: { chosen: "", alternatives: "", questions: assistantMessage.content },
+    }));
+  });
+  it("keeps the notebook mounted and autosaving after its panel closes", async () => {
+    renderView(); openNotebook();
+    fireEvent.change(await screen.findByRole("textbox", { name: "已选定内容" }), { target: { value: "隐藏后也要保存" } });
+    fireEvent.click(screen.getByRole("button", { name: "关闭构思草稿" }));
+    expect(screen.queryByRole("textbox", { name: "已选定内容" })).not.toBeInTheDocument();
+    await waitFor(() => expect(mocks.saveDiscussionWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+      draft: expect.objectContaining({ chosen: "隐藏后也要保存" }),
+    })), { timeout: 3000 });
+    openNotebook();
+    expect(screen.getByRole("textbox", { name: "已选定内容" })).toHaveValue("隐藏后也要保存");
   });
 });

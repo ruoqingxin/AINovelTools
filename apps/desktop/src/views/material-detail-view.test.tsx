@@ -29,6 +29,7 @@ describe("material detail navigation", () => {
     vi.resetAllMocks();
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
     mocks.getSummaryMaterial.mockResolvedValue(summary);
+    mocks.listJobs.mockResolvedValue([]);
     mocks.getWritingCard.mockResolvedValue({
       id: "card-1", projectId: "project-1", title: "短句节奏", content: "当前卡片内容", enabled: false,
       sourceVersion: "author:manual", scope: "PROJECT", updatedAt: "2",
@@ -39,6 +40,7 @@ describe("material detail navigation", () => {
     renderTarget();
     expect(await screen.findByText(summary.content)).toBeVisible();
     expect(mocks.getSummaryMaterial).toHaveBeenCalledWith("summary-1", "project-1");
+    fireEvent.click(screen.getByText("来源与高级信息"));
     expect(screen.getByText("已失效")).toBeVisible();
     const back = new URL(screen.getByRole("link", { name: "返回来源" }).getAttribute("href")!, window.location.origin);
     expect(back.searchParams.get("q")).toBe("城");
@@ -49,7 +51,7 @@ describe("material detail navigation", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(mocks.listSummaryMaterials).not.toHaveBeenCalled();
     expect(mocks.listWritingCards).not.toHaveBeenCalled();
-    expect(mocks.listJobs).not.toHaveBeenCalled();
+    expect(mocks.listJobs).toHaveBeenCalled();
     expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
   });
 
@@ -58,6 +60,7 @@ describe("material detail navigation", () => {
     expect(await screen.findByRole("heading", { name: "短句节奏" })).toBeVisible();
     expect(mocks.getWritingCard).toHaveBeenCalledWith("card-1", "project-1");
     expect(mocks.getSummaryMaterial).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("来源与高级信息"));
     expect(screen.getByText("已停用 · PROJECT")).toBeVisible();
     expect(screen.queryByRole("link", { name: "查看摘要来源正文" })).not.toBeInTheDocument();
     expect(mocks.upsertWritingCard).not.toHaveBeenCalled();

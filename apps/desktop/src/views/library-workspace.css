@@ -1,0 +1,65 @@
+.library-workspace { color: #303640; letter-spacing: 0; }
+.library-workspace .workspace-heading { padding-bottom: 12px; }
+.library-workspace .knowledge-section-nav { padding: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+.library-workspace .knowledge-section-link { min-height: 40px; border-bottom: 2px solid transparent; border-radius: 0; color: #647080; }
+.library-workspace .knowledge-section-link[data-active] { border-bottom-color: #3269cc; color: #245bb3; background: transparent; box-shadow: none; }
+.library-workspace .knowledge-section-link:hover { background: #f2f5fa; }
+.library-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 14px 0; }
+.library-toolbar input, .library-toolbar select { min-width: 0; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #48515e; font: inherit; font-size: 13px; }
+.library-toolbar .search-field { min-width: 0; flex: 1 1 180px; }
+.library-toolbar .search-field input { width: 100%; border: 0; }
+.library-toolbar .creation-mode { display: inline-flex; gap: 0; padding: 2px; border: 1px solid var(--line); border-radius: 5px; background: #f4f6f8; }
+.library-toolbar .creation-mode button { min-height: 30px; padding: 5px 10px; border: 0; border-radius: 3px; background: transparent; color: #657182; font: inherit; font-size: 13px; cursor: pointer; }
+.library-toolbar .creation-mode button[aria-pressed="true"] { background: white; color: #245bb3; box-shadow: 0 1px 3px #242f3e18; }
+.library-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); min-width: 0; border-top: 1px solid var(--line); }
+.library-list { min-width: 0; max-height: calc(100dvh - 240px); padding: 12px 12px 12px 0; border-right: 1px solid var(--line); overflow: auto; }
+.library-detail { min-width: 0; padding: 18px 24px; }
+.library-detail > .section-heading h2 { margin: 0; font-size: 18px; }
+.library-detail > h2 { margin: 0 0 14px; font-size: 18px; }
+.library-item { display: grid; width: 100%; gap: 6px; min-width: 0; padding: 12px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; text-align: left; background: transparent; color: #303640; font: inherit; font-size: 14px; cursor: pointer; overflow-wrap: anywhere; }
+.library-item[data-selected="true"] { color: #245bb3; background: #eaf1fc; }
+.library-item small { color: #75808e; font-size: 12px; }
+.library-empty { display: grid; min-height: 280px; place-content: center; justify-items: center; gap: 16px; color: #788291; }
+.library-empty p { margin: 0; }
+.library-workspace .primary-action, .library-workspace .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; font-size: 13px; cursor: pointer; }
+.library-workspace .primary-action { border-color: var(--accent); }
+.library-workspace .primary-action:disabled, .library-workspace .secondary-action:disabled { opacity: .55; cursor: not-allowed; }
+.library-workspace .entity-form-grid { gap: 16px; }
+.library-workspace label { color: #5a6574; font-size: 13px; }
+.library-workspace input:not([type="checkbox"]), .library-workspace textarea, .library-workspace select { min-width: 0; max-width: 100%; border-color: var(--line); border-radius: 5px; color: #303640; font-size: 14px; }
+.library-workspace textarea { line-height: 1.8; }
+.library-workspace .entity-form-wide { min-width: 0; }
+.library-workspace .library-advanced { margin: 16px 0; padding: 12px 0; border-top: 1px solid var(--line); }
+.library-advanced summary { color: #75808e; font-size: 13px; cursor: pointer; }
+.library-advanced label { display: grid; gap: 8px; margin-top: 12px; }
+.library-advanced code { overflow-wrap: anywhere; }
+.library-content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.9; font-size: 15px; }
+.library-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.library-meta { color: #75808e; font-size: 13px; }
+.library-form { display: grid; gap: 14px; }
+.library-field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, .4fr); gap: 14px; }
+.library-form label { display: grid; gap: 6px; }
+.library-form input:not([type="checkbox"]), .library-form select, .library-form textarea { width: 100%; min-height: 36px; padding: 8px 10px; border: 1px solid var(--line); background: white; font: inherit; }
+.library-form .library-toggle { display: flex; align-items: center; gap: 8px; }
+.library-form .file-picker { position: relative; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 7px; max-width: 100%; }
+.library-form .file-picker input { display: block; position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.library-form .file-picker:focus-within { outline: 2px solid #3269cc; outline-offset: 2px; }
+.library-toggle input { width: 18px; height: 18px; accent-color: #3269cc; }
+.library-evidence { display: grid; gap: 10px; padding: 18px 0; }
+.library-workspace pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.library-workspace .entity-import-lock { border: 0; padding: 0; margin: 0; min-width: 0; }
+.library-workspace .knowledge-select-list { max-height: 260px; overflow: auto; }
+.library-workspace .knowledge-select-list label { display: flex; align-items: baseline; gap: 8px; }
+.library-workspace .knowledge-select-list input { flex: 0 0 auto; }
+.library-workspace .workspace-panel .entity-import-panel { padding: 0; margin: 0; border: 0; background: transparent; }
+.library-workspace .library-actions .library-advanced { margin: 0; padding: 0; border: 0; }
+@media (max-width: 850px) {
+  .library-layout { grid-template-columns: minmax(0, 1fr); }
+  .library-list { max-height: 240px; padding: 8px 0; border-right: 0; border-bottom: 1px solid var(--line); }
+  .library-detail { padding: 18px 0; }
+  .library-toolbar > select { flex: 1 1 130px; }
+}
+@media (max-width: 600px) {
+  .library-workspace .knowledge-section-nav { gap: 2px; }
+  .library-workspace .knowledge-section-link { gap: 4px; padding: 0 5px; }
+}

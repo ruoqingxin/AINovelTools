@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, FilePenLine, History, Save, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, History, Save, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   confirmDiscussionDesign, DISCUSSION_LIMITS, errorMessage, getDiscussionWorkspace,
@@ -77,7 +77,7 @@ function workspaceBackup(sessionId: string): DiscussionWorkspace | null {
 function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, onPendingChange }: {
   proposal: DiscussionDesignProposal; onConfirmed: () => Promise<void>;
   currentWorkspaceVersion: number | undefined;
-  onPendingChange: (pending: boolean) => void;
+  onPendingChange: (id: string, pending: boolean) => void;
 }) {
   const [initial] = useState(() => proposalEdits(proposal));
   const [entities, setEntities] = useState(initial.entities);
@@ -101,7 +101,11 @@ function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, 
     || aliasTexts.some((value, index) => value !== proposal.entities[index].aliases.join("、"))
     || tagTexts.some((value, index) => value !== proposal.entities[index].tags.join("、"))
   );
-  useUnsavedChangesGuard(dirty, "整理结果有尚未确认的编辑。");
+  useUnsavedChangesGuard(dirty || busy, "整理结果有尚未确认的编辑或正在确认。");
+  useEffect(() => {
+    onPendingChange(proposal.id, dirty || busy);
+    return () => onPendingChange(proposal.id, false);
+  }, [busy, dirty, onPendingChange, proposal.id]);
   useEffect(() => {
     try {
       if (proposal.status === "CONFIRMED") localStorage.removeItem(`discussion-design-editor:${proposal.id}`);
@@ -137,7 +141,6 @@ function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, 
     if (chosen.some((entity) => entity.targetEntityId)
       && !window.confirm("确认将选中的修改保存为已有实体的新修订？旧版本会保留。")) return;
     setBusy(true);
-    onPendingChange(true);
     try {
       await confirmDiscussionDesign(proposal.id, chosen);
       await onConfirmed();
@@ -145,7 +148,6 @@ function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, 
       setError(errorMessage(cause));
     } finally {
       setBusy(false);
-      onPendingChange(false);
     }
   }
 
@@ -202,12 +204,11 @@ function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, 
   </section>;
 }
 
-export function DiscussionDesignPanel({ sessionId, profile, preference, settingsScope, hasDiscussion, conversationBusy, draftFocus, onPendingChange }: {
+export function DiscussionDesignPanel({ sessionId, profile, preference, settingsScope, conversationBusy, draftFocus, onPendingChange }: {
   sessionId: string; profile: ModelProfile | undefined; preference: AiTaskPreference;
   settingsScope?: AiTaskSettingsScope;
-  hasDiscussion: boolean;
   conversationBusy: boolean;
-  draftFocus: { field: "chosen" | "alternatives" } | null;
+  draftFocus: { field: "chosen" | "alternatives" | "questions" } | null;
   onPendingChange: (pending: boolean) => void;
 }) {
   const client = useQueryClient();
@@ -230,6 +231,10 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
   const [olderProposals, setOlderProposals] = useState<DiscussionDesignProposal[]>([]);
   const [historyBusy, setHistoryBusy] = useState(false);
   const [recovery, setRecovery] = useState<DiscussionWorkspace | null>(null);
+  const [proposalPending, setProposalPending] = useState<Record<string, boolean>>({});
+  const updateProposalPending = useCallback((id: string, pending: boolean) => {
+    setProposalPending((current) => current[id] === pending ? current : { ...current, [id]: pending });
+  }, []);
   const hasMoreVersions = useRef(true);
   const hasMoreProposals = useRef(true);
   const initialized = useRef(false);
@@ -241,11 +246,12 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
   });
   const dirty = Boolean(workspace && saved && JSON.stringify(workspace) !== JSON.stringify(saved));
   const projectTransitioning = useProjectTransition();
-  useUnsavedChangesGuard(dirty, "构思草稿尚未保存。");
+  useUnsavedChangesGuard(dirty || busy, "构思草稿尚未保存或正在处理。");
   const totalChars = workspace
     ? chars(workspace.draft.chosen) + chars(workspace.draft.alternatives) + chars(workspace.draft.questions)
     : 0;
-  const hasContent = hasDiscussion || Boolean(workspace && Object.values(workspace.draft).some((value) => value.trim()));
+  const hasContent = Boolean(workspace?.draft.chosen.trim());
+  const pendingResults = Object.values(proposalPending).some(Boolean);
 
   useEffect(() => {
     if (!draftFocus) return;
@@ -282,9 +288,9 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
   }, [dirty, recovery, sessionId, workspace]);
 
   useEffect(() => {
-    onPendingChange(busy || dirty);
+    onPendingChange(busy || dirty || pendingResults);
     return () => onPendingChange(false);
-  }, [busy, dirty, onPendingChange]);
+  }, [busy, dirty, onPendingChange, pendingResults]);
 
   const save = useCallback(async () => {
     if (!workspace) return null;
@@ -344,6 +350,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
     await Promise.all([
       client.invalidateQueries({ queryKey: ["discussion-design-proposals", sessionId] }),
       client.invalidateQueries({ queryKey: ["entities"] }),
+      client.invalidateQueries({ queryKey: ["entity-cards"] }),
       client.invalidateQueries({ queryKey: ["entity-revisions"] }),
       client.invalidateQueries({ queryKey: ["author-settings"] }),
     ]);
@@ -382,7 +389,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
   }
 
   return <aside className="discussion-design-panel" aria-label="构思草稿">
-    <div className="section-heading"><h2><FilePenLine size={17} />{showResults ? "整理结果" : "构思草稿"}</h2>
+    <div className="section-heading">{showResults ? <h2>整理结果</h2> : null}
       {showResults ? <button type="button" className="secondary-action discussion-icon-button"
         aria-label="返回构思草稿" title="返回构思草稿" onClick={() => setShowResults(false)}><ArrowLeft size={15} /></button>
         : <span className="discussion-save-state" data-dirty={dirty || undefined}>
@@ -448,7 +455,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
         <Sparkles size={14} />{busy ? "处理中…" : "整理为实体与设定"}
       </button>
       {!profile?.hasSecret ? <p className="discussion-panel-state">模型未就绪</p>
-        : !hasContent ? <p className="discussion-panel-state">暂无可整理内容</p> : null}
+        : !hasContent ? <p className="discussion-panel-state">尚无已选定内容</p> : null}
     </> : null}
     {!showResults && proposals.data?.length ? <button type="button" className="secondary-action"
       onClick={() => setShowResults(true)}><Check size={14} />查看整理结果 · {proposals.data.length}</button> : null}
@@ -468,10 +475,10 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
     </section> : null}
     {proposals.isError ? <p className="project-error" role="alert">{errorMessage(proposals.error)}</p> : null}
     {showResults ? [...(proposals.data ?? []), ...olderProposals].map((proposal, index) => index === 0
-      ? <EntityProposalEditor key={proposal.id} proposal={proposal} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={onPendingChange} />
+      ? <EntityProposalEditor key={proposal.id} proposal={proposal} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={updateProposalPending} />
       : <details className="discussion-older-proposal" key={proposal.id}><summary>
         {proposal.status === "CONFIRMED" ? "已确认" : "待确认"} · {proposal.entities.map((entity) => entity.name).join("、")}
-      </summary><EntityProposalEditor proposal={proposal} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={onPendingChange} /></details>) : null}
+      </summary><EntityProposalEditor proposal={proposal} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={updateProposalPending} /></details>) : null}
     {showResults && hasMoreProposals.current && (olderProposals.length ? olderProposals.length % 20 === 0 : proposals.data?.length === 20)
       ? <button type="button" className="secondary-action" disabled={historyBusy} onClick={() => void loadOlderProposals()}>更早整理结果</button> : null}
   </aside>;
