@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   listPlanNodes: vi.fn(), listKnowledgeCandidates: vi.fn(), detectCandidateConflicts: vi.fn(),
   listEvidenceAnchors: vi.fn(), listManuscriptRevisions: vi.fn(), reviewKnowledgeCandidate: vi.fn(),
   getCurrentProject: vi.fn(), getManuscriptSource: vi.fn(),
+  finalizeKnowledgeCandidates: vi.fn(),
 }));
 vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
@@ -87,5 +88,32 @@ describe("knowledge evidence query budget", () => {
     await act(async () => finish());
     await waitFor(() => expect(screen.getByLabelText("章节")).toBeEnabled());
     expect(pending).toHaveBeenLastCalledWith(false);
+  });
+
+  it("never enables finalization when conflict verification failed", async () => {
+    mocks.listKnowledgeCandidates.mockResolvedValue([{ id: "approved", candidateStatus: "APPROVED",
+      fact: { subject: "沈砚", predicate: "进入", object: "雾城", evidenceAnchorIds: [] } }]);
+    mocks.detectCandidateConflicts.mockRejectedValue(new Error("conflict check unavailable"));
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <KnowledgeReviewView embedded chapterId="chapter-1" /></QueryClientProvider>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("conflict check unavailable");
+    expect(screen.getByRole("button", { name: "定稿 1 条" })).toBeDisabled();
+    expect(mocks.finalizeKnowledgeCandidates).not.toHaveBeenCalled();
+  });
+
+  it("keeps handled facts hidden and high-risk conflicts blocking approved content", async () => {
+    mocks.listKnowledgeCandidates.mockResolvedValue([
+      { id: "approved", candidateStatus: "APPROVED", fact: { subject: "沈砚", predicate: "进入", object: "雾城", evidenceAnchorIds: [] } },
+      { id: "rejected", candidateStatus: "REJECTED", fact: { subject: "其他人", predicate: "进入", object: "旧城", evidenceAnchorIds: [] } },
+    ]);
+    mocks.detectCandidateConflicts.mockResolvedValue([{ kind: "CONTRADICTORY_OBJECT", candidateIds: ["approved"],
+      highRisk: true, subject: "沈砚", predicate: "进入", objects: ["雾城", "旧城"] }]);
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <KnowledgeReviewView embedded chapterId="chapter-1" /></QueryClientProvider>);
+    await screen.findByText("沈砚 · 进入 · 雾城");
+    expect(screen.queryByText("其他人 · 进入 · 旧城")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "定稿 1 条" })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("显示已处理"));
+    expect(screen.getByText("其他人 · 进入 · 旧城")).toBeVisible();
   });
 });

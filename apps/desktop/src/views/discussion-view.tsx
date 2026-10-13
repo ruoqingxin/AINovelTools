@@ -35,6 +35,7 @@ import { discussionSourceHref, planningTargetHref } from "../lib/discussion-sour
 import "./discussion-source.css";
 import { WorkspacePanel, useWideWorkspace } from "./workspace-panel";
 import "./discussion-workspace.css";
+import { sourceReturnTo } from "../lib/manuscript-source";
 
 const planningOptions = planningSectionGroups.flatMap((group) => group.children);
 
@@ -78,6 +79,10 @@ function discussionScopeLabel(kind: DiscussionScopeKind) {
 
 export function DiscussionView() {
   const client = useQueryClient();
+  const targetParams = new URLSearchParams(window.location.search);
+  const targetSession = targetParams.get("targetSession");
+  const targetProject = targetParams.get("targetProject");
+  const returnTo = sourceReturnTo(targetParams.get("returnTo"));
   const sessions = useQuery({ queryKey: ["discussion-sessions"], queryFn: listDiscussionSessions });
   const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes });
   const sections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
@@ -94,7 +99,7 @@ export function DiscussionView() {
   const preference = resolveTaskPreference(effectivePreferences, "discussion");
   const designProfile = resolveTaskChatProfile(profiles.data, effectivePreferences, "discussionDesign");
   const designPreference = resolveTaskPreference(effectivePreferences, "discussionDesign");
-  const [sessionId, setSessionId] = useState<string | null>(() => window.location.hash.slice(1) || null);
+  const [sessionId, setSessionId] = useState<string | null>(() => targetSession ?? (window.location.hash.slice(1) || null));
   const [topicKind, setTopicKind] = useState<DiscussionTopicKind>("FREE");
   const [showSessionForm, setShowSessionForm] = useState(false);
   const [scopeKind, setScopeKind] = useState<DiscussionScopeKind>("PROJECT");
@@ -107,7 +112,7 @@ export function DiscussionView() {
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [designPending, setDesignPending] = useState(false);
-  const [showDraft, setShowDraft] = useState(false);
+  const [showDraft, setShowDraft] = useState(() => new URLSearchParams(window.location.search).get("design") === "results");
   const [showSessions, setShowSessions] = useState(false);
   const wide = useWideWorkspace(1100);
   const [draftFocus, setDraftFocus] = useState<{ field: "chosen" | "alternatives" | "questions" } | null>(null);
@@ -132,6 +137,8 @@ export function DiscussionView() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const autoScroll = useRef(true);
   const activeSession = sessions.data?.find((session) => session.id === sessionId) ?? null;
+  const invalidTarget = targetSession !== null && sessions.isSuccess
+    && (!sessions.data.some((session) => session.id === targetSession && (!targetProject || session.projectId === targetProject)));
   const nodeTargets = (nodes.data ?? []).filter((node) => !node.archived && ["OUTLINE", "VOLUME", "CHAPTER", "SCENE"].includes(node.kind))
     .map((node) => ({ id: `plan-node:${node.id}`, label: `${node.kind === "CHAPTER" ? "章节执行卡" : node.kind === "VOLUME" ? "分卷规划" : node.kind === "SCENE" ? "场景执行卡" : "故事大纲"} · ${node.title}` }));
   const targetOptions = [...planningOptions, ...nodeTargets];
@@ -140,12 +147,12 @@ export function DiscussionView() {
   const messages = useQuery({
     queryKey: ["discussion-messages", sessionId],
     queryFn: () => listDiscussionMessages(sessionId!),
-    enabled: Boolean(sessionId),
+    enabled: Boolean(sessionId) && !invalidTarget,
   });
   const candidates = useQuery({
     queryKey: ["discussion-candidates", sessionId],
     queryFn: () => listDiscussionCandidates(sessionId!),
-    enabled: Boolean(sessionId),
+    enabled: Boolean(sessionId) && !invalidTarget,
   });
   const candidateEditsPending = Object.keys(candidateDrafts).length > 0;
   useUnsavedChangesGuard(Boolean(message.trim()) || candidateEditsPending || busy, "讨论还有未发送输入、未保存候选或正在处理的操作。");
@@ -247,7 +254,7 @@ export function DiscussionView() {
   }
 
   useEffect(() => {
-    if (!sessions.isSuccess || sessions.data.length || creatingDefault.current) return;
+    if (targetSession !== null || !sessions.isSuccess || sessions.data.length || creatingDefault.current) return;
     creatingDefault.current = true;
     void createDiscussionSession({
       title: "作品共创讨论",
@@ -268,13 +275,13 @@ export function DiscussionView() {
     }).finally(() => {
       creatingDefault.current = false;
     });
-  }, [client, sessions.data, sessions.isSuccess]);
+  }, [client, sessions.data, sessions.isSuccess, targetSession]);
 
   useEffect(() => {
-    if (!sessions.isSuccess || !sessions.data.length || initialSessionSelected.current) return;
+    if (targetSession !== null || !sessions.isSuccess || !sessions.data.length || initialSessionSelected.current) return;
     initialSessionSelected.current = true;
     if (!sessions.data.some((session) => session.id === sessionId)) setSessionId(sessions.data[0].id);
-  }, [sessionId, sessions.data]);
+  }, [sessionId, sessions.data, targetSession]);
 
   const scopeNodeKind = scopeKind === "VOLUME"
     ? "VOLUME"
@@ -458,7 +465,9 @@ export function DiscussionView() {
 
   const visibleMessages = [...new Map([...olderMessages, ...(messages.data ?? [])]
     .map((item) => [item.id, item])).values()];
+  if (invalidTarget) return <section className="discussion-workspace"><p className="project-error" role="alert">目标讨论已不可用或不属于当前作品，未打开其他讨论。</p><a href="/review">返回待办</a></section>;
   return <div className="discussion-workspace discussion-stage-three" data-draft-open={showDraft && wide}>
+    {returnTo ? <a className="activity-return" href={returnTo}>返回来源</a> : null}
     <div className="workspace-heading">
       <h1>构思</h1>
       <div className="library-actions">

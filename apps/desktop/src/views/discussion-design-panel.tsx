@@ -225,7 +225,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
-  const [showResults, setShowResults] = useState(false);
+  const [showResults, setShowResults] = useState(() => new URLSearchParams(window.location.search).get("design") === "results");
   const [activeField, setActiveField] = useState<typeof draftFields[number]["id"]>("chosen");
   const [olderVersions, setOlderVersions] = useState<DiscussionWorkspace[]>([]);
   const [olderProposals, setOlderProposals] = useState<DiscussionDesignProposal[]>([]);

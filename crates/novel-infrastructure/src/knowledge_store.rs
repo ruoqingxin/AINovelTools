@@ -274,7 +274,10 @@ impl ProjectManager {
         &self,
         chapter_id: Uuid,
     ) -> Result<Vec<KnowledgeConflict>, KnowledgeStoreError> {
-        let candidates = self.list_knowledge_candidates(chapter_id)?;
+        let candidates = self.list_knowledge_candidates(chapter_id)?
+            .into_iter().filter(|candidate| matches!(candidate.candidate_status,
+                CandidateStatus::Pending | CandidateStatus::NeedsReview | CandidateStatus::Approved))
+            .collect::<Vec<_>>();
         let mut conflicts = Vec::new();
         for (index, left) in candidates.iter().enumerate() {
             for right in candidates.iter().skip(index + 1) {

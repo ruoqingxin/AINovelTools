@@ -52,6 +52,7 @@ use commands::knowledge::{
     create_knowledge_candidate, create_relation, detect_candidate_conflicts,
     finalize_knowledge_candidates, list_beliefs, list_current_facts, list_events,
     list_evidence_anchors, list_foreshadowings, list_knowledge_candidates, list_relations,
+    list_author_todos,
     rebuild_world_state, review_knowledge_candidate, update_belief, update_event,
     update_foreshadowing, update_relation,
 };
@@ -265,6 +266,7 @@ pub fn run() {
             list_foreshadowings,
             create_knowledge_candidate,
             list_knowledge_candidates,
+            list_author_todos,
             review_knowledge_candidate,
             detect_candidate_conflicts,
             finalize_knowledge_candidates,

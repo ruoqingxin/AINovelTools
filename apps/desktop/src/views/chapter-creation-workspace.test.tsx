@@ -92,6 +92,17 @@ describe("ChapterCreationWorkspace", () => {
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ active: false, mode: "create" }));
   });
 
+  it.each(["ai", "review"])("opens the canonical %s assistant from author queue links", (assistant) => {
+    window.history.replaceState(null, "", `/writing?assistant=${assistant}&purpose=admission&returnTo=%2Freview#chapter-1`);
+    render(<ChapterCreationWorkspace {...makeProps()} />);
+    expect(screen.getByRole("button", { name: "收起写作助手" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "返回来源" })).toHaveAttribute("href", "/review");
+    if (assistant === "review") {
+      expect(screen.getByLabelText("检查对象")).toHaveValue("admission");
+      expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "review", reviewPurpose: "admission", active: true }));
+    } else expect(screen.getByLabelText("AI 补充意见")).toBeVisible();
+  });
+
   it("opens the editor by default and shares the live draft and editor with both review purposes", () => {
     const state = makeState({ chapterDirty: true, draft: doc("最新修改") });
     render(<ChapterCreationWorkspace {...makeProps(state)} />);

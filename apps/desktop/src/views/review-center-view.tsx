@@ -1,170 +1,49 @@
-import { useQuery } from "@tanstack/react-query";
-import { ClipboardCheck, FileCheck2, ShieldCheck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { getAuditFlowSettings, listPlanNodes, listPlanningSections } from "../lib/tauri-client";
-import { manuscriptQuery } from "../lib/manuscript-query";
-import { AiWritingPanel } from "./ai-writing-panel";
-import { KnowledgeReviewView } from "./knowledge-review-view";
-
-type ReviewTab = "facts" | "admission" | "manuscript";
-
-const reviewTabs = [
-  { value: "admission", label: "创作准入", icon: ClipboardCheck },
-  { value: "manuscript", label: "候选审核", icon: ShieldCheck },
-  { value: "facts", label: "知识审核", icon: FileCheck2 },
-] as const;
-
-const candidateReviewTransferKey = "ainoveltools:candidate-review-transfer";
-
-function nodePlanId(nodeId: string) {
-  return `plan-node:${nodeId}`;
-}
-
-function initialReviewTab(): ReviewTab {
-  const value = new URLSearchParams(window.location.search).get("tab");
-  return value === "admission" || value === "manuscript" || value === "facts" ? value : "admission";
-}
-
-function candidateReviewDocument(chapterId: string) {
-  try {
-    const stored = window.sessionStorage.getItem(candidateReviewTransferKey);
-    if (!stored) return "";
-    const transfer = JSON.parse(stored) as { chapterId?: string; documentJson?: string };
-    return transfer.chapterId === chapterId ? transfer.documentJson?.trim() ?? "" : "";
-  } catch {
-    return "";
-  }
-}
-
-function initialChapterId() {
-  return new URLSearchParams(window.location.search).get("chapterId") ?? "";
-}
-
-function syncReviewLocation(tab: ReviewTab, chapterId: string) {
-  const params = new URLSearchParams(window.location.search);
-  params.set("tab", tab);
-  if (chapterId) params.set("chapterId", chapterId);
-  window.history.replaceState(window.history.state, "", `${window.location.pathname}?${params.toString()}`);
-}
+import { ClipboardCheck, RefreshCw, ShieldAlert } from "lucide-react";
+import { useState } from "react";
+import { todoHref, todoLabels, useAuthorTodos } from "../lib/author-todos-query";
+import { errorMessage, type AuthorTodoKind } from "../lib/tauri-client";
+import "./activity-workspace.css";
 
 export function ReviewCenterView() {
-  const [tab, setTab] = useState<ReviewTab>(initialReviewTab);
-  const [chapterId, setChapterId] = useState(initialChapterId);
-  const [visitedTabs, setVisitedTabs] = useState<ReviewTab[]>([initialReviewTab()]);
-  const [pendingPanels, setPendingPanels] = useState<Record<string, boolean>>({});
-  const pendingCallbacks = useMemo(() => Object.fromEntries(
-    ["facts", "admission", "manuscript"].map((key) => [key, (pending: boolean) => {
-      setPendingPanels((current) => current[key] === pending ? current : { ...current, [key]: pending });
-    }]),
-  ), []);
-  const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes });
-  const planningSections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
-  const auditFlow = useQuery({ queryKey: ["audit-flow-settings"], queryFn: getAuditFlowSettings });
-  const enabledTabs = reviewTabs.filter(({ value }) => auditFlow.data?.[value === "facts" ? "knowledge" : value] !== false);
-  useEffect(() => {
-    if (!enabledTabs.some(({ value }) => value === tab)) setTab(enabledTabs[0]?.value ?? "admission");
-  }, [enabledTabs, tab]);
-  const chapterList = useMemo(() => (nodes.data ?? []).filter((node) => node.kind === "CHAPTER"), [nodes.data]);
-  const selectedChapterId = chapterId || chapterList[0]?.id || "";
-  const candidateDraft = useMemo(() => candidateReviewDocument(selectedChapterId), [selectedChapterId]);
-  const selectedChapter = chapterList.find((chapter) => chapter.id === selectedChapterId);
-  const selectedVolume = selectedChapter
-    ? (nodes.data ?? []).find((node) => node.id === selectedChapter.parentId && node.kind === "VOLUME")
-    : undefined;
-  const manuscript = useQuery(manuscriptQuery(selectedChapterId));
-  const chapterPlan = planningSections.data?.find((section) => section.id === nodePlanId(selectedChapterId))?.content ?? "";
-  const volumePlan = selectedVolume
-    ? planningSections.data?.find((section) => section.id === nodePlanId(selectedVolume.id))?.content ?? ""
-    : "";
+  const queue = useAuthorTodos();
+  const [kind, setKind] = useState<AuthorTodoKind | "ALL">("ALL");
+  const legacy = new URLSearchParams(window.location.search);
+  const legacyTab = legacy.get("tab");
+  const legacyChapter = legacy.get("chapterId");
+  const legacyParams = new URLSearchParams({
+    returnTo: "/review",
+    ...(legacyTab === "facts" ? { tab: "extraction", knowledge: "facts" }
+      : { assistant: "review", purpose: legacyTab === "admission" ? "admission" : "manuscript" }),
+  });
+  if (legacyChapter) legacyParams.set("referenceChapter", legacyChapter);
+  const items = (queue.data?.items ?? []).filter((item) => kind === "ALL" || item.kind === kind);
 
-  useEffect(() => {
-    setVisitedTabs((current) => current.includes(tab) ? current : [...current, tab]);
-  }, [tab]);
-
-  function selectTab(next: ReviewTab) {
-    setTab(next);
-    syncReviewLocation(next, selectedChapterId);
-  }
-
-  function selectChapter(nextChapterId: string) {
-    if (nextChapterId === selectedChapterId) return;
-    if (Object.values(pendingPanels).some(Boolean) && !window.confirm("当前审核面板有未提交修改或正在处理的操作。确定切换章节吗？")) return;
-    setChapterId(nextChapterId);
-    syncReviewLocation(tab, nextChapterId);
-  }
-
-  return <section className="review-center-view">
-    <div className="workspace-heading">
-      <h1>待办</h1>
+  return <section className="author-todos activity-workspace">
+    <div className="workspace-heading workspace-heading-with-action">
+      <div><h1>待办</h1>{queue.isSuccess ? <span className="activity-meta">{queue.data.pendingCount} 项待处理</span> : null}</div>
+      <button type="button" className="icon-command" aria-label="刷新待办" title="刷新待办"
+        disabled={queue.isFetching} onClick={() => void queue.refetch()}><RefreshCw size={16} /></button>
     </div>
-
-    <ol className="review-flow" aria-label="审核流程">
-      <li data-active={tab === "admission" || undefined}><strong>1. 创作准入</strong><span>生成正文前</span></li>
-      <li data-active={tab === "manuscript" || undefined}><strong>2. 候选审核</strong><span>审核候选区快照</span></li>
-      <li><strong>3. 知识提取</strong><span>从正式正文提取候选</span></li>
-      <li data-active={tab === "facts" || undefined}><strong>4. 知识审核</strong><span>核对事实并定稿</span></li>
-    </ol>
-    <div className="review-center-tabs" role="tablist" aria-label="审核类型">
-      {enabledTabs.map(({ value, label, icon: Icon }) => <button
-        type="button"
-        role="tab"
-        aria-selected={tab === value}
-        aria-controls={`review-panel-${value}`}
-        id={`review-tab-${value}`}
-        data-active={tab === value || undefined}
-        key={value}
-        onClick={() => selectTab(value)}
-      >
-        <Icon size={15} strokeWidth={1.8} />
-        <span>{label}</span>
-      </button>)}
+    {legacyTab ? <div className="activity-legacy-entry">
+      <a href={`/writing?${legacyParams}${legacyChapter ? `#${encodeURIComponent(legacyChapter)}` : ""}`}>
+        {legacyTab === "facts" ? "打开本章事实审核" : legacyTab === "admission" ? "打开生成前检查" : "打开正文检查"}
+      </a>
+    </div> : null}
+    <div className="activity-toolbar">
+      <select aria-label="待办类型" value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>
+        <option value="ALL">全部待办</option>
+        {Object.entries(todoLabels).map(([value, label]) => <option key={value} value={value}>{label.title}</option>)}
+      </select>
     </div>
-
-    <div className="review-center-context">
-      <label>章节<select value={selectedChapterId} onChange={(event) => selectChapter(event.target.value)} disabled={!chapterList.length}>
-        {!chapterList.length ? <option value="">暂无章节</option> : null}
-        {chapterList.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapter.title}</option>)}
-      </select></label>
-      {selectedChapter ? <span>{selectedVolume ? `${selectedVolume.title} · ` : ""}{selectedChapter.title}</span> : null}
-    </div>
-
-    <div className="review-center-panel">
-      <div id="review-panel-admission" role="tabpanel" aria-labelledby="review-tab-admission" hidden={tab !== "admission"}>
-      {visitedTabs.includes("admission") || tab === "admission" ? selectedChapter ? <AiWritingPanel
-        active={tab === "admission" && auditFlow.data?.admission !== false}
-        onPendingChange={pendingCallbacks.admission}
-        key={`admission-${selectedChapter.id}`}
-        mode="review"
-        reviewPurpose="admission"
-        chapterId={selectedChapter.id}
-        chapterTitle={selectedChapter.title}
-        chapterPlan={chapterPlan}
-        volumeId={selectedVolume?.id ?? ""}
-        volumePlan={volumePlan}
-        draft={manuscript.data?.documentJson ?? ""}
-        editor={null}
-      /> : <div className="proposal-empty review-empty"><ClipboardCheck size={20} /><div><strong>暂无可审核章节</strong><span>建立章节后才能检查创作准入。</span></div></div> : null}
-      </div>
-      <div id="review-panel-manuscript" role="tabpanel" aria-labelledby="review-tab-manuscript" hidden={tab !== "manuscript"}>
-      {visitedTabs.includes("manuscript") || tab === "manuscript" ? selectedChapter && candidateDraft ? <AiWritingPanel
-        active={tab === "manuscript" && auditFlow.data?.manuscript !== false}
-        onPendingChange={pendingCallbacks.manuscript}
-        key={`candidate-review-${selectedChapter.id}-${candidateDraft}`}
-        mode="review"
-        reviewPurpose="manuscript"
-        chapterId={selectedChapter.id}
-        chapterTitle={selectedChapter.title}
-        chapterPlan={chapterPlan}
-        volumeId={selectedVolume?.id ?? ""}
-        volumePlan={volumePlan}
-        draft={candidateDraft}
-        editor={null}
-      /> : <div className="proposal-empty review-empty"><ShieldCheck size={20} /><div><strong>暂无候选内容可审核</strong><span>请先在正文候选区编辑内容，再选择“审核当前候选”。</span></div></div> : null}
-      </div>
-      <div id="review-panel-facts" role="tabpanel" aria-labelledby="review-tab-facts" hidden={tab !== "facts"}>
-      {visitedTabs.includes("facts") || tab === "facts" ? <KnowledgeReviewView key={selectedChapterId} embedded chapterId={selectedChapterId} onChapterChange={selectChapter}
-        active={tab === "facts" && auditFlow.data?.knowledge !== false} onPendingChange={pendingCallbacks.facts} /> : null}
-      </div>
-    </div>
+    {queue.isPending ? <p className="plan-empty" role="status">正在加载待办…</p>
+      : queue.isError ? <p className="project-error" role="alert">待办加载失败：{errorMessage(queue.error)}</p>
+      : items.length ? <div className="todo-list" aria-label="待处理事项">
+        {items.map((item) => <article className="todo-row" key={`${item.kind}-${item.targetId}`} data-risk={item.highRisk || undefined}>
+          <div className="todo-target"><strong>{item.targetTitle}</strong><span>{todoLabels[item.kind].title} · {item.count} 项</span></div>
+          <div className="todo-state">{item.highRisk ? <span className="todo-risk"><ShieldAlert size={14} />冲突阻断定稿</span> : null}
+            <span>{todoLabels[item.kind].status}</span></div>
+          <a className="secondary-action" href={todoHref(item, queue.data.projectId)}>{todoLabels[item.kind].action}</a>
+        </article>)}
+      </div> : <div className="activity-empty"><ClipboardCheck size={26} /><p>{kind === "ALL" ? "暂无待处理事项" : "此类暂无待办"}</p></div>}
   </section>;
 }

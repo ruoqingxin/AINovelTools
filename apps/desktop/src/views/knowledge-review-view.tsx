@@ -17,7 +17,7 @@ import {
 const candidateStatusLabels: Record<CandidateStatus, string> = {
   PENDING: "待审核",
   NEEDS_REVIEW: "需复核",
-  APPROVED: "已批准",
+  APPROVED: "已批准 · 待定稿",
   REJECTED: "已拒绝",
   FINALIZED: "已定稿",
 };
@@ -44,6 +44,7 @@ export function KnowledgeReviewView(props: {
   const setChapterId = props.onChapterChange ?? setInternalChapterId;
   const selectedChapterId = chapterId || chapterList[0]?.id || "";
   const [evidenceOpen, setEvidenceOpen] = useState<Record<string, boolean>>({});
+  const [showHandled, setShowHandled] = useState(false);
   const candidates = useQuery({
     queryKey: ["knowledge-candidates", selectedChapterId],
     queryFn: () => listKnowledgeCandidates(selectedChapterId),
@@ -62,6 +63,7 @@ export function KnowledgeReviewView(props: {
   const [error, setError] = useState<string | null>(null);
   useCandidateEditGuard(false, busy !== null, props.onPendingChange);
   const approved = (candidates.data ?? []).filter((candidate) => candidate.candidateStatus === "APPROVED");
+  const visibleCandidates = (candidates.data ?? []).filter((candidate) => showHandled || !["REJECTED", "FINALIZED"].includes(candidate.candidateStatus));
 
   async function decide(id: string, expectedStatus: CandidateStatus, decision: "APPROVE" | "REJECT") {
     setBusy(id);
@@ -110,10 +112,14 @@ export function KnowledgeReviewView(props: {
           {!chapterList.length ? <option value="">暂无章节</option> : null}
           {chapterList.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapter.title}</option>)}
         </select></label> : null}
-        <button type="button" className="secondary-action" onClick={() => void candidates.refetch()} disabled={!selectedChapterId || candidates.isFetching}><RefreshCw size={14} />刷新</button>
-        <button type="button" className="primary-action" onClick={() => void finalize()} disabled={!approved.length || busy !== null || Boolean(conflicts.data?.some((conflict) => conflict.highRisk))}><FileCheck2 size={14} />{busy === "finalize" ? "定稿中…" : `定稿 ${approved.length} 条`}</button>
+        <button type="button" className="icon-command" aria-label="刷新事实审核" title="刷新事实审核" onClick={() => {
+          void candidates.refetch(); void conflicts.refetch(); void anchors.refetch();
+        }} disabled={!selectedChapterId || candidates.isFetching || busy !== null}><RefreshCw size={14} /></button>
+        <label><input type="checkbox" checked={showHandled} onChange={(event) => setShowHandled(event.target.checked)} />显示已处理</label>
+        <button type="button" className="primary-action" onClick={() => void finalize()} disabled={!approved.length || busy !== null || !conflicts.isSuccess || conflicts.isFetching || Boolean(conflicts.data?.some((conflict) => conflict.highRisk))}><FileCheck2 size={14} />{busy === "finalize" ? "定稿中…" : `定稿 ${approved.length} 条`}</button>
       </div>
       {error ? <p className="project-error" role="alert">{error}</p> : null}
+      {candidates.isError || conflicts.isError ? <p className="project-error" role="alert">读取审核状态失败：{errorMessage(candidates.error ?? conflicts.error)}</p> : null}
       {conflicts.data?.length ? <section className="knowledge-conflict-panel" role="alert">
         <div className="knowledge-conflict-heading"><AlertTriangle size={16} /><div><strong>检测到 {conflicts.data.length} 项冲突</strong><span>{conflicts.data.some((conflict) => conflict.highRisk) ? "高风险冲突已阻断定稿，请先定位候选并处理。" : "请确认这些候选的表述是否准确，再决定是否定稿。"}</span></div></div>
         <div className="knowledge-conflict-list">{conflicts.data.map((conflict, index) => <article key={`${conflict.kind}-${conflict.subject}-${conflict.predicate}-${index}`}>
@@ -124,8 +130,8 @@ export function KnowledgeReviewView(props: {
       </section> : null}
       <div className="knowledge-review-list">
         {candidates.isPending ? <p className="plan-empty">正在加载候选…</p> : null}
-        {!candidates.isPending && !candidates.data?.length ? <p className="plan-empty">本章节暂无候选事实。</p> : null}
-        {candidates.data?.map((candidate) => {
+        {candidates.isSuccess && !visibleCandidates.length ? <p className="plan-empty">本章节暂无待审核事实。</p> : null}
+        {visibleCandidates.map((candidate) => {
           const evidence = candidate.fact.evidenceAnchorIds
             .map((id) => anchors.data?.find((anchor) => anchor.id === id))
             .filter((anchor): anchor is NonNullable<typeof anchor> => Boolean(anchor));

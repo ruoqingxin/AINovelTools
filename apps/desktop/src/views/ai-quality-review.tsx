@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { errorMessage, getAiQualitySummary } from "../lib/tauri-client";
+import { errorMessage, getAiQualitySummary, getCurrentProject } from "../lib/tauri-client";
 
 export const QUALITY_DAYS = 90;
 export const QUALITY_GROUP_LIMIT = 20;
@@ -29,14 +29,18 @@ function percentage(value: number, total: number) {
 }
 
 export function AiQualityReview() {
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   const quality = useQuery({
     queryKey: ["ai-quality-summary", QUALITY_GROUP_LIMIT, QUALITY_DAYS],
     queryFn: () => getAiQualitySummary(QUALITY_GROUP_LIMIT, QUALITY_DAYS),
+    enabled: Boolean(project.data),
   });
+  if (project.isError) return <p className="project-error" role="alert">无法读取当前作品：{errorMessage(project.error)}</p>;
+  if (!project.data) return <p className="plan-empty">{project.isPending ? "正在读取作品…" : "请先打开作品查看效果分析"}</p>;
 
   return <section className="ai-usage-view" aria-label="AI 质量回顾">
     <div className="ai-usage-view-heading">
-      <div><strong>质量回顾</strong><span>只统计最近 {QUALITY_DAYS} 天、样本最多的 {QUALITY_GROUP_LIMIT} 组，避免长期数据持续堆积。</span></div>
+      <div><strong>效果分析</strong><span>最近 {QUALITY_DAYS} 天 · 最多 {QUALITY_GROUP_LIMIT} 组</span></div>
       <small>{quality.data ? `${quality.data.totalProposals} 条候选 · ${quality.data.totalRated} 条评价 · 最近 ${QUALITY_DAYS} 天` : quality.isPending ? "统计中…" : "无数据"}</small>
     </div>
     {quality.isError ? <p className="project-error" role="alert">质量统计加载失败：{errorMessage(quality.error)}</p> : quality.data?.groups.length ? <div className="ai-quality-list">

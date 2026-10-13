@@ -1,0 +1,69 @@
+.workspace-page > .activity-workspace { width: min(1440px, calc(100% - 48px)); margin: 0 auto; padding: 24px 0 32px; }
+.activity-workspace { color: #303640; letter-spacing: 0; }
+.activity-workspace .workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.activity-meta { color: #74808c; font-size: 13px; }
+.activity-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 14px 0; }
+.activity-toolbar select, .activity-workspace input, .activity-workspace select { min-width: 0; max-width: 100%; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: #48515e; font: inherit; font-size: 13px; }
+.activity-workspace .primary-action, .activity-workspace .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; max-width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; font-size: 13px; text-decoration: none; cursor: pointer; }
+.activity-workspace .primary-action { border-color: var(--accent); }
+.activity-workspace button:disabled { opacity: .5; cursor: not-allowed; }
+.activity-workspace .icon-command { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 5px; color: #657182; background: #fff; cursor: pointer; }
+.todo-list { border-top: 1px solid var(--line); }
+.todo-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .5fr) auto; gap: 16px; align-items: center; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.todo-row[data-risk] { border-left: 3px solid #bc544c; padding-left: 12px; }
+.todo-target, .todo-state { display: grid; min-width: 0; gap: 7px; font-size: 13px; overflow-wrap: anywhere; }
+.todo-target strong { font-size: 15px; }
+.todo-target > span, .todo-state > span { color: #75808e; }
+.todo-state .todo-risk { display: inline-flex; align-items: center; gap: 6px; color: #ae463e; }
+.activity-empty { display: grid; min-height: 280px; place-content: center; justify-items: center; gap: 12px; color: #788291; }
+.activity-empty p { margin: 0; }
+.activity-legacy-entry { padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.activity-return { display: inline-block; margin: 4px 0 12px; font-size: 13px; }
+.activity-workspace .jobs-workspace { grid-template-columns: minmax(280px, 1fr) minmax(300px, .9fr); }
+.activity-workspace .job-row { font-size: 13px; }
+.activity-workspace .chapter-tabs { margin-top: 14px; border-bottom: 1px solid var(--line); }
+.activity-workspace .chapter-tabs button { font-size: 13px; }
+.activity-workspace .activity-record { width: 100%; border-top: 0; border-right: 0; border-radius: 0; text-align: left; color: inherit; background: transparent; font: inherit; }
+.activity-workspace .activity-record[data-selected] { background: #eaf1fc; }
+.activity-workspace .activity-record .job-main { display: grid; min-width: 0; gap: 6px; overflow-wrap: anywhere; }
+.activity-workspace progress { width: 100%; height: 6px; accent-color: #3269cc; }
+.data-management .maintenance-operations button[aria-pressed="true"] { background: #eaf1fc; color: #245bb3; border-color: #aac4ef; }
+.activity-workspace .job-main strong { font-size: 14px; }
+.activity-workspace .job-main small, .activity-workspace .job-row > small { font-size: 12px; color: #74808c; }
+.activity-workspace .job-detail { padding-left: 20px; }
+.activity-workspace .job-detail-heading h2 { color: #303640; font-size: 17px; white-space: normal; overflow-wrap: anywhere; }
+.activity-workspace .job-detail :is(dt, dd, .job-detail-progress > div:first-child) { font-size: 13px; }
+.activity-workspace .job-detail dd { white-space: normal; overflow-wrap: anywhere; }
+.activity-workspace .job-detail dl > div { grid-template-columns: 88px minmax(0, 1fr); }
+.activity-workspace .job-status { font-size: 12px; }
+.activity-workspace .job-result { margin: 14px 0; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
+.activity-advanced { margin: 18px 0; padding: 14px 0; border-top: 1px solid var(--line); }
+.activity-advanced > summary { color: #6a7683; font-size: 13px; cursor: pointer; }
+.activity-advanced pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.activity-advanced code { overflow-wrap: anywhere; }
+.activity-workspace .job-log p, .activity-workspace .job-request-preview p { font-size: 13px; }
+.data-management .maintenance-operations { display: flex; flex-wrap: wrap; gap: 8px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.maintenance-form { display: grid; max-width: 740px; gap: 16px; padding: 20px 0; }
+.maintenance-form h3 { margin: 0; font-size: 17px; }
+.maintenance-form label { display: grid; gap: 7px; font-size: 13px; }
+.maintenance-path { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.maintenance-path input { flex: 1; width: 100%; }
+.maintenance-path button { flex: 0 0 34px; }
+.maintenance-form fieldset { display: grid; gap: 16px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.maintenance-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.maintenance-safety { margin: 0; font-size: 13px; color: #677381; overflow-wrap: anywhere; }
+.data-management .maintenance-result { display: grid; gap: 8px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.data-management .maintenance-result p { margin: 0; overflow-wrap: anywhere; }
+.data-management .maintenance-result a { justify-self: start; }
+.activity-workspace .search-result p { font-size: 15px; color: #48515e; line-height: 1.8; }
+.activity-workspace .search-result > a { margin-top: 10px; }
+@media (max-width: 900px) {
+  .activity-workspace .jobs-workspace { grid-template-columns: minmax(0, 1fr); }
+  .activity-workspace .jobs-list { border-right: 0; max-height: 340px; overflow: auto; }
+  .activity-workspace .job-detail { padding-left: 0; border-top: 1px solid var(--line); }
+}
+@media (max-width: 800px) {
+  .workspace-page > .activity-workspace { width: calc(100% - 28px); padding-top: 20px; }
+  .todo-row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+  .todo-target { grid-column: 1 / -1; }
+}

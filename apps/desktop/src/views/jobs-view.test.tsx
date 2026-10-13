@@ -3,146 +3,78 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JobsView } from "./jobs-view";
-
 const mocks = vi.hoisted(() => ({
-  acknowledgeFailedJobs: vi.fn(),
-  enqueueJob: vi.fn(),
-  getAiRunRequest: vi.fn(),
-  getAiQualitySummary: vi.fn(),
-  listAiRuns: vi.fn(),
-  listJobs: vi.fn(),
+  acknowledgeFailedJobs: vi.fn(), cancelJob: vi.fn(), retryJob: vi.fn(), getCurrentProject: vi.fn(),
+  getAiRunRequest: vi.fn(), listAiRuns: vi.fn(), listJobs: vi.fn(), listJobEvents: vi.fn(), listPlanNodes: vi.fn(),
 }));
-
-vi.mock("../lib/tauri-client", async () => {
-  const actual = await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client");
-  return { ...actual, acknowledgeFailedJobs: mocks.acknowledgeFailedJobs, enqueueJob: mocks.enqueueJob, getAiRunRequest: mocks.getAiRunRequest, getAiQualitySummary: mocks.getAiQualitySummary, listAiRuns: mocks.listAiRuns, listJobs: mocks.listJobs };
-});
-
-describe("JobsView", () => {
-  afterEach(() => {
-    cleanup();
-    window.history.replaceState({}, "", "/jobs");
-  });
-
+vi.mock("../lib/tauri-client", async () => ({ ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks }));
+const job = { id: "failed-job", jobType: "HEALTH_SCAN", payload: "{}", status: "FAILED", progress: 60, attemptCount: 1,
+  cancelRequested: false, errorSummary: "健康扫描失败", createdAt: "2026-10-13T00:00:00Z", updatedAt: "2026-10-13T00:00:01Z", acknowledgedAt: null };
+function renderView() {
+  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><JobsView /></QueryClientProvider>);
+}
+describe("background activity", () => {
+  afterEach(() => { cleanup(); window.history.replaceState({}, "", "/jobs"); });
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.acknowledgeFailedJobs.mockResolvedValue(1);
-    mocks.getAiRunRequest.mockResolvedValue({ endpoint: null, requestBody: null });
-    mocks.getAiQualitySummary.mockResolvedValue({
-      totalProposals: 0,
-      totalRated: 0,
-      totalHelpful: 0,
-      totalWithIssues: 0,
-      groups: [],
-    });
+    mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1", name: "铜铃之城" });
+    mocks.listPlanNodes.mockResolvedValue([]);
+    mocks.listJobEvents.mockResolvedValue([]);
     mocks.listAiRuns.mockResolvedValue([]);
     mocks.listJobs.mockResolvedValue([]);
-    mocks.enqueueJob.mockResolvedValue({});
   });
-
-  it("uses readable task labels and enqueues the matching task type", async () => {
-    render(<QueryClientProvider client={new QueryClient()}><JobsView /></QueryClientProvider>);
-    const backup = await screen.findByRole("button", { name: "创建备份" });
-    expect(mocks.listJobs).toHaveBeenCalled();
-    expect(screen.getByText("已结束任务只保留最近 100 个；排队中和执行中的任务不会清理")).toBeVisible();
-    fireEvent.click(backup);
-    await waitFor(() => expect(mocks.enqueueJob).toHaveBeenCalledWith("BACKUP"));
+  it("has no manual runner, maintenance creation, or quality tab", async () => {
+    renderView();
+    await screen.findByText("当前筛选没有后台任务");
+    expect(screen.queryByRole("button", { name: /执行下一项|创建备份/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /质量/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "用量与效果" })).toHaveAttribute("href", "/settings#ai-usage");
   });
-
-  it("acknowledges failed job alerts without changing the task list", async () => {
-    mocks.listJobs.mockResolvedValue([{
-      id: "failed-job",
-      jobType: "HEALTH_SCAN",
-      payload: "{}",
-      status: "FAILED",
-      progress: 60,
-      attemptCount: 1,
-      cancelRequested: false,
-      errorSummary: "健康扫描失败",
-      createdAt: "2026-09-11T00:00:00Z",
-      updatedAt: "2026-09-11T00:00:01Z",
-      acknowledgedAt: null,
-    }]);
-
-    render(<QueryClientProvider client={new QueryClient()}><JobsView /></QueryClientProvider>);
+  it("clears reminders without removing failures and puts IDs in advanced details", async () => {
+    mocks.listJobs.mockResolvedValue([job]);
+    renderView();
     fireEvent.click(await screen.findByRole("button", { name: "清除失败提醒 1" }));
-
-    await waitFor(() => expect(mocks.acknowledgeFailedJobs).toHaveBeenCalledTimes(1));
-    expect(screen.getAllByText("健康扫描失败").length).toBeGreaterThan(0);
+    await waitFor(() => expect(mocks.acknowledgeFailedJobs).toHaveBeenCalledOnce());
+    expect(screen.getByText("健康扫描失败")).toBeVisible();
+    expect(screen.getByText(job.id)).not.toBeVisible();
+    fireEvent.click(screen.getByText("高级详情"));
+    expect(screen.getByText(job.id)).toBeVisible();
   });
-
-  it("shows AI writing runs in the task page history", async () => {
+  it("preserves retry and cancellation with exactly one action per selected task", async () => {
+    mocks.listJobs.mockResolvedValue([job]);
+    mocks.retryJob.mockResolvedValue({ ...job, status: "QUEUED" });
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "重试" }));
+    await waitFor(() => expect(mocks.retryJob).toHaveBeenCalledWith(job.id));
+    mocks.listJobs.mockResolvedValue([{ ...job, status: "RUNNING", errorSummary: null }]);
+    fireEvent.click(screen.getByLabelText("刷新任务"));
+    fireEvent.click(await screen.findByRole("button", { name: "取消任务" }));
+    await waitFor(() => expect(mocks.cancelJob).toHaveBeenCalledWith(job.id));
+  });
+  it("opens a requested cancelled task from maintenance history", async () => {
+    window.history.replaceState({}, "", "/jobs?jobId=failed-job");
+    mocks.listJobs.mockResolvedValue([{ ...job, status: "CANCELLED", errorSummary: null }]);
+    renderView();
+    expect(await screen.findByText("任务已取消")).toBeVisible();
+  });
+  it("shows AI records with lazy request snapshots and no default technical fields", async () => {
     mocks.listAiRuns.mockResolvedValue([{
-      id: "run-1",
-      taskKey: "writing",
-      source: "WRITING",
-      action: "DRAFT",
-      status: "COMPLETED",
-      chapterId: "chapter-1",
-      chapterTitle: "第1章",
-      profileName: "写作模型",
-      attemptCount: 1,
-      retryReason: null,
-      errorCode: null,
-      estimatedInputTokens: 1200,
-      estimatedOutputTokens: 2400,
-      estimatedCostMicros: 3500,
-      priceCurrency: "USD",
-      promptVersion: "writing-v1",
-      createdAt: "2026-09-11T00:00:00Z",
-      finishedAt: "2026-09-11T00:00:12Z",
+      id: "run-1", taskKey: "writing", source: "WRITING", action: "DRAFT", status: "COMPLETED",
+      chapterId: "chapter-1", chapterTitle: "第1章", profileName: "写作模型", attemptCount: 1,
+      retryReason: null, errorCode: null, estimatedInputTokens: 1200, estimatedOutputTokens: 2400,
+      estimatedCostMicros: 3500, priceCurrency: "USD", promptVersion: "writing-v1",
+      createdAt: "2026-10-13T00:00:00Z", finishedAt: "2026-10-13T00:00:12Z",
     }]);
-
-    render(<QueryClientProvider client={new QueryClient()}><JobsView /></QueryClientProvider>);
+    mocks.getAiRunRequest.mockResolvedValue({ endpoint: "https://example.test/chat", requestBody: '{"model":"mock"}' });
+    renderView();
     fireEvent.click(screen.getByRole("tab", { name: "AI 运行记录" }));
-
-    expect(screen.getByText("模型、token、费用和状态统计长期保留；页面展示及完整请求快照各保留最近 100 条")).toBeVisible();
     expect(await screen.findByText("整章创作 · 第1章")).toBeVisible();
-    expect(screen.getByText(/写作模型 · 正文创作/)).toBeVisible();
-
-    mocks.getAiRunRequest.mockResolvedValue({
-      endpoint: "https://api.deepseek.com/chat/completions",
-      requestBody: "{\n  \"model\": \"deepseek-v4-flash\",\n  \"messages\": []\n}",
-    });
-    fireEvent.click(screen.getByRole("button", { name: /整章创作，已完成/ }));
-    fireEvent.click(screen.getByRole("button", { name: /查看完整请求/ }));
-
-    expect(await screen.findByText(/api\.deepseek\.com\/chat\/completions/)).toBeVisible();
-    expect(screen.getByText(/deepseek-v4-flash/)).toBeVisible();
-  });
-
-  it("shows model and prompt quality review metrics beside AI history", async () => {
-    mocks.getAiQualitySummary.mockResolvedValue({
-      totalProposals: 3,
-      totalRated: 3,
-      totalHelpful: 2,
-      totalWithIssues: 1,
-      groups: [{
-        taskKey: "writing",
-        action: "DRAFT",
-        promptVersion: "r3-writing-v4+task-abc",
-        profileName: "DeepSeek 写作",
-        proposalCount: 3,
-        acceptedCount: 2,
-        ratedCount: 3,
-        helpfulCount: 2,
-        notHelpfulCount: 1,
-        validCount: 2,
-        warningCount: 1,
-        needsInputCount: 0,
-        invalidCount: 0,
-      }],
-    });
-
-    render(<QueryClientProvider client={new QueryClient()}><JobsView /></QueryClientProvider>);
-    fireEvent.click(screen.getByRole("tab", { name: "质量回顾" }));
-
-    expect(screen.getByText("最近 90 天 · 最多 20 组")).toBeVisible();
-    expect(await screen.findByText("整章创作 · DeepSeek 写作")).toBeVisible();
-    expect(mocks.getAiQualitySummary).toHaveBeenCalledWith(20, 90);
-    expect(screen.getAllByText("有帮助")).toHaveLength(2);
-    expect(screen.getAllByText("67%")).toHaveLength(2);
-    expect(screen.getByText("校验问题 33%")).toBeVisible();
-    expect(screen.getByText("采用率")).toBeVisible();
+    expect(screen.getByText("writing-v1")).not.toBeVisible();
+    expect(mocks.getAiRunRequest).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("高级详情"));
+    fireEvent.click(screen.getByRole("button", { name: "查看完整请求" }));
+    expect(await screen.findByText('{"model":"mock"}')).toBeVisible();
+    expect(screen.getByText("12 秒")).toBeVisible();
   });
 });

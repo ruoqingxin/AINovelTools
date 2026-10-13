@@ -2,134 +2,59 @@ import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useState } from "react";
 import { ReviewCenterView } from "./review-center-view";
 
-const mocks = vi.hoisted(() => ({
-  currentManuscript: vi.fn(),
-  getAuditFlowSettings: vi.fn(),
-  listPlanNodes: vi.fn(),
-  listPlanningSections: vi.fn(),
-}));
-
-vi.mock("../lib/tauri-client", async () => {
-  const actual = await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client");
-  return {
-    ...actual,
-    currentManuscript: mocks.currentManuscript,
-    getAuditFlowSettings: mocks.getAuditFlowSettings,
-    listPlanNodes: mocks.listPlanNodes,
-    listPlanningSections: mocks.listPlanningSections,
-  };
-});
-
-vi.mock("./knowledge-review-view", () => ({
-  KnowledgeReviewView: (props: { embedded?: boolean; chapterId?: string }) => (
-    <div data-testid="facts-review" data-chapter={props.chapterId} data-embedded={String(props.embedded)} />
-  ),
-}));
-
-vi.mock("./ai-writing-panel", () => ({
-  AiWritingPanel: (props: {
-    reviewPurpose?: string;
-    chapterId: string;
-    chapterPlan: string;
-    volumePlan: string;
-    draft: string;
-    onPendingChange?: (pending: boolean) => void;
-    active?: boolean;
-  }) => {
-    const [value, setValue] = useState("");
-    return <div
-      data-testid="consistency-review"
-      data-purpose={props.reviewPurpose}
-      data-plan={props.chapterPlan}
-      data-volume-plan={props.volumePlan}
-      data-draft={props.draft}
-      data-active={String(props.active)}
-    >
-      {props.chapterId}
-      <input aria-label="审核面板输入" value={value} onChange={(event) => { setValue(event.target.value); props.onPendingChange?.(Boolean(event.target.value)); }} />
-    </div>;
-  },
-}));
-
+const mocks = vi.hoisted(() => ({ listAuthorTodos: vi.fn(), listPlanNodes: vi.fn() }));
+vi.mock("../lib/tauri-client", async () => ({ ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks }));
 function renderView() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><ReviewCenterView /></QueryClientProvider>);
+  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ReviewCenterView /></QueryClientProvider>);
 }
-
-describe("ReviewCenterView", () => {
+describe("author to-dos", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.history.replaceState({}, "", "/review");
-    window.sessionStorage.clear();
-    mocks.listPlanNodes.mockResolvedValue([
-      { id: "volume-1", parentId: null, kind: "VOLUME", title: "第一卷", sortOrder: 1, archived: false, revision: 1 },
-      { id: "chapter-1", parentId: "volume-1", kind: "CHAPTER", title: "第1章", sortOrder: 1, archived: false, revision: 1 },
-      { id: "chapter-2", parentId: "volume-1", kind: "CHAPTER", title: "第2章", sortOrder: 2, archived: false, revision: 1 },
-    ]);
-    mocks.listPlanningSections.mockResolvedValue([
-      { id: "plan-node:chapter-1", content: "第一章执行卡", pendingContent: "", storyState: "CONFIRMED", rationale: "", consequence: "", references: [], updatedAt: "" },
-      { id: "plan-node:chapter-2", content: "第二章执行卡", pendingContent: "", storyState: "CONFIRMED", rationale: "", consequence: "", references: [], updatedAt: "" },
-      { id: "plan-node:volume-1", content: "第一卷规划", pendingContent: "", storyState: "CONFIRMED", rationale: "", consequence: "", references: [], updatedAt: "" },
-    ]);
-    mocks.currentManuscript.mockResolvedValue({ id: "revision-1", documentJson: "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"正式正文\"}]}]}" });
-    mocks.getAuditFlowSettings.mockResolvedValue({ admission: true, manuscript: true, knowledge: true });
+    mocks.listAuthorTodos.mockResolvedValue({ projectId: "project-1", pendingCount: 3, items: [
+      { kind: "FACT_REVIEW", targetId: "chapter-1", targetTitle: "入城", count: 2, highRisk: true, updatedAt: "0" },
+      { kind: "FACT_FINALIZE", targetId: "chapter-2", targetTitle: "铜铃", count: 1, highRisk: false, updatedAt: "0" },
+    ] });
   });
-
-  afterEach(() => cleanup());
-
-  it("switches audit purposes and keeps the selected chapter context", async () => {
+  afterEach(cleanup);
+  it("shows real pending counts and distinct approval/finalization states without checking forms", async () => {
     renderView();
-
-    const admission = await screen.findByTestId("consistency-review");
-    expect(admission).toHaveAttribute("data-purpose", "admission");
-    expect(admission).toHaveAttribute("data-plan", "第一章执行卡");
-    expect(admission).toHaveAttribute("data-volume-plan", "第一卷规划");
-    await waitFor(() => expect(admission).toHaveAttribute("data-draft", expect.stringContaining("正式正文")));
-
-    fireEvent.change(screen.getByLabelText("章节"), { target: { value: "chapter-2" } });
-    await waitFor(() => expect(screen.getByTestId("consistency-review")).toHaveTextContent("chapter-2"));
-    expect(screen.getByTestId("consistency-review")).toHaveAttribute("data-plan", "第二章执行卡");
-
-    expect(screen.getByRole("tab", { name: "候选审核" })).toBeVisible();
-
-    fireEvent.click(screen.getByRole("tab", { name: "知识审核" }));
-    expect(await screen.findByTestId("facts-review")).toHaveAttribute("data-chapter", "chapter-2");
+    expect(await screen.findByText("3 项待处理")).toBeVisible();
+    expect(screen.getByText("待批准")).toBeVisible();
+    expect(screen.getByText("已批准 · 待定稿")).toBeVisible();
+    expect(screen.getByText("冲突阻断定稿")).toBeVisible();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(mocks.listPlanNodes).not.toHaveBeenCalled();
+    const url = new URL(screen.getByRole("link", { name: "审核事实" }).getAttribute("href")!, window.location.origin);
+    expect(url.searchParams.get("referenceChapter")).toBe("chapter-1");
+    expect(url.searchParams.get("targetProject")).toBe("project-1");
+    expect(url.searchParams.get("knowledge")).toBe("facts");
   });
-
-  it("opens the unsynced candidate snapshot in the candidate review tab", async () => {
-    window.sessionStorage.setItem("ainoveltools:candidate-review-transfer", JSON.stringify({
-      chapterId: "chapter-1",
-      documentJson: "候选区尚未同步的正文",
-    }));
-    window.history.replaceState({}, "", "/review?tab=manuscript&chapterId=chapter-1");
-
+  it("filters the list and refreshes the same queue", async () => {
     renderView();
-
-    const candidateReview = await screen.findByTestId("consistency-review");
-    expect(candidateReview).toHaveAttribute("data-purpose", "manuscript");
-    expect(candidateReview).toHaveAttribute("data-draft", "候选区尚未同步的正文");
+    await screen.findByText("3 项待处理");
+    fireEvent.change(screen.getByLabelText("待办类型"), { target: { value: "FACT_FINALIZE" } });
+    expect(screen.queryByText("入城")).not.toBeInTheDocument();
+    mocks.listAuthorTodos.mockResolvedValue({ projectId: "project-1", pendingCount: 0, items: [] });
+    fireEvent.click(screen.getByLabelText("刷新待办"));
+    await screen.findByText("0 项待处理");
+    expect(screen.getByText("此类暂无待办")).toBeVisible();
   });
-
-  it("retains a visited review panel and confirms pending work before changing chapters", async () => {
+  it("retains the legacy chapter and check purpose as a workspace entry", async () => {
+    window.history.replaceState({}, "", "/review?tab=admission&chapterId=chapter-2");
     renderView();
-    await screen.findByTestId("consistency-review");
-    fireEvent.change(screen.getByLabelText("审核面板输入"), { target: { value: "未提交输入" } });
-    fireEvent.click(screen.getByRole("tab", { name: "知识审核" }));
-    expect(screen.getByTestId("consistency-review")).not.toBeVisible();
-    expect(screen.getByTestId("consistency-review")).toHaveAttribute("data-active", "false");
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    try {
-      fireEvent.change(screen.getByLabelText("章节"), { target: { value: "chapter-2" } });
-      expect(screen.getByLabelText("章节")).toHaveValue("chapter-1");
-      fireEvent.click(screen.getByRole("tab", { name: "创作准入" }));
-      expect(screen.getByLabelText("审核面板输入")).toHaveValue("未提交输入");
-      confirm.mockReturnValue(true);
-      fireEvent.change(screen.getByLabelText("章节"), { target: { value: "chapter-2" } });
-      await waitFor(() => expect(screen.getByTestId("consistency-review")).toHaveTextContent("chapter-2"));
-      expect(screen.getByLabelText("审核面板输入")).toHaveValue("");
-    } finally { confirm.mockRestore(); }
+    const url = new URL(screen.getByRole("link", { name: "打开生成前检查" }).getAttribute("href")!, window.location.origin);
+    expect(url.hash).toBe("#chapter-2");
+    expect(url.searchParams.get("assistant")).toBe("review");
+    expect(url.searchParams.get("purpose")).toBe("admission");
+  });
+  it("reports query failure and supports refresh", async () => {
+    mocks.listAuthorTodos.mockRejectedValueOnce(new Error("queue unavailable"));
+    renderView();
+    expect(await screen.findByRole("alert")).toHaveTextContent("queue unavailable");
+    fireEvent.click(screen.getByLabelText("刷新待办"));
+    await waitFor(() => expect(screen.getByText("3 项待处理")).toBeVisible());
   });
 });

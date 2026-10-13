@@ -1,6 +1,15 @@
 use crate::{ApiError, ProjectState};
 
 #[tauri::command]
+pub(crate) fn list_author_todos(
+    state: tauri::State<'_, ProjectState>,
+) -> Result<novel_infrastructure::AuthorTodoQueue, ApiError> {
+    let manager = state.manager.lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?;
+    manager.list_author_todos().map_err(|error| ApiError::internal(error.to_string()))
+}
+
+#[tauri::command]
 pub(crate) fn list_evidence_anchors(
     state: tauri::State<'_, ProjectState>,
 ) -> Result<Vec<novel_infrastructure::EvidenceAnchor>, ApiError> {

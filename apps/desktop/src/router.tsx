@@ -86,6 +86,11 @@ function ReviewEntryView() {
   return <ProjectGate><ReviewCenterView /></ProjectGate>;
 }
 
+function JobsEntryView() {
+  const hash = useRouterState({ select: (state) => state.location.hash });
+  return hash === "quality" ? <Navigate to="/settings" hash="quality" replace /> : <ProjectGate><JobsView /></ProjectGate>;
+}
+
 const rootRoute = createRootRoute({
   component: AppShell,
   notFoundComponent: EmptyProjectView,
@@ -135,7 +140,7 @@ const knowledgeRecordsRoute = createRoute({ getParentRoute: () => rootRoute, pat
 const authorSettingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/settings", component: () => <ProjectGate><AuthorSettingsView /></ProjectGate> });
 const materialsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/materials", component: () => <ProjectGate><MaterialsView /></ProjectGate> });
 const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", component: () => <ProjectGate><SearchView /></ProjectGate> });
-const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: () => <ProjectGate><JobsView /></ProjectGate> });
+const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: JobsEntryView });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsView });
 
 const routeTree = rootRoute.addChildren([indexRoute, planningRoute, chaptersRoute, writingRoute, discussionRoute, knowledgeRoute, reviewRoute, knowledgeReviewRoute, knowledgeRecordsRoute, authorSettingsRoute, materialsRoute, searchRoute, jobsRoute, settingsRoute]);

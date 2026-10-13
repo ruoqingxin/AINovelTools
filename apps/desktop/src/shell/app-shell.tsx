@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Clock3, ListChecks, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings, X } from "lucide-react";
 import { getBootstrapStatus, getCurrentProject, getHealth, listAllRecoveryLogs } from "../lib/tauri-client";
 import { useJobs } from "../lib/jobs-query";
+import { useAuthorTodos } from "../lib/author-todos-query";
 import { UnsavedChangesProvider } from "./unsaved-changes-provider";
 import { primaryDestination, primaryNavigation, workspaceLabel } from "./navigation";
 import { ProjectActionsProvider, useProjectActions } from "./project-actions-provider";
@@ -45,6 +46,7 @@ function ShellLayout() {
   });
   const recovery = useQuery({ queryKey: ["recovery-all"], queryFn: listAllRecoveryLogs, enabled: Boolean(currentProject.data) && !actions.transitioning });
   const jobs = useJobs({ enabled: Boolean(currentProject.data) && !actions.transitioning, poll: true });
+  const todos = useAuthorTodos({ enabled: Boolean(currentProject.data) && !actions.transitioning, poll: true });
 
   const serviceLabel = health.isSuccess
     ? "本地数据正常"
@@ -109,6 +111,7 @@ function ShellLayout() {
               >
                 <Icon size={20} strokeWidth={1.8} />
                 <span>{label}</span>
+                {path === "/review" && todos.data?.pendingCount ? <span className="nav-todo-count" aria-label={`${todos.data.pendingCount} 项待办`}>{todos.data.pendingCount > 99 ? "99+" : todos.data.pendingCount}</span> : null}
               </Link>
             ) : <button type="button" key={label} className="activity-button" aria-label={label} title={label} disabled>
               <Icon size={20} strokeWidth={1.8} /><span>{label}</span>
@@ -134,7 +137,7 @@ function ShellLayout() {
             <button type="button" className="shell-icon" title="关闭提示" aria-label="关闭作品操作错误" onClick={actions.clearError}><X size={16} /></button></div> : null}
           {currentProject.isError ? <div className="global-action-error" role="alert"><span>无法读取当前作品</span>
             <button type="button" onClick={() => void currentProject.refetch()}>重试</button></div> : null}
-          {!actions.transitioning && currentProject.data && recovery.data?.length && pathname !== "/writing" && pathname !== "/chapters" ? <div className="global-recovery-banner" role="status"><span>有 {recovery.data.length} 份异常退出草稿尚未确认</span><Link to="/writing">处理异常草稿</Link></div> : null}
+          {!actions.transitioning && currentProject.data && recovery.data?.length && pathname !== "/writing" && pathname !== "/chapters" && pathname !== "/review" ? <div className="global-recovery-banner" role="status"><span>有 {recovery.data.length} 份异常退出草稿尚未确认</span><Link to="/review">处理异常草稿</Link></div> : null}
           {actions.transitioning ? <p className="route-loading" role="status">正在切换作品…</p> : null}
           <div className="workspace-page" hidden={actions.transitioning}
             key={currentProject.data?.projectId ?? "no-project"}><Outlet /></div>

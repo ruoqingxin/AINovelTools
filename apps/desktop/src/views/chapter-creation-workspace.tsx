@@ -56,15 +56,17 @@ export function ChapterCreationWorkspace({
   onPendingChange?: (pending: boolean) => void;
 }) {
   const [assistantTab, setAssistantTab] = useState<AssistantTab>(() =>
-    new URLSearchParams(window.location.search).get("assistant") === "plan" ? "plan" : "ai");
+    new URLSearchParams(window.location.search).get("assistant") === "plan" ? "plan"
+      : new URLSearchParams(window.location.search).get("assistant") === "review" ? "review" : "ai");
   const [visitedAssistantTabs, setVisitedAssistantTabs] = useState<AssistantTab[]>([assistantTab]);
   const [assistantOpen, setAssistantOpen] = useState(() =>
-    new URLSearchParams(window.location.search).get("assistant") === "plan");
+    ["plan", "ai", "review"].includes(new URLSearchParams(window.location.search).get("assistant") ?? ""));
   const assistantDocked = useWideWorkspace(1280);
-  const [reviewPurpose, setReviewPurpose] = useState<"admission" | "manuscript">("manuscript");
+  const [reviewPurpose, setReviewPurpose] = useState<"admission" | "manuscript">(() =>
+    new URLSearchParams(window.location.search).get("purpose") === "admission" ? "admission" : "manuscript");
   const [knowledgeTab, setKnowledgeTab] = useState<"extraction" | "facts">(() =>
     new URLSearchParams(window.location.search).get("knowledge") === "facts" ? "facts" : "extraction");
-  const [visitedReviews, setVisitedReviews] = useState<Array<"admission" | "manuscript">>([]);
+  const [visitedReviews, setVisitedReviews] = useState<Array<"admission" | "manuscript">>(assistantTab === "review" ? [reviewPurpose] : []);
   const [extractionVisited, setExtractionVisited] = useState(false);
   const [factsVisited, setFactsVisited] = useState(false);
   const [readinessOpen, setReadinessOpen] = useState(false);
@@ -114,6 +116,7 @@ export function ChapterCreationWorkspace({
 
   return <div className="creation-workspace" data-assistant-open={assistantOpen}>
     <div className="creation-main">
+      {referenceReturn && assistantTab !== "plan" ? <a className="activity-return" href={referenceReturn}>返回来源</a> : null}
       <div className="creation-navigation">
         <div className="creation-mode" role="group" aria-label="正文模式">
           <button type="button" aria-pressed={state.manuscriptTab !== "manuscript"}

@@ -80,6 +80,7 @@ export type AiConsistencySeverity = "BLOCKER" | "MAJOR" | "MINOR" | "INFO";
 export type AiConsistencyVerdict = "PASS" | "REVIEW" | "BLOCKED" | "NEEDS_INPUT" | "UNPARSED";
 export type ConsistencyReviewFreshness = "MISSING" | "FRESH" | "STALE" | "UNVERIFIED";
 export type AiProposalFeedbackRating = "HELPFUL" | "NOT_HELPFUL";
+export type AuthorTodoKind = "FACT_REVIEW" | "FACT_FINALIZE" | "EXTRACTION" | "EXTRACTION_DEFERRED" | "DISCUSSION_DESIGN" | "RECOVERY" | "WRITING_PROPOSAL";
 export type IpcContracts = {
     errors: IpcErrors;
     events: IpcEvents;
@@ -156,6 +157,7 @@ export type IpcErrors = {
     list_ai_runs: ApiError;
     list_all_recovery_logs: ApiError;
     list_author_settings: ApiError;
+    list_author_todos: ApiError;
     list_beliefs: ApiError;
     list_chapter_extractions: ApiError;
     list_current_facts: ApiError;
@@ -320,6 +322,7 @@ export type IpcRequests = {
     list_ai_runs: InputArgsListAiRuns;
     list_all_recovery_logs: InputArgsListAllRecoveryLogs;
     list_author_settings: InputArgsListAuthorSettings;
+    list_author_todos: InputArgsListAuthorTodos;
     list_beliefs: InputArgsListBeliefs;
     list_chapter_extractions: InputArgsListChapterExtractions;
     list_current_facts: InputArgsListCurrentFacts;
@@ -846,6 +849,7 @@ export type InputArgsListAiRuns = {
 };
 export type InputArgsListAllRecoveryLogs = {};
 export type InputArgsListAuthorSettings = {};
+export type InputArgsListAuthorTodos = {};
 export type InputArgsListBeliefs = {};
 export type InputArgsListChapterExtractions = {
     chapterId: string;
@@ -1246,6 +1250,7 @@ export type IpcResponses = {
     list_ai_runs: AiRun[];
     list_all_recovery_logs: RecoveryLog[];
     list_author_settings: AuthorSetting[];
+    list_author_todos: AuthorTodoQueue;
     list_beliefs: Belief[];
     list_chapter_extractions: ChapterExtractionProposal[];
     list_current_facts: Fact[];
@@ -2038,6 +2043,19 @@ export type AuthorSetting = {
     sessionId: string;
     sourceProposalId: string;
     visibility: string;
+};
+export type AuthorTodoQueue = {
+    items: AuthorTodo[];
+    pendingCount: number;
+    projectId: string;
+};
+export type AuthorTodo = {
+    count: number;
+    highRisk: boolean;
+    kind: AuthorTodoKind;
+    targetId: string;
+    targetTitle: string;
+    updatedAt: string;
 };
 export type DiscussionDesignProposal = {
     contextVersion: string;

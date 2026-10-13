@@ -101,25 +101,18 @@ describe("SearchView", () => {
     expect(screen.queryByText("result-0")).not.toBeInTheDocument();
   });
 
-  it("disables duplicate rebuilds and reports rebuild failures", async () => {
-    let rejectRebuild!: (error: Error) => void;
-    mocks.rebuildSearchIndex.mockImplementation(() => new Promise((_resolve, reject) => { rejectRebuild = reject; }));
+  it("keeps maintenance out of normal search", async () => {
     renderSearch();
-    fireEvent.click(screen.getByRole("button", { name: "重建索引" }));
-    expect(await screen.findByRole("button", { name: "正在重建…" })).toBeDisabled();
-    rejectRebuild(new Error("database unavailable"));
-    expect(await screen.findByRole("alert")).toHaveTextContent("索引重建失败：database unavailable");
-    expect(screen.getByRole("button", { name: "重建索引" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /重建/ })).not.toBeInTheDocument();
+    expect(mocks.rebuildSearchIndex).not.toHaveBeenCalled();
   });
 
-  it("refreshes active results after rebuilding the index", async () => {
+  it("links search errors to data repair without a duplicate rebuild command", async () => {
+    mocks.searchProject.mockRejectedValue(new Error("index unavailable"));
     renderSearch();
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "novel" } });
-    await screen.findByText("没有匹配结果。");
-    mocks.searchProject.mockResolvedValue([result(0)]);
-    fireEvent.click(screen.getByRole("button", { name: "重建索引" }));
-    expect(await screen.findByText("result-0")).toBeVisible();
-    expect(mocks.rebuildSearchIndex).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("alert")).toHaveTextContent("index unavailable");
+    expect(screen.getByRole("link", { name: "前往数据管理修复" })).toHaveAttribute("href", "/settings#data-management");
   });
 
   it("restores query and filter and links an exact manuscript revision with its return context", async () => {

@@ -47,6 +47,7 @@ mod review_contract;
 mod review_rules;
 mod review_store;
 mod search_store;
+mod todo_store;
 pub use ai::{
     AiBudgetSettings, AiConsistencyFinding, AiConsistencyReport, AiConsistencySeverity,
     AiConsistencyVerdict, AiError, AiOutputValidation, AiProposalFeedback,
@@ -109,6 +110,7 @@ pub use review_rules::{
 };
 pub use review_store::ReviewStoreError;
 pub use search_store::{SearchResult, SearchStoreError};
+pub use todo_store::{AuthorTodo, AuthorTodoKind, AuthorTodoQueue};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

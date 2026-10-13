@@ -326,7 +326,12 @@ impl ProjectManager {
                 .refresh_project_setting_summary_from_job(&job.payload)
                 .map(|_| ())
                 .map_err(|e| e.to_string()),
-            JobType::HealthScan => self.health_scan().map(|_| ()).map_err(|e| e.to_string()),
+            JobType::HealthScan => self.health_scan().map_err(|e| e.to_string()).and_then(|report| {
+                let summary = format!("SQLite: {}\nWarnings: {}\nErrors: {}",
+                    report.sqlite_integrity, report.warnings.join("; "), report.errors.join("; "));
+                self.append_job_event(job.id, "RESULT", summary, 100).map_err(|e| e.to_string())?;
+                if report.errors.is_empty() { Ok(()) } else { Err(report.errors.join("; ")) }
+            }),
             JobType::Backup => self.perform_backup(&job).map_err(|e| e.to_string()),
             JobType::RestoreVerify => self.perform_restore_verify(&job).map_err(|e| e.to_string()),
             JobType::AiPlanningGenerate | JobType::AiPlanningExtract => {
@@ -338,9 +343,21 @@ impl ProjectManager {
                 .map(Some)
         } else {
             match result {
-                Ok(()) => self
-                    .update_job_status(job.id, JobStatus::Succeeded, 100, None)
-                    .map(Some),
+                Ok(()) => {
+                    if let Some(session) = self.current.as_ref() {
+                        let result = match job.job_type {
+                            JobType::Backup => Some(session.root.join("snapshots").join(job.id.to_string()).display().to_string()),
+                            JobType::RestoreVerify => serde_json::from_str::<serde_json::Value>(&job.payload).ok()
+                                .and_then(|payload| payload.get("target").or_else(|| payload.get("source"))
+                                    .and_then(|value| value.as_str()).map(str::to_owned)),
+                            _ => None,
+                        };
+                        if let Some(result) = result {
+                            self.append_job_event(job.id, "RESULT", result, 100)?;
+                        }
+                    }
+                    self.update_job_status(job.id, JobStatus::Succeeded, 100, None).map(Some)
+                },
                 Err(error) => self
                     .update_job_status(job.id, JobStatus::Failed, job.progress, Some(error))
                     .map(Some),

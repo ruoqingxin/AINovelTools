@@ -78,6 +78,7 @@ export function listEvidenceAnchors() { return invoke("list_evidence_anchors"); 
 export function listCurrentFacts() { return invoke("list_current_facts"); }
 export function createKnowledgeCandidate(candidate: KnowledgeCandidate) { return invoke("create_knowledge_candidate", { candidate }); }
 export function listKnowledgeCandidates(chapterId: string) { return invoke("list_knowledge_candidates", { chapterId }); }
+export function listAuthorTodos() { return invoke("list_author_todos"); }
 export function extractChapterCandidates(input: IpcRequests["extract_chapter_candidates"]["input"]) {
   return invoke("extract_chapter_candidates", { input });
 }
@@ -436,7 +437,7 @@ export function invalidateProjectQueries(queryClient: { invalidateQueries: (opti
     ["current-project"], ["health"], ["entities"], ["entity-revisions"], ["summary-materials"],
     ["writing-cards"], ["plan-nodes"], ["planning-sections"], ["current-facts"], ["evidence-anchors"],
     ["relations"], ["events"], ["beliefs"], ["foreshadowings"], ["knowledge-candidates"],
-    ["knowledge-conflicts"], ["project-search"], ["jobs"], ["recovery-all"], ["manuscript"],
+    ["knowledge-conflicts"], ["author-todos"], ["project-search"], ["jobs"], ["recovery-all"], ["manuscript"],
     ["manuscript-draft"], ["manuscript-history"], ["manuscript-source"], ["recovery-logs"], ["ai-proposals"], ["ai-runs"],
     ["planning-discussion-sources"], ["discussion-source"], ["entity-cards"],
     ["chapter-entity-references"], ["entity-chapters"],

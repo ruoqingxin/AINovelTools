@@ -65,6 +65,7 @@ describe("project routes", () => {
     ["/knowledge/settings", "Materials settings"],
     ["/search", "Search"],
     ["/jobs", "Activity"],
+    ["/jobs#quality", "Settings"],
     ["/", "Workspace writing"],
     ["/?manage=1", "No project"],
   ])("loads %s on demand", async (path, label) => {
