@@ -81,7 +81,7 @@ export function SettingsView() {
   }, [activeSection]);
 
   return <section className="settings-view" ref={viewRef}>
-    <div className="workspace-heading"><h1>设置</h1><p className="workspace-lede">模型连接、创作参数、审核策略与费用管理</p></div>
+    <div className="workspace-heading"><h1>设置</h1><p className="workspace-lede">连接模型、分配任务、控制审核、查看费用与维护数据</p></div>
     <div className="settings-layout">
       <nav className="settings-nav" aria-label="设置分类">
         {sections.map(({ key, label, icon: Icon }) => <button key={key} type="button" className="settings-nav-item" aria-current={activeSection === key ? "page" : undefined} data-active={activeSection === key || undefined} onClick={() => switchSection(key)}><Icon size={18} /><span>{label}</span></button>)}

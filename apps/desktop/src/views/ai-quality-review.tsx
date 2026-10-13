@@ -39,6 +39,7 @@ export function AiQualityReview() {
   if (!project.data) return <p className="plan-empty">{project.isPending ? "正在读取作品…" : "请先打开作品查看效果分析"}</p>;
 
   return <section className="ai-usage-view" aria-label="AI 质量回顾">
+    <span className="settings-scope-label">当前作品 · 最近 {QUALITY_DAYS} 天</span>
     <div className="ai-usage-view-heading">
       <div><strong>效果分析</strong><span>最近 {QUALITY_DAYS} 天 · 最多 {QUALITY_GROUP_LIMIT} 组</span></div>
       <small>{quality.data ? `${quality.data.totalProposals} 条候选 · ${quality.data.totalRated} 条评价 · 最近 ${QUALITY_DAYS} 天` : quality.isPending ? "统计中…" : "无数据"}</small>
