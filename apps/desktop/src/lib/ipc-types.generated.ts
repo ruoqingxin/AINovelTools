@@ -2130,10 +2130,14 @@ export type WorldStateEntry = {
 };
 export type SearchResult = {
     blockId: string | null;
+    chapterId: string | null;
+    chapterTitle: string | null;
     objectId: string;
     objectType: string;
     snippet: string;
     sourceVersion: string | null;
+    title: string | null;
+    updatedAt: string | null;
 };
 export type StartupRecoveryReport = {
     actions: string[];

@@ -67,3 +67,6 @@
   .todo-row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
   .todo-target { grid-column: 1 / -1; }
 }
+.search-result h2 { margin: 10px 0 6px; font-size: 16px; overflow-wrap: anywhere; }
+.search-result .search-result-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.search-result mark { padding: 0 2px; color: #59420c; background: #fff0b5; }

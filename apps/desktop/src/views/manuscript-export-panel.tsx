@@ -2,6 +2,7 @@ import { Download } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { errorMessage, exportManuscript, type ManuscriptExportFormat, type ManuscriptExportReceipt } from "../lib/tauri-client";
 import "./manuscript-export-panel.css";
+import { useConfirmAction } from "../shell/confirm-action-provider";
 
 export function ManuscriptExportPanel({ projectId, chapter, chapterDirty, saving }: {
   projectId: string;
@@ -15,6 +16,9 @@ export function ManuscriptExportPanel({ projectId, chapter, chapterDirty, saving
   const [receipt, setReceipt] = useState<ManuscriptExportReceipt | null>(null);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+  const confirmAction = useConfirmAction();
+  const current = useRef({ projectId, chapterId: chapter?.id, saving, scope, format, chapterDirty });
+  current.current = { projectId, chapterId: chapter?.id, saving, scope, format, chapterDirty };
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -23,12 +27,17 @@ export function ManuscriptExportPanel({ projectId, chapter, chapterDirty, saving
 
   async function runExport() {
     if (busy.current || saving || scope === "chapter" && !chapter) return;
-    if (chapterDirty && !window.confirm("当前正文有未保存修改。本次只导出已保存正文，继续吗？")) return;
     busy.current = true;
     setExporting(true);
-    setError(null);
-    setReceipt(null);
+    const requested = current.current;
     try {
+      if (chapterDirty && !await confirmAction({ message: "当前正文有未保存修改。本次只导出已保存正文，继续吗？",
+        confirmLabel: "导出已保存正文" })) return;
+      const latest = current.current;
+      if (!mounted.current || latest.projectId !== requested.projectId || latest.chapterId !== requested.chapterId || latest.saving
+        || latest.scope !== requested.scope || latest.format !== requested.format || latest.chapterDirty !== requested.chapterDirty) return;
+      setError(null);
+      setReceipt(null);
       const result = await exportManuscript({
         expectedProjectId: projectId,
         format,

@@ -31,6 +31,7 @@ function setup() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  localStorage.clear();
   mocks.pathname = "/knowledge/settings";
   mocks.project = { projectId: "p1", name: "夜行信使" };
   mocks.getCurrentProject.mockImplementation(() => Promise.resolve(mocks.project));
@@ -121,6 +122,15 @@ describe("global workspace shell", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(document.querySelector(".app-shell")).not.toHaveAttribute("data-mobile-nav");
     expect(screen.getByRole("button", { name: "打开导航" })).toHaveFocus();
+  });
+  it("remembers the collapsed navigation after reopening the shell", async () => {
+    setup();
+    await screen.findByRole("link", { name: "写作" });
+    fireEvent.click(screen.getByRole("button", { name: "收起导航" }));
+    cleanup();
+    setup();
+    expect(screen.getByRole("button", { name: "展开导航" })).toHaveAttribute("aria-expanded", "false");
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-nav-collapsed", "true");
   });
   it("retains the outgoing workspace's inputs if opening another project fails", async () => {
     let rejectOpen!: (error: Error) => void;

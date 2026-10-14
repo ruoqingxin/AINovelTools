@@ -20,6 +20,13 @@
 }
 
 .app-shell[data-nav-collapsed] { grid-template-columns: 60px minmax(0, 1fr); }
+.app-shell:has(.creation-workspace[data-focus="true"]) { grid-template: "workspace" minmax(0, 1fr) / minmax(0, 1fr); }
+.app-shell:has(.creation-workspace[data-focus="true"]) > :is(.global-toolbar, .activity-bar, .status-bar) { display: none; }
+.app-shell:has(.creation-workspace[data-focus="true"]) .writing-planning-workspace > .workspace-heading,
+.app-shell:has(.creation-workspace[data-focus="true"]) .chapter-focus-header,
+.app-shell:has(.creation-workspace[data-focus="true"]) .workspace-directory { display: none; }
+.app-shell:has(.creation-workspace[data-focus="true"]) .stage-two-layout { grid-template-columns: minmax(0, 1fr); margin-top: 0; }
+.app-shell:has(.creation-workspace[data-focus="true"]) .workspace-page > .writing-planning-workspace { padding-top: 12px; }
 .global-toolbar { grid-area: toolbar; display: flex; min-width: 0; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); z-index: 110; }
 .global-location { min-width: 0; padding-left: 16px; border-left: 1px solid var(--line); color: var(--muted); font-size: 13px; white-space: nowrap; }
 .global-tools { display: flex; align-items: center; gap: 8px; margin-left: auto; }

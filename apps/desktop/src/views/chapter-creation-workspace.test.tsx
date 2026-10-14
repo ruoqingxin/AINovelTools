@@ -81,6 +81,7 @@ describe("ChapterCreationWorkspace", () => {
   afterEach(cleanup);
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     window.history.replaceState(null, "", "/writing");
   });
 
@@ -307,5 +308,47 @@ describe("ChapterCreationWorkspace", () => {
     fireEvent.change(screen.getByLabelText("检查对象"), { target: { value: "admission" } });
     expect(panels.ai.mock.calls.some(([props]) => props.mode === "review" && props.reviewPurpose === "manuscript" && props.active === false)).toBe(true);
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "review", reviewPurpose: "admission", active: true }));
+  });
+
+  it("remembers the docked assistant and preserves its input and preference through focus mode", () => {
+    const props = makeProps();
+    const view = render(<ChapterCreationWorkspace {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
+    fireEvent.change(screen.getByLabelText("AI 补充意见"), { target: { value: "保留人物动机" } });
+    fireEvent.click(screen.getByLabelText("写作显示设置"));
+    fireEvent.click(screen.getByRole("button", { name: "进入专注模式" }));
+    expect(document.querySelector(".creation-workspace")).toHaveAttribute("data-focus", "true");
+    expect(screen.getByLabelText("AI 补充意见")).not.toBeVisible();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.querySelector(".creation-workspace")).toHaveAttribute("data-focus", "false");
+    expect(screen.getByLabelText("AI 补充意见")).toHaveValue("保留人物动机");
+    view.unmount();
+    render(<ChapterCreationWorkspace {...props} />);
+    expect(screen.getByRole("button", { name: "收起写作助手" })).toBeVisible();
+  });
+
+  it("honors an assistant deep link over a previously collapsed layout", () => {
+    localStorage.setItem("ainoveltools:workspace-preferences:v1", JSON.stringify({ layouts: { "writing:assistant": false } }));
+    window.history.replaceState(null, "", "/writing?assistant=plan");
+    render(<ChapterCreationWorkspace {...makeProps()} />);
+    expect(screen.getByRole("textbox", { name: "本章计划" })).toBeVisible();
+  });
+
+  it("applies reading preferences and does not exit focus while a modal is open", () => {
+    localStorage.setItem("ainoveltools:workspace-preferences:v1", JSON.stringify({ fontSize: 20, lineHeight: 2.2, readingWidth: 680 }));
+    render(<ChapterCreationWorkspace {...makeProps()} />);
+    const workspace = document.querySelector(".creation-workspace")!;
+    expect(workspace).toHaveStyle({ "--writing-font-size": "20px", "--writing-line-height": "2.2", "--writing-width": "680px" });
+    fireEvent.click(screen.getByLabelText("写作显示设置"));
+    fireEvent.click(screen.getByRole("button", { name: "进入专注模式" }));
+    const modal = document.createElement("dialog");
+    modal.open = true;
+    modal.setAttribute("aria-modal", "true");
+    document.body.append(modal);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(workspace).toHaveAttribute("data-focus", "true");
+    modal.remove();
+    fireEvent.click(screen.getByRole("button", { name: "退出专注模式" }));
+    expect(workspace).toHaveAttribute("data-focus", "false");
   });
 });

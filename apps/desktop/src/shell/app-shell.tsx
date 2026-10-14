@@ -9,14 +9,16 @@ import { UnsavedChangesProvider } from "./unsaved-changes-provider";
 import { primaryDestination, primaryNavigation, workspaceLabel } from "./navigation";
 import { ProjectActionsProvider, useProjectActions } from "./project-actions-provider";
 import { ProjectPicker } from "./project-picker";
+import { useLayoutPreference } from "../lib/workspace-preferences";
+import { ConfirmActionProvider } from "./confirm-action-provider";
 
 export function AppShell() {
-  return <UnsavedChangesProvider><ProjectActionsProvider><ShellLayout /></ProjectActionsProvider></UnsavedChangesProvider>;
+  return <ConfirmActionProvider><UnsavedChangesProvider><ProjectActionsProvider><ShellLayout /></ProjectActionsProvider></UnsavedChangesProvider></ConfirmActionProvider>;
 }
 
 function ShellLayout() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useLayoutPreference("navigation:collapsed", false);
   const [mobileNavigation, setMobileNavigation] = useState(false);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
   const searchTrigger = useRef<HTMLAnchorElement>(null);

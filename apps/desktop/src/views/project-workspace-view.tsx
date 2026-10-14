@@ -26,6 +26,7 @@ import { useWideWorkspace, WorkspacePanel } from "./workspace-panel";
 import { PlanCandidateList } from "./plan-candidate-list";
 import { FreePlanningEditor } from "./free-planning-editor";
 import "./writing-planning.css";
+import { useLayoutPreference } from "../lib/workspace-preferences";
 
 import {
   isRootKind,
@@ -71,7 +72,8 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const [error, setError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const directoryDocked = useWideWorkspace(isChapterMode ? 1280 : 900);
-  const [directoryOpen, setDirectoryOpen] = useState(directoryDocked);
+  const [directoryOpen, setDirectoryOpen] = useLayoutPreference(
+    `${currentProject.data?.projectId ?? "current"}:${workspaceMode}:directory`, directoryDocked, directoryDocked);
   const [createChapterOpen, setCreateChapterOpen] = useState(false);
   const [excludedVolumes, setExcludedVolumes] = useState<Set<string>>(() => new Set());
   const [excludedChapters, setExcludedChapters] = useState<Set<string>>(() => new Set());

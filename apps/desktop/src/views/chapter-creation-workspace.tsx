@@ -1,5 +1,5 @@
 import { BookOpenText, ClipboardList, History, Library, MoreHorizontal, PanelRightClose, PanelRightOpen, RefreshCw, Save, ShieldCheck, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { AuditFlowSettings, PlanNode } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
 import { ChapterExtractionPanel } from "./chapter-extraction-panel";
@@ -15,6 +15,8 @@ import { PlanningDiscussionSources } from "./planning-discussion-sources";
 import { ChapterEntityReferencePanel } from "./chapter-entity-references";
 import { sourceReturnTo } from "../lib/manuscript-source";
 import { useWideWorkspace, WorkspacePanel } from "./workspace-panel";
+import { useLayoutPreference, useWorkspacePreferences } from "../lib/workspace-preferences";
+import { WritingDisplayControls } from "./writing-display-controls";
 
 type AssistantTab = "ai" | "plan" | "review";
 
@@ -59,9 +61,21 @@ export function ChapterCreationWorkspace({
     new URLSearchParams(window.location.search).get("assistant") === "plan" ? "plan"
       : new URLSearchParams(window.location.search).get("assistant") === "review" ? "review" : "ai");
   const [visitedAssistantTabs, setVisitedAssistantTabs] = useState<AssistantTab[]>([assistantTab]);
-  const [assistantOpen, setAssistantOpen] = useState(() =>
-    ["plan", "ai", "review"].includes(new URLSearchParams(window.location.search).get("assistant") ?? ""));
   const assistantDocked = useWideWorkspace(1280);
+  const deepLinkedAssistant = ["plan", "ai", "review"].includes(new URLSearchParams(window.location.search).get("assistant") ?? "");
+  const [assistantOpen, setAssistantOpen] = useLayoutPreference("writing:assistant", deepLinkedAssistant, assistantDocked && !deepLinkedAssistant);
+  const [focused, setFocused] = useState(false);
+  const assistantVisible = assistantOpen && !focused;
+  const preferences = useWorkspacePreferences();
+  useEffect(() => {
+    if (!focused) return;
+    const exit = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented
+        && !document.querySelector('dialog[open][aria-modal="true"]:not([hidden])')) setFocused(false);
+    };
+    document.addEventListener("keydown", exit);
+    return () => document.removeEventListener("keydown", exit);
+  }, [focused]);
   const [reviewPurpose, setReviewPurpose] = useState<"admission" | "manuscript">(() =>
     new URLSearchParams(window.location.search).get("purpose") === "admission" ? "admission" : "manuscript");
   const [knowledgeTab, setKnowledgeTab] = useState<"extraction" | "facts">(() =>
@@ -122,7 +136,9 @@ export function ChapterCreationWorkspace({
     onOpenChapterPlan: () => { selectAssistantTab("plan"); setAssistantOpen(true); },
   };
 
-  return <div className="creation-workspace" data-assistant-open={assistantOpen}>
+  return <div className="creation-workspace" data-assistant-open={assistantVisible} data-focus={focused}
+    style={{ "--writing-font-size": `${preferences.fontSize}px`, "--writing-line-height": preferences.lineHeight,
+      "--writing-width": `${preferences.readingWidth}px` } as CSSProperties}>
     <div className="creation-main">
       {referenceReturn && assistantTab !== "plan" ? <a className="activity-return" href={referenceReturn}>返回来源</a> : null}
       <div className="creation-navigation">
@@ -133,15 +149,16 @@ export function ChapterCreationWorkspace({
             onClick={() => state.setManuscriptTab("manuscript")}>阅读</button>
         </div>
         <div className="creation-local-tools">
+          <WritingDisplayControls focused={focused} onFocusChange={setFocused} />
           <button type="button" className="icon-command" title="历史版本" aria-label="历史版本"
             onClick={() => state.setManuscriptTab("versions")}><History size={17} />
             {state.recovery.data?.length ? <span className="tool-count">{state.recovery.data.length}</span> : null}</button>
           <button type="button" className="icon-command" title="本章知识" aria-label="本章知识"
             onClick={() => state.setManuscriptTab("extraction")}><Library size={17} /></button>
-        <button type="button" className="icon-command" title={assistantOpen ? "收起写作助手" : "展开写作助手"}
-          aria-label={assistantOpen ? "收起写作助手" : "展开写作助手"} aria-expanded={assistantOpen}
-          onClick={() => setAssistantOpen((open) => !open)}>
-          {assistantOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
+        <button type="button" className="icon-command" title={assistantVisible ? "收起写作助手" : "展开写作助手"}
+          aria-label={assistantVisible ? "收起写作助手" : "展开写作助手"} aria-expanded={assistantVisible}
+          onClick={() => { if (focused) { setFocused(false); setAssistantOpen(true); } else setAssistantOpen((open) => !open); }}>
+          {assistantVisible ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
         </button>
         </div>
       </div>
@@ -155,7 +172,7 @@ export function ChapterCreationWorkspace({
         <button type="button" className="secondary-action" onClick={() => void state.reloadLocalDraft()} disabled={state.savingDraft}>
           {state.draftReady ? "保留副本并重读" : "重新读取草稿"}</button>
       </div> : null}
-      {state.manuscriptMemoryNeedsRefresh && (!assistantOpen || assistantTab !== "ai") ? <div className="creation-memory-status" role="status">
+      {state.manuscriptMemoryNeedsRefresh && (!assistantVisible || assistantTab !== "ai") ? <div className="creation-memory-status" role="status">
         <span>章节记忆待更新</span>
         <button type="button" className="secondary-action" onClick={() => void state.refreshChapterMemory()}
           disabled={state.refreshingChapterMemory}><RefreshCw size={14} />{state.refreshingChapterMemory ? "提交中…" : "更新章节记忆"}</button>
@@ -250,12 +267,12 @@ export function ChapterCreationWorkspace({
       </div> : null}
       </WorkspacePanel>
     </div>
-    <WorkspacePanel open={assistantOpen} docked={assistantDocked} title="写作助手" className="creation-assistant"
+    <WorkspacePanel open={assistantVisible} docked={assistantDocked} title="写作助手" className="creation-assistant"
       onClose={() => setAssistantOpen(false)}>
       <WorkspaceTabs prefix="assistant" label="写作助手页签" value={assistantTab} tabs={assistantTabs} onChange={selectAssistantTab} />
       <div id="assistant-panel-ai" role="tabpanel" aria-labelledby="assistant-tab-ai" hidden={assistantTab !== "ai"}>
         {state.draftReady ? <AiWritingPanel {...aiProps}
-          active={assistantOpen && assistantTab === "ai"} onPendingChange={pendingCallbacks.ai}
+          active={assistantVisible && assistantTab === "ai"} onPendingChange={pendingCallbacks.ai}
           mode="create" onOpenAdmissionReview={() => openReview("admission")} /> : <p className="plan-empty">等待正文就绪…</p>}
       </div>
       <div id="assistant-panel-plan" role="tabpanel" aria-labelledby="assistant-tab-plan" hidden={assistantTab !== "plan"}>
@@ -282,13 +299,13 @@ export function ChapterCreationWorkspace({
           </div> : null}
           <a href="/planning">全书大纲</a>
           {referenceReturn ? <a href={referenceReturn}>返回来源</a> : null}
-          <ChapterEntityReferencePanel chapterId={chapter.id} active={assistantOpen && assistantTab === "plan"}
+          <ChapterEntityReferencePanel chapterId={chapter.id} active={assistantVisible && assistantTab === "plan"}
             onPendingChange={pendingCallbacks.references} />
-          <PlanningDiscussionSources sectionId={`plan-node:${chapter.id}`} active={assistantOpen && assistantTab === "plan"}
+          <PlanningDiscussionSources sectionId={`plan-node:${chapter.id}`} active={assistantVisible && assistantTab === "plan"}
             returnTo={`/writing?assistant=plan#${encodeURIComponent(chapter.id)}`} />
           <details onToggle={(event) => setReadinessOpen(event.currentTarget.open)}>
             <summary>生成前检查</summary>
-            {readinessOpen ? <AiWritingPanel {...aiProps} mode="readiness" active={assistantOpen && assistantTab === "plan"} /> : null}
+            {readinessOpen ? <AiWritingPanel {...aiProps} mode="readiness" active={assistantVisible && assistantTab === "plan"} /> : null}
           </details>
         </div> : null}
       </div>
@@ -306,7 +323,7 @@ export function ChapterCreationWorkspace({
           {!reviewEnabled ? <p className="plan-empty">此类检查已关闭。<a href="/settings#writing-admission">审核设置</a></p> : null}
           {state.draftReady ? visitedReviews.map((purpose) => <div key={purpose} hidden={reviewPurpose !== purpose || auditFlow?.[purpose] === false}>
             <AiWritingPanel {...aiProps} mode="review" reviewPurpose={purpose}
-              active={assistantOpen && assistantTab === "review" && reviewPurpose === purpose && auditFlow?.[purpose] !== false}
+              active={assistantVisible && assistantTab === "review" && reviewPurpose === purpose && auditFlow?.[purpose] !== false}
               onPendingChange={pendingCallbacks[purpose]} />
           </div>) : <p className="plan-empty">等待正文就绪…</p>}
         </> : null}

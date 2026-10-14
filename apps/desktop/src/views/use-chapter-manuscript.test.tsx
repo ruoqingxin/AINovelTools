@@ -1,9 +1,11 @@
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import { act, cleanup, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChapterManuscript } from "./use-chapter-manuscript";
 import type { ManuscriptDraft, ManuscriptDraftCommit } from "../lib/tauri-client";
+import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 
 const mocks = vi.hoisted(() => ({
   currentManuscript: vi.fn(), listManuscriptRevisions: vi.fn(), listRecoveryLogs: vi.fn(),
@@ -33,10 +35,11 @@ const emptyDraft = (chapterId = "chapter-1", version = 0): ManuscriptDraft => ({
 });
 let drafts: Map<string, ManuscriptDraft>;
 
-function setup(chapterId = "chapter-1", mode: "planning" | "writing" = "writing", initialTab: "candidate" | "manuscript" = "manuscript") {
+function setup(chapterId = "chapter-1", mode: "planning" | "writing" = "writing", initialTab: "candidate" | "manuscript" = "manuscript", customConfirmation = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const onError = vi.fn();
-  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>
+    {customConfirmation ? <ConfirmActionProvider>{children}</ConfirmActionProvider> : children}</QueryClientProvider>;
   const hook = renderHook(({ chapterId, mode }) => useChapterManuscript({
     chapterId, projectId: "project-1", mode, onError, initialTab,
   }), { wrapper, initialProps: { chapterId, mode } });
@@ -287,6 +290,39 @@ describe("useChapterManuscript", () => {
     await act(async () => { finish(emptyDraft()); await operation; });
     expect(result.current.draft).toBe(documentJson("new typing"));
     expect(onError).toHaveBeenLastCalledWith(expect.stringContaining("新编辑"));
+  });
+
+  it("preserves edits added while a discard confirmation is open", async () => {
+    const { result, onError } = setup("chapter-1", "writing", "candidate", true);
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setDraft(documentJson("before confirmation")));
+    let operation!: Promise<void>;
+    act(() => { operation = result.current.discardLocalDraft(); });
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    act(() => result.current.setDraft(documentJson("new typing")));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "放弃草稿并载入" }));
+      await operation;
+    });
+    expect(result.current.draft).toBe(documentJson("new typing"));
+    expect(mocks.discardManuscriptDraft).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenLastCalledWith(expect.stringContaining("确认期间"));
+  });
+
+  it("does not discard an old chapter after changing chapters during confirmation", async () => {
+    const { result, rerender } = setup("chapter-1", "writing", "candidate", true);
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    let operation!: Promise<void>;
+    act(() => { operation = result.current.discardLocalDraft(); });
+    mocks.currentManuscript.mockResolvedValue(revision("second", "new chapter", "chapter-2"));
+    rerender({ chapterId: "chapter-2", mode: "writing" });
+    await waitFor(() => expect(result.current.draft).toBe(documentJson("new chapter")));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "放弃草稿并载入" }));
+      await operation;
+    });
+    expect(mocks.discardManuscriptDraft).not.toHaveBeenCalled();
+    expect(result.current.draft).toBe(documentJson("new chapter"));
   });
 
   it("keeps initialized content and unsaved protection when a background draft read fails", async () => {

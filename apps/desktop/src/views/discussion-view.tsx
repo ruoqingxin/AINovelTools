@@ -642,7 +642,12 @@ export function DiscussionView() {
             {collectingId === messageItem.id ? (() => {
               const selectedKind = collectionTargets[messageItem.id] ?? "";
               const needsTarget = selectedKind === "PLANNING" || selectedKind === "SETTING";
-              return <section className="discussion-message-actions">
+              const closeCollector = () => {
+                if (busy || creatingSession) return;
+                if (candidateDrafts[messageItem.id] !== undefined && candidateDrafts[messageItem.id] !== messageItem.content && !window.confirm("放弃尚未收集的片段修改吗？")) return;
+                setCollectingId(null); setCandidateDrafts((current) => { const next = { ...current }; delete next[messageItem.id]; return next; });
+              };
+              return <WorkspacePanel open title="收集片段" className="discussion-collector" onClose={closeCollector}><section className="discussion-message-actions">
                 <textarea rows={3} value={candidateDrafts[messageItem.id] ?? messageItem.content} onChange={(event) => {
                   const value = event.target.value;
                   setCandidateDrafts((current) => {
@@ -664,19 +669,16 @@ export function DiscussionView() {
                       {writingChapters.map((node) => <option key={node.id} value={node.id}>{node.title}</option>)}
                     </select></label> : null}
                   {needsTarget ? <label><span>目标规划项</span><select aria-label="目标规划项" value={candidateTargetId} disabled={busy} onChange={(event) => setCandidateTargetId(event.target.value)}>{targetOptions.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}</select></label> : null}
-                  <button type="button" className="primary-action" onClick={() => {
+                  <div className="discussion-collector-commands"><button type="button" className="primary-action" onClick={() => {
                     if (selectedKind === "chosen" || selectedKind === "alternatives" || selectedKind === "questions") void collectIntoDraft(messageItem, selectedKind);
                     else if (["BOOK_PREFERENCES", "STORY_DIRECTION", "CHAPTER_WRITING"].includes(selectedKind)) void useFragment(messageItem, selectedKind);
                     else if (selectedKind) void saveCandidate(messageItem, selectedKind as DiscussionCandidateKind);
                   }} disabled={busy || !selectedKind || !(candidateDrafts[messageItem.id] ?? messageItem.content).trim()
                     || selectedKind === "CHAPTER_WRITING" && !chosenChapterId
                     || designPending && ["chosen", "alternatives", "questions", "BOOK_PREFERENCES", "STORY_DIRECTION", "CHAPTER_WRITING"].includes(selectedKind)}><Save size={12} />确认收集</button>
-                  <button type="button" className="secondary-action" disabled={busy} onClick={() => {
-                    if (candidateDrafts[messageItem.id] !== undefined && candidateDrafts[messageItem.id] !== messageItem.content && !window.confirm("放弃尚未收集的片段修改吗？")) return;
-                    setCollectingId(null); setCandidateDrafts((current) => { const next = { ...current }; delete next[messageItem.id]; return next; });
-                  }}>取消</button>
+                  <button type="button" className="secondary-action" disabled={busy} onClick={closeCollector}>取消</button></div>
                 </div>
-              </section>;
+              </section></WorkspacePanel>;
             })() : null}
           </article>)}
           {!messages.isPending && !messages.isError && !visibleMessages.length ? <div className="discussion-empty">

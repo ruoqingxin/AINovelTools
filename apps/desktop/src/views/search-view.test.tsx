@@ -38,6 +38,19 @@ describe("SearchView", () => {
     expect(screen.getByRole("textbox", { name: "搜索项目内容" })).toHaveFocus();
   });
 
+  it("shows real titles, chapter and revision metadata and highlights literal keywords safely", async () => {
+    window.history.replaceState(null, "", "/search?q=A%2BB");
+    mocks.searchProject.mockResolvedValue([{ ...result(1), title: "铜铃旧案", chapterTitle: "入城",
+      updatedAt: "2026-10-14T10:00:00Z", snippet: "A+B 与 a+b <script>未知</script>" }]);
+    renderSearch();
+    expect(await screen.findByRole("heading", { name: "铜铃旧案" })).toBeVisible();
+    expect(screen.getByText("入城")).toBeVisible();
+    expect(screen.getByText(/更新于/).closest("time")).toHaveAttribute("dateTime", "2026-10-14T10:00:00Z");
+    expect([...document.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["A+B", "a+b"]);
+    expect(document.querySelector(".search-result script")).toBeNull();
+    expect(document.querySelector(".search-result")).toHaveTextContent("<script>未知</script>");
+  });
+
   it("debounces input and searches only the final trimmed keyword", async () => {
     renderSearch();
     const input = screen.getByRole("textbox", { name: "搜索项目内容" });

@@ -68,18 +68,48 @@ describe("MaterialsView", () => {
     expect(screen.getAllByText(/更新于/)).toHaveLength(2);
     expect(mocks.listPlanNodes).toHaveBeenCalledOnce();
   });
-  it("brings the detail into view when selecting or editing a material on narrow screens", async () => {
-    const media = vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true } as MediaQueryList);
+  it("shows separate list and detail states on mobile and preserves filters and scroll on return", async () => {
+    const media = vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      matches: query.includes("max-width"), addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList));
     try {
       mocks.listSummaryMaterials.mockResolvedValue([summary]);
       renderView();
+      const list = document.querySelector<HTMLElement>(".library-list")!;
+      expect(document.querySelector(".library-detail")).not.toBeVisible();
+      list.scrollTop = 145;
+      fireEvent.change(screen.getByLabelText("搜索参考资料"), { target: { value: "章节记忆" } });
       const scroll = vi.fn();
       document.querySelector<HTMLElement>(".library-detail")!.scrollIntoView = scroll;
       await selectSummary();
+      expect(list).not.toBeVisible();
       expect(scroll).toHaveBeenCalledWith({ block: "start" });
       fireEvent.click(screen.getByRole("button", { name: "编辑参考副本" }));
       expect(scroll).toHaveBeenCalledTimes(2);
+      fireEvent.change(screen.getByLabelText("摘要内容"), { target: { value: "未保存编辑" } });
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      fireEvent.click(screen.getByRole("button", { name: "返回资料列表" }));
+      expect(screen.getByLabelText("摘要内容")).toHaveValue("未保存编辑");
+      confirm.mockReturnValue(true);
+      fireEvent.click(screen.getByRole("button", { name: "返回资料列表" }));
+      expect(list).toBeVisible();
+      expect(screen.getByLabelText("搜索参考资料")).toHaveValue("章节记忆");
+      await waitFor(() => expect(list.scrollTop).toBe(145));
     } finally { media.mockRestore(); }
+  });
+  it("renders large lists in batches while searching the full collection", async () => {
+    mocks.listWritingCards.mockResolvedValue(Array.from({ length: 205 }, (_, index) => ({
+      id: `card-${index}`, title: `卡片 ${index}`, content: `正文 ${index}`, enabled: true, cardType: "STYLE_RULE",
+    })));
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "写作卡片" }));
+    expect(await screen.findByRole("button", { name: /卡片 99 / })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /卡片 100 / })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "显示更多资料" }));
+    expect(screen.getByRole("button", { name: /卡片 199 / })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("搜索参考资料"), { target: { value: "卡片 204" } });
+    expect(screen.getByRole("button", { name: /卡片 204 / })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "显示更多资料" })).not.toBeInTheDocument();
   });
   it("activates a candidate without exposing duplicate restore commands", async () => {
     mocks.listSummaryMaterials.mockResolvedValue([{ ...summary, generationMode: "AI", lifecycleStatus: "CANDIDATE" }]);

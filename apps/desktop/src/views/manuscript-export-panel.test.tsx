@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ManuscriptExportPanel } from "./manuscript-export-panel";
+import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 
 const mocks = vi.hoisted(() => ({ exportManuscript: vi.fn() }));
 vi.mock("../lib/tauri-client", async () => ({
@@ -70,6 +71,7 @@ describe("ManuscriptExportPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "导出" }));
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining("只导出已保存正文"));
     expect(mocks.exportManuscript).not.toHaveBeenCalled();
+    await act(async () => {});
     confirm.mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "导出" }));
     await screen.findByRole("status");
@@ -129,5 +131,31 @@ describe("ManuscriptExportPanel", () => {
     expect(button).toBeDisabled();
     fireEvent.submit(button.closest("form")!);
     await waitFor(() => expect(mocks.exportManuscript).not.toHaveBeenCalled());
+  });
+
+  it("uses the shared confirmation and cancels without exporting or losing selected options", async () => {
+    render(<ConfirmActionProvider><ManuscriptExportPanel {...props} chapterDirty /></ConfirmActionProvider>);
+    openPanel();
+    fireEvent.change(screen.getByLabelText("文件格式"), { target: { value: "MARKDOWN" } });
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
+    expect(screen.getByRole("button", { name: "取消" })).toHaveFocus();
+    expect(mocks.exportManuscript).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.getByLabelText("文件格式")).toBeEnabled());
+    expect(screen.getByLabelText("文件格式")).toHaveValue("MARKDOWN");
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
+    fireEvent.click(screen.getByRole("button", { name: "导出已保存正文" }));
+    await screen.findByRole("status");
+    expect(mocks.exportManuscript).toHaveBeenCalledOnce();
+  });
+
+  it("does not export a stale project after confirmation", async () => {
+    const view = render(<ConfirmActionProvider><ManuscriptExportPanel {...props} chapterDirty /></ConfirmActionProvider>);
+    openPanel();
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
+    view.rerender(<ConfirmActionProvider><ManuscriptExportPanel {...props} projectId="project-2" chapterDirty /></ConfirmActionProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "导出已保存正文" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeEnabled());
+    expect(mocks.exportManuscript).not.toHaveBeenCalled();
   });
 });

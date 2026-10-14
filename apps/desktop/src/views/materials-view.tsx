@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Pencil, Plus, Search } from "lucide-react";
+import { ArrowLeft, Pencil, Plus, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { errorMessage, getCurrentProject, listPlanNodes, listSummaryMaterials, listWritingCards, type SummaryMaterial } from "../lib/tauri-client";
 import { KnowledgeSectionNav } from "./knowledge-section-nav";
@@ -7,6 +7,7 @@ import { parseMaterialTarget, summaryManuscriptHref } from "../lib/knowledge-nav
 import { MaterialDetailView } from "./material-detail-view";
 import { automaticSummary, MaterialEditor, SummaryActions, summaryLabel, summaryStatus } from "./material-controls";
 import { formatSavedAt } from "./project-workspace-utils";
+import { useWideWorkspace } from "./workspace-panel";
 import "./library-workspace.css";
 
 export function MaterialsView() {
@@ -24,9 +25,18 @@ function MaterialsManager() {
   const [creating, setCreating] = useState(false);
   const [editorState, setEditorState] = useState({ dirty: false, busy: false });
   const [actionBusy, setActionBusy] = useState(false);
+  const wide = useWideWorkspace(851);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(100);
+  const list = useRef<HTMLElement>(null);
+  const listPosition = useRef({ list: 0, workspace: 0 });
+  useEffect(() => { setVisibleCount(100); }, [kind, search]);
   const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes, enabled: kind === "SUMMARY" && Boolean(project.data) });
   const chapterTitles = new Map((nodes.data ?? []).filter((node) => node.kind === "CHAPTER").map((node) => [node.id, node.title]));
   const detail = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!wide && detailOpen) detail.current?.focus({ preventScroll: true });
+  }, [wide, detailOpen]);
   useEffect(() => {
     if ((selectedId || editing) && window.matchMedia?.("(max-width: 850px)").matches) {
       detail.current?.scrollIntoView?.({ block: "start" });
@@ -48,34 +58,50 @@ function MaterialsManager() {
   function leaveEditor() { return !actionBusy && !editorState.busy && (!editing || !editorState.dirty || window.confirm("放弃尚未保存的资料修改吗？")); }
   function choose(id: string | null) {
     if (!leaveEditor()) return;
+    listPosition.current = { list: list.current?.scrollTop ?? 0, workspace: document.querySelector(".workspace")?.scrollTop ?? 0 };
+    setDetailOpen(true);
     setSelectedId(id); setCreating(false); setEditing(false); setEditorState({ dirty: false, busy: false });
   }
-  return <section className="materials-view library-workspace">
+  function returnToList() {
+    if (!leaveEditor()) return;
+    setDetailOpen(false); setEditing(false); setCreating(false);
+    window.requestAnimationFrame(() => {
+      if (list.current) list.current.scrollTop = listPosition.current.list;
+      const workspace = document.querySelector(".workspace");
+      if (workspace) workspace.scrollTop = listPosition.current.workspace;
+      list.current?.querySelector<HTMLButtonElement>('[data-selected="true"]')?.focus({ preventScroll: true });
+    });
+  }
+  return <section className="materials-view library-workspace" data-mobile-detail={!wide && detailOpen}>
     <div className="workspace-heading"><h1>参考资料</h1></div><KnowledgeSectionNav />
     <div className="library-toolbar">
       <div className="creation-mode" role="group" aria-label="参考资料类型">{(["SUMMARY", "CARD"] as const).map((value) =>
         <button type="button" key={value} disabled={editorState.busy || actionBusy} aria-pressed={kind === value} onClick={() => {
           if (value === kind || !leaveEditor()) return;
-          setKind(value); setSelectedId(null); setEditing(false); setCreating(false); setSearch(""); setEditorState({ dirty: false, busy: false });
+          setKind(value); setSelectedId(null); setDetailOpen(false); setEditing(false); setCreating(false); setSearch(""); setEditorState({ dirty: false, busy: false });
         }}>{value === "SUMMARY" ? "摘要与记忆" : "写作卡片"}</button>)}</div>
       <label className="search-field"><Search size={15} /><input aria-label="搜索参考资料" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索资料" /></label>
       <button type="button" className="primary-action" disabled={!project.data || editorState.busy || actionBusy} onClick={() => {
         if (!leaveEditor()) return;
+        listPosition.current = { list: list.current?.scrollTop ?? 0, workspace: document.querySelector(".workspace")?.scrollTop ?? 0 };
+        setDetailOpen(true);
         setSelectedId(null); setCreating(true); setEditing(true);
       }}><Plus size={15} />{kind === "SUMMARY" ? "新建参考摘要" : "新建卡片"}</button>
     </div>
     {project.isError ? <p role="alert" className="project-error">{errorMessage(project.error)}<button type="button" onClick={() => void project.refetch()}>重试</button></p> : null}
-    <div className="library-layout"><aside className="library-list" aria-label="参考资料列表">
+    <div className="library-layout"><aside ref={list} hidden={!wide && detailOpen} className="library-list" aria-label="参考资料列表">
       {query.isPending ? <p role="status">正在读取资料…</p> : null}
       {query.isError ? <p role="alert" className="project-error">{errorMessage(query.error)}<button type="button" onClick={() => void query.refetch()}>重试</button></p> : null}
       {query.isSuccess && !items.length ? <p className="plan-empty">暂无匹配资料</p> : null}
-      {items.map((item) => <button key={item.id} type="button" className="library-item" disabled={editorState.busy || actionBusy} data-selected={selectedId === item.id} onClick={() => choose(item.id)}>
+      {items.slice(0, visibleCount).map((item) => <button key={item.id} type="button" className="library-item" disabled={editorState.busy || actionBusy} data-selected={selectedId === item.id} onClick={() => choose(item.id)}>
         <strong>{item.title}</strong><span>{item.content.slice(0, 90)}</span><small>{item.state}</small></button>)}
-    </aside><div ref={detail} className="library-detail">
+      {items.length > visibleCount ? <button type="button" className="secondary-action" onClick={() => setVisibleCount((count) => count + 100)}>显示更多资料</button> : null}
+    </aside><div ref={detail} hidden={!wide && !detailOpen} className="library-detail" tabIndex={-1} role="region" aria-label="参考资料详情">
+      {!wide ? <button type="button" className="secondary-action library-back" disabled={actionBusy || editorState.busy} onClick={returnToList}><ArrowLeft size={15} />返回资料列表</button> : null}
       {editing && project.data ? <><h2>{creating ? kind === "SUMMARY" ? "新建参考摘要" : "新建卡片" : summary && automaticSummary(summary) ? "另存为参考摘要" : "编辑资料"}</h2>
         <MaterialEditor key={`${kind}:${selectedId ?? "new"}`} kind={kind} projectId={project.data.projectId} summary={summary} card={card}
           onStateChange={setEditorState}
-          onSaved={(id) => { setSelectedId(id); setCreating(false); setEditing(false); setEditorState({ dirty: false, busy: false }); }} onCancel={() => { setEditing(false); setCreating(false); setEditorState({ dirty: false, busy: false }); }} />
+          onSaved={(id) => { setSelectedId(id); setCreating(false); setEditing(false); setEditorState({ dirty: false, busy: false }); }} onCancel={() => { setEditing(false); setCreating(false); if (!selectedId) setDetailOpen(false); setEditorState({ dirty: false, busy: false }); }} />
       </> : summary || card ? <>
         <h2>{card?.title ?? materialTitle(summary!)}</h2><p className="library-meta">{summary ? materialState(summary) : card?.enabled ? "已启用" : "已停用"}</p>
         <p className="library-content">{summary?.content ?? card?.content}</p>

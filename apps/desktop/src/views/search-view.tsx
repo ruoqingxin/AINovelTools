@@ -6,8 +6,16 @@ import { manuscriptSourceHref } from "../lib/manuscript-source";
 import { entityHref } from "../lib/entity-navigation";
 import { materialHref, planNodeHref } from "../lib/knowledge-navigation";
 import "./activity-workspace.css";
+import { formatSavedAt } from "./project-workspace-utils";
 
 const PAGE_SIZE = 50;
+
+export function highlightSearchSnippet(text: string, keyword: string) {
+  if (!keyword.trim()) return text;
+  const escaped = keyword.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.split(new RegExp(`(${escaped})`, "gi")).map((part, index) =>
+    index % 2 ? <mark key={index}>{part}</mark> : part);
+}
 
 export function SearchView() {
   const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get("q") ?? "");
@@ -53,7 +61,13 @@ export function SearchView() {
       {hasQuery && (isDebouncing || results.isPending) ? <p className="plan-empty">正在搜索…</p> : null}
       {hasQuery && !isDebouncing && results.isError ? <p className="project-error" role="alert">搜索失败：{errorMessage(results.error)} <a href="/settings#data-management">前往数据管理修复</a></p> : null}
       {hasQuery && !isDebouncing && results.isSuccess && items.length === 0 ? <p className="plan-empty"><Database size={16} />没有匹配结果。</p> : null}
-      {hasQuery && !isDebouncing ? items.map((item) => <article className="search-result" key={`${item.objectType}-${item.objectId}`}><div><span className="entity-type-badge">{labels[item.objectType] ?? item.objectType}</span></div><p>{item.snippet}</p>
+      {hasQuery && !isDebouncing ? items.map((item) => <article className="search-result" key={`${item.objectType}-${item.objectId}`}><div><span className="entity-type-badge">{labels[item.objectType] ?? item.objectType}</span></div>
+        <h2>{item.title ?? labels[item.objectType] ?? item.objectType}</h2>
+        {item.chapterTitle || item.updatedAt ? <p className="search-result-meta">
+          {item.chapterTitle && item.chapterTitle !== item.title ? <span>{item.chapterTitle}</span> : null}
+          {item.updatedAt ? <time dateTime={item.updatedAt}>{item.objectType === "MANUSCRIPT" ? "修订于" : "更新于"} {formatSavedAt(item.updatedAt)}</time> : null}
+        </p> : null}
+        <p>{highlightSearchSnippet(item.snippet, keyword)}</p>
         {item.objectType === "ENTITY" && project.data ? <a className="secondary-action" href={entityHref(item.objectId, project.data.projectId, returnTo)}><BookOpenText size={14} />打开当前实体</a> : null}
         {(item.objectType === "SUMMARY" || item.objectType === "CARD") && project.data ? <a className="secondary-action" href={materialHref(item.objectType, item.objectId, project.data.projectId, returnTo)}><BookOpenText size={14} />{item.objectType === "SUMMARY" ? "打开当前摘要" : "打开当前卡片"}</a> : null}
         {item.objectType === "PLAN" && project.data ? <a className="secondary-action" href={planNodeHref(item.objectId, project.data.projectId, returnTo)}><BookOpenText size={14} />打开当前规划</a> : null}

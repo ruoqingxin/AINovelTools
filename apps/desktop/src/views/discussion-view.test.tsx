@@ -452,11 +452,32 @@ describe("DiscussionView", () => {
     fireEvent.change(input, { target: { value: "提交快照" } });
     fireEvent.click(screen.getByRole("button", { name: "确认收集" }));
     await waitFor(() => expect(mocks.createDiscussionCandidate).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "关闭收集片段" }));
+    expect(screen.getByRole("dialog", { name: "收集片段" })).toBeVisible();
     fireEvent.change(input, { target: { value: "保存期间新增的编辑" } });
     resolve({});
     await screen.findByText("已保存为候选内容，确认前不会进入规划。");
     expect(input).toHaveValue("保存期间新增的编辑");
     expect(mocks.createDiscussionCandidate).toHaveBeenCalledWith(expect.objectContaining({ content: "提交快照" }));
+  });
+
+  it("preserves collection edits when dismissal is cancelled and discards only after approval", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    try {
+      mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+      renderView();
+      await openCollector();
+      const dialog = screen.getByRole("dialog", { name: "收集片段" });
+      fireEvent.change(screen.getByLabelText("收集内容"), { target: { value: "未收集的修改" } });
+      fireEvent.click(screen.getByRole("button", { name: "关闭收集片段" }));
+      expect(dialog).toBeVisible();
+      expect(screen.getByLabelText("收集内容")).toHaveValue("未收集的修改");
+      confirm.mockReturnValue(true);
+      fireEvent.click(screen.getByRole("button", { name: "取消" }));
+      expect(screen.queryByRole("dialog", { name: "收集片段" })).not.toBeInTheDocument();
+      await openCollector();
+      expect(screen.getByLabelText("收集内容")).toHaveValue(assistantMessage.content);
+    } finally { confirm.mockRestore(); }
   });
 
   it("confirms candidate abandonment before creating a session and locks edits only during the switch", async () => {

@@ -48,6 +48,7 @@
 }
 
 .creation-navigation {
+  position: relative;
   display: flex;
   min-height: 44px;
   align-items: center;
@@ -76,6 +77,13 @@
 }
 .creation-mode button[aria-pressed="true"] { background: white; color: #245bb3; box-shadow: 0 1px 3px #18243418; }
 .creation-local-tools { display: flex; gap: 6px; margin-left: auto; }
+.writing-display-controls { position: static; }
+.writing-display-controls summary { list-style: none; }
+.writing-display-controls summary::-webkit-details-marker { display: none; }
+.writing-display-menu { position: absolute; top: calc(100% + 4px); right: 16px; z-index: 30; display: grid; width: min(260px, calc(100vw - 64px)); max-height: calc(100dvh - 120px); overflow: auto; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); box-shadow: 0 6px 24px #18243420; }
+.writing-display-menu label { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; font-size: 13px; }
+.writing-display-menu input { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+.writing-display-menu output { color: var(--muted); }
 .creation-local-tools .icon-command { position: relative; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: white; color: #647082; cursor: pointer; }
 .tool-count { position: absolute; top: -4px; right: -4px; padding: 1px 4px; border-radius: 4px; background: #a45a1d; color: white; font-size: 11px; }
 .creation-navigation .chapter-tabs {
@@ -161,14 +169,17 @@
   padding: 24px;
   border-radius: 5px;
   color: #303640;
-  font-size: 16px;
-  line-height: 1.9;
+  max-width: var(--writing-width);
+  margin-inline: auto;
+  font-size: var(--writing-font-size, 16px);
+  line-height: var(--writing-line-height, 1.9);
   overflow-wrap: anywhere;
 }
 
 .creation-edit-panel .tiptap-editor {
   border-radius: 0 0 5px 5px;
 }
+.creation-edit-panel .editor-toolbar { max-width: var(--writing-width); margin-inline: auto; }
 
 .creation-savebar {
   position: sticky;
@@ -437,6 +448,7 @@
 }
 
 @media (max-width: 600px) {
+  .creation-mode button { padding-inline: 8px; }
   .writing-focus-layout .chapter-settings-panel,
   .writing-focus-layout .chapter-jump-panel {
     bottom: 100px;

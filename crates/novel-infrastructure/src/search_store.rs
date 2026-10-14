@@ -8,6 +8,10 @@ pub struct SearchResult {
     pub block_id: Option<String>,
     pub source_version: Option<String>,
     pub snippet: String,
+    pub title: Option<String>,
+    pub chapter_id: Option<Uuid>,
+    pub chapter_title: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 fn search_result_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchResult> {
@@ -27,6 +31,10 @@ fn search_result_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchRes
         block_id: None,
         source_version,
         snippet: row.get(3)?,
+        title: None,
+        chapter_id: None,
+        chapter_title: None,
+        updated_at: None,
     })
 }
 
@@ -117,7 +125,7 @@ impl Database {
         let sql = if short_query {
             "SELECT object_type, object_id, source_version, substr(content,1,180) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND content LIKE '%' || ?3 || '%' ESCAPE '\\' ORDER BY rowid LIMIT ?4 OFFSET ?5"
         } else {
-            "SELECT object_type, object_id, source_version, snippet(search_index, 4, '[', ']', '…', 12) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND search_index MATCH ?3 ORDER BY rank, rowid LIMIT ?4 OFFSET ?5"
+            "SELECT object_type, object_id, source_version, snippet(search_index, 4, '', '', '…', 12) FROM search_index WHERE project_id = ?1 AND (?2 IS NULL OR object_type = ?2) AND search_index MATCH ?3 ORDER BY rank, rowid LIMIT ?4 OFFSET ?5"
         };
         let query = if short_query {
             query
@@ -133,6 +141,7 @@ impl Database {
             search_result_from_row,
         )?;
         let mut results = rows.collect::<Result<Vec<_>, _>>()?;
+        self.enrich_search_results(project_id, &mut results)?;
         self.locate_manuscript_results(&mut results, &literal_query)?;
         Ok(results)
     }
@@ -156,7 +165,77 @@ impl Database {
             rusqlite::params![project_id.to_string(), ids],
             search_result_from_row,
         )?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        let mut results = rows.collect::<Result<Vec<_>, _>>()?;
+        self.enrich_search_results(project_id, &mut results)?;
+        Ok(results)
+    }
+
+    fn enrich_search_results(
+        &self,
+        project_id: Uuid,
+        results: &mut [SearchResult],
+    ) -> Result<(), DatabaseError> {
+        if results.is_empty() {
+            return Ok(());
+        }
+        let ids = serde_json::to_string(
+            &results
+                .iter()
+                .map(|result| result.object_id)
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        // Enrich a whole result page without changing its order or revision identity.
+        let mut statement = self.connection.prepare_cached(
+            "SELECT s.object_type, s.object_id,
+                CASE s.object_type
+                    WHEN 'PLAN' THEN p.title WHEN 'ENTITY' THEN er.name WHEN 'CARD' THEN w.title
+                    WHEN 'MANUSCRIPT' THEN chapter.title
+                    WHEN 'SUMMARY' THEN CASE sm.generation_mode
+                        WHEN 'EXTRACTIVE_AUTO' THEN '章节记忆' WHEN 'EXTRACTIVE_AUTO_PROJECT' THEN '作品概览'
+                        WHEN 'EXTRACTIVE_AUTO_SETTINGS' THEN '设定概览' ELSE '参考摘要' END END,
+                COALESCE(m.chapter_id, source.id, CASE WHEN p.kind = 'CHAPTER' THEN p.id END),
+                COALESCE(chapter.title, source.title, CASE WHEN p.kind = 'CHAPTER' THEN p.title END),
+                COALESCE(m.created_at, e.updated_at, sm.updated_at, w.updated_at,
+                    strftime('%Y-%m-%dT%H:%M:%fZ', COALESCE(
+                        (SELECT created_at FROM plan_node_revisions WHERE node_id = p.id ORDER BY revision DESC LIMIT 1),
+                        p.created_at)))
+             FROM json_each(?2) requested JOIN search_index s ON s.object_id = requested.value
+             LEFT JOIN plan_nodes p ON s.object_type = 'PLAN' AND p.id = s.object_id
+             LEFT JOIN entities e ON s.object_type = 'ENTITY' AND e.id = s.object_id AND e.project_id = ?1
+             LEFT JOIN entity_revisions er ON er.id = e.current_revision_id AND er.entity_id = e.id
+             LEFT JOIN writing_cards w ON s.object_type = 'CARD' AND w.id = s.object_id AND w.project_id = ?1
+             LEFT JOIN summary_materials sm ON s.object_type = 'SUMMARY' AND sm.id = s.object_id AND sm.project_id = ?1
+             LEFT JOIN manuscript_revisions m ON s.object_type = 'MANUSCRIPT' AND m.id = s.object_id
+             LEFT JOIN plan_nodes chapter ON chapter.id = m.chapter_id
+             LEFT JOIN plan_nodes source ON sm.kind = 'CHAPTER' AND source.id = sm.source_id AND source.kind = 'CHAPTER'
+             WHERE s.project_id = ?1",
+        )?;
+        let rows = statement.query_map(rusqlite::params![project_id.to_string(), ids], |row| {
+            Ok((
+                (row.get::<_, String>(0)?, row.get::<_, String>(1)?),
+                (
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ),
+            ))
+        })?;
+        let metadata = rows.collect::<Result<std::collections::HashMap<_, _>, _>>()?;
+        for result in results {
+            if let Some((title, chapter_id, chapter_title, updated_at)) =
+                metadata.get(&(result.object_type.clone(), result.object_id.to_string()))
+            {
+                result.title.clone_from(title);
+                result.chapter_id = chapter_id
+                    .as_deref()
+                    .and_then(|id| Uuid::parse_str(id).ok());
+                result.chapter_title.clone_from(chapter_title);
+                result.updated_at.clone_from(updated_at);
+            }
+        }
+        Ok(())
     }
 
     fn locate_manuscript_results(
@@ -165,20 +244,31 @@ impl Database {
         query: &str,
     ) -> Result<(), DatabaseError> {
         let needle = query.to_lowercase();
+        let ids: Vec<_> = results
+            .iter()
+            .filter(|result| result.object_type == "MANUSCRIPT")
+            .map(|result| result.object_id)
+            .collect();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let ids = serde_json::to_string(&ids)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let mut statement = self.connection.prepare_cached(
+            "SELECT m.id, m.document_json FROM json_each(?1) requested
+             JOIN manuscript_revisions m ON m.id = requested.value",
+        )?;
+        let rows = statement.query_map([ids], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let documents = rows.collect::<Result<std::collections::HashMap<_, _>, _>>()?;
         for result in results
             .iter_mut()
             .filter(|result| result.object_type == "MANUSCRIPT")
         {
-            let json = self
-                .connection
-                .query_row(
-                    "SELECT document_json FROM manuscript_revisions WHERE id = ?1",
-                    [result.object_id.to_string()],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?;
-            let Some(document) =
-                json.and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+            let Some(document) = documents
+                .get(&result.object_id.to_string())
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
             else {
                 continue;
             };
@@ -368,6 +458,10 @@ mod tests {
                 .unwrap();
             assert_eq!(results.len(), 1, "{query}");
             assert_eq!(results[0].object_id, old.id);
+            assert_eq!(results[0].title.as_deref(), Some("章"));
+            assert_eq!(results[0].chapter_id, Some(chapter.id));
+            assert_eq!(results[0].chapter_title.as_deref(), Some("章"));
+            assert_eq!(results[0].updated_at, Some(old.created_at.clone()));
             assert_eq!(results[0].block_id.as_deref(), Some("block:1"));
             assert_eq!(
                 results[0].source_version,
@@ -386,5 +480,102 @@ mod tests {
         );
         drop(manager);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_metadata_uses_current_names_and_handles_missing_objects() {
+        let root = std::env::temp_dir().join(format!("ainovel-search-metadata-{}", Uuid::new_v4()));
+        let mut manager = ProjectManager::new();
+        let manifest = manager.create(&root, "metadata").unwrap();
+        let chapter = manager
+            .create_plan_node(None, PlanNodeKind::Chapter, "铜铃之城".into())
+            .unwrap();
+        let results = manager
+            .search_project("铜铃".into(), Some("PLAN".into()), 50, 0)
+            .unwrap();
+        assert_eq!(results[0].title.as_deref(), Some("铜铃之城"));
+        assert_eq!(results[0].chapter_id, Some(chapter.id));
+        assert!(results[0].updated_at.is_some());
+        let unknown = Uuid::new_v4();
+        insert(
+            &manager.current.as_ref().unwrap().database,
+            manifest.project_id,
+            &unknown.to_string(),
+            "missing metadata",
+        );
+        let missing = manager
+            .search_project("missing".into(), None, 50, 0)
+            .unwrap();
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].title.is_none());
+        assert!(missing[0].updated_at.is_none());
+        drop(manager);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_enriches_entity_card_and_summary_metadata_in_requested_order() {
+        let mut database = Database::in_memory().unwrap();
+        let project = Uuid::new_v4();
+        let entity = Uuid::new_v4();
+        let entity_revision = Uuid::new_v4();
+        let card = Uuid::new_v4();
+        let summary = Uuid::new_v4();
+        database
+            .connection
+            .execute(
+                "INSERT INTO entities (id, project_id, entity_type, current_revision_id)
+             VALUES (?1, ?2, 'CHARACTER', ?3)",
+                rusqlite::params![
+                    entity.to_string(),
+                    project.to_string(),
+                    entity_revision.to_string()
+                ],
+            )
+            .unwrap();
+        database
+            .connection
+            .execute(
+                "INSERT INTO entity_revisions (id, entity_id, revision, name, description)
+             VALUES (?1, ?2, 1, '沈砚', '调查者')",
+                rusqlite::params![entity_revision.to_string(), entity.to_string()],
+            )
+            .unwrap();
+        database
+            .connection
+            .execute(
+                "INSERT INTO writing_cards (id, project_id, card_type, title, content)
+             VALUES (?1, ?2, 'STYLE_RULE', '克制叙事', '调查者保持克制')",
+                rusqlite::params![card.to_string(), project.to_string()],
+            )
+            .unwrap();
+        database.connection.execute(
+            "INSERT INTO summary_materials (id, project_id, kind, precision, content, generation_mode)
+             VALUES (?1, ?2, 'SETTING', 'L1', '调查者的作品概览', 'EXTRACTIVE_AUTO_PROJECT')",
+            rusqlite::params![summary.to_string(), project.to_string()],
+        ).unwrap();
+        database.rebuild_search_index(project).unwrap();
+        let results = database
+            .search_project_objects(project, &[card, summary, entity, card])
+            .unwrap();
+        assert_eq!(
+            results
+                .iter()
+                .map(|hit| hit.title.as_deref())
+                .collect::<Vec<_>>(),
+            vec![
+                Some("克制叙事"),
+                Some("作品概览"),
+                Some("沈砚"),
+                Some("克制叙事")
+            ]
+        );
+        assert!(results.iter().all(|hit| hit.updated_at.is_some()));
+        assert!(results.iter().all(|hit| hit.chapter_id.is_none()));
+        let hits = database
+            .search_project(project, "调查者", None, 50, 0)
+            .unwrap();
+        assert_eq!(hits.len(), 3);
+        assert!(hits.iter().all(|hit| !hit.snippet.contains("[调查者]")));
     }
 }

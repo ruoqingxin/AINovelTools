@@ -13,6 +13,7 @@ import type { ManuscriptWorkspaceTab } from "./manuscript-workspace-tabs";
 import { candidateReviewTransferKey, documentToJson, writingCandidateTransferKey } from "./project-workspace-utils";
 import { manuscriptQuery } from "../lib/manuscript-query";
 import { createChapterDraftWriter } from "../lib/chapter-draft-writer";
+import { useConfirmAction } from "../shell/confirm-action-provider";
 
 type DraftSnapshot = {
   chapterId: string;
@@ -35,6 +36,9 @@ export function useChapterManuscript({
   initialTab?: ManuscriptWorkspaceTab;
 }) {
   const client = useQueryClient();
+  const confirmAction = useConfirmAction();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const enabled = Boolean(chapterId && mode !== "planning");
   const [manuscriptTab, setManuscriptTab] = useState<ManuscriptWorkspaceTab>(initialTab);
   const manuscript = useQuery({
@@ -223,7 +227,12 @@ export function useChapterManuscript({
   async function discardLocalDraft() {
     const currentWriter = writer.current;
     if (!chapterId || !draftReady || !currentWriter || savingFormal.current) return;
-    if (!window.confirm("放弃本章本地草稿并载入已保存正文吗？历史版本和恢复记录不会被删除。")) return;
+    if (!await confirmAction({ message: "放弃本章本地草稿并载入已保存正文吗？历史版本和恢复记录不会被删除。",
+      confirmLabel: "放弃草稿并载入" })) return;
+    if (!mounted.current || writer.current !== currentWriter || savingFormal.current) return;
+    if (snapshotRef.current.documentJson !== draft || snapshotRef.current.baseRevisionId !== snapshot.baseRevisionId) {
+      onError("确认期间正文已发生变化，已保留当前草稿。请重新确认。"); return;
+    }
     savingFormal.current = true;
     setSavingDraft(true);
     try {
@@ -246,8 +255,13 @@ export function useChapterManuscript({
 
   async function reloadLocalDraft() {
     if (!chapterId || savingFormal.current) return;
-    if (draftReady && !window.confirm("保留当前内容为恢复副本，再重新读取本地草稿吗？")) return;
     const currentWriter = writer.current;
+    if (draftReady && !await confirmAction({ message: "保留当前内容为恢复副本，再重新读取本地草稿吗？",
+      confirmLabel: "保留副本并重读" })) return;
+    if (!mounted.current || writer.current !== currentWriter || savingFormal.current) return;
+    if (snapshotRef.current.documentJson !== draft || snapshotRef.current.chapterId !== snapshot.chapterId) {
+      onError("确认期间正文已发生变化，已保留当前草稿。请重新确认。"); return;
+    }
     savingFormal.current = true;
     setSavingDraft(true);
     try {
