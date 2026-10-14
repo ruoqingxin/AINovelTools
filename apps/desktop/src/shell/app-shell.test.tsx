@@ -43,6 +43,32 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("global workspace shell", () => {
+  it("opens search through the guarded link with Ctrl+K and Cmd+K", async () => {
+    setup();
+    const search = screen.getByRole("link", { name: "搜索" });
+    await waitFor(() => expect(search).toHaveAttribute("aria-disabled", "false"));
+    const clicked = vi.fn((event: MouseEvent) => event.preventDefault());
+    search.addEventListener("click", clicked);
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    expect(clicked).toHaveBeenCalledTimes(2);
+    const dialog = document.createElement("dialog");
+    dialog.setAttribute("open", "");
+    document.body.append(dialog);
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    expect(clicked).toHaveBeenCalledTimes(2);
+    dialog.remove();
+  });
+  it("does not trigger search shortcuts without an open project", async () => {
+    mocks.project = null;
+    setup();
+    await waitFor(() => expect(mocks.getCurrentProject).toHaveBeenCalled());
+    const clicked = vi.fn();
+    screen.getByRole("link", { name: "搜索" }).addEventListener("click", clicked);
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    expect(clicked).not.toHaveBeenCalled();
+  });
+
   it("separates five primary destinations from global tools and settings", async () => {
     setup();
     await screen.findByRole("link", { name: "资料" });

@@ -738,15 +738,20 @@ describe("AiWritingPanel consistency review", () => {
       on: (name: string, callback: () => void) => listeners.set(name, callback),
       off: vi.fn(),
     } as unknown as NonNullable<Parameters<typeof AiWritingPanel>[0]["editor"]>;
+    const selectText = vi.fn();
     render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <AiWritingPanel chapterId="chapter-1" chapterTitle="入城" chapterPlan="" volumeId="" volumePlan="" draft="正文" editor={editor} />
+      <AiWritingPanel chapterId="chapter-1" chapterTitle="入城" chapterPlan="" volumeId="" volumePlan="" draft="正文" editor={editor} onSelectText={selectText} />
     </QueryClientProvider>);
     await waitFor(() => expect(screen.getByRole("button", { name: "生成新版整章" })).toBeEnabled());
     fireEvent.change(screen.getByLabelText("AI 写作操作"), { target: { value: "REWRITE" } });
     expect(screen.getByRole("button", { name: "改写选区" })).toBeDisabled();
     expect(screen.getByText("尚未选择正文片段")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "选择正文片段" }));
+    expect(selectText).toHaveBeenCalledOnce();
+    expect(mocks.generateAiProposal).not.toHaveBeenCalled();
     selectionText = "铜铃响起";
     act(() => listeners.get("selectionUpdate")!());
+    expect(screen.getByRole("button", { name: "重新选择正文片段" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "改写选区" }));
     await waitFor(() => expect(mocks.generateAiProposal).toHaveBeenCalledWith(expect.objectContaining({
       action: "REWRITE", selection: "铜铃响起", chapterId: "chapter-1",

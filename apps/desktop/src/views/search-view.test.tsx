@@ -33,6 +33,11 @@ describe("SearchView", () => {
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
   });
 
+  it("focuses the keyword field as soon as search opens", () => {
+    renderSearch();
+    expect(screen.getByRole("textbox", { name: "搜索项目内容" })).toHaveFocus();
+  });
+
   it("debounces input and searches only the final trimmed keyword", async () => {
     renderSearch();
     const input = screen.getByRole("textbox", { name: "搜索项目内容" });

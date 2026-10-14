@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MaterialsView } from "./materials-view";
 
 const mocks = vi.hoisted(() => ({
-  listSummaryMaterials: vi.fn(), listWritingCards: vi.fn(), getCurrentProject: vi.fn(),
+  listSummaryMaterials: vi.fn(), listWritingCards: vi.fn(), getCurrentProject: vi.fn(), listPlanNodes: vi.fn(),
   setSummaryMaterialLifecycle: vi.fn(), upsertSummaryMaterial: vi.fn(), upsertWritingCard: vi.fn(),
   enqueueChapterSummaryRefresh: vi.fn(), enqueueProjectSettingSummaryRefresh: vi.fn(), listJobs: vi.fn(),
   rebuildSummaryMaterial: vi.fn(),
@@ -38,6 +38,7 @@ describe("MaterialsView", () => {
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
     mocks.listSummaryMaterials.mockResolvedValue([]);
     mocks.listWritingCards.mockResolvedValue([]);
+    mocks.listPlanNodes.mockResolvedValue([]);
     mocks.setSummaryMaterialLifecycle.mockResolvedValue({});
     mocks.listJobs.mockResolvedValue([]);
     mocks.upsertSummaryMaterial.mockImplementation(async (value) => value);
@@ -55,6 +56,30 @@ describe("MaterialsView", () => {
     await waitFor(() => expect(mocks.upsertSummaryMaterial).toHaveBeenCalledWith(expect.objectContaining({
       content: "作者参考", generationMode: "MANUAL_REFERENCE", precision: "L0", lifecycleStatus: "ACTIVE",
     })));
+  });
+  it("identifies chapter memories by source chapter and searches those names", async () => {
+    mocks.listSummaryMaterials.mockResolvedValue([{ ...summary, updatedAt: "2026-10-14T10:00:00Z" }]);
+    mocks.listPlanNodes.mockResolvedValue([{ id: "chapter-1", kind: "CHAPTER", title: "铜铃旧案" }]);
+    renderView();
+    expect(await screen.findByText("章节记忆 · 铜铃旧案")).toBeVisible();
+    fireEvent.change(screen.getByLabelText("搜索参考资料"), { target: { value: "铜铃旧案" } });
+    fireEvent.click(screen.getByRole("button", { name: /章节记忆 · 铜铃旧案/ }));
+    expect(screen.getByRole("heading", { name: "章节记忆 · 铜铃旧案" })).toBeVisible();
+    expect(screen.getAllByText(/更新于/)).toHaveLength(2);
+    expect(mocks.listPlanNodes).toHaveBeenCalledOnce();
+  });
+  it("brings the detail into view when selecting or editing a material on narrow screens", async () => {
+    const media = vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true } as MediaQueryList);
+    try {
+      mocks.listSummaryMaterials.mockResolvedValue([summary]);
+      renderView();
+      const scroll = vi.fn();
+      document.querySelector<HTMLElement>(".library-detail")!.scrollIntoView = scroll;
+      await selectSummary();
+      expect(scroll).toHaveBeenCalledWith({ block: "start" });
+      fireEvent.click(screen.getByRole("button", { name: "编辑参考副本" }));
+      expect(scroll).toHaveBeenCalledTimes(2);
+    } finally { media.mockRestore(); }
   });
   it("activates a candidate without exposing duplicate restore commands", async () => {
     mocks.listSummaryMaterials.mockResolvedValue([{ ...summary, generationMode: "AI", lifecycleStatus: "CANDIDATE" }]);

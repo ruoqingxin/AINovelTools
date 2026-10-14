@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   font-family:
     Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   color: #202522;
@@ -855,6 +856,7 @@ textarea:focus-visible,
 
 .editor-toolbar {
   display: flex;
+  align-items: center;
   gap: 4px;
   margin-top: 12px;
   padding: 5px;
@@ -866,6 +868,7 @@ textarea:focus-visible,
 
 .editor-toolbar button {
   display: grid;
+  flex-shrink: 0;
   width: 28px;
   height: 28px;
   place-items: center;
@@ -881,6 +884,8 @@ textarea:focus-visible,
   color: var(--accent-strong);
   background: #dce8e4;
 }
+
+.editor-toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .tiptap-editor {
   display: block;
@@ -1058,14 +1063,14 @@ textarea:focus-visible,
 }
 
 .ai-model-note small {
-  color: #8a9bb7;
-  font-size: 9px;
+  color: #5d708b;
+  font-size: 12px;
 }
 
 .ai-model-note strong {
   overflow: hidden;
   color: #31598f;
-  font-size: 11px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1077,7 +1082,7 @@ textarea:focus-visible,
 
 .ai-model-note a {
   color: #3971d8;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   text-decoration: none;
 }
@@ -1093,8 +1098,8 @@ textarea:focus-visible,
 }
 
 .ai-model-note-preflight span {
-  color: #7183a0;
-  font-size: 9px;
+  color: #5d708b;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -2930,29 +2935,6 @@ textarea:focus-visible,
   .proposal-feedback,.proposal-compare-grid { grid-template-columns:1fr; }
   .chapter-tabs { overflow-x: auto; }
   .chapter-tabs button { flex: 0 0 auto; }
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #e5e9e5;
-    background: #202421;
-    --line: #383e39;
-    --line-strong: #454c47;
-    --muted: #9ba39d;
-    --surface: #242925;
-    --surface-subtle: #202421;
-    --accent: #3aa99d;
-    --accent-strong: #69c3ba;
-  }
-
-  .workspace-heading h1,
-  .section-heading h2 {
-    color: #edf0ed;
-  }
-
-  .secondary-action {
-    color: #dce1dc;
-  }
 }
 
 /* Raise the smallest operational text without turning dense tools into large cards. */

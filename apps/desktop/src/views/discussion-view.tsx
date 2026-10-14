@@ -654,9 +654,10 @@ export function DiscussionView() {
                 }} disabled={creatingSession} aria-label="收集内容" />
                 <div>
                   <label><span>收集到</span><select aria-label="收集到" value={selectedKind} disabled={busy} onChange={(event) => setCollectionTargets((current) => ({ ...current, [messageItem.id]: event.target.value }))}>
-                    <option value="">选择去向</option><option value="chosen">已选定内容</option><option value="alternatives">备选方向</option><option value="questions">未决问题</option>
-                    <option value="BOOK_PREFERENCES">记为本书偏好</option><option value="STORY_DIRECTION">记入故事方向</option><option value="CHAPTER_WRITING">用于本章</option>
-                    <option value="NOTE">{candidateKindLabels.NOTE}</option><option value="PLANNING">{candidateKindLabels.PLANNING}</option><option value="SETTING">{candidateKindLabels.SETTING}</option><option value="FORESHADOWING">{candidateKindLabels.FORESHADOWING}</option></select></label>
+                    <option value="">选择去向</option>
+                    <optgroup label="构思笔记"><option value="chosen">已选定内容</option><option value="alternatives">备选方向</option><option value="questions">未决问题</option></optgroup>
+                    <optgroup label="用于创作"><option value="BOOK_PREFERENCES">记为本书偏好</option><option value="STORY_DIRECTION">记入故事方向</option><option value="CHAPTER_WRITING">用于本章</option></optgroup>
+                    <optgroup label="高级候选"><option value="NOTE">{candidateKindLabels.NOTE}</option><option value="PLANNING">{candidateKindLabels.PLANNING}</option><option value="SETTING">{candidateKindLabels.SETTING}</option><option value="FORESHADOWING">{candidateKindLabels.FORESHADOWING}</option></optgroup></select></label>
                   {selectedKind === "CHAPTER_WRITING" ? <label><span>章节</span>
                     <select aria-label="片段目标章节" value={chosenChapterId} disabled={busy} onChange={(event) => setWritingChapterId(event.target.value)}>
                       {!writingChapters.length ? <option value="">尚无章节</option> : null}

@@ -73,6 +73,26 @@ vi.mock("../lib/tauri-client", async () => {
 });
 
 describe("SettingsView", () => {
+  it("uses a compact task selector on narrow screens and preserves task edits while switching", async () => {
+    const media = vi.spyOn(window, "matchMedia").mockReturnValue({
+      matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList);
+    try {
+      window.history.replaceState(null, "", "/settings#ai-task-models");
+      mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+      renderSettings();
+      const selector = await screen.findByRole("combobox", { name: "选择要设置的 AI 任务" });
+      expect(screen.queryByRole("tablist", { name: "选择要设置的 AI 任务" })).not.toBeInTheDocument();
+      expect(selector.querySelectorAll("option")).toHaveLength(AI_TASK_DEFINITIONS.length);
+      fireEvent.change(selector, { target: { value: "writing" } });
+      fireEvent.change(screen.getByLabelText("正文书写温度"), { target: { value: "0.65" } });
+      fireEvent.change(selector, { target: { value: "discussion" } });
+      fireEvent.change(selector, { target: { value: "writing" } });
+      expect(screen.getByLabelText("正文书写温度")).toHaveValue(0.65);
+      expect(mocks.saveAiTaskPreferences).not.toHaveBeenCalled();
+    } finally { media.mockRestore(); }
+  });
+
   afterEach(() => {
     cleanup();
     window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);

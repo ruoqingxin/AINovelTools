@@ -49,7 +49,7 @@
 
 .creation-navigation {
   display: flex;
-  min-height: 49px;
+  min-height: 44px;
   align-items: center;
   gap: 8px;
   padding: 0 16px;
@@ -111,6 +111,8 @@
   padding: 18px;
 }
 
+.creation-edit-panel { padding-top: 10px; }
+
 .creation-document-heading {
   display: flex;
   align-items: center;
@@ -145,6 +147,9 @@
   color: #245bb3;
   background: #eaf1fc;
 }
+
+.editor-toolbar-divider { height: 18px; margin: 0 2px; border-left: 1px solid var(--line); }
+.editor-character-count { min-width: 0; margin-left: auto; overflow: hidden; color: #5f6b78; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 
 .creation-edit-panel .tiptap-editor {
   border-color: var(--line);
@@ -181,7 +186,7 @@
 
 .creation-savebar > span {
   color: #6b7870;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .creation-savebar > div {
@@ -280,6 +285,8 @@
 .creation-assistant .proposal-heading-actions button {
   white-space: nowrap;
 }
+
+.creation-assistant .proposal textarea { font-size: 14px; line-height: 1.8; }
 
 .creation-assistant .ai-stage-heading h2 {
   font-size: 14px;
@@ -452,6 +459,8 @@
   .creation-knowledge-panel {
     padding: 14px 10px;
   }
+
+  .creation-edit-panel { padding-top: 8px; }
 
   .creation-edit-panel .tiptap-editor,
   .creation-reader-panel .manuscript-reader-body {

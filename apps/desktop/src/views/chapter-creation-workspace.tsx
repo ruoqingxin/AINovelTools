@@ -110,7 +110,15 @@ export function ChapterCreationWorkspace({
     volumePlan,
     draft: state.draft,
     editor: state.editor,
-    onReturnToEditor: () => state.setManuscriptTab("candidate"),
+    onReturnToEditor: () => {
+      state.setManuscriptTab("candidate");
+      if (!assistantDocked) setAssistantOpen(false);
+    },
+    onSelectText: () => {
+      state.setManuscriptTab("candidate");
+      if (!assistantDocked) setAssistantOpen(false);
+      window.requestAnimationFrame(() => state.editor?.commands.focus());
+    },
     onOpenChapterPlan: () => { selectAssistantTab("plan"); setAssistantOpen(true); },
   };
 
@@ -153,12 +161,15 @@ export function ChapterCreationWorkspace({
           disabled={state.refreshingChapterMemory}><RefreshCw size={14} />{state.refreshingChapterMemory ? "提交中…" : "更新章节记忆"}</button>
       </div> : null}
       {state.draftReady && state.manuscriptTab !== "manuscript" ? <div
-        className="creation-edit-panel" id="manuscript-panel-candidate" role="region" aria-label="正文编辑">
-        <div className="creation-document-heading">
-          <h3>正文编辑</h3>
-          <span>{documentCharacterCount(state.draft)} 字</span>
-        </div>
-        {state.editor ? <ManuscriptCandidateEditor editor={state.editor} /> : <p className="plan-empty">正在加载编辑器…</p>}
+        className="creation-edit-panel" id="manuscript-panel-candidate" role="region" aria-label="正文编辑"
+        onKeyDown={(event) => {
+          if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey
+            || event.key.toLowerCase() !== "s" || event.nativeEvent.isComposing) return;
+          event.preventDefault();
+          if (state.manuscriptTab === "candidate" && state.chapterDirty && !state.savingDraft
+            && (hasDraft || state.manuscript.data)) void state.saveDraft();
+        }}>
+        {state.editor ? <ManuscriptCandidateEditor editor={state.editor} characterCount={documentCharacterCount(state.draft)} /> : <p className="plan-empty">正在加载编辑器…</p>}
         {state.mergeResult ? <div className="merge-panel" role="status">
           <strong>{state.mergeResult.conflicts.length ? `发现 ${state.mergeResult.conflicts.length} 个冲突块` : "没有发现冲突"}</strong>
           {!state.mergeResult.conflicts.length ? <button type="button" className="secondary-action"
@@ -178,7 +189,7 @@ export function ChapterCreationWorkspace({
             </details> : null}
             {auditFlow?.manuscript !== false ? <button type="button" className="secondary-action"
               onClick={() => openReview("manuscript")} disabled={!hasDraft}><ShieldCheck size={14} />检查正文</button> : null}
-            <button type="button" className="primary-action" onClick={() => void state.saveDraft()}
+            <button type="button" className="primary-action" title="保存正文 (Ctrl+S)" onClick={() => void state.saveDraft()}
               disabled={state.savingDraft || !state.chapterDirty || (!hasDraft && !state.manuscript.data)}><Save size={14} />保存正文</button>
           </div>
         </div>

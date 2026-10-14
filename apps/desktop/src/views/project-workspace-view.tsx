@@ -466,7 +466,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   }
 
   return (
-    <section className="project-workspace writing-planning-workspace">
+    <section className="project-workspace writing-planning-workspace" data-workspace-mode={workspaceMode}>
       <div className="workspace-heading workspace-heading-with-action">
         <div>
           <h1>{isChapterMode ? "写作" : "大纲"}</h1>

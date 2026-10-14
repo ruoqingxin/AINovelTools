@@ -1,4 +1,10 @@
 .writing-planning-workspace { color: #262b33; letter-spacing: 0; }
+.writing-planning-workspace[data-workspace-mode="writing"] > .workspace-heading { align-items: center; gap: 8px; padding-bottom: 8px; }
+.writing-planning-workspace[data-workspace-mode="writing"] > .workspace-heading h1 { font-size: 18px; }
+.writing-planning-workspace[data-workspace-mode="writing"] .stage-two-layout { margin-top: 8px; }
+.writing-planning-workspace[data-workspace-mode="writing"] .chapter-focus-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 64px; gap: 8px; padding: 8px 14px; }
+.writing-planning-workspace[data-workspace-mode="writing"] .chapter-focus-copy > span { color: #5e7087; font-size: 12px; }
+.writing-planning-workspace[data-workspace-mode="writing"] .chapter-focus-copy h2 { font-size: 18px; white-space: normal; }
 .workspace-heading-tools { display: flex; align-items: center; gap: 8px; }
 .workspace-heading-tools .icon-command { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 5px; color: #647082; background: white; cursor: pointer; }
 .writing-planning-workspace .stage-two-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin-top: 12px; }
@@ -104,6 +110,11 @@
 .ai-model-note[data-compact] .ai-model-note-preflight { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }
 .ai-model-note[data-compact] details span { display: block; margin-top: 6px; }
 @media (max-width: 600px) {
+  .writing-planning-workspace[data-workspace-mode="writing"] > .workspace-heading { flex-direction: row; }
+  .writing-planning-workspace[data-workspace-mode="writing"] .chapter-focus-header { padding: 8px 10px; align-items: center; }
+  .writing-planning-workspace[data-workspace-mode="writing"] .chapter-focus-actions { width: auto; flex-wrap: nowrap; }
+  .writing-planning-workspace[data-workspace-mode="writing"] .chapter-settings-menu > summary { width: 34px; height: 34px; padding: 0; }
+  .writing-planning-workspace[data-workspace-mode="writing"] .chapter-settings-menu > summary > span { display: none; }
   .writing-planning-workspace .plan-inspector { padding: 0 10px 16px; }
   .writing-planning-workspace .chapter-focus-inspector { padding: 0; }
   .writing-planning-workspace .chapter-focus-header { align-items: start; flex-wrap: wrap; padding: 12px 10px; }

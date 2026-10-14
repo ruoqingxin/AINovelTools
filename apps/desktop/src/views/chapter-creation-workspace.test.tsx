@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChapterCreationWorkspace } from "./chapter-creation-workspace";
@@ -15,6 +15,7 @@ vi.mock("./ai-writing-panel", () => ({
     if (props.mode === "create") return <div>
       <label>AI 补充意见<input value={instruction} onChange={(event) => setInstruction(event.target.value)} /></label>
       <button onClick={props.onOpenAdmissionReview as () => void}>处理准入</button>
+      <button onClick={props.onSelectText as () => void}>选择正文片段</button>
     </div>;
     if (props.mode === "review") return <div>
       <p>检查快照：{String(props.draft)}</p>
@@ -157,6 +158,44 @@ describe("ChapterCreationWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存计划" }));
     expect(savePlan).toHaveBeenCalledOnce();
     expect(screen.getByText("共享编辑器")).toBeVisible();
+  });
+
+  it("saves with Ctrl+S or Cmd+S only inside the active manuscript editor", () => {
+    const state = makeState({ chapterDirty: true });
+    const props = makeProps(state);
+    const view = render(<ChapterCreationWorkspace {...props} />);
+    const editor = screen.getByRole("region", { name: "正文编辑" });
+    fireEvent.keyDown(editor, { key: "s", ctrlKey: true });
+    fireEvent.keyDown(editor, { key: "s", metaKey: true });
+    expect(state.saveDraft).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(document, { key: "s", ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
+    fireEvent.keyDown(screen.getByLabelText("AI 补充意见"), { key: "s", ctrlKey: true });
+    expect(state.saveDraft).toHaveBeenCalledTimes(2);
+    view.rerender(<ChapterCreationWorkspace {...props} state={{ ...state, savingDraft: true }} />);
+    fireEvent.keyDown(editor, { key: "s", ctrlKey: true });
+    view.rerender(<ChapterCreationWorkspace {...props} state={{ ...state, chapterDirty: false }} />);
+    fireEvent.keyDown(editor, { key: "s", ctrlKey: true });
+    expect(state.saveDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns to text selection on narrow screens without clearing assistant input", async () => {
+    const media = vi.spyOn(window, "matchMedia").mockReturnValue({
+      matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList);
+    const focus = vi.fn();
+    const state = makeState({ editor: { commands: { focus } } as unknown as ManuscriptState["editor"] });
+    try {
+      render(<ChapterCreationWorkspace {...makeProps(state)} />);
+      fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
+      fireEvent.change(screen.getByLabelText("AI 补充意见"), { target: { value: "只改对话" } });
+      fireEvent.click(screen.getByRole("button", { name: "选择正文片段" }));
+      expect(state.setManuscriptTab).toHaveBeenCalledWith("candidate");
+      expect(screen.getByLabelText("AI 补充意见")).not.toBeVisible();
+      await waitFor(() => expect(focus).toHaveBeenCalledOnce());
+      fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
+      expect(screen.getByLabelText("AI 补充意见")).toHaveValue("只改对话");
+    } finally { media.mockRestore(); }
   });
 
   it("retains pending execution cards and confirms before replacing plan edits", () => {

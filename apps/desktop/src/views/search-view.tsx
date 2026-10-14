@@ -44,7 +44,7 @@ export function SearchView() {
   return <section className="search-view activity-workspace">
     <div className="workspace-heading"><h1>搜索</h1></div>
     <div className="search-toolbar">
-      <label className="search-field"><Search size={15} /><input aria-label="搜索项目内容" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入关键词" /></label>
+      <label className="search-field"><Search size={15} /><input autoFocus aria-label="搜索项目内容" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入关键词" /></label>
       <select aria-label="对象类型筛选" value={objectType} onChange={(event) => setObjectType(event.target.value)}>
         <option value="">可检索内容</option><option value="ENTITY">人物与世界</option><option value="SUMMARY">摘要</option><option value="CARD">写作卡片</option><option value="PLAN">大纲</option><option value="MANUSCRIPT">正文</option>
       </select>

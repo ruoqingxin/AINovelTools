@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Pencil, Plus, Search } from "lucide-react";
-import { useState } from "react";
-import { errorMessage, getCurrentProject, listSummaryMaterials, listWritingCards } from "../lib/tauri-client";
+import { useEffect, useRef, useState } from "react";
+import { errorMessage, getCurrentProject, listPlanNodes, listSummaryMaterials, listWritingCards, type SummaryMaterial } from "../lib/tauri-client";
 import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import { parseMaterialTarget, summaryManuscriptHref } from "../lib/knowledge-navigation";
 import { MaterialDetailView } from "./material-detail-view";
 import { automaticSummary, MaterialEditor, SummaryActions, summaryLabel, summaryStatus } from "./material-controls";
+import { formatSavedAt } from "./project-workspace-utils";
 import "./library-workspace.css";
 
 export function MaterialsView() {
@@ -23,10 +24,25 @@ function MaterialsManager() {
   const [creating, setCreating] = useState(false);
   const [editorState, setEditorState] = useState({ dirty: false, busy: false });
   const [actionBusy, setActionBusy] = useState(false);
+  const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes, enabled: kind === "SUMMARY" && Boolean(project.data) });
+  const chapterTitles = new Map((nodes.data ?? []).filter((node) => node.kind === "CHAPTER").map((node) => [node.id, node.title]));
+  const detail = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if ((selectedId || editing) && window.matchMedia?.("(max-width: 850px)").matches) {
+      detail.current?.scrollIntoView?.({ block: "start" });
+    }
+  }, [selectedId, editing]);
+  function materialTitle(item: SummaryMaterial) {
+    const chapterTitle = item.kind === "CHAPTER" && item.sourceId ? chapterTitles.get(item.sourceId) : undefined;
+    return `${summaryLabel(item)}${chapterTitle ? ` · ${chapterTitle}` : ""}`;
+  }
+  function materialState(item: SummaryMaterial) {
+    return `${summaryStatus(item)}${item.updatedAt && !Number.isNaN(new Date(item.updatedAt).getTime()) ? ` · 更新于 ${formatSavedAt(item.updatedAt)}` : ""}`;
+  }
   const summary = kind === "SUMMARY" ? summaries.data?.find((item) => item.id === selectedId) : undefined;
   const card = kind === "CARD" ? cards.data?.find((item) => item.id === selectedId) : undefined;
   const query = kind === "SUMMARY" ? summaries : cards;
-  const items = (kind === "SUMMARY" ? (summaries.data ?? []).map((item) => ({ id: item.id, title: summaryLabel(item), content: item.content, state: summaryStatus(item) }))
+  const items = (kind === "SUMMARY" ? (summaries.data ?? []).map((item) => ({ id: item.id, title: materialTitle(item), content: item.content, state: materialState(item) }))
     : (cards.data ?? []).map((item) => ({ id: item.id, title: item.title, content: item.content, state: `${item.enabled ? "已启用" : "已停用"} · ${item.cardType === "STYLE_RULE" ? "风格规则" : "写作技巧"}` })))
     .filter((item) => `${item.title} ${item.content}`.toLowerCase().includes(search.trim().toLowerCase()));
   function leaveEditor() { return !actionBusy && !editorState.busy && (!editing || !editorState.dirty || window.confirm("放弃尚未保存的资料修改吗？")); }
@@ -55,13 +71,13 @@ function MaterialsManager() {
       {query.isSuccess && !items.length ? <p className="plan-empty">暂无匹配资料</p> : null}
       {items.map((item) => <button key={item.id} type="button" className="library-item" disabled={editorState.busy || actionBusy} data-selected={selectedId === item.id} onClick={() => choose(item.id)}>
         <strong>{item.title}</strong><span>{item.content.slice(0, 90)}</span><small>{item.state}</small></button>)}
-    </aside><div className="library-detail">
+    </aside><div ref={detail} className="library-detail">
       {editing && project.data ? <><h2>{creating ? kind === "SUMMARY" ? "新建参考摘要" : "新建卡片" : summary && automaticSummary(summary) ? "另存为参考摘要" : "编辑资料"}</h2>
         <MaterialEditor key={`${kind}:${selectedId ?? "new"}`} kind={kind} projectId={project.data.projectId} summary={summary} card={card}
           onStateChange={setEditorState}
           onSaved={(id) => { setSelectedId(id); setCreating(false); setEditing(false); setEditorState({ dirty: false, busy: false }); }} onCancel={() => { setEditing(false); setCreating(false); setEditorState({ dirty: false, busy: false }); }} />
       </> : summary || card ? <>
-        <h2>{card?.title ?? summaryLabel(summary!)}</h2><p className="library-meta">{summary ? summaryStatus(summary) : card?.enabled ? "已启用" : "已停用"}</p>
+        <h2>{card?.title ?? materialTitle(summary!)}</h2><p className="library-meta">{summary ? materialState(summary) : card?.enabled ? "已启用" : "已停用"}</p>
         <p className="library-content">{summary?.content ?? card?.content}</p>
         <button type="button" className="secondary-action" disabled={actionBusy} onClick={() => setEditing(true)}><Pencil size={15} />{summary && automaticSummary(summary) ? "编辑参考副本" : "编辑资料"}</button>
         {summary ? <SummaryActions key={summary.id} item={summary} onBusyChange={setActionBusy} /> : null}

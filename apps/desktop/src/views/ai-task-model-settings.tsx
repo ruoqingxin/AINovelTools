@@ -31,6 +31,7 @@ import {
   type ProjectAiTaskOverrides,
 } from "../lib/tauri-client";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { useWideWorkspace } from "./workspace-panel";
 
 const CONTEXT_OPTIONS: Array<{
   key: keyof Omit<AiTaskContextPreference, "inputTokenBudget">;
@@ -228,6 +229,7 @@ export function AiTaskModelSettings(props: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<AiTaskKey>(() => aiTaskSettingsFromHash()?.task ?? "workDesign");
+  const wideTaskSelector = useWideWorkspace(701);
   const [scope, setScope] = useState<"GLOBAL" | "PROJECT">(() => aiTaskSettingsFromHash()?.scope ?? "GLOBAL");
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const instructionRef = useRef<HTMLTextAreaElement>(null);
@@ -607,7 +609,13 @@ export function AiTaskModelSettings(props: {
         {scope === "PROJECT" && hasProjectOverride ? <button type="button" className="settings-text-link" onClick={() => void removeProjectOverride()} disabled={projectSaving}><RotateCcw size={14} />恢复全局配置</button> : null}
       </div>
       <div className="ai-task-workbench">
-        <div className="ai-task-selector" role="tablist" aria-label="选择要设置的 AI 任务" onKeyDown={(event) => {
+        {!wideTaskSelector ? <label className="ai-task-compact-selector">
+          <span id="ai-task-compact-label">AI 任务</span>
+          <select aria-label="选择要设置的 AI 任务" value={selectedTask}
+            onChange={(event) => selectTask(event.target.value as AiTaskKey)}>
+            {AI_TASK_DEFINITIONS.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </label> : <div className="ai-task-selector" role="tablist" aria-label="选择要设置的 AI 任务" onKeyDown={(event) => {
           if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
           event.preventDefault();
           const index = AI_TASK_DEFINITIONS.findIndex(({ key }) => key === selectedTask);
@@ -623,8 +631,9 @@ export function AiTaskModelSettings(props: {
               <span>{profile?.name ?? (preferredProfile ? `自动：${preferredProfile.name}` : "未配置")}{hasCustomGeneration(preference, key, maxOutputLimitForTask(key)) || hasCustomPrompt(preference, key) ? " · 已调整" : ""}</span>
             </button>;
           })}
-        </div>
-        <section className="ai-task-editor" id="ai-task-editor" role="tabpanel" aria-labelledby={`ai-task-${selectedTask}`}>
+        </div>}
+        <section className="ai-task-editor" id="ai-task-editor" role={wideTaskSelector ? "tabpanel" : "region"}
+          aria-labelledby={wideTaskSelector ? `ai-task-${selectedTask}` : "ai-task-compact-label"}>
           <div className="ai-task-editor-heading">
             <div><strong>{selectedDefinition.label}</strong><span>{selectedDefinition.description}</span></div>
             <div><span className="ai-task-routing-state" data-ready={effectiveProfile?.hasSecret || undefined}>{selectionMissing ? "配置已删除" : selectedProfile ? selectedProfile.hasSecret ? "模型可用" : "缺少 Key" : preferredProfile ? preferredProfile.hasSecret ? `自动使用 ${preferredProfile.name}` : "首选模型缺少 Key" : "未配置"}</span><small>{nextRunCostLabel(estimateNextRunCost(usage.data?.byTask, selectedTask, effectiveProfile), null)}</small>{hasCustomGeneration(selectedPreference, selectedTask, selectedMaxOutputLimit) ? <button type="button" className="ai-task-reset" onClick={() => clearTaskTuning(selectedTask, selectedMaxOutputLimit)} aria-label="恢复推荐参数" title={`恢复推荐值：温度 ${recommendedTaskPreference(selectedTask).temperature}，最大输出 ${Math.min(recommendedTaskPreference(selectedTask).maxOutputTokens ?? selectedMaxOutputLimit, selectedMaxOutputLimit)}`}><RotateCcw size={13} /></button> : null}</div>

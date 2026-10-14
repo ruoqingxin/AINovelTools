@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/react";
-import { Ban, Check, ClipboardCheck, Columns2, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
+import { Ban, Check, ClipboardCheck, Columns2, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, Sparkles, TextSelect, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
 import { useDeferredValue, useEffect, useRef, useState } from "react";
 import {
   cancelAiTask,
@@ -43,7 +43,7 @@ function isChapterSummaryJobFor(job: Job, chapterId: string) {
 
 export type AiWritingPanelMode = "readiness" | "create" | "review";
 
-export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: boolean; onPendingChange?: (pending: boolean) => void; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null; onOpenAdmissionReview?: () => void; onReturnToEditor?: () => void; onOpenChapterPlan?: () => void }) {
+export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: boolean; onPendingChange?: (pending: boolean) => void; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null; onOpenAdmissionReview?: () => void; onReturnToEditor?: () => void; onSelectText?: () => void; onOpenChapterPlan?: () => void }) {
   const client = useQueryClient();
   const active = props.active !== false;
   const mode = props.mode ?? "create";
@@ -293,6 +293,9 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
           <option value="POLISH">选区润色</option><option value="SUMMARIZE">章节摘要</option>
         </select></label>
         {(writingAction === "REWRITE" || writingAction === "POLISH") && !selectionAvailable ? <p role="status">尚未选择正文片段</p> : null}
+        {(writingAction === "REWRITE" || writingAction === "POLISH") && props.onSelectText ? <button
+          type="button" className="secondary-action" onClick={props.onSelectText} disabled={!props.editor}>
+          <TextSelect size={14} />{selectionAvailable ? "重新选择正文片段" : "选择正文片段"}</button> : null}
         <button type="button" className="primary-action" onClick={() => void runAction(writingAction)}
           disabled={generationLocked || fragmentEnabled && writingFragment.isPending || !props.editor || !selectedChatProfile?.hasSecret || writingActionBlocked(writingAction)
             || (writingAction === "REWRITE" || writingAction === "POLISH") && !selectionAvailable

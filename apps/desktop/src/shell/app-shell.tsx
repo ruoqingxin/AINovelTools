@@ -19,6 +19,7 @@ function ShellLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavigation, setMobileNavigation] = useState(false);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
+  const searchTrigger = useRef<HTMLAnchorElement>(null);
   useEffect(() => {
     if (!mobileNavigation) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -48,6 +49,20 @@ function ShellLayout() {
   const jobs = useJobs({ enabled: Boolean(currentProject.data) && !actions.transitioning, poll: true });
   const todos = useAuthorTodos({ enabled: Boolean(currentProject.data) && !actions.transitioning, poll: true });
 
+  useEffect(() => {
+    const openSearch = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey
+        || event.key.toLowerCase() !== "k" || event.isComposing || event.defaultPrevented) return;
+      if (!currentProject.data || actions.busy !== null || actions.transitioning
+        || document.querySelector('dialog[open]:not([data-docked="true"]), [aria-modal="true"]:not([hidden])')) return;
+      event.preventDefault();
+      if (pathname === "/search") document.querySelector<HTMLInputElement>('input[aria-label="搜索项目内容"]')?.focus();
+      else searchTrigger.current?.click();
+    };
+    document.addEventListener("keydown", openSearch);
+    return () => document.removeEventListener("keydown", openSearch);
+  }, [currentProject.data, actions.busy, actions.transitioning, pathname]);
+
   const serviceLabel = health.isSuccess
     ? "本地数据正常"
     : health.isError
@@ -71,7 +86,7 @@ function ShellLayout() {
           <ProjectPicker />
           <span className="global-location">{workspaceLabel(pathname)}</span>
           <div className="global-tools" aria-label="全局工具">
-            <Link to="/search" className="shell-icon" aria-label="搜索" title="搜索" aria-current={pathname === "/search" ? "page" : undefined}
+            <Link ref={searchTrigger} to="/search" className="shell-icon" aria-label="搜索" title="搜索 (Ctrl+K)" aria-current={pathname === "/search" ? "page" : undefined}
               data-active={pathname === "/search" || undefined} aria-disabled={!currentProject.data || actions.busy !== null}
               onClick={(event) => { if (!currentProject.data || actions.busy !== null) event.preventDefault(); }}>
               <Search size={19} />
