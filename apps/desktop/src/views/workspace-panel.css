@@ -60,3 +60,10 @@
 .chapter-create-form label { display: grid; gap: 6px; }
 .chapter-create-form input, .chapter-create-form select { width: 100%; min-height: 36px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 5px; background: white; color: inherit; font: inherit; }
 .chapter-create-form .primary-action, .chapter-create-form .secondary-action { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 5px; font: inherit; cursor: pointer; }
+
+@media (max-height: 560px) {
+  .workspace-panel:not([data-docked="true"]) { inset: 8px 0 8px auto; height: calc(100dvh - 16px); }
+  .workspace-panel.chapter-create-dialog { inset: 8px auto auto 50%; height: auto; max-height: calc(100dvh - 16px); }
+  .workspace-panel-body { padding: 12px; }
+  .chapter-create-form { gap: 12px; }
+}

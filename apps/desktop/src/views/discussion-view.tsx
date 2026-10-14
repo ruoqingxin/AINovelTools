@@ -37,6 +37,7 @@ import "./discussion-source.css";
 import { WorkspacePanel, useWideWorkspace } from "./workspace-panel";
 import "./discussion-workspace.css";
 import { sourceReturnTo } from "../lib/manuscript-source";
+import { useConfirmAction } from "../shell/confirm-action-provider";
 
 const planningOptions = planningSectionGroups.flatMap((group) => group.children);
 
@@ -80,6 +81,10 @@ function discussionScopeLabel(kind: DiscussionScopeKind) {
 
 export function DiscussionView() {
   const client = useQueryClient();
+  const confirmAction = useConfirmAction();
+  const sessionOperation = useRef(false);
+  const collectorClosing = useRef(false);
+  const editEpoch = useRef(0);
   const targetParams = new URLSearchParams(window.location.search);
   const targetSession = targetParams.get("targetSession");
   const targetProject = targetParams.get("targetProject");
@@ -162,6 +167,13 @@ export function DiscussionView() {
     enabled: Boolean(sessionId) && !invalidTarget,
   });
   const candidateEditsPending = Object.keys(candidateDrafts).length > 0;
+  const latest = useRef<{ sessionId: string | null; candidateDrafts: typeof candidateDrafts; designPending: boolean;
+    busy: boolean; creatingSession: boolean; collectingId: string | null; sessionTitle: string;
+    scopeKind: DiscussionScopeKind; scopeId: string; scopeText: string; topicKind: DiscussionTopicKind } | null>(null);
+  latest.current = { sessionId, candidateDrafts, designPending, busy, creatingSession, collectingId,
+    sessionTitle, scopeKind, scopeId, scopeText, topicKind };
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useUnsavedChangesGuard(Boolean(message.trim()) || candidateEditsPending || busy, "讨论还有未发送输入、未保存候选或正在处理的操作。");
 
   useEffect(() => {
@@ -193,15 +205,30 @@ export function DiscussionView() {
     } catch { setError("输入仍保留在当前页面，但无法保存本地输入草稿，请暂时不要关闭页面。"); }
   }
 
-  function selectSession(id: string | null) {
-    if (id === sessionId || busy) return;
-    if ((designPending || candidateEditsPending) && !window.confirm("讨论仍有未保存草稿或候选，确定切换讨论吗？")) return;
-    setCandidateDrafts({});
-    setSessionId(id);
-    setDraftFocus(null);
-    setShowDraft(false);
-    setCollectingId(null);
-    window.history.replaceState(null, "", id ? `#${id}` : window.location.pathname);
+  function unchangedSession(expected: NonNullable<typeof latest.current>, epoch: number) {
+    const current = latest.current;
+    if (!mounted.current || !current || current.sessionId !== expected.sessionId || current.busy || current.creatingSession) return false;
+    if (current.candidateDrafts !== expected.candidateDrafts || current.designPending !== expected.designPending || editEpoch.current !== epoch) {
+      setError("确认期间讨论内容已变化，已保留当前编辑。请重新确认。"); return false;
+    }
+    return true;
+  }
+
+  async function selectSession(id: string | null) {
+    if (id === sessionId || busy || sessionOperation.current || !latest.current) return;
+    const expected = latest.current, epoch = editEpoch.current;
+    sessionOperation.current = true;
+    try {
+      if ((designPending || candidateEditsPending) && !await confirmAction({ message: "讨论仍有未保存草稿或候选，确定切换讨论吗？",
+        confirmLabel: "放弃修改并切换" })) return;
+      if (!unchangedSession(expected, epoch)) return;
+      setCandidateDrafts({});
+      setSessionId(id);
+      setDraftFocus(null);
+      setShowDraft(false);
+      setCollectingId(null);
+      window.history.replaceState(null, "", id ? `#${id}` : window.location.pathname);
+    } finally { sessionOperation.current = false; }
   }
 
   async function loadEarlier() {
@@ -225,6 +252,24 @@ export function DiscussionView() {
       && selection?.toString().trim() ? selection.toString().trim() : item.content;
     if (content !== item.content) setCandidateDrafts((current) => ({ ...current, [item.id]: current[item.id] ?? content }));
     setCollectingId(item.id);
+  }
+  async function closeCollector(item: DiscussionMessage) {
+    const current = latest.current;
+    if (!current || current.busy || current.creatingSession || collectorClosing.current) return;
+    const expectedDraft = current.candidateDrafts[item.id];
+    const expectedSession = current.sessionId;
+    collectorClosing.current = true;
+    try {
+      if (expectedDraft !== undefined && expectedDraft !== item.content
+        && !await confirmAction({ message: "放弃尚未收集的片段修改吗？", confirmLabel: "放弃片段修改" })) return;
+      const fresh = latest.current;
+      if (!mounted.current || !fresh || fresh.busy || fresh.creatingSession || fresh.sessionId !== expectedSession || fresh.collectingId !== item.id) return;
+      if (fresh.candidateDrafts[item.id] !== expectedDraft) {
+        setError("确认期间片段已变化，已保留当前内容。请重新确认。"); return;
+      }
+      setCollectingId(null);
+      setCandidateDrafts((drafts) => { const next = { ...drafts }; delete next[item.id]; return next; });
+    } finally { collectorClosing.current = false; }
   }
   function finishCollection(item: DiscussionMessage, content: string) {
     if ((latestCandidateDrafts.current[item.id] ?? item.content) !== content) return;
@@ -303,7 +348,7 @@ export function DiscussionView() {
     : [];
 
   async function createSession() {
-    if (busy || designPending) return;
+    if (busy || designPending || sessionOperation.current || !latest.current) return;
     if (!sessionTitle.trim()) {
       setError("请填写讨论标题。");
       return;
@@ -316,7 +361,17 @@ export function DiscussionView() {
       setError("请填写当前选区内容。");
       return;
     }
-    if (candidateEditsPending && !window.confirm("候选仍有未保存修改，确定放弃并建立新讨论吗？")) return;
+    const expected = latest.current, epoch = editEpoch.current;
+    sessionOperation.current = true;
+    try {
+      if (candidateEditsPending && !await confirmAction({ message: "候选仍有未保存修改，确定放弃并建立新讨论吗？",
+        confirmLabel: "放弃修改并新建" })) return;
+      if (!unchangedSession(expected, epoch)) return;
+      await submitSession();
+    } finally { sessionOperation.current = false; }
+  }
+
+  async function submitSession() {
     setBusy(true);
     setCreatingSession(true);
     setError(null);
@@ -544,7 +599,7 @@ export function DiscussionView() {
         }}><BookmarkPlus size={15} />构思草稿</button>
       </div>
     </div>
-    <div className="discussion-layout">
+    <div className="discussion-layout" onChangeCapture={() => { editEpoch.current += 1; }}>
       <WorkspacePanel open={showSessions} title="讨论与收集" onClose={() => setShowSessions(false)}>
       <section className="discussion-sidebar" aria-label="讨论会话">
         <div className="discussion-session-toolbar">
@@ -642,12 +697,7 @@ export function DiscussionView() {
             {collectingId === messageItem.id ? (() => {
               const selectedKind = collectionTargets[messageItem.id] ?? "";
               const needsTarget = selectedKind === "PLANNING" || selectedKind === "SETTING";
-              const closeCollector = () => {
-                if (busy || creatingSession) return;
-                if (candidateDrafts[messageItem.id] !== undefined && candidateDrafts[messageItem.id] !== messageItem.content && !window.confirm("放弃尚未收集的片段修改吗？")) return;
-                setCollectingId(null); setCandidateDrafts((current) => { const next = { ...current }; delete next[messageItem.id]; return next; });
-              };
-              return <WorkspacePanel open title="收集片段" className="discussion-collector" onClose={closeCollector}><section className="discussion-message-actions">
+              return <WorkspacePanel open title="收集片段" className="discussion-collector" onClose={() => void closeCollector(messageItem)}><section className="discussion-message-actions">
                 <textarea rows={3} value={candidateDrafts[messageItem.id] ?? messageItem.content} onChange={(event) => {
                   const value = event.target.value;
                   setCandidateDrafts((current) => {
@@ -676,7 +726,7 @@ export function DiscussionView() {
                   }} disabled={busy || !selectedKind || !(candidateDrafts[messageItem.id] ?? messageItem.content).trim()
                     || selectedKind === "CHAPTER_WRITING" && !chosenChapterId
                     || designPending && ["chosen", "alternatives", "questions", "BOOK_PREFERENCES", "STORY_DIRECTION", "CHAPTER_WRITING"].includes(selectedKind)}><Save size={12} />确认收集</button>
-                  <button type="button" className="secondary-action" disabled={busy} onClick={closeCollector}>取消</button></div>
+                  <button type="button" className="secondary-action" disabled={busy} onClick={() => void closeCollector(messageItem)}>取消</button></div>
                 </div>
               </section></WorkspacePanel>;
             })() : null}

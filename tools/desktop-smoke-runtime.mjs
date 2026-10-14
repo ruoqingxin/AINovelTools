@@ -33,7 +33,10 @@ export async function createDesktopHarness(prefix, app) {
   const instances = [];
   const events = [];
 
-  async function launch(name) {
+  async function launch(name, { deviceScaleFactor } = {}) {
+    if (deviceScaleFactor !== undefined && ![1, 1.5, 2].includes(deviceScaleFactor)) {
+      throw new Error("Desktop acceptance scale must be 1, 1.5 or 2.");
+    }
     const state = join(artifacts, name);
     await mkdir(state, { recursive: true });
     const server = createServer();
@@ -45,7 +48,7 @@ export async function createDesktopHarness(prefix, app) {
       cwd: workspace, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, LOCALAPPDATA: state, APPDATA: state,
         WEBVIEW2_USER_DATA_FOLDER: join(state, "webview"),
-        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${port}` },
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${port}${deviceScaleFactor === undefined ? "" : ` --force-device-scale-factor=${deviceScaleFactor}`}` },
     });
     const instance = { child, state, log: "", pageErrors: [], browser: null, acceptConfirm: true, confirmations: [] };
     instances.push(instance);

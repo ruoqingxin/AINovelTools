@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { enqueueJob, errorMessage, getCurrentProject, type Job, type JobType } from "../lib/tauri-client";
 import { useJobs } from "../lib/jobs-query";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { useConfirmAction } from "../shell/confirm-action-provider";
 import "./activity-workspace.css";
 
 type Operation = "BACKUP" | "VERIFY" | "RESTORE" | "HEALTH_SCAN" | "REBUILD_SEARCH_INDEX";
@@ -19,6 +20,9 @@ const statuses = { QUEUED: "等待执行", RUNNING: "执行中", SUCCEEDED: "已
 
 export function DataManagementView({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const client = useQueryClient();
+  const confirmAction = useConfirmAction();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   const jobs = useJobs();
   const [operation, setOperation] = useState<Operation>("BACKUP");
@@ -28,6 +32,8 @@ export function DataManagementView({ onDirtyChange }: { onDirtyChange?: (dirty: 
   const locked = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Job | null>(null);
+  const latest = useRef({ operation, source, target, projectId: project.data?.projectId });
+  latest.current = { operation, source, target, projectId: project.data?.projectId };
   const dirty = Boolean(source || target) || busy;
   useUnsavedChangesGuard(dirty, "数据管理有未提交路径或正在提交的维护操作。");
   useEffect(() => {
@@ -55,20 +61,31 @@ export function DataManagementView({ onDirtyChange }: { onDirtyChange?: (dirty: 
 
   async function submit() {
     if (locked.current || !project.data || needsSource && !source.trim() || operation === "RESTORE" && !target.trim()) return;
-    if (operation === "RESTORE" && !window.confirm(`校验备份后，将恢复到新目录：\n${target.trim()}\n当前作品不会被覆盖或切换。确定继续吗？`)) return;
+    const submitted = latest.current;
     locked.current = true;
     setBusy(true);
     setError(null);
     try {
+      if (operation === "RESTORE" && !await confirmAction({ message: `校验备份后，将恢复到新目录：\n${target.trim()}\n当前作品不会被覆盖或切换。确定继续吗？`,
+        confirmLabel: "校验并恢复到新目录" })) return;
+      if (!mounted.current) return;
+      const current = latest.current;
+      const currentProject = client.getQueryData<typeof project.data>(["current-project"]);
+      if (current.projectId !== submitted.projectId || currentProject?.projectId !== submitted.projectId
+        || current.operation !== submitted.operation || current.source !== submitted.source || current.target !== submitted.target) {
+        setError("确认期间作品或恢复路径已变化，未提交恢复任务。请重新确认。"); return;
+      }
       const type: JobType = needsSource ? "RESTORE_VERIFY" : operation as JobType;
       const payload = needsSource ? { source: source.trim(), ...(operation === "RESTORE" ? { target: target.trim() } : {}) } : {};
       const saved = await enqueueJob(type, JSON.stringify(payload));
-      setReceipt(saved);
-      setSource("");
-      setTarget("");
+      if (mounted.current && latest.current.projectId === submitted.projectId) {
+        setReceipt(saved);
+        setSource("");
+        setTarget("");
+      }
       await client.invalidateQueries({ queryKey: ["jobs"] });
-    } catch (cause) { setError(errorMessage(cause)); }
-    finally { setBusy(false); locked.current = false; }
+    } catch (cause) { if (mounted.current) setError(errorMessage(cause)); }
+    finally { if (mounted.current) setBusy(false); locked.current = false; }
   }
 
   return <section className="settings-content activity-workspace data-management">

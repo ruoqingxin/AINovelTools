@@ -40,6 +40,8 @@ export function useChapterManuscript({
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const enabled = Boolean(chapterId && mode !== "planning");
+  const scopeRef = useRef({ chapterId, projectId, enabled });
+  scopeRef.current = { chapterId, projectId, enabled };
   const [manuscriptTab, setManuscriptTab] = useState<ManuscriptWorkspaceTab>(initialTab);
   const manuscript = useQuery({
     ...manuscriptQuery(chapterId),
@@ -78,6 +80,7 @@ export function useChapterManuscript({
     && (persisted?.documentJson !== draft || (persisted?.baseRevisionId ?? undefined) !== snapshot.baseRevisionId);
   const [savingDraft, setSavingDraft] = useState(false);
   const [clearingRecovery, setClearingRecovery] = useState(false);
+  const recoveryOperation = useRef(false);
   const [transferringCandidate, setTransferringCandidate] = useState(false);
   const [manuscriptMemoryNeedsRefresh, setManuscriptMemoryNeedsRefresh] = useState(false);
   const [refreshingChapterMemory, setRefreshingChapterMemory] = useState(false);
@@ -266,9 +269,12 @@ export function useChapterManuscript({
     setSavingDraft(true);
     try {
       await currentWriter?.idle();
+      if (!sameWorkspace(currentWriter)) return;
       if (draftReady && draft.trim()) await saveRecoveryLog({ chapterId, documentJson: draft });
+      if (!sameWorkspace(currentWriter)) return;
       const refreshed = await localDraft.refetch();
       if (!refreshed.isSuccess) return;
+      if (!sameWorkspace(currentWriter)) return;
       if (draftReady && snapshotRef.current.documentJson !== draft) {
         onError("重新读取期间有新编辑，已保留当前内容。请完成编辑后再重读草稿。");
         return;
@@ -302,10 +308,29 @@ export function useChapterManuscript({
     setManuscriptTab("candidate");
   }
 
-  function recoverLatest() {
+  function sameWorkspace(currentWriter: typeof writer.current) {
+    return mounted.current && scopeRef.current.enabled && scopeRef.current.chapterId === chapterId
+      && scopeRef.current.projectId === projectId && writer.current === currentWriter;
+  }
+
+  function sameDraft(expected: DraftSnapshot, currentWriter: typeof writer.current) {
+    if (!sameWorkspace(currentWriter) || savingFormal.current) return false;
+    const current = snapshotRef.current;
+    if (current.chapterId !== expected.chapterId || current.documentJson !== expected.documentJson
+      || current.baseRevisionId !== expected.baseRevisionId || current.baseDocumentJson !== expected.baseDocumentJson) {
+      onError("确认期间正文已发生变化，已保留当前草稿。请重新确认。");
+      return false;
+    }
+    return true;
+  }
+
+  async function recoverLatest() {
     const latest = recovery.data?.[0];
-    if (!latest || !chapterId) return;
-    if (chapterDirty && !window.confirm("当前编辑器有未保存修改。载入异常草稿会替换这些修改，确定继续吗？")) return;
+    if (!latest || !chapterId || !draftReady || savingFormal.current) return;
+    const expected = snapshotRef.current, currentWriter = writer.current;
+    if (chapterDirty && !await confirmAction({ message: "当前编辑器有未保存修改。载入异常草稿会替换这些修改，确定继续吗？",
+      confirmLabel: "载入异常草稿" })) return;
+    if (!sameDraft(expected, currentWriter)) return;
     loadCandidate(latest.documentJson);
   }
 
@@ -325,8 +350,9 @@ export function useChapterManuscript({
     }
   }
 
-  function openCandidateReview() {
-    if (!chapterId || !draft.trim()) return;
+  async function openCandidateReview() {
+    if (!chapterId || !draft.trim() || !draftReady || savingFormal.current) return;
+    const expected = snapshotRef.current, currentWriter = writer.current;
     let changedSinceReview = true;
     try {
       const stored = window.sessionStorage.getItem(candidateReviewTransferKey);
@@ -335,7 +361,9 @@ export function useChapterManuscript({
     } catch {
       // An unreadable snapshot is treated as a new review.
     }
-    if (chapterDirty && changedSinceReview && !window.confirm("当前候选有未同步修改。将以当前版本作为审核快照，前往审核吗？")) return;
+    if (chapterDirty && changedSinceReview && !await confirmAction({ message: "当前候选有未同步修改。将以当前版本作为审核快照，前往审核吗？",
+      confirmLabel: "同步快照并审核" })) return;
+    if (!sameDraft(expected, currentWriter)) return;
     try {
       storeCandidate(draft);
       window.sessionStorage.setItem(candidateReviewTransferKey, JSON.stringify({ chapterId, documentJson: draft }));
@@ -347,19 +375,29 @@ export function useChapterManuscript({
   }
 
   async function discardRecoveryLogs() {
-    if (!chapterId || !recovery.data?.length) return;
-    if (!window.confirm(`确认不需要恢复这 ${recovery.data.length} 次自动保护记录吗？删除记录不会修改当前正文或已保存版本。`)) return;
+    if (!chapterId || !recovery.data?.length || recoveryOperation.current) return;
+    const currentWriter = writer.current;
+    const recordIds = recovery.data.map((record) => record.id).sort().join(",");
+    recoveryOperation.current = true;
     setClearingRecovery(true);
-    onError(null);
     try {
+      if (!await confirmAction({ message: `确认不需要恢复这 ${recovery.data.length} 次自动保护记录吗？删除记录不会修改当前正文或已保存版本。`,
+        confirmLabel: "删除保护记录" })) return;
+      if (!sameWorkspace(currentWriter)) return;
+      const currentRecords = client.getQueryData<typeof recovery.data>(["recovery-logs", chapterId]);
+      if (!currentRecords || currentRecords.map((record) => record.id).sort().join(",") !== recordIds) {
+        onError("确认期间保护记录已变化，未删除任何记录。请重新检查后确认。"); return;
+      }
+      onError(null);
       await clearRecoveryLogs(chapterId);
       await Promise.all([
         client.invalidateQueries({ queryKey: ["recovery-logs", chapterId] }),
         client.invalidateQueries({ queryKey: ["recovery-all"] }),
       ]);
     } catch (cause) {
-      onError(errorMessage(cause));
+      if (sameWorkspace(currentWriter)) onError(errorMessage(cause));
     } finally {
+      recoveryOperation.current = false;
       setClearingRecovery(false);
     }
   }
@@ -373,9 +411,12 @@ export function useChapterManuscript({
     }
   }
 
-  function restoreRevision(revision: ManuscriptRevision) {
-    if (!chapterId) return;
-    if (chapterDirty && !window.confirm("当前编辑器有未保存修改。载入历史版本会替换这些修改，确定继续吗？")) return;
+  async function restoreRevision(revision: ManuscriptRevision) {
+    if (!chapterId || revision.chapterId !== chapterId || !draftReady || savingFormal.current) return;
+    const expected = snapshotRef.current, currentWriter = writer.current;
+    if (chapterDirty && !await confirmAction({ message: "当前编辑器有未保存修改。载入历史版本会替换这些修改，确定继续吗？",
+      confirmLabel: "载入历史版本" })) return;
+    if (!sameDraft(expected, currentWriter)) return;
     loadCandidate(revision.documentJson);
     onError(null);
   }

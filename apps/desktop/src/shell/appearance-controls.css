@@ -1,0 +1,7 @@
+.appearance-controls { position: relative; }
+.appearance-controls summary { list-style: none; cursor: pointer; }
+.appearance-controls summary::-webkit-details-marker { display: none; }
+.appearance-menu { position: absolute; inset: calc(100% + 8px) 0 auto auto; z-index: 120; width: 170px; max-width: calc(100vw - 24px); padding: 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); box-shadow: 0 8px 28px #18243424; }
+.appearance-menu button { display: flex; width: 100%; min-height: 38px; align-items: center; gap: 9px; padding: 6px 9px; border: 0; border-radius: 3px; color: inherit; background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.appearance-menu button span { flex: 1; }
+.appearance-menu button:hover, .appearance-menu button[aria-pressed="true"] { color: #245bb3; background: #eaf1fc; }

@@ -11,12 +11,15 @@ import { ProjectActionsProvider, useProjectActions } from "./project-actions-pro
 import { ProjectPicker } from "./project-picker";
 import { useLayoutPreference } from "../lib/workspace-preferences";
 import { ConfirmActionProvider } from "./confirm-action-provider";
+import { AppearanceControls } from "./appearance-controls";
+import { useWorkspaceTheme } from "../lib/use-workspace-theme";
 
 export function AppShell() {
   return <ConfirmActionProvider><UnsavedChangesProvider><ProjectActionsProvider><ShellLayout /></ProjectActionsProvider></UnsavedChangesProvider></ConfirmActionProvider>;
 }
 
 function ShellLayout() {
+  useWorkspaceTheme();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [collapsed, setCollapsed] = useLayoutPreference("navigation:collapsed", false);
   const [mobileNavigation, setMobileNavigation] = useState(false);
@@ -88,6 +91,7 @@ function ShellLayout() {
           <ProjectPicker />
           <span className="global-location">{workspaceLabel(pathname)}</span>
           <div className="global-tools" aria-label="全局工具">
+            <AppearanceControls />
             <Link ref={searchTrigger} to="/search" className="shell-icon" aria-label="搜索" title="搜索 (Ctrl+K)" aria-current={pathname === "/search" ? "page" : undefined}
               data-active={pathname === "/search" || undefined} aria-disabled={!currentProject.data || actions.busy !== null}
               onClick={(event) => { if (!currentProject.data || actions.busy !== null) event.preventDefault(); }}>

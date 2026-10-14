@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AI_TASK_DEFINITIONS, emptyAiTaskPreferences as recommendedAiTaskPreferences } from "../lib/ai-task-preferences";
 import { SettingsView } from "./settings-view";
+import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 
 const mocks = vi.hoisted(() => ({
   listModelProfiles: vi.fn(),
@@ -43,8 +44,9 @@ function chatProfile() {
   };
 }
 
-function renderSettings() {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SettingsView /></QueryClientProvider>);
+function renderSettings(customConfirmation = false) {
+  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    {customConfirmation ? <ConfirmActionProvider><SettingsView /></ConfirmActionProvider> : <SettingsView />}</QueryClientProvider>);
 }
 
 vi.mock("../lib/tauri-client", async () => {
@@ -618,20 +620,56 @@ describe("SettingsView", () => {
   });
 
   it("protects unsaved model changes on both category clicks and hash links", async () => {
-    renderSettings();
+    renderSettings(true);
     await screen.findByLabelText("配置名称");
     fireEvent.change(screen.getByLabelText("配置名称"), { target: { value: "未保存配置" } });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(screen.getByLabelText("配置名称")).toHaveValue("未保存配置");
     window.history.replaceState({}, "", "#ai-task-models");
     fireEvent(window, new Event("hashchange"));
     expect(window.location.hash).toBe("#model-api");
-    expect(confirm).toHaveBeenCalledTimes(2);
-    confirm.mockReturnValue(true);
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "放弃修改并切换" }));
     expect(await screen.findByRole("heading", { name: "AI 任务模型" })).toBeVisible();
     expect(window.location.hash).toBe("#ai-task-models");
+  });
+
+  it("retains newer model edits entered while a category confirmation is open", async () => {
+    renderSettings(true);
+    const name = await screen.findByLabelText("配置名称");
+    fireEvent.change(name, { target: { value: "初始修改" } });
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    fireEvent.change(name, { target: { value: "确认期间的新修改" } });
+    fireEvent.click(screen.getByRole("button", { name: "放弃修改并切换" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("确认期间设置内容已变化");
+    expect(name).toHaveValue("确认期间的新修改");
+    expect(window.location.hash).toBe("#model-api");
+  });
+
+  it("keeps dirty budgets and the accepted hash when cancelling an analysis hash link", async () => {
+    window.history.replaceState({}, "", "#ai-usage");
+    renderSettings(true);
+    const daily = await screen.findByLabelText("每日预算上限");
+    await waitFor(() => expect(daily).toBeEnabled());
+    fireEvent.change(daily, { target: { value: "20" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存预算" })).toBeEnabled());
+    window.history.replaceState({}, "", "#quality");
+    fireEvent(window, new Event("hashchange"));
+    expect(window.location.hash).toBe("#ai-usage");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(daily).toHaveValue(20);
+    expect(screen.getByRole("button", { name: "用量与预算" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "效果分析" }));
+    fireEvent.click(screen.getByRole("button", { name: "放弃修改并切换" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "效果分析" })).toHaveAttribute("aria-pressed", "true"));
+    expect(window.location.hash).toBe("#quality");
   });
 
   it("validates the model URL and protects an entered API key", async () => {

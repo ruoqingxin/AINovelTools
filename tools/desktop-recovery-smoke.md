@@ -31,7 +31,9 @@ node tools/desktop-recovery-smoke.mjs --app E:\AINovelTools\target\debug\ainovel
 - Three chapters saved through the real editor, with a second saved revision.
 - Durable local drafts, a conflict from a second desktop instance, and UI
   preservation of the conflict content as a recovery copy before rereading.
-- Real browser confirmation cancellation for rereading and saved-only export.
+- Shared modal confirmation cancellation for rereading and saved-only export,
+  including default cancel focus.
+- Dark appearance applied through the UI and retained across desktop restart.
 - TXT export through the UI and Markdown through IPC, checked against actual
   files and saved revisions rather than drafts.
 - Backup and verified restore executed by the actual maintenance worker.

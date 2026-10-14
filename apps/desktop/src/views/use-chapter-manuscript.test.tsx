@@ -336,4 +336,127 @@ describe("useChapterManuscript", () => {
     expect(result.current.draftNeedsPersistence).toBe(true);
     expect(result.current.draft).toBe(documentJson("not persisted"));
   });
+
+  it.each(["recovery", "revision"] as const)("cancels %s replacement without modifying the draft", async (kind) => {
+    mocks.listRecoveryLogs.mockResolvedValue([{ id: "recovery-1", chapterId: "chapter-1", documentJson: documentJson("recovered") }]);
+    const { result } = setup("chapter-1", "writing", "candidate", true);
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setDraft(documentJson("keep draft")));
+    let operation!: Promise<void>;
+    act(() => { operation = kind === "recovery" ? result.current.recoverLatest() : result.current.restoreRevision(revision("old", "historic")); });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "取消" }));
+      await operation;
+    });
+    expect(result.current.draft).toBe(documentJson("keep draft"));
+  });
+
+  it.each(["recovery", "revision"] as const)("loads %s as an editable candidate after confirmation, without formal save", async (kind) => {
+    mocks.listRecoveryLogs.mockResolvedValue([{ id: "recovery-1", chapterId: "chapter-1", documentJson: documentJson("recovered") }]);
+    const { result } = setup("chapter-1", "writing", "manuscript", true);
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setDraft(documentJson("current draft")));
+    let operation!: Promise<void>;
+    act(() => { operation = kind === "recovery" ? result.current.recoverLatest() : result.current.restoreRevision(revision("old", "historic")); });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: kind === "recovery" ? "载入异常草稿" : "载入历史版本" }));
+      await operation;
+    });
+    expect(result.current.draft).toBe(documentJson(kind === "recovery" ? "recovered" : "historic"));
+    expect(result.current.manuscriptTab).toBe("candidate");
+    expect(result.current.chapterDirty).toBe(true);
+    expect(mocks.commitManuscriptDraft).not.toHaveBeenCalled();
+  });
+
+  it.each(["recovery", "revision", "review"] as const)("preserves typing while %s confirmation is open", async (kind) => {
+    mocks.listRecoveryLogs.mockResolvedValue([{ id: "recovery-1", chapterId: "chapter-1", documentJson: documentJson("recovered") }]);
+    const { result, onError } = setup("chapter-1", "writing", "candidate", true);
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setDraft(documentJson("before confirmation")));
+    let operation!: Promise<void>;
+    act(() => { operation = kind === "recovery" ? result.current.recoverLatest()
+      : kind === "review" ? result.current.openCandidateReview() : result.current.restoreRevision(revision("old", "historic")); });
+    act(() => result.current.setDraft(documentJson("new typing")));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: kind === "recovery" ? "载入异常草稿" : kind === "review" ? "同步快照并审核" : "载入历史版本" }));
+      await operation;
+    });
+    expect(result.current.draft).toBe(documentJson("new typing"));
+    expect(onError).toHaveBeenLastCalledWith(expect.stringContaining("确认期间"));
+    expect(window.sessionStorage.getItem("ainoveltools:writing-candidate-transfer")).toBeNull();
+  });
+
+  it("does not load a historical revision into a different chapter after confirmation", async () => {
+    const { result, rerender } = setup("chapter-1", "writing", "candidate", true);
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setDraft(documentJson("first draft")));
+    let operation!: Promise<void>;
+    act(() => { operation = result.current.restoreRevision(revision("old", "historic")); });
+    mocks.currentManuscript.mockResolvedValue(revision("second", "new chapter", "chapter-2"));
+    rerender({ chapterId: "chapter-2", mode: "writing" });
+    await waitFor(() => expect(result.current.draft).toBe(documentJson("new chapter")));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "载入历史版本" }));
+      await operation;
+    });
+    expect(result.current.draft).toBe(documentJson("new chapter"));
+    await act(() => result.current.restoreRevision(revision("wrong", "wrong chapter")));
+    expect(result.current.draft).toBe(documentJson("new chapter"));
+  });
+
+  it("does not delete newly added recovery records after an old confirmation", async () => {
+    const record = { id: "recovery-1", chapterId: "chapter-1", documentJson: documentJson("recovered") };
+    mocks.listRecoveryLogs.mockResolvedValue([record]);
+    const { result, client, onError } = setup("chapter-1", "writing", "candidate", true);
+    await waitFor(() => expect(result.current.recovery.data).toHaveLength(1));
+    let operation!: Promise<void>;
+    act(() => { operation = result.current.discardRecoveryLogs(); });
+    await act(() => result.current.discardRecoveryLogs());
+    act(() => client.setQueryData(["recovery-logs", "chapter-1"], [record, { ...record, id: "recovery-2" }]));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "删除保护记录" }));
+      await operation;
+    });
+    expect(mocks.clearRecoveryLogs).not.toHaveBeenCalled();
+    expect(result.current.clearingRecovery).toBe(false);
+    expect(onError).toHaveBeenLastCalledWith(expect.stringContaining("保护记录已变化"));
+  });
+
+  it("cancels recovery deletion and permits a subsequent confirmed attempt", async () => {
+    mocks.listRecoveryLogs.mockResolvedValue([{ id: "recovery-1", chapterId: "chapter-1", documentJson: documentJson("recovered") }]);
+    const { result } = setup("chapter-1", "writing", "candidate", true);
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    let operation!: Promise<void>;
+    act(() => { operation = result.current.discardRecoveryLogs(); });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "取消" }));
+      await operation;
+    });
+    expect(mocks.clearRecoveryLogs).not.toHaveBeenCalled();
+    act(() => { operation = result.current.discardRecoveryLogs(); });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "删除保护记录" }));
+      await operation;
+    });
+    expect(mocks.clearRecoveryLogs).toHaveBeenCalledOnce();
+    expect(mocks.clearRecoveryLogs).toHaveBeenCalledWith("chapter-1");
+    expect(result.current.draft).toBe(documentJson("saved"));
+  });
+
+  it("keeps the new chapter intact if an older reload finishes after navigation", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { result, rerender } = setup();
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    let finish!: (value: ManuscriptDraft) => void;
+    mocks.currentManuscriptDraft.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    let operation!: Promise<void>;
+    act(() => { operation = result.current.reloadLocalDraft(); });
+    await waitFor(() => expect(mocks.currentManuscriptDraft).toHaveBeenCalledTimes(2));
+    mocks.currentManuscript.mockResolvedValue(revision("second", "new chapter", "chapter-2"));
+    rerender({ chapterId: "chapter-2", mode: "writing" });
+    await waitFor(() => expect(result.current.draft).toBe(documentJson("new chapter")));
+    await act(async () => { finish(emptyDraft()); await operation; });
+    expect(result.current.draft).toBe(documentJson("new chapter"));
+    expect(result.current.draftReady).toBe(true);
+  });
 });

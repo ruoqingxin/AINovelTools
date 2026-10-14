@@ -10,6 +10,7 @@ mod browser_dialogs;
 mod commands;
 mod errors;
 mod state;
+mod window_layout;
 
 #[cfg(feature = "ipc-contract")]
 pub mod ipc_contract;
@@ -102,6 +103,9 @@ pub fn run() {
             ai_cancellations: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window_layout::fit_to_monitor(&window.as_ref().window());
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut ticks = 0u32;
@@ -128,6 +132,16 @@ pub fn run() {
                 }
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main"
+                && matches!(event, tauri::WindowEvent::ScaleFactorChanged { .. })
+            {
+                let window = window.clone();
+                std::thread::spawn(move || {
+                    let _ = window_layout::fit_to_monitor(&window);
+                });
+            }
         })
         .invoke_handler(tauri::generate_handler![
             bootstrap_status,

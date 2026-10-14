@@ -49,6 +49,9 @@ try {
   }
   const revisions = [];
   let editor = await writing(main, chapters[0].id);
+  await main.page.getByLabel("外观", { exact: true }).click();
+  await main.page.getByRole("button", { name: "深色", exact: true }).click();
+  assert.equal(await main.page.evaluate(() => document.documentElement.dataset.theme), "dark");
   for (const [index, chapter] of chapters.entries()) {
     if (index > 0) {
       await main.page.getByRole("button", { name: "下一章", exact: true }).click();
@@ -61,7 +64,7 @@ try {
     await main.page.getByRole("button", { name: "保存正文", exact: true }).click();
     revisions.push(await until(() => invoke(main, "current_manuscript", { chapterId: chapter.id }),
       (revision) => revision?.documentJson.includes(text), `chapter ${index + 1} save`));
-    await main.page.locator('.chapter-focus-header .save-state[data-state="saved"]').waitFor();
+    await main.page.locator(".creation-savebar").getByText("正文已保存", { exact: true }).waitFor();
     console.log(`Chapter ${index + 1} saved through UI`);
   }
   editor = await writing(main, chapters[1].id);
@@ -94,14 +97,17 @@ try {
   assert.equal(await editor.textContent(), "Unsaved conflict content to preserve.");
   assert.equal((await invoke(main, "current_manuscript", { chapterId })).id, revisions[2].id);
   await main.page.screenshot({ path: join(artifacts, "two-instance-conflict.png"), fullPage: true });
-  main.acceptConfirm = false;
-  const confirmationsBeforeReread = main.confirmations.length;
   await main.page.getByRole("button", { name: "保留副本并重读", exact: true }).click();
-  assert.equal(main.confirmations.length, confirmationsBeforeReread + 1);
+  let confirmation = main.page.getByRole("alertdialog", { name: "请确认操作" });
+  await confirmation.waitFor();
+  assert(await confirmation.getByRole("button", { name: "取消", exact: true }).evaluate((element) => element === document.activeElement));
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await confirmation.waitFor({ state: "detached" });
   assert.equal(await editor.textContent(), "Unsaved conflict content to preserve.");
   assert.equal((await invoke(main, "list_recovery_logs", { chapterId })).length, 0);
-  main.acceptConfirm = true;
   await main.page.getByRole("button", { name: "保留副本并重读", exact: true }).click();
+  confirmation = main.page.getByRole("alertdialog", { name: "请确认操作" });
+  await confirmation.getByRole("button", { name: "保留副本并重读", exact: true }).click();
   await editor.getByText(remoteText, { exact: true }).waitFor();
   const recovery = await invoke(main, "list_recovery_logs", { chapterId });
   assert(recovery.some((log) => log.documentJson.includes("Unsaved conflict content")));
@@ -110,15 +116,16 @@ try {
 
   await main.page.getByText("导出正文", { exact: true }).click();
   await main.page.getByLabel("导出范围", { exact: true }).selectOption("book");
-  main.acceptConfirm = false;
-  const confirmationsBeforeExport = main.confirmations.length;
   const exportsBeforeCancellation = await readdir(join(projectRoot, "exports"));
   await main.page.getByRole("button", { name: "导出", exact: true }).click();
-  assert.equal(main.confirmations.length, confirmationsBeforeExport + 1);
+  confirmation = main.page.getByRole("alertdialog", { name: "请确认操作" });
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await confirmation.waitFor({ state: "detached" });
   assert.equal(await main.page.locator(".manuscript-export-result").count(), 0);
   assert.deepEqual(await readdir(join(projectRoot, "exports")), exportsBeforeCancellation);
-  main.acceptConfirm = true;
   await main.page.getByRole("button", { name: "导出", exact: true }).click();
+  confirmation = main.page.getByRole("alertdialog", { name: "请确认操作" });
+  await confirmation.getByRole("button", { name: "导出已保存正文", exact: true }).click();
   await main.page.getByRole("status").filter({ hasText: "已导出 3 章" }).waitFor();
   const exportPath = await main.page.locator(".manuscript-export-result code").textContent();
   const exportedText = await readFile(exportPath, "utf8");
@@ -160,11 +167,12 @@ try {
   assert.equal(reopenedDraft.version, remoteDraft.version);
   assert.equal(reopenedDraft.baseRevisionId, revisions[2].id);
   editor = await writing(main, chapterId);
+  assert.equal(await main.page.evaluate(() => document.documentElement.dataset.theme), "dark", "appearance persists across desktop restart");
   await editor.getByText(remoteText, { exact: true }).waitFor();
-  await main.page.getByRole("tab", { name: /版本/ }).click();
+  await main.page.getByRole("button", { name: "历史版本", exact: true }).click();
   await main.page.locator(".recovery-banner").waitFor();
   await main.page.screenshot({ path: join(artifacts, "reopened-recovery.png"), fullPage: true });
-  events.push({ stage: "crash-reopen-verified", report, draftVersion: reopenedDraft.version });
+  events.push({ stage: "crash-reopen-verified", report, draftVersion: reopenedDraft.version, theme: "dark" });
   await invoke(main, "open_project", { root: restoredRoot });
   for (const [index, chapter] of chapters.entries()) {
     assert.equal((await invoke(main, "current_manuscript", { chapterId: chapter.id })).id, revisions[index].id);

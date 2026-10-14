@@ -8,6 +8,7 @@ import "./settings.css";
 import { aiTaskSettingsFromHash } from "../lib/ai-task-preferences";
 import { DataManagementView } from "./data-management-view";
 import { AiQualityReview } from "./ai-quality-review";
+import { useConfirmAction } from "../shell/confirm-action-provider";
 
 type SettingsSection = "MODEL_API" | "AI_TASKS" | "AI_USAGE" | "WRITING_ADMISSION" | "DATA";
 
@@ -28,6 +29,8 @@ function settingsSectionFromHash(hash = window.location.hash): SettingsSection {
 }
 
 export function SettingsView() {
+  const confirmAction = useConfirmAction();
+  const switching = useRef(false);
   const viewRef = useRef<HTMLElement>(null);
   const acceptedHash = useRef(window.location.hash || "#model-api");
   const [activeSection, setActiveSection] = useState<SettingsSection>(settingsSectionFromHash);
@@ -37,39 +40,60 @@ export function SettingsView() {
   const [writingAdmissionDirty, setWritingAdmissionDirty] = useState(false);
   const [dataDirty, setDataDirty] = useState(false);
   const [analysis, setAnalysis] = useState(() => window.location.hash === "#quality");
+  const [switchError, setSwitchError] = useState<string | null>(null);
+  const currentView = useRef({ activeSection, analysis });
+  currentView.current = { activeSection, analysis };
+  function formSnapshot() {
+    return JSON.stringify(Array.from(viewRef.current?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input, textarea, select") ?? [])
+      .map((field) => [field.name, field.value, field instanceof HTMLInputElement ? field.checked : null]));
+  }
 
-  function switchSection(next: SettingsSection) {
-    if (next === activeSection) {
-      if (next === "AI_USAGE" && window.location.hash === "#quality" && !analysis && aiUsageDirty
-        && !window.confirm("预算有未保存修改，确定切换吗？")) {
-        window.history.replaceState(window.history.state, "", acceptedHash.current);
-        return;
-      }
-      acceptedHash.current = window.location.hash;
+  async function switchSection(next: SettingsSection, requestedHash?: string) {
+    if (switching.current) {
+      window.history.replaceState(window.history.state, "", acceptedHash.current);
       return;
     }
-    const dirty = activeSection === "MODEL_API"
+    if (next === activeSection && requestedHash === undefined) return;
+    const nextHash = requestedHash ?? sections.find((section) => section.key === next)!.hash;
+    const nextAnalysis = next === "AI_USAGE" && nextHash === "#quality";
+    const changingView = next !== activeSection || next === "AI_USAGE" && nextAnalysis !== analysis;
+    const dirty = !changingView ? false : activeSection === "MODEL_API"
       ? modelDirty
       : activeSection === "AI_TASKS"
         ? aiTaskDirty
         : activeSection === "AI_USAGE"
           ? aiUsageDirty
           : activeSection === "DATA" ? dataDirty : writingAdmissionDirty;
-    if (dirty && !window.confirm("当前设置页有未保存修改，切换会丢失这些修改。确定切换吗？")) {
+    const expected = currentView.current, form = formSnapshot();
+    const previousHash = acceptedHash.current;
+    switching.current = true;
+    if (dirty) {
       window.history.replaceState(window.history.state, "", acceptedHash.current);
-      return;
     }
-    setActiveSection(next);
-    const nextHash = next === "AI_USAGE" && window.location.hash === "#quality" ? "#quality" : next === "AI_TASKS" && aiTaskSettingsFromHash()
-      ? window.location.hash
-      : sections.find((section) => section.key === next)!.hash;
-    window.history.replaceState(window.history.state, "", nextHash);
-    acceptedHash.current = nextHash;
-    if (next === "AI_USAGE") setAnalysis(nextHash === "#quality");
+    try {
+      if (dirty && !await confirmAction({
+        message: next === activeSection && next === "AI_USAGE" ? "预算有未保存修改，确定切换吗？"
+          : "当前设置页有未保存修改，切换会丢失这些修改。确定切换吗？",
+        confirmLabel: "放弃修改并切换",
+      })) return;
+      if (!viewRef.current || currentView.current.activeSection !== expected.activeSection
+        || currentView.current.analysis !== expected.analysis) return;
+      if (dirty && formSnapshot() !== form) {
+        setSwitchError("确认期间设置内容已变化，已保留当前修改。请重新确认。"); return;
+      }
+      setSwitchError(null);
+      setActiveSection(next);
+      window.history.replaceState(window.history.state, "", nextHash);
+      acceptedHash.current = nextHash;
+      if (next === "AI_USAGE") setAnalysis(nextAnalysis);
+    } finally {
+      switching.current = false;
+      if (acceptedHash.current === previousHash) window.history.replaceState(window.history.state, "", previousHash);
+    }
   }
 
   useEffect(() => {
-    const syncSectionFromHash = () => { switchSection(settingsSectionFromHash()); setAnalysis(window.location.hash === "#quality"); };
+    const syncSectionFromHash = () => { void switchSection(settingsSectionFromHash(), window.location.hash); };
     window.addEventListener("hashchange", syncSectionFromHash);
     return () => window.removeEventListener("hashchange", syncSectionFromHash);
   }, [activeSection, modelDirty, aiTaskDirty, aiUsageDirty, writingAdmissionDirty, dataDirty, analysis]);
@@ -84,17 +108,13 @@ export function SettingsView() {
     <div className="workspace-heading"><h1>设置</h1><p className="workspace-lede">连接模型、分配任务、控制审核、查看费用与维护数据</p></div>
     <div className="settings-layout">
       <nav className="settings-nav" aria-label="设置分类">
-        {sections.map(({ key, label, icon: Icon }) => <button key={key} type="button" className="settings-nav-item" aria-current={activeSection === key ? "page" : undefined} data-active={activeSection === key || undefined} onClick={() => switchSection(key)}><Icon size={18} /><span>{label}</span></button>)}
+        {sections.map(({ key, label, icon: Icon }) => <button key={key} type="button" className="settings-nav-item" aria-current={activeSection === key ? "page" : undefined} data-active={activeSection === key || undefined} onClick={() => void switchSection(key)}><Icon size={18} /><span>{label}</span></button>)}
       </nav>
+      {switchError ? <p className="project-error settings-switch-error" role="alert">{switchError}</p> : null}
       {activeSection === "MODEL_API" ? <ModelProfileSettings onDirtyChange={setModelDirty} /> : activeSection === "AI_TASKS" ? <AiTaskModelSettings onDirtyChange={setAiTaskDirty} onSelectionChange={(hash) => { acceptedHash.current = hash; }} /> : activeSection === "WRITING_ADMISSION" ? <WritingAdmissionSettings onDirtyChange={setWritingAdmissionDirty} /> : activeSection === "DATA" ? <DataManagementView onDirtyChange={setDataDirty} /> : <div className="settings-analysis-layout">
         <div className="settings-period-switch" role="group" aria-label="用量与效果视图">
-          <button type="button" aria-pressed={!analysis} onClick={() => {
-            setAnalysis(false); acceptedHash.current = "#ai-usage"; window.history.replaceState(window.history.state, "", "#ai-usage");
-          }}>用量与预算</button>
-          <button type="button" aria-pressed={analysis} onClick={() => {
-            if (aiUsageDirty && !window.confirm("预算有未保存修改，确定切换吗？")) return;
-            setAnalysis(true); acceptedHash.current = "#quality"; window.history.replaceState(window.history.state, "", "#quality");
-          }}>效果分析</button>
+          <button type="button" aria-pressed={!analysis} onClick={() => void switchSection("AI_USAGE", "#ai-usage")}>用量与预算</button>
+          <button type="button" aria-pressed={analysis} onClick={() => void switchSection("AI_USAGE", "#quality")}>效果分析</button>
         </div>
         {analysis ? <AiQualityReview /> : <AiUsageSettings onDirtyChange={setAiUsageDirty} />}
       </div>}

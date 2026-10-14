@@ -3,13 +3,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DataManagementView } from "./data-management-view";
+import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 const mocks = vi.hoisted(() => ({ enqueueJob: vi.fn(), getCurrentProject: vi.fn(), listJobs: vi.fn(), open: vi.fn(), save: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open, save: mocks.save }));
 vi.mock("../lib/tauri-client", async () => ({ ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"),
   enqueueJob: mocks.enqueueJob, getCurrentProject: mocks.getCurrentProject, listJobs: mocks.listJobs }));
-function renderView(onDirtyChange = vi.fn()) {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <DataManagementView onDirtyChange={onDirtyChange} /></QueryClientProvider>);
+function renderView(onDirtyChange = vi.fn(), customConfirmation = false) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const content = <DataManagementView onDirtyChange={onDirtyChange} />;
+  return { ...render(<QueryClientProvider client={client}>
+    {customConfirmation ? <ConfirmActionProvider>{content}</ConfirmActionProvider> : content}</QueryClientProvider>), client };
 }
 describe("data maintenance", () => {
   beforeEach(() => {
@@ -37,6 +40,7 @@ describe("data maintenance", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     fireEvent.click(screen.getByRole("button", { name: "校验并恢复" }));
     expect(mocks.enqueueJob).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "校验并恢复" })).toBeEnabled());
     confirm.mockReturnValue(true);
     mocks.enqueueJob.mockRejectedValueOnce(new Error("queue unavailable"));
     fireEvent.click(screen.getByRole("button", { name: "校验并恢复" }));
@@ -75,5 +79,39 @@ describe("data maintenance", () => {
     await screen.findByText("请先打开作品");
     expect(screen.queryByRole("button", { name: "创建备份" })).not.toBeInTheDocument();
     expect(mocks.enqueueJob).not.toHaveBeenCalled();
+  });
+  it("locks restoration while confirming, preserves cancelled paths and allows retry", async () => {
+    renderView(vi.fn(), true);
+    await screen.findByRole("button", { name: "创建备份" });
+    fireEvent.click(screen.getByRole("button", { name: "恢复" }));
+    fireEvent.change(screen.getByLabelText("备份目录"), { target: { value: "E:\\Backup" } });
+    fireEvent.change(screen.getByLabelText("新作品目录"), { target: { value: "E:\\NewNovel" } });
+    fireEvent.click(screen.getByRole("button", { name: "校验并恢复" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveTextContent("E:\\NewNovel");
+    expect(screen.getByLabelText("新作品目录")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "备份" })).toBeDisabled();
+    expect(mocks.enqueueJob).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "校验并恢复" })).toBeEnabled());
+    expect(screen.getByLabelText("新作品目录")).toHaveValue("E:\\NewNovel");
+    fireEvent.click(screen.getByRole("button", { name: "校验并恢复" }));
+    fireEvent.click(screen.getByRole("button", { name: "校验并恢复到新目录" }));
+    await screen.findByText("等待执行");
+    expect(mocks.enqueueJob).toHaveBeenCalledOnce();
+    expect(mocks.enqueueJob).toHaveBeenCalledWith("RESTORE_VERIFY", JSON.stringify({ source: "E:\\Backup", target: "E:\\NewNovel" }));
+  });
+  it("does not enqueue a restore for a project changed while confirmation is open", async () => {
+    const { client } = renderView(vi.fn(), true);
+    await screen.findByRole("button", { name: "创建备份" });
+    fireEvent.click(screen.getByRole("button", { name: "恢复" }));
+    fireEvent.change(screen.getByLabelText("备份目录"), { target: { value: "E:\\Backup" } });
+    fireEvent.change(screen.getByLabelText("新作品目录"), { target: { value: "E:\\NewNovel" } });
+    fireEvent.click(screen.getByRole("button", { name: "校验并恢复" }));
+    act(() => client.setQueryData(["current-project"], { projectId: "project-2", name: "另一作品" }));
+    fireEvent.click(screen.getByRole("button", { name: "校验并恢复到新目录" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("作品或恢复路径已变化");
+    expect(mocks.enqueueJob).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("新作品目录")).toHaveValue("E:\\NewNovel");
   });
 });

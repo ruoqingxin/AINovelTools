@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyAiTaskPreferences } from "../lib/ai-task-preferences";
 import type {
@@ -13,6 +13,7 @@ import type {
   DiscussionDesignProposal,
 } from "../lib/tauri-client";
 import { DiscussionView } from "./discussion-view";
+import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 
 const mocks = vi.hoisted(() => ({
   askProjectDiscussion: vi.fn(),
@@ -126,10 +127,10 @@ const assistantMessage: DiscussionMessage = {
 
 const exchange: DiscussionExchange = { userMessage, assistantMessage };
 
-function renderView() {
+function renderView(customConfirmation = false) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <DiscussionView />
+      {customConfirmation ? <ConfirmActionProvider><DiscussionView /></ConfirmActionProvider> : <DiscussionView />}
     </QueryClientProvider>,
   );
 }
@@ -469,11 +470,11 @@ describe("DiscussionView", () => {
       await openCollector();
       const dialog = screen.getByRole("dialog", { name: "收集片段" });
       fireEvent.change(screen.getByLabelText("收集内容"), { target: { value: "未收集的修改" } });
-      fireEvent.click(screen.getByRole("button", { name: "关闭收集片段" }));
+      await act(async () => fireEvent.click(screen.getByRole("button", { name: "关闭收集片段" })));
       expect(dialog).toBeVisible();
       expect(screen.getByLabelText("收集内容")).toHaveValue("未收集的修改");
       confirm.mockReturnValue(true);
-      fireEvent.click(screen.getByRole("button", { name: "取消" }));
+      await act(async () => fireEvent.click(screen.getByRole("button", { name: "取消" })));
       expect(screen.queryByRole("dialog", { name: "收集片段" })).not.toBeInTheDocument();
       await openCollector();
       expect(screen.getByLabelText("收集内容")).toHaveValue(assistantMessage.content);
@@ -491,11 +492,11 @@ describe("DiscussionView", () => {
       const input = screen.getByLabelText("收集内容");
       fireEvent.change(input, { target: { value: "未保存的片段" } });
       fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
-      fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
+      await act(async () => fireEvent.click(screen.getByRole("button", { name: "建立会话" })));
       expect(mocks.createDiscussionSession).not.toHaveBeenCalled();
       expect(input).toHaveValue("未保存的片段");
       confirm.mockReturnValue(true);
-      fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
+      await act(async () => fireEvent.click(screen.getByRole("button", { name: "建立会话" })));
       expect(input).toBeDisabled();
       resolve({ ...session, id: "session-2" });
       await screen.findByText("已建立新的讨论会话。");
@@ -517,11 +518,11 @@ describe("DiscussionView", () => {
       expect(input).toHaveValue("未保存候选");
       fireEvent.click(screen.getByRole("button", { name: "讨论列表" }));
       const selector = screen.getByLabelText("选择讨论会话");
-      fireEvent.change(selector, { target: { value: "session-2" } });
+      await act(async () => fireEvent.change(selector, { target: { value: "session-2" } }));
       expect(selector).toHaveValue(session.id);
       expect(input).toHaveValue("未保存候选");
       confirm.mockReturnValue(true);
-      fireEvent.change(selector, { target: { value: "session-2" } });
+      await act(async () => fireEvent.change(selector, { target: { value: "session-2" } }));
       await waitFor(() => expect(selector).toHaveValue("session-2"));
       const count = confirm.mock.calls.length;
       fireEvent.change(selector, { target: { value: session.id } });
@@ -540,6 +541,58 @@ describe("DiscussionView", () => {
     await waitFor(() => expect(mocks.createDiscussionSession).toHaveBeenCalledWith(
       expect.objectContaining({ topicKind: "ITEM", scopeKind: "PROJECT", scopeId: null }),
     ));
+  });
+
+  it("retains a newer fragment after approving an older abandonment confirmation", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    renderView(true);
+    await openCollector();
+    fireEvent.change(screen.getByLabelText("收集内容"), { target: { value: "最初片段" } });
+    fireEvent.click(screen.getByRole("button", { name: "关闭收集片段" }));
+    fireEvent.change(screen.getByLabelText("收集内容"), { target: { value: "新的片段" } });
+    fireEvent.click(screen.getByRole("button", { name: "放弃片段修改" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("片段已变化");
+    expect(screen.getByRole("dialog", { name: "收集片段" })).toBeVisible();
+    expect(screen.getByLabelText("收集内容")).toHaveValue("新的片段");
+  });
+
+  it("cancels a session switch and rejects stale approval after another fragment edit", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    mocks.listDiscussionSessions.mockResolvedValue([session, { ...session, id: "session-2", title: "另一讨论" }]);
+    renderView(true);
+    await openCollector();
+    fireEvent.change(screen.getByLabelText("收集内容"), { target: { value: "当前候选" } });
+    fireEvent.click(screen.getByRole("button", { name: "讨论列表" }));
+    const selector = screen.getByLabelText("选择讨论会话");
+    fireEvent.change(selector, { target: { value: "session-2" } });
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(selector).toHaveValue(session.id);
+    fireEvent.change(selector, { target: { value: "session-2" } });
+    fireEvent.change(screen.getByLabelText("收集内容"), { target: { value: "新的候选" } });
+    fireEvent.click(screen.getByRole("button", { name: "放弃修改并切换" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("讨论内容已变化");
+    expect(selector).toHaveValue(session.id);
+    expect(screen.getByLabelText("收集内容")).toHaveValue("新的候选");
+  });
+
+  it("keeps new session fields when confirmation becomes stale, then permits one approved creation", async () => {
+    mocks.listDiscussionMessages.mockResolvedValue([assistantMessage]);
+    mocks.createDiscussionSession.mockResolvedValue({ ...session, id: "session-2" });
+    renderView(true);
+    await openCollector();
+    fireEvent.change(screen.getByLabelText("收集内容"), { target: { value: "未收集候选" } });
+    fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
+    fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
+    fireEvent.change(screen.getByLabelText("标题"), { target: { value: "新的讨论标题" } });
+    fireEvent.click(screen.getByRole("button", { name: "放弃修改并新建" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("讨论内容已变化");
+    expect(mocks.createDiscussionSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
+    fireEvent.click(screen.getByRole("button", { name: "放弃修改并新建" }));
+    await screen.findByText("已建立新的讨论会话。");
+    expect(mocks.createDiscussionSession).toHaveBeenCalledOnce();
+    expect(mocks.createDiscussionSession).toHaveBeenCalledWith(expect.objectContaining({ title: "新的讨论标题" }));
   });
 
   it("autosaves selected ideas and preserves over-limit drafts without truncation", async () => {

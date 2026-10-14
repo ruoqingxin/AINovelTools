@@ -1,5 +1,5 @@
 import { BookOpenText, ClipboardList, History, Library, MoreHorizontal, PanelRightClose, PanelRightOpen, RefreshCw, Save, ShieldCheck, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { AuditFlowSettings, PlanNode } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
 import { ChapterExtractionPanel } from "./chapter-extraction-panel";
@@ -17,6 +17,7 @@ import { sourceReturnTo } from "../lib/manuscript-source";
 import { useWideWorkspace, WorkspacePanel } from "./workspace-panel";
 import { useLayoutPreference, useWorkspacePreferences } from "../lib/workspace-preferences";
 import { WritingDisplayControls } from "./writing-display-controls";
+import { useConfirmAction } from "../shell/confirm-action-provider";
 
 type AssistantTab = "ai" | "plan" | "review";
 
@@ -57,6 +58,32 @@ export function ChapterCreationWorkspace({
   state: ReturnType<typeof useChapterManuscript>;
   onPendingChange?: (pending: boolean) => void;
 }) {
+  const confirmAction = useConfirmAction();
+  const planState = useRef<{ chapterId: string; chapterPlan: string; pendingChapterPlan?: string; savingPlan: boolean; planReady: boolean } | null>(null);
+  planState.current = { chapterId: chapter.id, chapterPlan, pendingChapterPlan, savingPlan, planReady };
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const planOperation = useRef(false);
+  const [planNotice, setPlanNotice] = useState<string | null>(null);
+  async function usePlanCandidate(adopt: boolean) {
+    if (planOperation.current || !planReady || savingPlan || !pendingChapterPlan?.trim()) return;
+    const expected = planState.current;
+    planOperation.current = true;
+    try {
+      if (planDirty && !await confirmAction({
+        message: `当前章节计划有未保存修改。${adopt ? "采用" : "载入"}候选会替换这些修改，确定继续吗？`,
+        confirmLabel: adopt ? "采用计划候选" : "载入计划候选",
+      })) return;
+      const latest = planState.current;
+      if (!mounted.current || !latest || latest.chapterId !== expected?.chapterId || !latest.planReady || latest.savingPlan) return;
+      if (latest.chapterPlan !== expected.chapterPlan || latest.pendingChapterPlan !== expected.pendingChapterPlan) {
+        setPlanNotice("确认期间计划或候选已变化，已保留当前内容。请重新确认。"); return;
+      }
+      setPlanNotice(null);
+      if (adopt) await onAdoptPlan?.();
+      else onPlanChange(pendingChapterPlan);
+    } finally { planOperation.current = false; }
+  }
   const [assistantTab, setAssistantTab] = useState<AssistantTab>(() =>
     new URLSearchParams(window.location.search).get("assistant") === "plan" ? "plan"
       : new URLSearchParams(window.location.search).get("assistant") === "review" ? "review" : "ai");
@@ -287,16 +314,13 @@ export function ChapterCreationWorkspace({
             <strong>计划候选</strong>
             <pre>{pendingChapterPlan}</pre>
             <div>
-              <button type="button" className="secondary-action" onClick={() => {
-                if (planDirty && !window.confirm("当前章节计划有未保存修改。载入候选会替换这些修改，确定继续吗？")) return;
-                onPlanChange(pendingChapterPlan);
-              }} disabled={savingPlan}>载入编辑</button>
-              {onAdoptPlan ? <button type="button" className="primary-action" onClick={() => {
-                if (planDirty && !window.confirm("当前章节计划有未保存修改。采用候选会替换这些修改，确定继续吗？")) return;
-                void onAdoptPlan();
-              }} disabled={savingPlan}>确认为本章计划</button> : null}
+              <button type="button" className="secondary-action" onClick={() => void usePlanCandidate(false)}
+                disabled={!planReady || savingPlan}>载入编辑</button>
+              {onAdoptPlan ? <button type="button" className="primary-action" onClick={() => void usePlanCandidate(true)}
+                disabled={!planReady || savingPlan}>确认为本章计划</button> : null}
             </div>
           </div> : null}
+          {planNotice ? <p className="project-error" role="alert">{planNotice}</p> : null}
           <a href="/planning">全书大纲</a>
           {referenceReturn ? <a href={referenceReturn}>返回来源</a> : null}
           <ChapterEntityReferencePanel chapterId={chapter.id} active={assistantVisible && assistantTab === "plan"}

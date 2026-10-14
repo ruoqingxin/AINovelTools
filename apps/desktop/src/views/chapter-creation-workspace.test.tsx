@@ -1,8 +1,9 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChapterCreationWorkspace } from "./chapter-creation-workspace";
+import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 
 type WorkspaceProps = ComponentProps<typeof ChapterCreationWorkspace>;
 type ManuscriptState = WorkspaceProps["state"];
@@ -199,7 +200,7 @@ describe("ChapterCreationWorkspace", () => {
     } finally { media.mockRestore(); }
   });
 
-  it("retains pending execution cards and confirms before replacing plan edits", () => {
+  it("retains pending execution cards and confirms before replacing plan edits", async () => {
     const props = makeProps();
     const adopt = vi.fn().mockResolvedValue(undefined);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -207,12 +208,12 @@ describe("ChapterCreationWorkspace", () => {
       planDirty onAdoptPlan={adopt} />);
     fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
     fireEvent.click(screen.getByRole("tab", { name: "本章计划" }));
-    fireEvent.click(screen.getByRole("button", { name: "载入编辑" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "载入编辑" })));
     expect(props.onPlanChange).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "确认为本章计划" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "确认为本章计划" })));
     expect(adopt).not.toHaveBeenCalled();
     confirm.mockReturnValue(true);
-    fireEvent.click(screen.getByRole("button", { name: "载入编辑" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "载入编辑" })));
     expect(props.onPlanChange).toHaveBeenCalledWith("新的执行卡");
     view.rerender(<ChapterCreationWorkspace {...props} pendingChapterPlan="新的执行卡"
       onAdoptPlan={adopt} />);
@@ -232,6 +233,29 @@ describe("ChapterCreationWorkspace", () => {
     expect(panels.facts).toHaveBeenLastCalledWith(expect.objectContaining({ chapterId: "chapter-1", embedded: true }));
     fireEvent.click(screen.getByRole("button", { name: "查看已保存正文" }));
     expect(state.setManuscriptTab).toHaveBeenCalledWith("manuscript");
+  });
+
+  it.each([false, true])("does not replace newer chapter-plan edits after confirmation (adopt=%s)", async (adopt) => {
+    window.history.replaceState(null, "", "/writing?assistant=plan");
+    const props = { ...makeProps(), pendingChapterPlan: "计划候选", planDirty: true, onAdoptPlan: vi.fn() };
+    const view = render(<ConfirmActionProvider><ChapterCreationWorkspace {...props} /></ConfirmActionProvider>);
+    fireEvent.click(screen.getByRole("button", { name: adopt ? "确认为本章计划" : "载入编辑" }));
+    view.rerender(<ConfirmActionProvider><ChapterCreationWorkspace {...props} chapterPlan="新的计划修改" /></ConfirmActionProvider>);
+    fireEvent.click(screen.getByRole("button", { name: adopt ? "采用计划候选" : "载入计划候选" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("计划或候选已变化");
+    expect(props.onAdoptPlan).not.toHaveBeenCalled();
+    expect(props.onPlanChange).not.toHaveBeenCalled();
+  });
+
+  it("does not adopt an old plan candidate after changing chapters during confirmation", async () => {
+    window.history.replaceState(null, "", "/writing?assistant=plan");
+    const props = { ...makeProps(), pendingChapterPlan: "计划候选", planDirty: true, onAdoptPlan: vi.fn() };
+    const view = render(<ConfirmActionProvider><ChapterCreationWorkspace {...props} /></ConfirmActionProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "确认为本章计划" }));
+    view.rerender(<ConfirmActionProvider><ChapterCreationWorkspace {...props} chapter={{ ...props.chapter, id: "chapter-2" }} /></ConfirmActionProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "采用计划候选" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(props.onAdoptPlan).not.toHaveBeenCalled();
   });
 
   it("respects disabled checks without disabling manual saves", () => {
