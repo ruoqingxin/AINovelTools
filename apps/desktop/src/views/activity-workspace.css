@@ -1,4 +1,4 @@
-.workspace-page > .activity-workspace { width: min(1440px, calc(100% - 48px)); margin: 0 auto; padding: 24px 0 32px; }
+.workspace-page > .activity-workspace:not(.author-todos) { width: min(1440px, calc(100% - 48px)); margin: 0 auto; padding: 24px 0 32px; }
 .activity-workspace { color: #303640; letter-spacing: 0; }
 .activity-workspace .workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .activity-meta { color: #74808c; font-size: 13px; }
@@ -9,6 +9,8 @@
 .activity-workspace button:disabled { opacity: .5; cursor: not-allowed; }
 .activity-workspace .icon-command { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 5px; color: #657182; background: #fff; cursor: pointer; }
 .todo-list { border-top: 1px solid var(--line); }
+.author-todos > .todo-list { flex: 1; min-height: 0; overflow: auto; }
+.author-todos > .activity-empty { flex: 1; min-height: 0; padding: 24px; text-align: center; overflow: auto; }
 .todo-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .5fr) auto; gap: 16px; align-items: center; padding: 18px 0; border-bottom: 1px solid var(--line); }
 .todo-row[data-risk] { border-left: 3px solid #bc544c; padding-left: 12px; }
 .todo-target, .todo-state { display: grid; min-width: 0; gap: 7px; font-size: 13px; overflow-wrap: anywhere; }
@@ -63,7 +65,7 @@
   .activity-workspace .job-detail { padding-left: 0; border-top: 1px solid var(--line); }
 }
 @media (max-width: 800px) {
-  .workspace-page > .activity-workspace { width: calc(100% - 28px); padding-top: 20px; }
+  .workspace-page > .activity-workspace:not(.author-todos) { width: calc(100% - 28px); padding-top: 20px; }
   .todo-row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
   .todo-target { grid-column: 1 / -1; }
 }

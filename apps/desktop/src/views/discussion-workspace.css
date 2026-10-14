@@ -3,9 +3,13 @@
 .discussion-stage-three .primary-action, .discussion-stage-three .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; font: inherit; font-size: 13px; cursor: pointer; }
 .discussion-stage-three .primary-action { border-color: var(--accent); background: var(--accent); color: white; }
 .discussion-stage-three .secondary-action { background: white; color: #536478; }
-.discussion-stage-three .discussion-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.discussion-stage-three .discussion-layout { display: grid; flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; gap: 20px; }
 .discussion-stage-three[data-draft-open="true"] .discussion-layout { grid-template-columns: minmax(0, 1fr) 360px; }
-.discussion-stage-three .discussion-thread { grid-column: auto; grid-row: auto; min-width: 0; }
+.discussion-stage-three .discussion-thread { grid-column: auto; grid-row: auto; min-width: 0; min-height: 0; height: 100%; overflow: auto; }
+.discussion-stage-three .discussion-thread > * { flex-shrink: 0; }
+.discussion-stage-three .discussion-thread > .discussion-messages { flex: 1; min-height: 120px; }
+.discussion-stage-three .discussion-message { width: fit-content; max-width: min(88%, 1000px); }
+.discussion-stage-three .discussion-composer { position: sticky; bottom: 0; background: var(--surface); }
 .discussion-stage-three .discussion-sidebar { display: block; grid-column: auto; padding: 0; border: 0; background: transparent; box-shadow: none; }
 .discussion-stage-three .discussion-session-toolbar { display: flex; flex-wrap: wrap; padding: 0; gap: 12px; }
 .discussion-stage-three .discussion-session-picker { flex: 1 1 220px; min-width: 0; }
@@ -24,10 +28,10 @@
 .discussion-stage-three .discussion-collector .discussion-message-actions { margin: 0; padding: 0; border: 0; }
 .discussion-stage-three .discussion-collector textarea { min-height: 140px; max-height: 35dvh; padding: 12px; font-size: 14px; line-height: 1.8; resize: vertical; }
 .discussion-collector-commands { position: sticky; bottom: 0; display: flex; flex: 1 0 100%; justify-content: flex-end; gap: 8px; padding: 12px 0 0; background: var(--surface); }
-.discussion-stage-three .discussion-notebook[data-docked="true"] { max-height: calc(100dvh - 200px); }
+.discussion-stage-three .discussion-notebook[data-docked="true"] { position: relative; height: 100%; min-height: 0; max-height: none; align-self: stretch; }
+.discussion-stage-three .discussion-design-panel { max-height: none; }
 .discussion-stage-three .discussion-notebook .workspace-panel-heading > h2 { font-size: 16px; }
 @media (max-width: 600px) {
   .discussion-stage-three .workspace-heading .library-actions { width: 100%; gap: 6px; }
   .discussion-stage-three .workspace-heading button { font-size: 12px; padding: 7px 8px; }
-  .discussion-stage-three .discussion-thread { min-height: 560px; }
 }

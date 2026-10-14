@@ -24,6 +24,6 @@ export const ManuscriptCandidateEditor = memo(function ManuscriptCandidateEditor
       <button type="button" onClick={() => editor.chain().focus().redo().run()} disabled={!formatting.canRedo} aria-label="重做" title="重做 (Ctrl+Shift+Z)"><Redo2 size={15} /></button>
       {characterCount !== undefined ? <span className="editor-character-count">{characterCount} 字</span> : null}
     </div>
-    <EditorContent editor={editor} />
+    <EditorContent className="manuscript-editor-content" editor={editor} />
   </>;
 });

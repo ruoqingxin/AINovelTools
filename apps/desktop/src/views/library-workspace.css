@@ -11,9 +11,12 @@
 .library-toolbar .creation-mode { display: inline-flex; gap: 0; padding: 2px; border: 1px solid var(--line); border-radius: 5px; background: #f4f6f8; }
 .library-toolbar .creation-mode button { min-height: 30px; padding: 5px 10px; border: 0; border-radius: 3px; background: transparent; color: #657182; font: inherit; font-size: 13px; cursor: pointer; }
 .library-toolbar .creation-mode button[aria-pressed="true"] { background: white; color: #245bb3; box-shadow: 0 1px 3px #242f3e18; }
-.library-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); min-width: 0; border-top: 1px solid var(--line); }
-.library-list { min-width: 0; max-height: calc(100dvh - 240px); padding: 12px 12px 12px 0; border-right: 1px solid var(--line); overflow: auto; }
-.library-detail { min-width: 0; padding: 18px 24px; }
+.library-layout { display: grid; flex: 1; grid-template-columns: 260px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-width: 0; min-height: 0; border-top: 1px solid var(--line); }
+.library-list { min-width: 0; min-height: 0; padding: 12px 12px 12px 0; border-right: 1px solid var(--line); overflow: auto; }
+.library-list > .section-heading { position: sticky; top: -12px; z-index: 1; background: var(--surface); }
+.library-detail { min-width: 0; min-height: 0; padding: 18px 24px; overflow: auto; }
+.library-detail:has(> .library-empty) { display: flex; flex-direction: column; }
+.library-detail > .library-empty { flex: 1; min-height: 180px; text-align: center; }
 .library-list[hidden], .library-detail[hidden] { display: none; }
 .library-back { margin-bottom: 18px; }
 .library-detail > .section-heading h2 { margin: 0; font-size: 18px; }
@@ -57,8 +60,11 @@
 .library-workspace .library-actions .library-advanced { margin: 0; padding: 0; border: 0; }
 @media (max-width: 850px) {
   .materials-view[data-mobile-detail="false"] .library-list { max-height: none; }
-  .library-layout { grid-template-columns: minmax(0, 1fr); }
+  .library-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .library-list { max-height: 240px; padding: 8px 0; border-right: 0; border-bottom: 1px solid var(--line); }
+  .library-list > .section-heading { top: -8px; }
+  .materials-view .library-layout { grid-template-rows: minmax(0, 1fr); }
+  .materials-view .library-list { max-height: none; }
   .library-detail { padding: 18px 0; }
   .library-toolbar > select { flex: 1 1 130px; }
 }

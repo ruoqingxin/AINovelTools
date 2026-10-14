@@ -75,6 +75,17 @@ vi.mock("../lib/tauri-client", async () => {
 });
 
 describe("SettingsView", () => {
+  it("resets the internal content scroll when switching settings categories", async () => {
+    renderSettings();
+    await screen.findByRole("heading", { name: "模型 API" });
+    const panel = document.querySelector(".settings-section-panel")!;
+    panel.scrollTop = 600;
+    fireEvent.click(screen.getByRole("button", { name: "审核流程" }));
+    await screen.findByRole("heading", { name: "审核流程" });
+    expect(panel.scrollTop).toBe(0);
+    expect(screen.getByRole("navigation", { name: "设置分类" }).closest(".settings-section-panel")).toBeNull();
+  });
+
   it("uses a compact task selector on narrow screens and preserves task edits while switching", async () => {
     const media = vi.spyOn(window, "matchMedia").mockReturnValue({
       matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn(),

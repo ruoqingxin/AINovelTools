@@ -58,6 +58,29 @@
 .workspace { grid-area: workspace; min-width: 0; min-height: 0; overflow: auto; padding-bottom: 0; background: var(--surface); }
 .workspace-page { min-width: 0; min-height: 100%; }
 .workspace-page > :is(.empty-project-view, .project-workspace, .discussion-workspace, .story-bible-view, .materials-view, .search-view, .jobs-view, .review-center-view) { width: min(1440px, calc(100% - 48px)); margin: 0 auto; padding: 24px 0 32px; }
+.workspace:has(> .workspace-page > :is(.writing-planning-workspace, .library-workspace, .discussion-stage-three, .author-todos, .settings-view)) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.workspace:has(> .workspace-page > :is(.writing-planning-workspace, .library-workspace, .discussion-stage-three, .author-todos, .settings-view)) > .workspace-page:not([hidden]) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.workspace-page > :is(.writing-planning-workspace, .library-workspace, .discussion-stage-three, .author-todos, .settings-view) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  width: calc(100% - 48px);
+  margin: 0 auto;
+  padding: 24px 0 16px;
+  overflow: auto;
+}
+.workspace-page > :is(.writing-planning-workspace, .library-workspace, .discussion-stage-three, .author-todos, .settings-view) > * { flex-shrink: 0; }
+.workspace > :is(.global-action-error, .global-recovery-banner) { flex-shrink: 0; }
 .workspace-page .workspace-heading { padding-bottom: 16px; border-bottom-color: var(--line); }
 .workspace-page .workspace-heading h1 { color: #28313a; font-size: 22px; letter-spacing: 0; }
 .app-shell .status-bar { grid-area: status; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-top: 1px solid var(--line); color: var(--muted); background: var(--surface-subtle); font-size: 11px; }
@@ -120,6 +143,7 @@
   .activity-button[data-active]::before { inset: 10px auto 10px -8px; width: 3px; height: auto; }
   .mobile-navigation-backdrop { position: fixed; inset: 52px 0 26px; z-index: 100; display: block; padding: 0; border: 0; background: #18222d40; }
   .workspace-page > :is(.empty-project-view, .project-workspace, .discussion-workspace, .story-bible-view, .materials-view, .search-view, .jobs-view, .review-center-view) { width: calc(100% - 28px); padding-top: 20px; }
+  .workspace-page > :is(.author-todos, .settings-view) { width: calc(100% - 28px); padding-top: 20px; }
   .project-manager-heading { align-items: flex-start; flex-direction: column; }
   .global-action-error { padding-inline: 14px; }
 }

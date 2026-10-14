@@ -101,8 +101,10 @@ export function SettingsView() {
   useEffect(() => {
     const workspace = viewRef.current?.closest(".workspace");
     if (workspace) workspace.scrollTop = 0;
+    const panel = viewRef.current?.querySelector(".settings-section-panel");
+    if (panel) panel.scrollTop = 0;
     viewRef.current?.querySelector<HTMLElement>(".settings-nav-item[data-active]")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [activeSection]);
+  }, [activeSection, analysis]);
 
   return <section className="settings-view" ref={viewRef}>
     <div className="workspace-heading"><h1>设置</h1><p className="workspace-lede">连接模型、分配任务、控制审核、查看费用与维护数据</p></div>
@@ -111,6 +113,7 @@ export function SettingsView() {
         {sections.map(({ key, label, icon: Icon }) => <button key={key} type="button" className="settings-nav-item" aria-current={activeSection === key ? "page" : undefined} data-active={activeSection === key || undefined} onClick={() => void switchSection(key)}><Icon size={18} /><span>{label}</span></button>)}
       </nav>
       {switchError ? <p className="project-error settings-switch-error" role="alert">{switchError}</p> : null}
+      <div className="settings-section-panel">
       {activeSection === "MODEL_API" ? <ModelProfileSettings onDirtyChange={setModelDirty} /> : activeSection === "AI_TASKS" ? <AiTaskModelSettings onDirtyChange={setAiTaskDirty} onSelectionChange={(hash) => { acceptedHash.current = hash; }} /> : activeSection === "WRITING_ADMISSION" ? <WritingAdmissionSettings onDirtyChange={setWritingAdmissionDirty} /> : activeSection === "DATA" ? <DataManagementView onDirtyChange={setDataDirty} /> : <div className="settings-analysis-layout">
         <div className="settings-period-switch" role="group" aria-label="用量与效果视图">
           <button type="button" aria-pressed={!analysis} onClick={() => void switchSection("AI_USAGE", "#ai-usage")}>用量与预算</button>
@@ -118,6 +121,7 @@ export function SettingsView() {
         </div>
         {analysis ? <AiQualityReview /> : <AiUsageSettings onDirtyChange={setAiUsageDirty} />}
       </div>}
+      </div>
     </div>
   </section>;
 }

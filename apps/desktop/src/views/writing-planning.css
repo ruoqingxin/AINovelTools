@@ -7,9 +7,16 @@
 .writing-planning-workspace[data-workspace-mode="writing"] .chapter-focus-copy h2 { font-size: 18px; white-space: normal; }
 .workspace-heading-tools { display: flex; align-items: center; gap: 8px; }
 .workspace-heading-tools .icon-command { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 5px; color: #647082; background: white; cursor: pointer; }
-.writing-planning-workspace .stage-two-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin-top: 12px; }
+.writing-planning-workspace .stage-two-layout { display: grid; flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; gap: 0; margin-top: 12px; }
 .writing-planning-workspace .stage-two-layout[data-directory-open="true"] { grid-template-columns: 230px minmax(0, 1fr); }
 .writing-planning-workspace .workspace-directory { border-right: 1px solid var(--line); }
+.writing-planning-workspace .workspace-directory[data-docked="true"] {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  align-self: stretch;
+}
 .workspace-directory .workspace-panel-body { padding: 8px; }
 .writing-planning-workspace .plan-tree { position: static; max-height: none; padding: 0; border: 0; border-radius: 0; background: white; }
 .writing-planning-workspace .plan-tree > .section-heading { padding: 4px 8px; }
@@ -53,21 +60,25 @@
 .writing-planning-workspace .plan-candidate-item textarea { width: 100%; min-height: 84px; padding: 10px; border: 1px solid var(--line); border-radius: 4px; color: #303640; font-size: 14px; }
 .candidate-original summary { cursor: pointer; color: #7a8390; font-size: 12px; }
 .candidate-original textarea { width: 100%; margin-top: 12px; }
-.writing-planning-workspace .plan-inspector { min-width: 0; padding: 0 20px 20px; background: white; border: 0; border-radius: 0; }
+.writing-planning-workspace .plan-inspector { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0 20px 20px; background: white; border: 0; border-radius: 0; overflow: auto; }
+.writing-planning-workspace .plan-inspector > * { flex-shrink: 0; }
 .writing-planning-workspace .chapter-focus-inspector { padding: 0; }
+.writing-planning-workspace .chapter-focus-inspector > .creation-workspace { flex: 1; min-height: 0; }
+.writing-planning-workspace .stage-two-layout > .workspace-empty { min-width: 0; min-height: 0; padding: 24px; overflow: auto; text-align: center; }
 .writing-planning-workspace .plan-inspector-heading { padding: 16px 0; margin: 0; border-bottom: 1px solid var(--line); }
 .writing-planning-workspace .plan-inspector-heading h2 { margin: 0; color: #262b33; font-size: 18px; }
 .writing-planning-workspace .chapter-focus-header { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: white; padding: 12px 18px; }
 .chapter-focus-copy h2 { overflow-wrap: anywhere; }
 .workspace-empty { display: grid; min-height: 460px; place-content: center; justify-items: center; gap: 20px; color: #737c88; }
 .workspace-empty h2 { margin: 0; font-size: 18px; }
-.compact-plan-editor { display: grid; gap: 14px; padding-top: 16px; }
+.compact-plan-editor { display: flex; flex: 1; flex-direction: column; gap: 14px; padding-top: 16px; }
+.compact-plan-editor > * { flex-shrink: 0; }
 .compact-plan-toolbar, .compact-plan-savebar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .compact-plan-savebar { padding: 12px 0; border-top: 1px solid var(--line); }
 .compact-plan-savebar > div { display: flex; flex-wrap: wrap; gap: 8px; }
 .compact-plan-savebar label { display: flex; align-items: center; gap: 8px; color: #5a6370; font-size: 13px; }
 .compact-plan-savebar select { min-height: 34px; max-width: 100%; padding: 4px 8px; border: 1px solid var(--line); border-radius: 5px; color: inherit; background: white; font: inherit; }
-.compact-plan-editor > textarea { width: 100%; min-height: 360px; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #303640; font: inherit; font-size: 14px; line-height: 1.8; resize: vertical; }
+.compact-plan-editor > textarea { flex: 1; width: 100%; min-height: 360px; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #303640; font: inherit; font-size: 14px; line-height: 1.8; resize: vertical; }
 .compact-plan-editor > textarea[readonly] { background: #fafbfc; }
 .writing-planning-workspace .primary-action, .writing-planning-workspace .secondary-action { min-height: 34px; font-size: 13px; border-radius: 5px; }
 .compact-ai-tool { padding: 12px 0; border-top: 1px solid var(--line); }
@@ -97,6 +108,15 @@
 .writing-planning-workspace .node-plan-candidate strong { color: #303640; font-size: 14px; }
 .writing-planning-workspace .node-plan-candidate small { color: #788291; font-size: 12px; }
 .writing-planning-workspace .plan-inspector-work-design .story-planning-workbench { margin: 0; padding: 0; border: 0; border-radius: 0; background: white; }
+.writing-planning-workspace .plan-inspector-work-design .story-planning-workbench,
+.writing-planning-workspace .story-planning-layout-editor-only,
+.writing-planning-workspace .story-planning-layout-editor-only > .story-planning-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+.writing-planning-workspace .story-planning-workbench > *,
+.writing-planning-workspace .story-planning-editor > * { flex-shrink: 0; }
 .compact-work-design .story-planning-layout { margin-top: 0; }
 .compact-work-design .story-planning-editor-heading { padding: 16px 0; color: #262b33; border-bottom: 1px solid var(--line); }
 .compact-work-design .story-planning-editor-heading h3 { color: #262b33; font-size: 18px; }
@@ -122,8 +142,10 @@
   .compact-plan-savebar label, .compact-plan-savebar > div { width: 100%; }
   .writing-planning-workspace .volume-manager-targets, .writing-planning-workspace .chapter-split-controls { grid-template-columns: minmax(0, 1fr); }
 }
-.free-planning-editor { display: grid; gap: 12px; }
-.free-planning-editor > label { display: grid; gap: 8px; color: #405675; font-size: 13px; }
+.free-planning-editor { display: flex; flex: 1; flex-direction: column; gap: 12px; }
+.free-planning-editor > * { flex-shrink: 0; }
+.free-planning-editor > label { display: flex; flex: 1; flex-direction: column; gap: 8px; color: #405675; font-size: 13px; }
+.free-planning-editor > label > textarea { flex: 1; min-height: 240px; }
 .free-planning-editor textarea { width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: white; color: #34435a; font: inherit; font-size: 14px; line-height: 1.8; resize: vertical; box-sizing: border-box; }
 .free-planning-editor textarea:focus { outline: 2px solid #c7dafb; outline-offset: 1px; }
 .free-planning-candidate { border-top: 1px solid var(--line); padding-top: 12px; }

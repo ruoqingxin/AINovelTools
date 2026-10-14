@@ -42,5 +42,5 @@ export const ManuscriptReader = memo(function ManuscriptReader({ documentJson, b
       }
     }
   }, [documentJson, editor, blockId]);
-  return editor ? <EditorContent editor={editor} /> : <p className="plan-empty">正在加载正文…</p>;
+  return editor ? <EditorContent className="manuscript-reader-content" editor={editor} /> : <p className="plan-empty">正在加载正文…</p>;
 });

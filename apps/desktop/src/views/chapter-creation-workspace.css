@@ -2,7 +2,9 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
-  align-items: start;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
   color: #303640;
   letter-spacing: 0;
 }
@@ -15,6 +17,26 @@
 .creation-assistant {
   min-width: 0;
 }
+
+.creation-main { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.creation-main > * { flex-shrink: 0; }
+.creation-edit-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.creation-edit-panel > * { flex-shrink: 0; }
+.creation-edit-panel > .manuscript-editor-content {
+  flex: 1;
+  min-height: 160px;
+  overflow: auto;
+}
+.creation-edit-panel > .manuscript-editor-content > .tiptap-editor {
+  width: 100%;
+  min-height: 100%;
+}
+.creation-edit-panel .editor-toolbar { width: 100%; }
+.creation-reader-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; }
+.creation-reader-panel > * { flex-shrink: 0; }
+.creation-reader-panel > .manuscript-reader-content { flex: 1; }
+.creation-reader-panel > .manuscript-reader-content > .manuscript-reader-body { min-height: 100%; }
+.creation-reader-panel > .creation-empty { flex: 1; }
 
 .creation-assistant[hidden],
 .creation-assistant [hidden],
@@ -444,7 +466,7 @@
 .ai-writing-mode select { min-height: 36px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; background: white; color: inherit; font: inherit; }
 @media (min-width: 1280px) {
   .creation-workspace[data-assistant-open="true"] { grid-template-columns: minmax(0, 1fr) 340px; }
-  .creation-assistant[data-docked="true"] { border-left: 1px solid var(--line); }
+  .creation-assistant[data-docked="true"] { position: relative; height: 100%; max-height: none; align-self: stretch; border-left: 1px solid var(--line); }
 }
 
 @media (max-width: 600px) {
