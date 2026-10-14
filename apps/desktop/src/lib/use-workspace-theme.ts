@@ -1,9 +1,16 @@
-import { useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useWorkspacePreferences } from "./workspace-preferences";
 import "./workspace-theme.css";
 
 export function useWorkspaceTheme() {
   const { theme } = useWorkspacePreferences();
+  useEffect(() => {
+    if (!isTauri()) return;
+    void getCurrentWindow().setTheme(theme === "system" ? null : theme)
+      .catch((cause: unknown) => { console.warn("Unable to update native window theme.", cause); });
+  }, [theme]);
   useLayoutEffect(() => {
     const media = window.matchMedia?.("(prefers-color-scheme: dark)");
     const apply = () => {
