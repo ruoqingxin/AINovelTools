@@ -1,11 +1,11 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { router } from "./router";
 
-const mocks = vi.hoisted(() => ({ getCurrentProject: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getCurrentProject: vi.fn(), loadAuthorSettings: vi.fn() }));
 
 vi.mock("./lib/tauri-client", () => mocks);
 vi.mock("./shell/app-shell", () => ({ AppShell: () => <Outlet /> }));
@@ -19,7 +19,10 @@ vi.mock("./views/settings-view", () => ({ SettingsView: () => <p>Settings</p> })
 vi.mock("./views/story-bible-view", () => ({ StoryBibleView: () => <p>Materials entities</p> }));
 vi.mock("./views/materials-view", () => ({ MaterialsView: () => <p>Materials references</p> }));
 vi.mock("./views/knowledge-records-view", () => ({ KnowledgeRecordsView: () => <p>Materials records</p> }));
-vi.mock("./views/author-settings-view", () => ({ AuthorSettingsView: () => <p>Materials settings</p> }));
+vi.mock("./views/author-settings-view", async () => {
+  await mocks.loadAuthorSettings();
+  return { AuthorSettingsView: () => <p>Materials settings</p> };
+});
 vi.mock("./views/search-view", () => ({ SearchView: () => <p>Search</p> }));
 vi.mock("./views/jobs-view", () => ({ JobsView: () => <p>Activity</p> }));
 vi.mock("./views/manuscript-source-view", () => ({ ManuscriptSourceView: () => <p>Verified source</p> }));
@@ -33,6 +36,7 @@ function renderRoute(path: string) {
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><RouterProvider router={testRouter} /></QueryClientProvider>);
+  return testRouter;
 }
 
 describe("project routes", () => {
@@ -44,6 +48,23 @@ describe("project routes", () => {
     vi.resetAllMocks();
     vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
+  });
+
+  it("keeps the current knowledge page visible while a cold tab component loads", async () => {
+    let release!: () => void;
+    mocks.loadAuthorSettings.mockReturnValue(new Promise<void>((resolve) => { release = resolve; }));
+    const testRouter = renderRoute("/knowledge");
+    await screen.findByText("Materials entities");
+    let navigation!: Promise<void>;
+    act(() => { navigation = testRouter.navigate({ to: "/knowledge/settings" }); });
+    try {
+      await waitFor(() => expect(mocks.loadAuthorSettings).toHaveBeenCalled());
+      expect(screen.getByText("Materials entities")).toBeVisible();
+      expect(screen.queryByText("Materials settings")).not.toBeInTheDocument();
+    } finally {
+      await act(async () => { release(); await navigation; });
+    }
+    expect(await screen.findByText("Materials settings")).toBeVisible();
   });
 
   it.each([

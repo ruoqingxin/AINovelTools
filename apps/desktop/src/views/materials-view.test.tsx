@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MaterialsView } from "./materials-view";
+vi.mock("./knowledge-section-nav", () => ({ KnowledgeSectionNav: () => null }));
 
 const mocks = vi.hoisted(() => ({
   listSummaryMaterials: vi.fn(), listWritingCards: vi.fn(), getCurrentProject: vi.fn(), listPlanNodes: vi.fn(),

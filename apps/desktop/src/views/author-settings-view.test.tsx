@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthorSettingsView } from "./author-settings-view";
+vi.mock("./knowledge-section-nav", () => ({ KnowledgeSectionNav: () => null }));
 const mocks = vi.hoisted(() => ({ listAuthorSettings: vi.fn(), getCurrentProject: vi.fn() }));
 vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,

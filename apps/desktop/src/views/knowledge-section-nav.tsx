@@ -1,4 +1,5 @@
 import { BookMarked, Files, UsersRound } from "lucide-react";
+import { Link, useRouterState } from "@tanstack/react-router";
 
 const sections = [
   { label: "人物与世界", href: "/knowledge", icon: UsersRound, exact: true },
@@ -8,22 +9,24 @@ const sections = [
 ];
 
 export function KnowledgeSectionNav() {
-  const currentPath = window.location.pathname.replace(/\/+$/, "") || "/";
+  const currentPath = useRouterState({ select: (state) => state.location.pathname }).replace(/\/+$/, "") || "/";
 
   return <nav className="knowledge-section-nav" aria-label="知识资料分类">
     {sections.map(({ label, href, icon: Icon, exact }) => {
       const active = exact ? currentPath === href : currentPath === href || currentPath.startsWith(`${href}/`);
 
-      return <a
+      return <Link
       key={href}
-      href={href}
+      to={href}
+      preload="intent"
+      activeOptions={{ exact: Boolean(exact), includeSearch: false }}
       className="knowledge-section-link"
       aria-current={active ? "page" : undefined}
       data-active={active || undefined}
     >
       <Icon size={15} strokeWidth={1.8} />
       <span>{label}</span>
-    </a>;
+    </Link>;
     })}
   </nav>;
 }

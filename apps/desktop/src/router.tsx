@@ -132,13 +132,26 @@ const discussionRoute = createRoute({
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/knowledge",
+  loader: () => StoryBibleView.preload?.(),
   component: () => <ProjectGate><StoryBibleView /></ProjectGate>,
 });
 const reviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/review", component: ReviewEntryView });
 const knowledgeReviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/review", component: ReviewEntryView });
-const knowledgeRecordsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/records", component: () => <ProjectGate><KnowledgeRecordsView /></ProjectGate> });
-const authorSettingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/settings", component: () => <ProjectGate><AuthorSettingsView /></ProjectGate> });
-const materialsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge/materials", component: () => <ProjectGate><MaterialsView /></ProjectGate> });
+const knowledgeRecordsRoute = createRoute({
+  getParentRoute: () => rootRoute, path: "/knowledge/records",
+  loader: () => KnowledgeRecordsView.preload?.(),
+  component: () => <ProjectGate><KnowledgeRecordsView /></ProjectGate>,
+});
+const authorSettingsRoute = createRoute({
+  getParentRoute: () => rootRoute, path: "/knowledge/settings",
+  loader: () => AuthorSettingsView.preload?.(),
+  component: () => <ProjectGate><AuthorSettingsView /></ProjectGate>,
+});
+const materialsRoute = createRoute({
+  getParentRoute: () => rootRoute, path: "/knowledge/materials",
+  loader: () => MaterialsView.preload?.(),
+  component: () => <ProjectGate><MaterialsView /></ProjectGate>,
+});
 const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", component: () => <ProjectGate><SearchView /></ProjectGate> });
 const jobsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/jobs", component: JobsEntryView });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsView });

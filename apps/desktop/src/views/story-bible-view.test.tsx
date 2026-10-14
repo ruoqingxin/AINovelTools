@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EntityCard } from "../lib/tauri-client";
 import { StoryBibleView } from "./story-bible-view";
+vi.mock("./knowledge-section-nav", () => ({ KnowledgeSectionNav: () => null }));
 
 const mocks = vi.hoisted(() => ({
   listEntityCards: vi.fn(),
