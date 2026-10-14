@@ -7,7 +7,11 @@ export function WritingDisplayControls({ focused, onFocusChange }: { focused: bo
   const menu = useRef<HTMLDetailsElement>(null);
   function constrainMenu() {
     const panel = menu.current?.querySelector<HTMLElement>(".writing-display-menu");
-    if (panel && menu.current?.open) panel.style.maxHeight = `${Math.max(80, window.innerHeight - panel.getBoundingClientRect().top - 12)}px`;
+    if (panel && menu.current?.open) {
+      const bottom = panel.closest(".creation-main")?.getBoundingClientRect().bottom ?? window.innerHeight;
+      const available = window.innerHeight <= 560 ? window.innerHeight - 108 : bottom - panel.getBoundingClientRect().top - 12;
+      panel.style.maxHeight = `${Math.max(40, available)}px`;
+    }
   }
   useEffect(() => {
     const closeOutside = (event: PointerEvent) => {

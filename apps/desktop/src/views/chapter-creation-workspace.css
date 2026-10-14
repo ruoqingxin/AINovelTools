@@ -469,6 +469,17 @@
   .creation-assistant[data-docked="true"] { position: relative; height: 100%; max-height: none; align-self: stretch; border-left: 1px solid var(--line); }
 }
 
+@media (max-height: 560px) {
+  .writing-display-menu,
+  .writing-planning-workspace .chapter-settings-panel {
+    position: fixed;
+    inset: auto 14px 42px auto;
+    width: min(440px, calc(100vw - 28px));
+    max-height: calc(100dvh - 108px);
+    overflow: auto;
+  }
+}
+
 @media (max-width: 600px) {
   .creation-mode button { padding-inline: 8px; }
   .writing-focus-layout .chapter-settings-panel,

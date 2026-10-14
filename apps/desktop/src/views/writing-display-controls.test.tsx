@@ -32,4 +32,17 @@ describe("WritingDisplayControls", () => {
     fireEvent.click(screen.getByRole("button", { name: "退出专注模式" }));
     expect(focus).toHaveBeenLastCalledWith(false);
   });
+  it("keeps the menu above the status bar in short windows", () => {
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 400 });
+    try {
+      render(<WritingDisplayControls focused={false} onFocusChange={vi.fn()} />);
+      const menu = document.querySelector("details")!;
+      menu.open = true;
+      fireEvent.resize(window);
+      expect(document.querySelector<HTMLElement>(".writing-display-menu")!.style.maxHeight).toBe("292px");
+    } finally {
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: originalHeight });
+    }
+  });
 });

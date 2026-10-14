@@ -24,7 +24,7 @@ export function DiscussionSourceView({ search }: { search: string }) {
       <button type="button" className="secondary-action" onClick={() => void (project.isError ? project.refetch() : source.refetch())}><RefreshCw size={14} />重试定位</button></div>
       : !project.isPending && !project.data ? <p className="project-error" role="alert">未打开来源项目。</p>
       : source.isPending ? <p role="status">正在校验讨论来源…</p> : null}
-    {data && !failed ? <>
+    {data && !failed ? <div className="discussion-source-body">
       <div className="discussion-source-metadata"><span>候选 <code>{data.candidate.id}</code></span><span>消息 <code>{data.message.id}</code></span></div>
       <section className="discussion-source-text" aria-label="原始讨论消息"><h2>原始消息</h2><p>{data.message.content}</p></section>
       <section className="discussion-source-text" aria-label="候选快照"><h2>候选内容</h2><p>{data.candidate.content}</p></section>
@@ -34,6 +34,6 @@ export function DiscussionSourceView({ search }: { search: string }) {
           href={planningTargetHref(data.candidate.targetSectionId, data.session.projectId, data.planningTargetKind)}><ArrowUpRight size={14} />打开规划待定区</a>
           : data.candidate.status === "PROMOTED" ? <span role="status">目标规划已不可用</span> : null}
       </footer> : null}
-    </> : null}
+    </div> : null}
   </section>;
 }

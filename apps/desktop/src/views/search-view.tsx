@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { BookOpenText, Database, Search } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { errorMessage, getCurrentProject, searchProject } from "../lib/tauri-client";
 import { manuscriptSourceHref } from "../lib/manuscript-source";
 import { entityHref } from "../lib/entity-navigation";
@@ -18,6 +18,7 @@ export function highlightSearchSnippet(text: string, keyword: string) {
 }
 
 export function SearchView() {
+  const resultsPanel = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get("q") ?? "");
   const [keyword, setKeyword] = useState(() => query.trim());
   const [objectType, setObjectType] = useState(() => {
@@ -36,6 +37,9 @@ export function SearchView() {
     const params = new URLSearchParams({ ...(query ? { q: query } : {}), ...(objectType ? { type: objectType } : {}) });
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
   }, [query, objectType]);
+  useEffect(() => {
+    if (resultsPanel.current) resultsPanel.current.scrollTop = 0;
+  }, [keyword, objectType]);
 
   const results = useInfiniteQuery({
     queryKey: ["project-search", project.data?.projectId, keyword, objectType],
@@ -57,7 +61,8 @@ export function SearchView() {
         <option value="">可检索内容</option><option value="ENTITY">人物与世界</option><option value="SUMMARY">摘要</option><option value="CARD">写作卡片</option><option value="PLAN">大纲</option><option value="MANUSCRIPT">正文</option>
       </select>
     </div>
-    <div className="search-results">
+    <div className="search-results" ref={resultsPanel}>
+      {!hasQuery ? <div className="activity-empty"><Search size={24} /><p>尚未搜索</p></div> : null}
       {hasQuery && (isDebouncing || results.isPending) ? <p className="plan-empty">正在搜索…</p> : null}
       {hasQuery && !isDebouncing && results.isError ? <p className="project-error" role="alert">搜索失败：{errorMessage(results.error)} <a href="/settings#data-management">前往数据管理修复</a></p> : null}
       {hasQuery && !isDebouncing && results.isSuccess && items.length === 0 ? <p className="plan-empty"><Database size={16} />没有匹配结果。</p> : null}

@@ -1,4 +1,3 @@
-.workspace-page > .activity-workspace:not(.author-todos) { width: min(1440px, calc(100% - 48px)); margin: 0 auto; padding: 24px 0 32px; }
 .activity-workspace { color: #303640; letter-spacing: 0; }
 .activity-workspace .workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .activity-meta { color: #74808c; font-size: 13px; }
@@ -21,7 +20,11 @@
 .activity-empty p { margin: 0; }
 .activity-legacy-entry { padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .activity-return { display: inline-block; margin: 4px 0 12px; font-size: 13px; }
-.activity-workspace .jobs-workspace { grid-template-columns: minmax(280px, 1fr) minmax(300px, .9fr); }
+.activity-panel, .ai-runs-history { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.activity-panel > *, .ai-runs-history > * { flex-shrink: 0; }
+.activity-panel .activity-empty { flex: 1; min-height: 120px; }
+.activity-workspace .jobs-workspace { flex: 1; min-height: 0; grid-template-columns: minmax(280px, 1fr) minmax(300px, .9fr); grid-template-rows: minmax(0, 1fr); }
+.activity-workspace .jobs-list, .activity-workspace .job-detail { min-height: 0; overflow: auto; }
 .activity-workspace .job-row { font-size: 13px; }
 .activity-workspace .chapter-tabs { margin-top: 14px; border-bottom: 1px solid var(--line); }
 .activity-workspace .chapter-tabs button { font-size: 13px; }
@@ -59,13 +62,22 @@
 .data-management .maintenance-result a { justify-self: start; }
 .activity-workspace .search-result p { font-size: 15px; color: #48515e; line-height: 1.8; }
 .activity-workspace .search-result > a { margin-top: 10px; }
+.search-view .search-toolbar { flex-wrap: wrap; }
+.search-view .search-field { flex: 1 1 220px; min-width: 0; }
+.search-view .search-toolbar select { flex: 0 1 auto; }
+.search-view .search-results { flex: 1; min-height: 120px; overflow: auto; }
+.search-view .search-results:has(> .activity-empty) { display: flex; flex-direction: column; }
+.search-view .search-results > .activity-empty { flex: 1; min-height: 120px; text-align: center; }
+.search-view .search-result { padding-right: 8px; }
+.search-view .search-result p { max-width: 1120px; }
 @media (max-width: 900px) {
-  .activity-workspace .jobs-workspace { grid-template-columns: minmax(0, 1fr); }
-  .activity-workspace .jobs-list { border-right: 0; max-height: 340px; overflow: auto; }
-  .activity-workspace .job-detail { padding-left: 0; border-top: 1px solid var(--line); }
+  .activity-panel { overflow: auto; }
+  .activity-workspace .jobs-workspace { flex: 1 0 auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-content: start; }
+  .activity-workspace .jobs-list { border-right: 0; max-height: min(340px, 40dvh); overflow: auto; }
+  .activity-workspace .job-detail { padding-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+  .ai-runs-history { flex: 1 0 auto; }
 }
 @media (max-width: 800px) {
-  .workspace-page > .activity-workspace:not(.author-todos) { width: calc(100% - 28px); padding-top: 20px; }
   .todo-row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
   .todo-target { grid-column: 1 / -1; }
 }

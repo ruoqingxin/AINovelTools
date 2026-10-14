@@ -110,3 +110,11 @@
   padding-left: 18px;
   overflow-wrap: anywhere;
 }
+
+@media (max-height: 560px) {
+  .manuscript-export-panel {
+    position: fixed;
+    inset: auto 14px 42px auto;
+    max-height: calc(100dvh - 108px);
+  }
+}

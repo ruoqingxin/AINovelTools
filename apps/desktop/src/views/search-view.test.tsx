@@ -36,6 +36,22 @@ describe("SearchView", () => {
   it("focuses the keyword field as soon as search opens", () => {
     renderSearch();
     expect(screen.getByRole("textbox", { name: "搜索项目内容" })).toHaveFocus();
+    expect(screen.getByText("尚未搜索")).toBeVisible();
+  });
+
+  it("resets the results panel when the keyword or object filter changes", async () => {
+    window.history.replaceState(null, "", "/search?q=first");
+    mocks.searchProject.mockResolvedValue([result(1)]);
+    renderSearch();
+    await screen.findByText("result-1");
+    const panel = document.querySelector<HTMLDivElement>(".search-results")!;
+    panel.scrollTop = 400;
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "CARD" } });
+    expect(panel.scrollTop).toBe(0);
+    panel.scrollTop = 400;
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "second" } });
+    await waitFor(() => expect(mocks.searchProject).toHaveBeenCalledWith("second", "CARD", 50, 0));
+    expect(panel.scrollTop).toBe(0);
   });
 
   it("shows real titles, chapter and revision metadata and highlights literal keywords safely", async () => {

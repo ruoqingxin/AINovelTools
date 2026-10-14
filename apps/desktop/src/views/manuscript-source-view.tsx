@@ -31,12 +31,12 @@ export function ManuscriptSourceView({ search }: { search: string }) {
         <RefreshCw size={14} />重试定位</button>
     </div> : !project.isPending && !project.data ? <p role="alert" className="project-error">未打开来源项目。</p>
       : source.isPending ? <p className="plan-empty" role="status">正在校验正文来源…</p> : null}
-    {data && !source.isError ? <>
+    {data && !source.isError ? <div className="manuscript-source-body">
       <div className="manuscript-source-metadata"><span>修订 <code>{data.revision.id}</code></span>
         {data.blockId ? <span>段落 <code>{data.blockId}</code></span> : null}
       </div>
       {data.quote ? <blockquote className="manuscript-source-quote" aria-label="绑定的原文证据">{data.quote}</blockquote> : null}
       <ManuscriptReader documentJson={data.revision.documentJson} blockId={data.blockId ?? undefined} ariaLabel="来源正文" />
-    </> : null}
+    </div> : null}
   </section>;
 }

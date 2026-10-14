@@ -94,7 +94,7 @@ function AiRunsHistory() {
     const seconds = Math.round((Date.parse(run.finishedAt) - Date.parse(run.createdAt)) / 1000);
     return Number.isFinite(seconds) && seconds >= 0 ? `${seconds} 秒` : "";
   }
-  return <section aria-label="AI 运行记录">
+  return <section className="ai-runs-history" aria-label="AI 运行记录">
     <div className="activity-toolbar">
       <ActivityFilters value={state} onChange={setState} />
       <select aria-label="AI 运行分类" value={source} onChange={(event) => setSource(event.target.value)}>
@@ -204,7 +204,7 @@ export function JobsView() {
         setView(key);
         window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}${key === "AI_RUNS" ? "#ai-runs" : ""}`);
       }} />
-    <div role="tabpanel" id={`activity-panel-${view}`} aria-labelledby={`activity-tab-${view}`}>
+    <div className="activity-panel" role="tabpanel" id={`activity-panel-${view}`} aria-labelledby={`activity-tab-${view}`}>
     {view === "AI_RUNS" ? <AiRunsHistory /> : <>
       <div className="activity-toolbar"><ActivityFilters value={state} onChange={setState} />
         {failedCount ? <button className="secondary-action" type="button" disabled={action.isPending}
