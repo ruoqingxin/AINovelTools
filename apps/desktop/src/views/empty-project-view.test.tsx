@@ -79,8 +79,9 @@ describe("EmptyProjectView", () => {
     mocks.listPlanningSections.mockRejectedValue(new Error("规划读取失败"));
     mocks.createPlanNode.mockResolvedValue({ id: "created", kind: "CHAPTER", parentId: "volume" });
     setup();
-    await waitFor(() => expect(screen.getByRole("button", { name: "创建第一章" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "创建第一章" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "新建章节" })).toBeEnabled());
+    expect(screen.getByRole("link", { name: "开始创作准备" })).toHaveAttribute("href", "/preparation");
+    fireEvent.click(screen.getByRole("button", { name: "新建章节" }));
     expect(screen.queryByLabelText("一句话核心")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "创建章节" }));
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith({ to: "/writing", hash: "created" }));
@@ -93,8 +94,8 @@ describe("EmptyProjectView", () => {
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project", name: "existing" });
     mocks.createPlanNode.mockRejectedValue(new Error("创建失败"));
     setup();
-    await waitFor(() => expect(screen.getByRole("button", { name: "创建第一章" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "创建第一章" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "新建章节" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "新建章节" }));
     fireEvent.change(screen.getByLabelText("章节名称"), { target: { value: "第1章·入城" } });
     fireEvent.click(screen.getByRole("button", { name: "创建章节" }));
     await screen.findByRole("alert");
@@ -112,8 +113,8 @@ describe("EmptyProjectView", () => {
     ]);
     mocks.createPlanNode.mockResolvedValue({ id: "created", kind: "CHAPTER", parentId: "volume" });
     setup();
-    await waitFor(() => expect(screen.getByRole("button", { name: "创建第一章" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "创建第一章" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "新建章节" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "新建章节" }));
     fireEvent.change(screen.getByLabelText("章节名称"), { target: { value: "故事从这里开始" } });
     fireEvent.click(screen.getByRole("button", { name: "创建章节" }));
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith({ to: "/writing", hash: "created" }));

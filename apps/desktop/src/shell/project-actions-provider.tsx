@@ -65,9 +65,7 @@ export function ProjectActionsProvider({ children }: { children: ReactNode }) {
       // Most existing feature caches are not project-keyed; never carry them across a switch.
       client.removeQueries({ predicate: (query) => !globalQueryKeys.has(String(query.queryKey[0])) });
       client.setQueryData(["current-project"], project);
-      await navigate(mode === "create"
-        ? { to: "/", search: { manage: "1" }, hash: "", replace: true, ignoreBlocker: true }
-        : { to: "/writing", search: {}, hash: "", replace: true, ignoreBlocker: true });
+      await navigate({ to: mode === "create" ? "/preparation" : "/", search: {}, hash: "", replace: true, ignoreBlocker: true });
       await Promise.all([
         client.invalidateQueries({ queryKey: ["recent-projects"] }),
         client.invalidateQueries({ queryKey: ["health"] }),

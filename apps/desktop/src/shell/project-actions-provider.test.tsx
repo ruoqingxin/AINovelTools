@@ -62,7 +62,7 @@ describe("project switching", () => {
     expect(client.getQueryData(["discussion-sessions"])).toBeUndefined();
     expect(client.getQueryData(["audit-flow-settings"])).toBeUndefined();
     expect(client.getQueryData(["model-profiles"])).toEqual([{ id: "shared-model" }]);
-    expect(mocks.navigate).toHaveBeenCalledWith({ to: "/writing", search: {}, hash: "", replace: true, ignoreBlocker: true });
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: "/", search: {}, hash: "", replace: true, ignoreBlocker: true });
   });
   it("does not switch or erase content when the author chooses to stay", async () => {
     const client = setup(true);
@@ -131,7 +131,7 @@ describe("project switching", () => {
     fireEvent.click(screen.getByText("create"));
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalled());
     expect(mocks.createProject).toHaveBeenCalledWith("E:\\new-story", "new-story");
-    expect(mocks.navigate).toHaveBeenCalledWith({ to: "/", search: { manage: "1" }, hash: "", replace: true, ignoreBlocker: true });
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: "/preparation", search: {}, hash: "", replace: true, ignoreBlocker: true });
   });
   it("serializes commands from multiple entry points", async () => {
     let resolveDialog!: (path: string | null) => void;

@@ -5,7 +5,7 @@ import { createMemoryHistory, createRouter, Outlet, RouterProvider } from "@tans
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { router } from "./router";
 
-const mocks = vi.hoisted(() => ({ getCurrentProject: vi.fn(), loadAuthorSettings: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getCurrentProject: vi.fn(), listPlanNodes: vi.fn(), loadAuthorSettings: vi.fn() }));
 
 vi.mock("./lib/tauri-client", () => mocks);
 vi.mock("./shell/app-shell", () => ({ AppShell: () => <Outlet /> }));
@@ -27,6 +27,7 @@ vi.mock("./views/search-view", () => ({ SearchView: () => <p>Search</p> }));
 vi.mock("./views/jobs-view", () => ({ JobsView: () => <p>Activity</p> }));
 vi.mock("./views/manuscript-source-view", () => ({ ManuscriptSourceView: () => <p>Verified source</p> }));
 vi.mock("./views/discussion-source-view", () => ({ DiscussionSourceView: () => <p>Verified discussion source</p> }));
+vi.mock("./views/creation-preparation-view", () => ({ CreationPreparationView: () => <p>Creation preparation</p> }));
 
 function renderRoute(path: string) {
   const testRouter = createRouter({
@@ -48,6 +49,7 @@ describe("project routes", () => {
     vi.resetAllMocks();
     vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
+    mocks.listPlanNodes.mockResolvedValue([{ kind: "CHAPTER", archived: false }]);
   });
 
   it("keeps the current knowledge page visible while a cold tab component loads", async () => {
@@ -69,6 +71,7 @@ describe("project routes", () => {
 
   it.each([
     ["/planning", "Workspace planning"],
+    ["/preparation", "Creation preparation"],
     ["/writing", "Workspace writing"],
     ["/chapters", "Workspace writing"],
     ["/writing?sourceRevision=old-revision", "Verified source"],
@@ -94,12 +97,18 @@ describe("project routes", () => {
     expect(await screen.findByText(label)).toBeVisible();
   });
 
-  it.each(["/", "/writing", "/knowledge", "/knowledge/materials", "/knowledge/records", "/knowledge/settings", "/search", "/jobs"])
+  it.each(["/", "/preparation", "/writing", "/knowledge", "/knowledge/materials", "/knowledge/records", "/knowledge/settings", "/search", "/jobs"])
   ("shows the project entry on %s when no project is open", async (path) => {
     mocks.getCurrentProject.mockResolvedValue(null);
     renderRoute(path);
     expect(await screen.findByText("No project")).toBeVisible();
     expect(screen.queryByText("Workspace writing")).not.toBeInTheDocument();
+  });
+
+  it.each([{ nodes: [] }, { nodes: [{ kind: "CHAPTER", archived: true }] }])("starts preparation when there are no active chapters: %j", async ({ nodes }) => {
+    mocks.listPlanNodes.mockResolvedValue(nodes);
+    renderRoute("/");
+    expect(await screen.findByText("Creation preparation")).toBeVisible();
   });
 
   it("reports project loading errors instead of treating them as an unopened project", async () => {
