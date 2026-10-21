@@ -33,6 +33,7 @@ describe("exact planning navigation", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); window.history.replaceState(null, "", "/"); });
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
     mocks.listPlanNodes.mockResolvedValue([scene]);
     mocks.listPlanningSections.mockResolvedValue([{
@@ -80,20 +81,22 @@ describe("exact planning navigation", () => {
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
 
-  it("allows manual outline editing without complete planning or an AI model", async () => {
+  it("allows early outline drafts but never confirms incomplete preparation through a plain save", async () => {
     mocks.listPlanNodes.mockResolvedValue([{ ...scene, id: "outline-1", kind: "OUTLINE", title: "大纲" }]);
     renderPlan("?planNode=outline-1&targetProject=project-1");
-    const note = await screen.findByLabelText("故事方向笔记");
+    const note = await screen.findByLabelText("主线大纲");
     await waitFor(() => expect(note).toBeEnabled());
     expect(screen.queryByText("故事大纲尚未开放")).not.toBeInTheDocument();
     expect(note).not.toHaveAttribute("readonly");
-    expect(screen.getByRole("button", { name: "保存笔记" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
     mocks.savePlanningSection.mockImplementation(async (section) => ({ ...section, version: 1 }));
     fireEvent.change(note, { target: { value: "先写一个接到旧电话的开场，结局不定。" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
     await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
-      id: "plan-node:outline-1", content: "先写一个接到旧电话的开场，结局不定。", storyState: "CONFIRMED", version: 0,
+      id: "plan-node:outline-1", content: "", pendingContent: "先写一个接到旧电话的开场，结局不定。", storyState: "UNSET", version: 0,
     })));
+    expect(screen.getByRole("button", { name: "确认为正式大纲" })).toBeDisabled();
+    expect(screen.getByRole("region", { name: "作者审阅" })).toBeVisible();
   });
 
   it("keeps old planning notes behind optional references without completion pressure", async () => {
@@ -144,7 +147,7 @@ describe("exact planning navigation", () => {
     expect(back.searchParams.get("type")).toBe("PLAN");
   });
 
-  function batchSetup(split = false) {
+  function batchSetup(split = false, preferences?: PlanningSection) {
     const manager: PlanNode = { ...scene, id: "manager", kind: "VOLUME_MANAGER", title: "分卷管理", revision: 4 };
     const volume: PlanNode = { ...scene, id: "volume", kind: "VOLUME", title: "第一卷", parentId: manager.id, revision: 3 };
     const outline: PlanNode = { ...scene, id: "outline", kind: "OUTLINE", title: "大纲" };
@@ -158,10 +161,64 @@ describe("exact planning navigation", () => {
     mocks.listPlanNodes.mockResolvedValue(list);
     mocks.listPlanningSections.mockResolvedValue([
       source, { ...source, id: "plan-node:outline", content: "正式大纲", pendingContent: "", storyState: "CONFIRMED" },
+      ...(split ? [{ ...source, id: "plan-node:volume", content: "本卷正式计划", pendingContent: "", storyState: "CONFIRMED" as const }] : []),
+      ...(preferences ? [preferences] : []),
     ]);
     renderPlan("?planNode=manager&targetProject=project-1");
     return { source, parent: split ? volume : manager };
   }
+
+  it("shares one natural-language preference note with volume planning and preserves edits across tools", async () => {
+    let preferences: PlanningSection = {
+      id: "seed-tone", content: "约 20 万字，大致三卷，章节数暂不定。轻松，第三人称。",
+      pendingContent: "", storyState: "CONFIRMED", version: 5, rationale: "", consequence: "", references: [], updatedAt: "",
+    };
+    batchSetup(true, preferences);
+    await screen.findByText(preferences.content, { selector: ".volume-book-preferences-preview" });
+    const disclosure = screen.getByText("本书偏好", { selector: ".volume-book-preferences > summary" });
+    expect(disclosure.closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(disclosure);
+    const editor = screen.getByLabelText("篇幅、风格与边界");
+    await waitFor(() => expect(editor).toHaveValue(preferences.content));
+    expect(editor.getAttribute("placeholder")).not.toContain("\n");
+    fireEvent.change(editor, { target: { value: "约 30 万字，四卷，节奏克制。" } });
+    fireEvent.click(screen.getByRole("button", { name: "分卷方案" }));
+    expect(editor).toHaveValue("约 30 万字，四卷，节奏克制。");
+    expect(screen.queryByLabelText("本书字数（万字）")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("分卷数（卷）")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("章节数（章）")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "本卷章节" }));
+    expect(editor).toHaveValue("约 30 万字，四卷，节奏克制。");
+    expect(screen.getByLabelText("本批章节数")).toBeInTheDocument();
+    expect(screen.queryByText("未设置本卷章节目标")).not.toBeInTheDocument();
+    mocks.savePlanningSection.mockImplementation(async (input) => {
+      preferences = { ...input, version: 6 };
+      mocks.listPlanningSections.mockResolvedValue([
+        ...(await mocks.listPlanningSections()).filter((item: PlanningSection) => item.id !== preferences.id), preferences,
+      ]);
+      return preferences;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
+    await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
+      id: "seed-tone", version: 5, content: "约 30 万字，四卷，节奏克制。", storyState: "CONFIRMED",
+    })));
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存笔记" })).toBeDisabled());
+    fireEvent.click(disclosure);
+    expect(screen.getByText(preferences.content, { selector: ".volume-book-preferences-preview" })).toBeVisible();
+  });
+
+  it("keeps inline preference edits when a node switch is cancelled", async () => {
+    batchSetup(true);
+    await screen.findByLabelText("篇幅、风格与边界");
+    fireEvent.click(screen.getByText("本书偏好", { selector: ".volume-book-preferences > summary" }));
+    const editor = screen.getByLabelText("篇幅、风格与边界");
+    await waitFor(() => expect(editor).toBeEnabled());
+    fireEvent.change(editor, { target: { value: "篇幅暂不定，写得轻松些。" } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "第一卷" }));
+    expect(confirm).toHaveBeenCalled();
+    expect(editor).toHaveValue("篇幅暂不定，写得轻松些。");
+  });
 
   it("adopts volumes through one batch using the original source and parent versions, preserving newer edits", async () => {
     let resolve!: (receipt: PlanBatchReceipt) => void;

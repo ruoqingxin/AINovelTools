@@ -95,6 +95,31 @@ describe("ChapterCreationWorkspace", () => {
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ active: false, mode: "create" }));
   });
 
+  it("opens the plan directly from the toolbar and saves it without saving the manuscript", () => {
+    const props = makeProps(makeState({ chapterDirty: true }));
+    props.planDirty = true;
+    render(<ChapterCreationWorkspace {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "本章计划" }));
+    const editor = screen.getByRole("textbox", { name: "本章计划" });
+    expect(editor).toBeVisible();
+    expect(screen.getByRole("button", { name: "本章计划" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.keyDown(editor, { key: "s", ctrlKey: true });
+    expect(props.onSavePlan).toHaveBeenCalledOnce();
+    expect(props.state.saveDraft).not.toHaveBeenCalled();
+    fireEvent.keyDown(editor, { key: "s", ctrlKey: true, isComposing: true });
+    expect(props.onSavePlan).toHaveBeenCalledOnce();
+  });
+
+  it("keeps unsaved draft status visible while reading the saved manuscript", () => {
+    const state = makeState({ manuscriptTab: "manuscript", chapterDirty: true });
+    render(<ChapterCreationWorkspace {...makeProps(state)} />);
+    expect(screen.getByRole("region", { name: "已保存正文" })).toHaveTextContent("当前草稿有未保存修改");
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑草稿" }));
+    expect(state.setManuscriptTab).toHaveBeenCalledWith("candidate");
+    expect(state.saveDraft).not.toHaveBeenCalled();
+    expect(state.discardLocalDraft).not.toHaveBeenCalled();
+  });
+
   it.each(["ai", "review"])("opens the canonical %s assistant from author queue links", (assistant) => {
     window.history.replaceState(null, "", `/writing?assistant=${assistant}&purpose=admission&returnTo=%2Freview#chapter-1`);
     render(<ChapterCreationWorkspace {...makeProps()} />);

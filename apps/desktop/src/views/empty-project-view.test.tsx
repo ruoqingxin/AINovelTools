@@ -16,7 +16,7 @@ vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
 }));
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ to, hash, children, ...props }: { to: string; hash?: string; children: ReactNode }) => <a href={`${to}${hash ? `#${hash}` : ""}`} {...props}>{children}</a>,
+  Link: ({ to, hash, search, children, ...props }: { to: string; hash?: string; search?: Record<string, string>; children: ReactNode }) => <a href={`${to}${search ? `?${new URLSearchParams(search)}` : ""}${hash ? `#${hash}` : ""}`} {...props}>{children}</a>,
   useNavigate: () => mocks.navigate,
 }));
 
@@ -80,7 +80,7 @@ describe("EmptyProjectView", () => {
     mocks.createPlanNode.mockResolvedValue({ id: "created", kind: "CHAPTER", parentId: "volume" });
     setup();
     await waitFor(() => expect(screen.getByRole("button", { name: "新建章节" })).toBeEnabled());
-    expect(screen.getByRole("link", { name: "开始创作准备" })).toHaveAttribute("href", "/preparation");
+    expect(screen.getByRole("link", { name: "开始创作准备" })).toHaveAttribute("href", "/planning?mode=prepare");
     fireEvent.click(screen.getByRole("button", { name: "新建章节" }));
     expect(screen.queryByLabelText("一句话核心")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "创建章节" }));

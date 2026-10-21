@@ -174,7 +174,10 @@ export function DiscussionView() {
     sessionTitle, scopeKind, scopeId, scopeText, topicKind };
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useUnsavedChangesGuard(Boolean(message.trim()) || candidateEditsPending || busy, "讨论还有未发送输入、未保存候选或正在处理的操作。");
+  const sessionFormDirty = showSessionForm && (sessionTitle !== "作品共创讨论" || topicKind !== "FREE"
+    || scopeKind !== "PROJECT" || Boolean(scopeId || scopeText));
+  useUnsavedChangesGuard(Boolean(message.trim()) || candidateEditsPending || busy || sessionFormDirty,
+    "讨论还有未发送输入、未保存候选或正在处理的操作。");
 
   useEffect(() => {
     setOlderMessages([]);
@@ -614,19 +617,26 @@ export function DiscussionView() {
         {sessions.isError ? <p className="project-error" role="alert">{errorMessage(sessions.error)}
           <button type="button" className="secondary-action" onClick={() => void sessions.refetch()}>重试</button>
         </p> : null}
-        {showSessionForm ? <section className="discussion-session-create" id="discussion-session-form">
+        {showSessionForm ? <form className="discussion-session-create" id="discussion-session-form" onSubmit={(event) => {
+          event.preventDefault(); void createSession();
+        }}>
           <div className="discussion-session-fields">
-          <label><span>标题</span><input aria-label="标题" value={sessionTitle} maxLength={200} onChange={(event) => setSessionTitle(event.target.value)} /></label>
+          <label><span>标题</span><input autoFocus aria-label="标题" value={sessionTitle} maxLength={200} onChange={(event) => setSessionTitle(event.target.value)} disabled={busy} /></label>
+          <details className="discussion-session-options">
+          <summary>分类与范围 · {discussionTopics.find((topic) => topic.id === topicKind)?.label} · {discussionScopeLabel(scopeKind)}</summary>
+          <div>
           <label><span>构思类型</span><select aria-label="构思类型" value={topicKind} onChange={(event) => setTopicKind(event.target.value as DiscussionTopicKind)}>
             {discussionTopics.map((topic) => <option key={topic.id} value={topic.id}>{topic.label}</option>)}
           </select></label>
           <label><span>范围</span><select aria-label="范围" value={scopeKind} onChange={(event) => { setScopeKind(event.target.value as DiscussionScopeKind); setScopeId(""); setScopeText(""); }}><option value="PROJECT">全书</option><option value="VOLUME">当前卷</option><option value="CHAPTER">当前章节</option><option value="SCENE">当前场景</option><option value="SELECTION">当前选区</option></select></label>
           {scopeKind !== "PROJECT" ? <label><span>{scopeKind === "VOLUME" ? "分卷" : scopeKind === "SCENE" ? "场景" : "章节"}</span><select value={scopeId} onChange={(event) => setScopeId(event.target.value)}><option value="" disabled>请选择</option>{scopeNodes.map((node) => <option key={node.id} value={node.id}>{node.title}</option>)}</select></label> : null}
           {scopeKind === "SELECTION" ? <label><span>选区内容</span><textarea rows={3} value={scopeText} onChange={(event) => setScopeText(event.target.value)} placeholder="粘贴当前选中的正文片段…" /></label> : null}
-          <button type="button" className="secondary-action" onClick={() => void createSession()} disabled={busy || designPending || scopeKind !== "PROJECT" && (!scopeId || scopeKind === "SELECTION" && !scopeText.trim())}><Plus size={13} />建立会话</button>
+          </div>
+          </details>
+          <button type="submit" className="primary-action" disabled={!sessionTitle.trim() || busy || designPending || scopeKind !== "PROJECT" && (!scopeId || scopeKind === "SELECTION" && !scopeText.trim())}><Plus size={13} />{creatingSession ? "创建中…" : "建立会话"}</button>
           </div>
           {error ? <p className="project-error" role="alert">{error}</p> : null}
-        </section> : null}
+        </form> : null}
         {candidates.isError ? <p className="project-error" role="alert">{errorMessage(candidates.error)}</p> : null}
         {notice && showSessions ? <p className="project-notice" role="status">{notice}{planningDestination ? <a href={planningDestination}>打开待采用内容</a> : null}
           {writingDestination ? <a href={writingDestination}>打开本章写作</a> : null}</p> : null}

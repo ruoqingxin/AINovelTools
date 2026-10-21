@@ -43,6 +43,9 @@ export function MaterialEditor({ kind, projectId: initialProjectId, summary: ini
     || summaryKind !== (summary?.kind ?? "CHAPTER") || sourceVersion !== (summary?.sourceVersion ?? card?.sourceVersion ?? "")
     || cardType !== (card?.cardType ?? "STYLE_RULE") || scope !== (card?.scope ?? "PROJECT")
     || enabled !== (card?.enabled ?? true) || sortText !== String(card?.sortOrder ?? 0);
+  const sortValid = Number.isSafeInteger(sortOrder);
+  const canSave = !busy && Boolean(content.trim()) && (kind !== "CARD" || Boolean(title.trim()) && sortValid)
+    && (dirty || copy || !summary && !card);
   useEffect(() => { onStateChange?.({ dirty, busy }); }, [dirty, busy, onStateChange]);
   useUnsavedChangesGuard(dirty || busy, "参考资料有尚未保存的修改。");
   function cancel() {
@@ -50,7 +53,7 @@ export function MaterialEditor({ kind, projectId: initialProjectId, summary: ini
     onCancel();
   }
   async function save() {
-    if (inFlight.current || !content.trim() || kind === "CARD" && (!title.trim() || !Number.isSafeInteger(sortOrder))) return;
+    if (inFlight.current || !canSave) return;
     inFlight.current = true; setBusy(true); setError(null);
     try {
       if ((await getCurrentProject())?.projectId !== projectId) throw new Error("作品已切换，未保存资料。");
@@ -79,26 +82,32 @@ export function MaterialEditor({ kind, projectId: initialProjectId, summary: ini
     } catch (cause) { setError(errorMessage(cause)); }
     finally { inFlight.current = false; setBusy(false); }
   }
-  return <form className="library-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+  return <form className="library-form" onSubmit={(event) => { event.preventDefault(); void save(); }}
+    onKeyDown={(event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s" || event.nativeEvent.isComposing) return;
+      event.preventDefault(); event.stopPropagation(); void save();
+    }}>
     <fieldset disabled={busy} className="entity-import-lock library-form">
       {kind === "SUMMARY" ? <label>关联内容<select aria-label="关联内容" value={summaryKind} onChange={(event) => setSummaryKind(event.target.value as typeof summaryKind)}>
         <option value="CHAPTER">章节</option><option value="CHARACTER">人物</option><option value="SETTING">设定</option>
       </select></label> : <>
-        <label>标题<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-        <div className="library-field-row"><label>卡片类型<select aria-label="卡片类型" value={cardType} onChange={(event) => setCardType(event.target.value as typeof cardType)}>
+        <label>标题<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+        <label>卡片类型<select aria-label="卡片类型" value={cardType} onChange={(event) => setCardType(event.target.value as typeof cardType)}>
           <option value="STYLE_RULE">风格规则</option><option value="TECHNIQUE">写作技巧</option>
         </select></label>
-        <label>排序<input type="number" step={1} value={sortText} onChange={(event) => setSortText(event.target.value)} /></label>
-        </div><label className="library-toggle"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />启用此卡片</label>
       </>}
-      <label>{kind === "SUMMARY" ? "摘要内容" : "卡片内容"}<textarea aria-label={kind === "SUMMARY" ? "摘要内容" : "卡片内容"} rows={8} value={content} onChange={(event) => setContent(event.target.value)} /></label>
-      <details className="library-advanced"><summary>高级信息</summary>
+      <label>{kind === "SUMMARY" ? "摘要内容" : "卡片内容"}<textarea autoFocus={kind === "SUMMARY"} aria-label={kind === "SUMMARY" ? "摘要内容" : "卡片内容"} rows={8} value={content} onChange={(event) => setContent(event.target.value)} /></label>
+      {kind === "CARD" ? <label className="library-toggle"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />启用此卡片</label> : null}
+      <details className="library-advanced"><summary>高级信息{kind === "CARD" && !sortValid ? " · 排序无效" : ""}</summary>
         <label>来源标识<input value={sourceVersion} readOnly={copy} onChange={(event) => setSourceVersion(event.target.value)} /></label>
-        {kind === "CARD" ? <label>作用范围<input value={scope} onChange={(event) => setScope(event.target.value)} /></label> : null}
+        {kind === "CARD" ? <><label>作用范围<input value={scope} onChange={(event) => setScope(event.target.value)} /></label>
+          <label>排序<input type="number" step={1} value={sortText} aria-invalid={!sortValid} onChange={(event) => setSortText(event.target.value)} /></label>
+          {!sortValid ? <p className="project-error" role="alert">排序需填写有效整数。</p> : null}</> : null}
       </details>
     </fieldset>
     {error ? <p role="alert" className="project-error">{error}</p> : null}
-    <div className="library-actions"><button type="submit" className="primary-action" disabled={busy || !content.trim() || kind === "CARD" && (!title.trim() || !Number.isSafeInteger(sortOrder))}>
+    <div className="library-actions"><span className="library-meta" role="status">{busy ? "正在保存…" : dirty ? "有未保存修改" : "尚无新修改"}</span>
+      <button type="submit" className="primary-action" disabled={!canSave}>
       <Save size={15} />{busy ? "保存中…" : copy ? "另存为参考摘要" : kind === "SUMMARY" ? "保存摘要" : "保存卡片"}</button>
       <button type="button" className="secondary-action" disabled={busy} onClick={cancel}>取消</button></div>
   </form>;

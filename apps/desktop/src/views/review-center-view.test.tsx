@@ -42,6 +42,17 @@ describe("author to-dos", () => {
     await screen.findByText("0 项待处理");
     expect(screen.getByText("此类暂无待办")).toBeVisible();
   });
+  it("returns to all pending work from an empty category", async () => {
+    renderView();
+    await screen.findByText("3 项待处理");
+    fireEvent.change(screen.getByLabelText("待办类型"), { target: { value: "FACT_REVIEW" } });
+    expect(screen.getByText("入城")).toBeVisible();
+    fireEvent.change(screen.getByLabelText("待办类型"), { target: { value: "WRITING_PROPOSAL" } });
+    expect(screen.getByText("此类暂无待办")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "查看全部待办" }));
+    expect(screen.getByLabelText("待办类型")).toHaveValue("ALL");
+    expect(screen.getByText("铜铃")).toBeVisible();
+  });
   it("retains the legacy chapter and check purpose as a workspace entry", async () => {
     window.history.replaceState({}, "", "/review?tab=admission&chapterId=chapter-2");
     renderView();
@@ -54,7 +65,7 @@ describe("author to-dos", () => {
     mocks.listAuthorTodos.mockRejectedValueOnce(new Error("queue unavailable"));
     renderView();
     expect(await screen.findByRole("alert")).toHaveTextContent("queue unavailable");
-    fireEvent.click(screen.getByLabelText("刷新待办"));
+    fireEvent.click(screen.getByRole("button", { name: "重试加载" }));
     await waitFor(() => expect(screen.getByText("3 项待处理")).toBeVisible());
   });
 });

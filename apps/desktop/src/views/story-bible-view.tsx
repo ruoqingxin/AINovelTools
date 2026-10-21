@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, FileUp, MessageSquareText, Pencil, Plus, RotateCcw, Save, Search } from "lucide-react";
+import { Archive, Check, FileUp, MessageSquareText, Pencil, Plus, RotateCcw, Save } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
@@ -25,6 +25,7 @@ import { sourceReturnTo } from "../lib/manuscript-source";
 import { EntityChapters } from "./entity-chapters";
 import { WorkspacePanel } from "./workspace-panel";
 import "./library-workspace.css";
+import { SearchField } from "./search-field";
 
 const typeLabels: Record<EntityType, string> = {
   CHARACTER: "人物",
@@ -85,6 +86,7 @@ export function StoryBibleView() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<"save" | "archive" | "reload" | null>(null);
+  const saveInFlight = useRef(false);
   const [importFileName, setImportFileName] = useState("");
   const [importItems, setImportItems] = useState<Array<{ name: string; description: string; aliases: string[]; tags: string[] }>>([]);
   const [importSourceText, setImportSourceText] = useState("");
@@ -113,7 +115,8 @@ export function StoryBibleView() {
       if (statusFilter !== "ALL" && entity.lifecycleStatus !== statusFilter) return false;
       if (!query) return true;
       const revision = currentRevisionByEntity.get(entity.id);
-      return revision?.name.toLocaleLowerCase().includes(query) ?? false;
+      return revision ? [revision.name, ...revision.aliases, ...revision.tags, revision.description]
+        .some((value) => value.toLocaleLowerCase().includes(query)) : false;
     });
   }, [currentRevisionByEntity, entities.data, search, statusFilter, typeFilter]);
 
@@ -235,7 +238,8 @@ export function StoryBibleView() {
   }
 
   async function save() {
-    if (!form.name.trim() || busy || importInFlight.current) return;
+    if (!project.data || !form.name.trim() || busy || saveInFlight.current || importInFlight.current || form.id && !entityDirty) return;
+    saveInFlight.current = true;
     setError(null);
     setNotice(null);
     setBusy("save");
@@ -247,7 +251,8 @@ export function StoryBibleView() {
     };
     try {
       const saved = await upsertEntity(input);
-      setForm((current) => ({ ...current, id: saved.id, baseRevisionId: saved.currentRevisionId, expectedVersion: saved.version }));
+      setForm((current) => ({ ...current, name: current.name === form.name ? input.name : current.name,
+        id: saved.id, baseRevisionId: saved.currentRevisionId, expectedVersion: saved.version }));
       setSelectedId(saved.id);
       setSavedSignature(entitySignature(input, summaryText, scopeText));
       await refreshEntities(saved.id);
@@ -256,6 +261,7 @@ export function StoryBibleView() {
       const code = cause && typeof cause === "object" && "code" in cause ? String(cause.code) : "";
       setError(code === "VERSION_CONFLICT" ? "实体已被其他操作更新，请重新载入后再保存。" : errorMessage(cause));
     } finally {
+      saveInFlight.current = false;
       setBusy(null);
     }
   }
@@ -366,7 +372,7 @@ export function StoryBibleView() {
       {targetError ? <p className="project-error" role="alert">{targetError}</p> : null}
 
       <div className="library-toolbar">
-        <label className="search-field"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索实体名称" aria-label="搜索实体" /></label>
+        <SearchField label="搜索实体" value={search} onChange={setSearch} placeholder="搜索名称、别名或描述" />
         <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as "ALL" | EntityType)} aria-label="实体类型筛选">
           <option value="ALL">全部类型</option>
           {Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -382,15 +388,23 @@ export function StoryBibleView() {
         <button type="button" className="primary-action" disabled={importBusy || busy !== null || !project.data} onClick={startNew}><Plus size={15} />新建实体</button>
       </div>
       {error && !showImport ? <p className="project-error" role="alert">{error}</p> : null}
-      {notice && !showImport ? <p className="project-notice" role="status">{notice}</p> : null}
-      {project.isError ? <p className="project-error" role="alert">{errorMessage(project.error)}</p> : null}
+      {notice && !showImport ? <p className="project-notice" role="status">{notice === "已保存为新修订" && entityDirty
+        ? "上一版已保存，当前仍有未保存修改。" : notice}</p> : null}
+      {project.isError ? <p className="project-error" role="alert">{errorMessage(project.error)}
+        <button type="button" className="secondary-action" disabled={project.isFetching} onClick={() => void project.refetch()}>重试</button></p> : null}
 
       <div className="library-layout">
         <aside className="library-list" aria-label="实体列表">
           <div className="section-heading"><h2>实体库</h2><span>{filtered.length} / {entities.data?.length ?? 0}</span></div>
           {entities.isPending ? <p className="plan-empty">正在加载实体…</p> : null}
-          {entities.isError ? <p className="project-error" role="alert">无法加载实体：{errorMessage(entities.error)}</p> : null}
-          {!entities.isPending && filtered.length === 0 ? <p className="plan-empty">没有符合条件的实体。</p> : null}
+          {entities.isError ? <p className="project-error" role="alert">无法加载实体：{errorMessage(entities.error)}
+            <button type="button" className="secondary-action" disabled={entities.isFetching} onClick={() => void cards.refetch()}>重试加载</button></p> : null}
+          {entities.isSuccess && filtered.length === 0 ? <div className="library-list-empty">
+            <p className="plan-empty">{entities.data?.length ? "没有符合条件的实体。" : "暂无人物与世界设定"}</p>
+            {search || typeFilter !== "ALL" || statusFilter !== "ACTIVE" ? <button type="button" className="secondary-action" onClick={() => {
+              setSearch(""); setTypeFilter("ALL"); setStatusFilter("ACTIVE");
+            }}>重置筛选</button> : null}
+          </div> : null}
           {filtered.map((entity) => (
             <button type="button" key={entity.id} className="library-item" disabled={importBusy || busy !== null} data-selected={selectedId === entity.id} onClick={() => selectEntity(entity)}>
               <strong>{currentRevisionByEntity.get(entity.id)?.name ?? "未命名实体"}</strong><small>{typeLabels[entity.entityType]} · {entity.lifecycleStatus === "ARCHIVED" ? "已归档" : "活动"} · v{entity.version}</small>
@@ -399,7 +413,8 @@ export function StoryBibleView() {
         </aside>
 
         {!targetResolved || targetError ? <div className="library-detail">{!targetResolved ? <p role="status">正在定位实体…</p> : null}</div> : <div className="library-detail">
-          {!selected && !editing ? <div className="library-empty"><p>选择一个人物或世界设定</p></div> : <>
+          {!selected && !editing ? <div className="library-empty"><p>{entities.isPending ? "正在加载设定…" : entities.isError ? "设定暂不可用"
+            : !entities.data?.length ? "尚未添加人物与世界设定" : "选择一个人物或世界设定"}</p></div> : <>
           <div className="section-heading"><h2>{selected ? editing ? "编辑实体" : form.name : "新建实体"}</h2>{selected ? <span>版本 {selected.version}</span> : <span>尚未保存</span>}</div>
           {selected && !editing ? <><p className="library-meta">{typeLabels[selected.entityType]} · {selected.lifecycleStatus === "ARCHIVED" ? "已归档" : "活动"}</p>
             <p className="library-content">{form.description || "暂无描述"}</p>
@@ -415,18 +430,24 @@ export function StoryBibleView() {
             {remoteChanged ? <span role="status">实体已有新修订，本地修改仍保留。</span> : null}
             <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => void reloadEntity()}><RotateCcw size={14} />读取最新实体</button>
           </div> : null}
-          {editing ? <fieldset className="entity-import-lock" disabled={importBusy}><div className="entity-form-grid">
+          {editing ? <fieldset className="entity-import-lock" disabled={importBusy} onKeyDown={(event) => {
+            if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s" || event.nativeEvent.isComposing) return;
+            event.preventDefault(); event.stopPropagation(); void save();
+          }}><div className="entity-form-grid">
             <label>类型<select value={form.entityType} disabled={Boolean(selected) || busy !== null} onChange={(event) => setForm((current) => ({ ...current, entityType: event.target.value as EntityType }))}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <label>名称<input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：林澈" /></label>
-            <label>别名<input value={summaryText} onChange={(event) => setSummaryText(event.target.value)} placeholder="多个别名用顿号分隔" /></label>
-            <label>标签<input value={scopeText} onChange={(event) => setScopeText(event.target.value)} placeholder="多个标签用顿号分隔" /></label>
+            <label>名称<input autoFocus value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：林澈" /></label>
             <label className="entity-form-wide">描述<textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} rows={5} placeholder="记录稳定设定和使用边界" /></label>
+            <details className="entity-form-wide library-advanced"><summary>别名与标签{summaryText || scopeText ? " · 已设置" : ""}</summary>
+              <label>别名<input value={summaryText} onChange={(event) => setSummaryText(event.target.value)} placeholder="多个别名用顿号分隔" /></label>
+              <label>标签<input value={scopeText} onChange={(event) => setScopeText(event.target.value)} placeholder="多个标签用顿号分隔" /></label>
+            </details>
             <details className="entity-form-wide library-advanced"><summary>高级信息</summary>
               <label>固定属性 JSON<textarea value={form.fixedAttributesJson} onChange={(event) => setForm((current) => ({ ...current, fixedAttributesJson: event.target.value }))} rows={4} spellCheck={false} /></label>
               <label>来源版本<input value={form.sourceVersion ?? ""} onChange={(event) => setForm((current) => ({ ...current, sourceVersion: event.target.value || undefined }))} placeholder="例如：manuscript:2" /></label>
             </details>
           </div>
-          <div className="inspector-actions"><button type="button" className="primary-action" onClick={() => void save()} disabled={!form.name.trim() || busy !== null || !project.data}><Save size={15} />{busy === "save" ? "保存中…" : selected ? "保存为新修订" : "创建实体"}</button>
+          <div className="inspector-actions"><span className="library-meta" role="status">{busy === "save" ? "正在保存…" : entityDirty ? "有未保存修改" : "尚无新修改"}</span>
+            <button type="button" className="primary-action" onClick={() => void save()} disabled={!form.name.trim() || busy !== null || !project.data || Boolean(form.id) && !entityDirty}><Save size={15} />{busy === "save" ? "保存中…" : selected ? "保存为新修订" : "创建实体"}</button>
             <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => {
               if (entityDirty && !window.confirm("放弃尚未保存的实体修改吗？")) return;
               setEditing(false); setForm({ ...form, id: undefined }); setSavedSignature(entitySignature(form, summaryText, scopeText));

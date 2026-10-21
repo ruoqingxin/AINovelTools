@@ -104,7 +104,8 @@ function AiRunsHistory() {
         aria-label="刷新 AI 运行记录" title="刷新 AI 运行记录"><RefreshCw size={15} /></button>
     </div>
     {action.isError ? <p className="project-error" role="alert">{errorMessage(action.error)}</p> : null}
-    {runs.isPending ? <p className="plan-empty">正在加载 AI 运行记录…</p> : runs.isError ? <p className="project-error" role="alert">{errorMessage(runs.error)}</p>
+    {runs.isPending ? <p className="plan-empty" role="status">正在加载 AI 运行记录…</p> : runs.isError ? <p className="project-error" role="alert">{errorMessage(runs.error)}
+      <button type="button" className="secondary-action" disabled={runs.isFetching} onClick={() => void runs.refetch()}><RefreshCw size={14} />重试加载</button></p>
       : displayed.length ? <div className="jobs-workspace">
         <div className="jobs-list">{displayed.map((run) => <button className="job-row activity-record" type="button" key={run.id}
           data-selected={selected?.id === run.id || undefined} aria-pressed={selected?.id === run.id} onClick={() => setSelectedId(run.id)}>
@@ -136,7 +137,8 @@ function AiRunsHistory() {
             {advanced && showRequest ? <RequestSnapshot snapshot={request.data} pending={request.isPending} error={request.error} /> : null}
           </details>
         </> : null}</aside>
-      </div> : <div className="activity-empty"><History size={24} /><p>当前筛选没有 AI 运行记录</p></div>}
+      </div> : <div className="activity-empty"><History size={24} /><p>当前筛选没有 AI 运行记录</p>
+        {state !== "ALL" || source !== "ALL" ? <button type="button" className="secondary-action" onClick={() => { setState("ALL"); setSource("ALL"); }}>查看全部记录</button> : null}</div>}
   </section>;
 }
 
@@ -213,7 +215,8 @@ export function JobsView() {
           aria-label="刷新任务" title="刷新任务"><RefreshCw size={15} /></button>
       </div>
       {action.isError ? <p className="project-error" role="alert">任务操作失败：{errorMessage(action.error)}</p> : null}
-      {jobs.isPending ? <p className="plan-empty">正在加载任务…</p> : jobs.isError ? <p className="project-error" role="alert">{errorMessage(jobs.error)}</p>
+      {jobs.isPending ? <p className="plan-empty" role="status">正在加载任务…</p> : jobs.isError ? <p className="project-error" role="alert">{errorMessage(jobs.error)}
+        <button type="button" className="secondary-action" disabled={jobs.isFetching} onClick={() => void jobs.refetch()}><RefreshCw size={14} />重试加载</button></p>
         : missingTarget ? <p className="project-error" role="alert">目标任务已不可用或不属于当前作品。<button type="button" onClick={() => setSelectedId(null)}>查看当前活动</button></p>
         : displayed.length ? <div className="jobs-workspace"><div className="jobs-list">
           {displayed.map((job) => <button className="job-row activity-record" type="button" key={job.id}
@@ -249,7 +252,8 @@ export function JobsView() {
               : <div className="job-log">{events.data?.map((event) => <div className="job-log-entry" key={event.id}><span>{event.progress}%</span>
                 <div><p>{event.message}</p><small>{new Date(event.createdAt).toLocaleString()}</small></div></div>)}</div>}
           </details>
-        </> : null}</aside></div> : <div className="activity-empty"><ClipboardList size={24} /><p>当前筛选没有后台任务</p></div>}
+        </> : null}</aside></div> : <div className="activity-empty"><ClipboardList size={24} /><p>当前筛选没有后台任务</p>
+          {state !== "ALL" ? <button type="button" className="secondary-action" onClick={() => setState("ALL")}>查看全部记录</button> : null}</div>}
     </>}
     </div>
   </section>;

@@ -5,7 +5,7 @@ import { createMemoryHistory, createRouter, Outlet, RouterProvider } from "@tans
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { router } from "./router";
 
-const mocks = vi.hoisted(() => ({ getCurrentProject: vi.fn(), listPlanNodes: vi.fn(), loadAuthorSettings: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getCurrentProject: vi.fn(), listPlanNodes: vi.fn(), listPlanningSections: vi.fn(), loadAuthorSettings: vi.fn() }));
 
 vi.mock("./lib/tauri-client", () => mocks);
 vi.mock("./shell/app-shell", () => ({ AppShell: () => <Outlet /> }));
@@ -50,6 +50,7 @@ describe("project routes", () => {
     vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
     mocks.listPlanNodes.mockResolvedValue([{ kind: "CHAPTER", archived: false }]);
+    mocks.listPlanningSections.mockResolvedValue([]);
   });
 
   it("keeps the current knowledge page visible while a cold tab component loads", async () => {
@@ -70,7 +71,10 @@ describe("project routes", () => {
   });
 
   it.each([
-    ["/planning", "Workspace planning"],
+    ["/planning", "Creation preparation"],
+    ["/planning?mode=structure", "Workspace planning"],
+    ["/planning?mode=prepare&item=outline", "Creation preparation"],
+    ["/planning?planNode=outline&targetProject=project-1", "Workspace planning"],
     ["/preparation", "Creation preparation"],
     ["/writing", "Workspace writing"],
     ["/chapters", "Workspace writing"],
@@ -123,5 +127,15 @@ describe("project routes", () => {
       warning.mockRestore();
       error.mockRestore();
     }
+  });
+
+  it("resumes incomplete preparation after an opening node has been created", async () => {
+    mocks.listPlanningSections.mockResolvedValue([{
+      id: "plan-node:outline", version: 1, content: "已审定的主线", pendingContent: "", storyState: "CONFIRMED",
+      references: ['author-planning-review:v1:{"sectionVersion":1,"checks":[],"basis":[]}'],
+    }]);
+    renderRoute("/");
+    expect(await screen.findByText("Creation preparation")).toBeVisible();
+    expect(screen.queryByText("Workspace writing")).not.toBeInTheDocument();
   });
 });

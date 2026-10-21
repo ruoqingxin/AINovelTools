@@ -35,7 +35,7 @@ export const planningSectionGroups: PlanningGroup[] = [
       { id: "seed-premise", label: "核心前提与开局情境", prompt: "主角在什么异常局面中，必须完成什么高风险目标，否则会失去什么最重要的东西", guidance: "用 1—3 句话写清特殊世界或规则、突发事件、主角目标和失败后果。先回答“故事为什么现在开始”，不用展开背景百科。" },
       { id: "seed-genre-promise", label: "类型、题材与阅读承诺", prompt: "这是什么类型的故事，写给谁看，读者会持续获得什么样的满足", guidance: "写明类型、题材和主要爽点或情绪体验，并给出大致兑现频率，例如每卷一次翻盘、每 20 章一次副本收获。" },
       { id: "seed-hook", label: "核心卖点与独特钩子", prompt: "为什么读者要点开这本书，而不是同类作品", guidance: "提炼一个最独特的身份、能力、世界、关系或叙事钩子，最好浓缩成“谁利用什么，在什么世界对抗什么”的一句话。" },
-      { id: "seed-tone", label: "本书偏好", prompt: "记录作者明确提出的预计篇幅、风格基调和表达边界", guidance: "只记录作者已决定的偏好，允许大致范围；未提到的内容留白，不要求确定感情线、主角底线或剧情走向。" },
+      { id: "seed-tone", label: "本书偏好", prompt: "记录作者明确提出的预计篇幅、卷章安排、风格基调和表达边界", guidance: "只记录作者已决定的偏好，允许大致范围；未提到的内容留白，不要求确定感情线、主角底线或剧情走向。" },
     ],
   },
   {
@@ -100,6 +100,7 @@ function planningJobInput(job: Job): PlanningAiJobInput | null {
 }
 
 export function StoryPlanningWorkbench(props: {
+  compact?: boolean;
   selectedSectionId?: string;
   onSelectSection?: (sectionId: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -433,10 +434,10 @@ export function StoryPlanningWorkbench(props: {
   if (storedSections.isPending) return <p role="status">正在读取作品设定…</p>;
   if (storedSections.isError && !storedSections.data) return <p className="project-error" role="alert">{errorMessage(storedSections.error)}</p>;
 
-  if (selectedId === "seed-tone") return <section className="story-planning-workbench" aria-label="本书偏好">
-    <h2>本书偏好</h2>
-    <FreePlanningEditor draft={planningDraft} label="篇幅、风格与边界" rows={6} stateLabels={planningStoryStateLabels}
-      placeholder={"篇幅：约 20 万字\n风格：轻松、克制，带一点悬疑\n表达边界：不写过度血腥\n人称与视角：第三人称，贴近主角"}
+  if (selectedId === "seed-tone") return <section className="story-planning-workbench book-preferences-editor" aria-label="本书偏好">
+    {!props.compact ? <h2>本书偏好</h2> : null}
+    <FreePlanningEditor draft={planningDraft} label="篇幅、风格与边界" rows={4} stateLabels={planningStoryStateLabels}
+      placeholder="想写约 20 万字，大致分三卷，章节数暂不定。轻松、克制，带一点悬疑，第三人称，不写过度血腥。"
       onSave={() => void savePreferences()} onAdopt={() => void confirmPending()} />
     <PlanningDiscussionSources sectionId={selectedId} />
     {notice ? <p className="project-notice" role="status">{notice}</p> : null}

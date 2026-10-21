@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { primaryDestination, primaryNavigation, workspaceLabel } from "./navigation";
 
 describe("workspace navigation", () => {
-  it("puts preparation before the existing business destinations", () => {
-    expect(primaryNavigation.map((item) => item.label)).toEqual(["创作准备", "写作", "构思", "大纲", "资料", "待办"]);
+  it("unifies preparation and outlines into a single planning destination", () => {
+    expect(primaryNavigation.map((item) => item.label)).toEqual(["大纲规划", "写作", "构思", "资料", "待办"]);
   });
   it.each([
-    ["/preparation", "/preparation"],
+    ["/preparation", "/planning"],
     ["/writing", "/writing"], ["/chapters", "/writing"],
     ["/planning", "/planning"], ["/discussion", "/discussion"],
     ["/knowledge", "/knowledge"], ["/knowledge/settings", "/knowledge"],

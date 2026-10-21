@@ -26,6 +26,8 @@
 .library-item small { color: #75808e; font-size: 12px; }
 .library-empty { display: grid; min-height: 280px; place-content: center; justify-items: center; gap: 16px; color: #788291; }
 .library-empty p { margin: 0; }
+.library-list-empty { padding: 12px 0; }
+.library-list-empty .plan-empty { margin: 0 0 12px; }
 .library-workspace .primary-action, .library-workspace .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; font-size: 13px; cursor: pointer; }
 .library-workspace .primary-action { border-color: var(--accent); }
 .library-workspace .primary-action:disabled, .library-workspace .secondary-action:disabled { opacity: .55; cursor: not-allowed; }
@@ -40,6 +42,8 @@
 .library-advanced code { overflow-wrap: anywhere; }
 .library-content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.9; font-size: 15px; }
 .library-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.library-workspace .inspector-actions { flex-wrap: wrap; align-items: center; }
+.library-workspace .inspector-actions > .library-meta { flex-basis: 100%; }
 .library-meta { color: #75808e; font-size: 13px; }
 .library-form { display: grid; gap: 14px; }
 .library-field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, .4fr); gap: 14px; }

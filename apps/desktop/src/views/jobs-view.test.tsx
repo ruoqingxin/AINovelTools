@@ -58,6 +58,21 @@ describe("background activity", () => {
     renderView();
     expect(await screen.findByText("任务已取消")).toBeVisible();
   });
+  it("recovers a filtered empty state without deleting cancelled tasks", async () => {
+    mocks.listJobs.mockResolvedValue([{ ...job, status: "CANCELLED", errorSummary: null }]);
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "查看全部记录" }));
+    expect(screen.getByLabelText("活动状态")).toHaveValue("ALL");
+    expect(await screen.findByText("任务已取消")).toBeVisible();
+    expect(mocks.cancelJob).not.toHaveBeenCalled();
+  });
+  it("retries a failed activity query inline", async () => {
+    mocks.listJobs.mockRejectedValueOnce(new Error("任务读取失败"));
+    renderView();
+    expect(await screen.findByRole("alert")).toHaveTextContent("任务读取失败");
+    fireEvent.click(screen.getByRole("button", { name: "重试加载" }));
+    expect(await screen.findByText("当前筛选没有后台任务")).toBeVisible();
+  });
   it("shows AI records with lazy request snapshots and no default technical fields", async () => {
     mocks.listAiRuns.mockResolvedValue([{
       id: "run-1", taskKey: "writing", source: "WRITING", action: "DRAFT", status: "COMPLETED",

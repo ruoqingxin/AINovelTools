@@ -2,7 +2,7 @@ import type { PlanNodeKind } from "../lib/tauri-client";
 
 export const kindLabels: Record<PlanNodeKind, string> = {
   WORK_DESIGN: "本书偏好",
-  OUTLINE: "故事方向",
+  OUTLINE: "主线大纲",
   VOLUME_MANAGER: "分卷管理",
   VOLUME: "分卷",
   CHAPTER: "章节",
@@ -11,7 +11,7 @@ export const kindLabels: Record<PlanNodeKind, string> = {
 
 export const rootDefinitions: Array<{ kind: PlanNodeKind; label: string }> = [
   { kind: "WORK_DESIGN", label: "本书偏好" },
-  { kind: "OUTLINE", label: "故事方向" },
+  { kind: "OUTLINE", label: "主线大纲" },
   { kind: "VOLUME_MANAGER", label: "分卷管理" },
 ];
 
@@ -25,7 +25,7 @@ export function nodePlanId(nodeId: string) {
 
 
 export function nodePlanPrompt(kind: PlanNodeKind) {
-  if (kind === "OUTLINE") return "围绕作者当前灵感提出故事方向或近期走向的候选笔记。无需完整主线，不要求提前确定高潮、结局、人物弧光或升级体系；允许只讨论下一步。未决定的内容保持开放，互斥方案分别列出，不把备选当作已确认设定。";
+  if (kind === "OUTLINE") return "依据已确认的故事核心、人物动机、规则与代价推演主线大纲。依次写明开局诱因、主角目标与选择、阻力升级、关键转折及代价、阶段高潮与收束。体现事件的因果承接；未决定的结局或情节明确保留备选。输出供作者审阅的草稿，不生成正文。";
   if (kind === "VOLUME_MANAGER") return "根据正式故事主线规划整部作品的分卷结构。每卷必须独占一行，严禁把多卷写在同一行。每行只输出“第X卷·标题｜阶段目标｜主要矛盾｜卷末转折”，不要输出说明、标题、编号或空行。";
   if (kind === "VOLUME") return "写清本分卷要完成的阶段任务、主要矛盾、人物变化和卷末转折。";
   if (kind === "CHAPTER") return "写清本章的目标、冲突、关键行动、情感变化和结尾钩子，作为正文写作执行卡。";
@@ -65,14 +65,6 @@ export function parseVolumePlanCandidates(value: string) {
 
 export function parseChapterPlanCandidates(value: string) {
   return parsePlanCandidates(value, "章");
-}
-
-export function buildVolumePlanTargetGuidance(targets: { wordCount: string; volumeCount: string; chapterCount: string }) {
-  return [
-    targets.wordCount.trim() ? `本书预计总字数：${targets.wordCount.trim()} 万字` : "",
-    targets.volumeCount.trim() ? `计划分卷数：${targets.volumeCount.trim()} 卷` : "",
-    targets.chapterCount.trim() ? `预计章节数：${targets.chapterCount.trim()} 章` : "",
-  ].filter(Boolean).join("\n");
 }
 
 export function resolveDefaultWritingChapter<T extends { id: string }>(chapters: T[], requestedId: string, rememberedId: string) {

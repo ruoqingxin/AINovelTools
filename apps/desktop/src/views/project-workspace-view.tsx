@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArchiveRestore, ArrowLeft, BookOpen, Check, List, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import { cancelJob, createPlanNode, errorMessage, getAuditFlowSettings, getCurrentProject, listModelProfiles, listPlanningSections, listPlanNodes, movePlanNode, updatePlanNodeChecked, type PlanNode, type PlanNodeKind } from "../lib/tauri-client";
 import { useJobs } from "../lib/jobs-query";
@@ -24,7 +24,8 @@ import { ChapterDirectory } from "./chapter-directory";
 import { ChapterCreateDialog } from "./chapter-create-dialog";
 import { useWideWorkspace, WorkspacePanel } from "./workspace-panel";
 import { PlanCandidateList } from "./plan-candidate-list";
-import { FreePlanningEditor } from "./free-planning-editor";
+import { PreparationEditor } from "./creation-preparation-view";
+import { buildPreparationStages, preparationPrerequisites, preparationStatus } from "./creation-preparation";
 import "./writing-planning.css";
 import { useLayoutPreference } from "../lib/workspace-preferences";
 
@@ -42,7 +43,7 @@ import {
 
 const planningDefinitionsById = new Map(planningSectionGroups.flatMap((group) => group.children).map((item) => [item.id, item]));
 
-export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "writing" } = {}) {
+export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "writing"; embedded?: boolean } = {}) {
   const workspaceMode = props.mode ?? "planning";
   const isChapterMode = workspaceMode === "chapters" || workspaceMode === "writing";
   const client = useQueryClient();
@@ -63,12 +64,12 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const [moveParentId, setMoveParentId] = useState("");
   const [nodePlanTab, setNodePlanTab] = useState<"formal" | "pending">("formal");
   const [nodePlanGuidance, setNodePlanGuidance] = useState("");
-  const [volumePlanTargets, setVolumePlanTargets] = useState({ wordCount: "", volumeCount: "", chapterCount: "" });
   const [showVolumePlanning, setShowVolumePlanning] = useState(false);
   const [chapterSplitVolumeId, setChapterSplitVolumeId] = useState("");
   const [chapterSplitBatchCount, setChapterSplitBatchCount] = useState("20");
   const [chapterSplitGuidance, setChapterSplitGuidance] = useState("");
   const [planningSectionDirty, setPlanningSectionDirty] = useState(false);
+  const onOutlinePending = useCallback((dirty: boolean, busy: boolean) => setPlanningSectionDirty(dirty || busy), []);
   const [error, setError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const directoryDocked = useWideWorkspace(isChapterMode ? 1280 : 900);
@@ -146,6 +147,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 
   const nodeIndex = useMemo(() => buildWorkspaceNodeIndex(nodes.data ?? []), [nodes.data]);
   const sectionsById = useMemo(() => new Map((planningSections.data ?? []).map((section) => [section.id, section])), [planningSections.data]);
+  const bookPreferences = sectionsById.get("seed-tone");
   const selected = selectedId ? nodeIndex.nodesById.get(selectedId) ?? null : null;
   const selectedQueryPlan = selected ? sectionsById.get(nodePlanId(selected.id)) : undefined;
   const nodeDraft = usePlanningDraft(selected ? nodePlanId(selected.id) : "", selectedQueryPlan, planningSections.data !== undefined);
@@ -179,6 +181,11 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const canMoveToRoot = Boolean(selected && isRootKind(selected.kind) && !activeNodes.some((node) => node.id !== selected.id && node.parentId === null && node.kind === selected.kind));
   const workDesignNode = nodeIndex.nodesByKind.WORK_DESIGN[0];
   const volumeManagerNode = nodeIndex.nodesByKind.VOLUME_MANAGER[0];
+  const outlineNode = nodeIndex.nodesByKind.OUTLINE[0];
+  const outlineReady = preparationStatus(outlineNode ? sectionsById.get(nodePlanId(outlineNode.id)) : undefined, planningSections.data ?? []) === "confirmed";
+  const preparationStages = buildPreparationStages(nodes.data ?? []);
+  const outlineItem = { ...preparationStages[2].items[0], sectionId: selected?.kind === "OUTLINE" ? nodePlanId(selected.id) : null };
+  const outlineBasisItems = preparationStages.slice(0, 2).flatMap((stage) => stage.items);
   const volumeNodes = nodeIndex.nodesByKind.VOLUME;
   const chapterNodes = nodeIndex.nodesByKind.CHAPTER;
   const volumesWithoutChapters = useMemo(() => volumeNodes.filter((volume) => !nodeIndex.chaptersByVolume.has(volume.id)), [nodeIndex, volumeNodes]);
@@ -187,17 +194,13 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const chapterSplitVolume = volumeNodes.find((volume) => volume.id === chapterSplitVolumeId) ?? volumeNodes[0];
   const chapterSplitSectionId = chapterSplitVolume ? `chapter-split-${chapterSplitVolume.id}` : "";
   const chapterSplitStoredPlan = sectionsById.get(chapterSplitSectionId);
+  const splitVolumeReady = preparationStatus(chapterSplitVolume ? sectionsById.get(nodePlanId(chapterSplitVolume.id)) : undefined, planningSections.data ?? []) === "confirmed";
   const splitDraft = usePlanningDraft(chapterSplitSectionId, chapterSplitStoredPlan, planningSections.data !== undefined);
   const chapterSplitPendingDraft = splitDraft.form.pendingContent;
   const setChapterSplitPendingDraft = (pendingContent: string) => splitDraft.setForm((current) => ({ ...current, pendingContent }));
   const chapterSplitCandidates = useMemo(() => structuredChapters?.text === chapterSplitPendingDraft
     ? structuredChapters.candidates : parseChapterPlanCandidates(chapterSplitPendingDraft), [chapterSplitPendingDraft, structuredChapters]);
   const chapterSplitExistingCount = chapterSplitVolume ? nodeIndex.chaptersByVolume.get(chapterSplitVolume.id)?.length ?? 0 : 0;
-  const chapterSplitTotalTarget = Number.parseInt(volumePlanTargets.chapterCount, 10);
-  const chapterSplitVolumeIndex = chapterSplitVolume ? volumeNodes.findIndex((volume) => volume.id === chapterSplitVolume.id) : -1;
-  const chapterSplitTargetCount = volumeNodes.length && Number.isFinite(chapterSplitTotalTarget) && chapterSplitTotalTarget > 0
-    ? Math.floor(chapterSplitTotalTarget / volumeNodes.length) + (chapterSplitVolumeIndex < chapterSplitTotalTarget % volumeNodes.length ? 1 : 0)
-    : 0;
   const chapterSplitBatchSize = Math.min(50, Math.max(1, Number.parseInt(chapterSplitBatchCount, 10) || 20));
   const chapterSplitJob = chapterSplitSectionId
     ? (jobs.data ?? []).find((job) => {
@@ -233,14 +236,17 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
       : undefined;
   const nodeTaskPreference = selected?.kind === "OUTLINE" ? outlinePreference : volumePreference;
   const { savingNodePlan, generatingNodePlan, generatingChapterSplit,
-    saveNodePlan, generateNodePlan, generateChapterSplit, adoptChapterSplitPlan, adoptNodePlan, adoptVolumeManagerPlan,
+    saveNodePlan, saveChapterSplitDraft, generateNodePlan, generateChapterSplit, adoptChapterSplitPlan, adoptNodePlan, adoptVolumeManagerPlan,
   } = useWorkspacePlanningOperations({
     projectId: currentProject.data?.projectId, selected, planningSections: planningSections.data, sectionsById,
+    outlineSectionId: outlineNode ? nodePlanId(outlineNode.id) : undefined,
+    nodeJobBusy: nodePlanJob?.status === "QUEUED" || nodePlanJob?.status === "RUNNING",
     volumeNodes, chapterNodes, nodeDraft, splitDraft, nodePlanTab,
-    nodeGeneration: { profile: nodeTaskProfile, preference: nodeTaskPreference, guidance: nodePlanGuidance, targets: volumePlanTargets },
+    preferencesDirty: selected?.kind === "VOLUME_MANAGER" && planningSectionDirty,
+    nodeGeneration: { profile: nodeTaskProfile, preference: nodeTaskPreference, guidance: nodePlanGuidance },
     splitGeneration: { volume: chapterSplitVolume, profile: chapterSplitProfile, preference: chapterSplitPreference,
       guidance: chapterSplitGuidance, busy: chapterSplitJobBusy, sectionId: chapterSplitSectionId,
-      targetCount: chapterSplitTargetCount, existingCount: chapterSplitExistingCount, batchSize: chapterSplitBatchSize },
+      existingCount: chapterSplitExistingCount, batchSize: chapterSplitBatchSize },
     onError: setError,
     excludedVolumes, excludedChapters,
     volumeCandidates: volumeManagerCandidates, chapterCandidates: chapterSplitCandidates,
@@ -471,7 +477,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     <section className="project-workspace writing-planning-workspace" data-workspace-mode={workspaceMode}>
       <div className="workspace-heading workspace-heading-with-action">
         <div>
-          <h1>{isChapterMode ? "写作" : "大纲"}</h1>
+          {props.embedded ? <h2 className="planning-section-title">分卷与细化</h2> : <h1>{isChapterMode ? "写作" : "大纲与规划"}</h1>}
           {returnTo && (!isChapterMode || !selected) ? <a className="secondary-action workspace-return-link" href={returnTo}><ArrowLeft size={15} />返回来源</a> : null}
         </div>
         <div className="workspace-heading-tools"><button type="button" className="icon-command" title={isChapterMode ? "章节目录" : "大纲目录"}
@@ -534,8 +540,10 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 
       {!selected ? <PlanningDashboard
         onOpenPreferences={() => void createStarterNode("WORK_DESIGN", "本书偏好")}
-        onOpenDirection={() => void createStarterNode("OUTLINE", "故事方向")}
+        onOpenDirection={() => void createStarterNode("OUTLINE", "主线大纲")}
+        onOpenStructure={() => void createStarterNode("VOLUME_MANAGER", "分卷与章节")}
         onCreateChapter={() => setCreateChapterOpen(true)}
+        nodes={nodes.data ?? []} sections={planningSections.data ?? []}
         chapterNodes={chapterNodes}
         isChapterMode={isChapterMode}
         onOpenFirstChapter={() => chapterNodes[0] && selectNode(chapterNodes[0])}
@@ -561,7 +569,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
           selectedVolume={selectedVolume}
           workspaceMode={workspaceMode}
         /> : null}
-        {selected.kind !== "WORK_DESIGN" ? <>{!(selected.kind === "CHAPTER" && isChapterMode) ? <div className="plan-inspector-heading"><h2>{selected.kind === "OUTLINE" ? "故事方向" : selected.kind === "VOLUME_MANAGER" ? "分卷与章节" : selected.title}</h2></div> : null}
+        {selected.kind !== "WORK_DESIGN" ? <>{selected.kind !== "OUTLINE" && !(selected.kind === "CHAPTER" && isChapterMode) ? <div className="plan-inspector-heading"><h2>{selected.kind === "VOLUME_MANAGER" ? "分卷与章节" : selected.title}</h2></div> : null}
         {selected.kind !== "OUTLINE" && selected.kind !== "VOLUME_MANAGER" && !(selected.kind === "CHAPTER" && isChapterMode) ? <details className="structure-settings"><summary>结构设置</summary><div className="inspector-node-settings">
           <label className="inspector-name-field">节点名称<input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} aria-label="编辑节点标题" /></label>
           <div className="inspector-actions">
@@ -570,6 +578,15 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
           </div>
           <div className="inspector-move-row"><label>归属<select value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} aria-label="移动到父节点"><option value="" disabled={!canMoveToRoot}>{canMoveToRoot ? "顶层" : "选择父节点"}</option>{moveCandidates.map((node) => <option key={node.id} value={node.id}>{kindLabels[node.kind]} · {node.title}</option>)}</select></label><button type="button" className="secondary-action" onClick={() => void moveSelected()} disabled={!canMoveToRoot && !moveParentId}>移动</button></div>
         </div></details> : null}{selected.kind === "VOLUME_MANAGER" ? <div className="volume-manager-panel">
+<div className="planning-basis-strip" role="status">
+  <strong>{outlineReady ? "主线大纲已确认" : "主线大纲待确认或复核"}</strong>
+  <a href="/planning?mode=prepare&item=outline">审阅主线大纲</a>
+</div>
+<details className="volume-book-preferences">
+  <summary>本书偏好<small>{planningSectionDirty ? "未保存" : bookPreferences ? planningStoryStateLabels[bookPreferences.storyState] : "暂未设置"}</small></summary>
+  <StoryPlanningWorkbench compact selectedSectionId="seed-tone" onDirtyChange={setPlanningSectionDirty} />
+</details>
+<p className="volume-book-preferences-preview">{bookPreferences?.content.trim() || "暂未设置"}</p>
 <div className="section-heading">
 <div>
 <div className="creation-mode" role="group" aria-label="结构工具">
@@ -579,27 +596,14 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 </div>
 <small>{volumePlanReady ? `${volumeNodes.length} 卷 · ${chapterNodes.length} 章` : "尚未创建分卷"}</small>
 </div>
-{!volumePlanReady || showVolumePlanning ? <div className="volume-manager-ai-panel"><details className="compact-ai-tool"><summary><Sparkles size={15} />生成分卷方案</summary><div className="volume-manager-targets">
-<label>
-<span>本书字数（万字）</span>
-<input type="number" min="1" inputMode="numeric" value={volumePlanTargets.wordCount} onChange={(event) => setVolumePlanTargets((current) => ({ ...current, wordCount: event.target.value }))} placeholder="例如 120" />
-</label>
-<label>
-<span>分卷数（卷）</span>
-<input type="number" min="1" inputMode="numeric" value={volumePlanTargets.volumeCount} onChange={(event) => setVolumePlanTargets((current) => ({ ...current, volumeCount: event.target.value }))} placeholder="例如 4" />
-</label>
-<label>
-<span>章节数（章）</span>
-<input type="number" min="1" inputMode="numeric" value={volumePlanTargets.chapterCount} onChange={(event) => setVolumePlanTargets((current) => ({ ...current, chapterCount: event.target.value }))} placeholder="例如 400" />
-</label>
-</div>
+{!volumePlanReady || showVolumePlanning ? <div className="volume-manager-ai-panel"><details className="compact-ai-tool"><summary><Sparkles size={15} />生成分卷方案</summary>
 <AiModelNote compact taskLabel="分卷规划" taskKey="volumePlanning" profile={volumeProfile} preference={volumePreference} />
 <label className="node-plan-guidance">
 <span>给 AI 的补充意见（可选）</span>
 <textarea rows={2} value={nodePlanGuidance} onChange={(event) => setNodePlanGuidance(event.target.value)} placeholder="例如：第一卷尽快进入冲突，卷末必须有不可逆变化" />
 </label>
 <div className="node-plan-ai-bar">
-<button type="button" className="secondary-action" onClick={() => void generateNodePlan()} disabled={!volumeProfile?.hasSecret || generatingNodePlan || Boolean(nodePlanJob?.status === "QUEUED" || nodePlanJob?.status === "RUNNING")}>
+<button type="button" className="secondary-action" onClick={() => void generateNodePlan()} disabled={!volumeProfile?.hasSecret || generatingNodePlan || Boolean(nodePlanJob?.status === "QUEUED" || nodePlanJob?.status === "RUNNING") || !outlineReady || nodeDraft.dirty || planningSectionDirty}>
 <Sparkles size={14} />{nodePlanJob?.status === "RUNNING" ? "生成中…" : "生成分卷方案"}</button>
 </div></details>{nodePlanJob && (nodePlanJob.status === "QUEUED" || nodePlanJob.status === "RUNNING") ? <div className="node-plan-job">
 <span>AI 正在规划分卷结构，完成后候选会出现在这里</span>
@@ -616,7 +620,8 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   onChange={(text, candidates) => { setNodePlanPendingDraft(text); setStructuredVolumes({ text, candidates }); }} saving={savingNodePlan} ready={nodeDraft.ready} unit="卷" />
 <details className="candidate-original"><summary>原始候选文本</summary><textarea disabled={!nodeDraft.ready} rows={6} value={nodePlanPendingDraft} onChange={(event) => { setStructuredVolumes(null); setNodePlanPendingDraft(event.target.value); }} aria-label="分卷候选" /></details>
 <div className="node-plan-actions">
-<button type="button" className="primary-action" onClick={() => void adoptVolumeManagerPlan()} disabled={savingNodePlan || !nodeDraft.ready || !currentProject.data || !selectedVolumeCandidates.length}>
+<button type="button" className="secondary-action" onClick={() => void saveNodePlan()} disabled={savingNodePlan || !nodeDraft.ready || !nodeDraft.dirty || Boolean(nodePlanJob?.status === "QUEUED" || nodePlanJob?.status === "RUNNING")}>保存分卷候选</button>
+<button type="button" className="primary-action" onClick={() => void adoptVolumeManagerPlan()} disabled={savingNodePlan || !nodeDraft.ready || !currentProject.data || !selectedVolumeCandidates.length || !outlineReady}>
 <Check size={14} />采用并创建 {selectedVolumeCandidates.length} 个分卷</button>
 </div>
 </div> : null}</div> : null}{volumePlanReady && !showVolumePlanning ? <section className="chapter-split-ai-panel">
@@ -624,7 +629,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 <div>
 <h3>本卷章节</h3>
 </div>
-<small>{chapterSplitTargetCount ? `本卷目标约 ${chapterSplitTargetCount} 章` : "未设置本卷章节目标"}</small>
+{!splitVolumeReady ? <p className="preparation-review-warning" role="status">本卷规划尚未确认，章节候选保留。请先审定本卷的阶段目标、冲突与卷末转折。</p> : null}
 </div>
 <div className="chapter-split-controls">
 <label>
@@ -637,7 +642,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 </label>
 <div className="chapter-split-progress">
 <span>本卷进度</span>
-<strong>{chapterSplitExistingCount}{chapterSplitTargetCount ? ` / ${chapterSplitTargetCount}` : ""} 章</strong>
+<strong>{chapterSplitExistingCount} 章</strong>
 <small>下一批从第 {chapterNodes.length + 1} 章开始</small>
 </div>
 </div>
@@ -648,7 +653,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 <textarea rows={2} value={chapterSplitGuidance} onChange={(event) => setChapterSplitGuidance(event.target.value)} placeholder="例如：每章只推进一个主要事件，前 5 章节奏要快，保留卷末三章做连续反转" />
 </label>
 <div className="node-plan-ai-bar">
-<button type="button" className="secondary-action" onClick={() => void generateChapterSplit()} disabled={!chapterSplitProfile?.hasSecret || chapterSplitBusy || !chapterSplitSectionId}>
+<button type="button" className="secondary-action" onClick={() => void generateChapterSplit()} disabled={!chapterSplitProfile?.hasSecret || chapterSplitBusy || !chapterSplitSectionId || !outlineReady || !splitVolumeReady || splitDraft.dirty || planningSectionDirty}>
 <Sparkles size={14} />{chapterSplitBusy ? "生成中…" : "拆分本卷章节"}</button>
 </div></details>{chapterSplitJob && (chapterSplitJob.status === "QUEUED" || chapterSplitJob.status === "RUNNING") ? <div className="node-plan-job">
 <span>AI 正在拆分「{chapterSplitVolume?.title}」，完成后候选会出现在这里</span>
@@ -665,24 +670,20 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   onChange={(text, candidates) => { setChapterSplitPendingDraft(text); setStructuredChapters({ text, candidates }); }} saving={savingNodePlan} ready={splitDraft.ready} unit="章" />
 <details className="candidate-original"><summary>原始候选文本</summary><textarea disabled={!splitDraft.ready} rows={8} value={chapterSplitPendingDraft} onChange={(event) => { setStructuredChapters(null); setChapterSplitPendingDraft(event.target.value); }} aria-label="章节拆分候选" /></details>
 <div className="node-plan-actions">
-<button type="button" className="secondary-action" disabled={savingNodePlan} onClick={() => setChapterSplitPendingDraft("")}>清空候选</button>
-<button type="button" className="primary-action" onClick={() => void adoptChapterSplitPlan()} disabled={savingNodePlan || !splitDraft.ready || !currentProject.data || !selectedChapterCandidates.length}>
+<button type="button" className="secondary-action" disabled={savingNodePlan || chapterSplitBusy} onClick={() => {
+  if (window.confirm("清空本批章节候选吗？已有章节与正式计划保留。")) setChapterSplitPendingDraft("");
+}}>清空候选</button>
+<button type="button" className="secondary-action" onClick={() => void saveChapterSplitDraft()} disabled={savingNodePlan || !splitDraft.ready || !splitDraft.dirty || chapterSplitBusy}>保存章节候选</button>
+<button type="button" className="primary-action" onClick={() => void adoptChapterSplitPlan()} disabled={savingNodePlan || !splitDraft.ready || !currentProject.data || !selectedChapterCandidates.length || !outlineReady || !splitVolumeReady}>
 <Check size={14} />采用并创建 {selectedChapterCandidates.length} 章</button>
 </div>
 </div> : null}</section> : null}
 </div> : null}{selected.kind === "OUTLINE" ? <>
-          <FreePlanningEditor draft={nodeDraft} label="故事方向笔记" stateLabels={planningStoryStateLabels}
-            placeholder="一个开场、一个暂定走向，或接下来想写的情节…"
-            onSave={() => void saveNodePlan()} onAdopt={() => void adoptNodePlan()} />
-          <details className="compact-ai-tool"><summary><Sparkles size={15} />生成方向候选</summary>
-            <AiModelNote compact taskLabel="故事方向" taskKey="outline" profile={nodeTaskProfile} preference={nodeTaskPreference} />
-            <label>补充意见<textarea rows={3} value={nodePlanGuidance} onChange={(event) => setNodePlanGuidance(event.target.value)} /></label>
-            <button type="button" className="secondary-action" onClick={() => void generateNodePlan()}
-              disabled={!nodeTaskProfile?.hasSecret || generatingNodePlan || Boolean(nodePlanJob?.status === "QUEUED" || nodePlanJob?.status === "RUNNING")}>
-              <Sparkles size={14} />生成候选</button>
-          </details>
-          {nodePlanJob && (nodePlanJob.status === "QUEUED" || nodePlanJob.status === "RUNNING")
-            ? <p role="status">生成中 · {nodePlanJob.progress}%</p> : null}
+          <div className="preparation-editor planning-outline-editor">
+            <PreparationEditor key={selected.id} item={outlineItem} sections={planningSections.data ?? []}
+              basisItems={outlineBasisItems} prerequisites={preparationPrerequisites(preparationStages, "outline", planningSections.data ?? [])}
+              onPendingChange={onOutlinePending} />
+          </div>
         </> : null}{selected.kind !== "CHAPTER" && selected.kind !== "VOLUME_MANAGER" && selected.kind !== "OUTLINE" ? <div className="compact-plan-editor">
           <div className="compact-plan-toolbar">
             <div className="creation-mode" role="group" aria-label="规划内容">

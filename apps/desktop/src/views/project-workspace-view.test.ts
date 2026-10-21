@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildVolumePlanTargetGuidance, diffLines, documentCharacterCount, documentToText, parseChapterPlanCandidates, parseVolumePlanCandidates, resolveDefaultWritingChapter } from "./project-workspace-utils";
+import { diffLines, documentCharacterCount, documentToText, parseChapterPlanCandidates, parseVolumePlanCandidates, resolveDefaultWritingChapter } from "./project-workspace-utils";
 
 describe("parseVolumePlanCandidates", () => {
   it("parses numbered, Chinese-numbered, and duplicate volume candidates", () => {
@@ -47,24 +47,6 @@ describe("parseVolumePlanCandidates", () => {
       content: "目标二｜矛盾二｜转折二",
     });
     expect(candidates[5].content).toBe("目标六｜矛盾六｜转折六");
-  });
-});
-
-describe("buildVolumePlanTargetGuidance", () => {
-  it("turns the volume scale targets into explicit AI constraints", () => {
-    expect(buildVolumePlanTargetGuidance({
-      wordCount: "120",
-      volumeCount: "4",
-      chapterCount: "400",
-    })).toBe([
-      "本书预计总字数：120 万字",
-      "计划分卷数：4 卷",
-      "预计章节数：400 章",
-    ].join("\n"));
-  });
-
-  it("omits empty targets", () => {
-    expect(buildVolumePlanTargetGuidance({ wordCount: "", volumeCount: " 3 ", chapterCount: "" })).toBe("计划分卷数：3 卷");
   });
 });
 

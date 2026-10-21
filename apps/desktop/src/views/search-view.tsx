@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { BookOpenText, Database, Search } from "lucide-react";
+import { BookOpenText, Database, RefreshCw, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { errorMessage, getCurrentProject, searchProject } from "../lib/tauri-client";
 import { manuscriptSourceHref } from "../lib/manuscript-source";
@@ -7,6 +7,7 @@ import { entityHref } from "../lib/entity-navigation";
 import { materialHref, planNodeHref } from "../lib/knowledge-navigation";
 import "./activity-workspace.css";
 import { formatSavedAt } from "./project-workspace-utils";
+import { SearchField } from "./search-field";
 
 const PAGE_SIZE = 50;
 
@@ -56,16 +57,22 @@ export function SearchView() {
   return <section className="search-view activity-workspace">
     <div className="workspace-heading"><h1>搜索</h1></div>
     <div className="search-toolbar">
-      <label className="search-field"><Search size={15} /><input autoFocus aria-label="搜索项目内容" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入关键词" /></label>
+      <SearchField autoFocus label="搜索项目内容" value={query} onChange={setQuery} placeholder="搜索人物、设定、大纲或正文" />
       <select aria-label="对象类型筛选" value={objectType} onChange={(event) => setObjectType(event.target.value)}>
-        <option value="">可检索内容</option><option value="ENTITY">人物与世界</option><option value="SUMMARY">摘要</option><option value="CARD">写作卡片</option><option value="PLAN">大纲</option><option value="MANUSCRIPT">正文</option>
+        <option value="">全部类型</option><option value="ENTITY">人物与世界</option><option value="SUMMARY">摘要</option><option value="CARD">写作卡片</option><option value="PLAN">大纲</option><option value="MANUSCRIPT">正文</option>
       </select>
     </div>
-    <div className="search-results" ref={resultsPanel}>
+    <div className="search-results" ref={resultsPanel} aria-busy={hasQuery && (isDebouncing || results.isFetching)}>
+      {project.isError ? <p className="project-error" role="alert">无法读取当前作品：{errorMessage(project.error)}
+        <button type="button" className="secondary-action" onClick={() => void project.refetch()} disabled={project.isFetching}><RefreshCw size={14} />重试</button></p> : null}
+      {project.isSuccess && !project.data ? <p className="plan-empty">尚未打开作品</p> : null}
       {!hasQuery ? <div className="activity-empty"><Search size={24} /><p>尚未搜索</p></div> : null}
-      {hasQuery && (isDebouncing || results.isPending) ? <p className="plan-empty">正在搜索…</p> : null}
-      {hasQuery && !isDebouncing && results.isError ? <p className="project-error" role="alert">搜索失败：{errorMessage(results.error)} <a href="/settings#data-management">前往数据管理修复</a></p> : null}
-      {hasQuery && !isDebouncing && results.isSuccess && items.length === 0 ? <p className="plan-empty"><Database size={16} />没有匹配结果。</p> : null}
+      {hasQuery && !project.isError && (project.isPending || Boolean(project.data) && (isDebouncing || results.isPending)) ? <p className="plan-empty" role="status">正在搜索…</p> : null}
+      {hasQuery && !isDebouncing && results.isError ? <p className="project-error" role="alert">搜索失败：{errorMessage(results.error)}
+        <button type="button" className="secondary-action" onClick={() => void results.refetch()} disabled={results.isFetching}><RefreshCw size={14} />重试搜索</button>
+        <a href="/settings#data-management">前往数据管理修复</a></p> : null}
+      {hasQuery && !isDebouncing && results.isSuccess && items.length === 0 ? <div className="activity-empty"><Database size={20} /><p>没有匹配结果。</p>
+        {objectType ? <button type="button" className="secondary-action" onClick={() => setObjectType("")}>搜索全部类型</button> : null}</div> : null}
       {hasQuery && !isDebouncing ? items.map((item) => <article className="search-result" key={`${item.objectType}-${item.objectId}`}><div><span className="entity-type-badge">{labels[item.objectType] ?? item.objectType}</span></div>
         <h2>{item.title ?? labels[item.objectType] ?? item.objectType}</h2>
         {item.chapterTitle || item.updatedAt ? <p className="search-result-meta">

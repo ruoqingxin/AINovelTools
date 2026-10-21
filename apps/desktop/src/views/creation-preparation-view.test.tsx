@@ -8,6 +8,7 @@ import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 import { CreationPreparationView } from "./creation-preparation-view";
 import { buildPreparationStages } from "./creation-preparation";
 import { emptyPlanningSection } from "./use-planning-draft";
+import { openingReviewChecks, outlineReviewChecks, readPlanningReview, withPlanningReview } from "./planning-review";
 
 const mocks = vi.hoisted(() => ({
   getCurrentProject: vi.fn(), listPlanNodes: vi.fn(), listPlanningSections: vi.fn(),
@@ -18,7 +19,7 @@ vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
 }));
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ to, hash, children, ...props }: { to: string; hash?: string; children: ReactNode }) =>
+  Link: ({ to, hash, search: _search, children, ...props }: { to: string; hash?: string; search?: unknown; children: ReactNode }) =>
     <a href={`${to}${hash ? `#${hash}` : ""}`} {...props}>{children}</a>,
 }));
 vi.mock("../lib/jobs-query", () => ({ useJobs: () => ({ data: mocks.jobs }) }));
@@ -33,10 +34,10 @@ let nodes: PlanNode[];
 function confirmed(id: string): PlanningSection {
   return { ...emptyPlanningSection(id), content: `已决定：${id}`, storyState: "CONFIRMED", version: 1 };
 }
-function setup() {
+function setup(initialItem?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<StrictMode><QueryClientProvider client={client}><ConfirmActionProvider>
-    <CreationPreparationView />
+    <CreationPreparationView initialItem={initialItem} />
   </ConfirmActionProvider></QueryClientProvider></StrictMode>);
   return client;
 }
@@ -124,7 +125,7 @@ describe("creation preparation workbench", () => {
     await chooseStage("准备开篇");
     expect(screen.getByRole("button", { name: "建立开篇章节计划" })).toBeDisabled();
     expect(screen.getByText("前序关键准备尚有 6 项待确认")).toBeVisible();
-    await chooseStage("确定故事走向");
+    await chooseStage("审定主线大纲");
     expect(screen.getByRole("button", { name: "建立主线大纲" })).toBeDisabled();
     expect(mocks.createPlanNode).not.toHaveBeenCalled();
   });
@@ -269,5 +270,109 @@ describe("creation preparation workbench", () => {
     await waitFor(() => expect(screen.getByText("关键准备 1 / 7")).toBeVisible());
     expect(input).toHaveValue("本地仍在编辑");
     expect(screen.queryByRole("textbox", { name: "题材与阅读期待" })).not.toBeInTheDocument();
+  });
+
+  function outlineSetup() {
+    nodes = [{ id: "outline", kind: "OUTLINE", title: "主线大纲", parentId: null, archived: false, revision: 1, sortOrder: 0 }];
+    stored = buildPreparationStages(nodes).slice(0, 2).flatMap((stage) => stage.items).filter((item) => item.required).map((item) => confirmed(item.sectionId!));
+  }
+
+  it("requires all outline review decisions and resets them when the text changes", async () => {
+    outlineSetup();
+    setup("outline");
+    const input = await screen.findByRole("textbox", { name: "主线大纲" });
+    fireEvent.change(input, { target: { value: "诱因、选择、升级、转折与收束" } });
+    const accept = screen.getByRole("button", { name: "确认并继续" });
+    expect(accept).toBeDisabled();
+    outlineReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
+    expect(accept).toBeEnabled();
+    fireEvent.change(input, { target: { value: "改为另一条因果主线" } });
+    expect(accept).toBeDisabled();
+    outlineReviewChecks.forEach((check) => expect(screen.getByRole("checkbox", { name: check })).not.toBeChecked());
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it("persists author review, source versions and open questions only on explicit confirmation", async () => {
+    outlineSetup();
+    stored.push({ ...emptyPlanningSection("plan-node:outline"), references: ["discussion:original"], version: 2 });
+    setup("outline");
+    fireEvent.change(await screen.findByRole("textbox", { name: "主线大纲" }), { target: { value: "主角失信后选择承担代价，完成阶段目标。" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "待定问题与取舍" }), { target: { value: "终局真相保留两个备选。" } });
+    outlineReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
+    fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
+    await screen.findByRole("textbox", { name: "结局方向" });
+    const section = stored.find((section) => section.id === "plan-node:outline")!;
+    expect(section).toMatchObject({ version: 3, consequence: "终局真相保留两个备选。", pendingContent: "", storyState: "CONFIRMED" });
+    expect(section.references).toContain("discussion:original");
+    expect(readPlanningReview(section)).toMatchObject({ sectionVersion: 3, checks: outlineReviewChecks });
+    expect(readPlanningReview(section)?.basis).toHaveLength(5);
+  });
+
+  it("preserves a formal outline and requests re-review after an upstream revision", async () => {
+    outlineSetup();
+    const previous = { ...confirmed("plan-node:outline"), content: "原来审定的主线", version: 1 };
+    stored.push({ ...previous, references: withPlanningReview(previous, outlineReviewChecks, [...stored]), version: 2 });
+    const client = setup("outline");
+    const input = await screen.findByRole("textbox", { name: "主线大纲" });
+    expect(input).toHaveAttribute("readonly");
+    const updated = stored.map((section) => section.id === "seed-premise" ? { ...section, content: "新的故事核心", version: 2 } : section);
+    act(() => client.setQueryData(["planning-sections"], updated));
+    expect(await screen.findByText(/确认依据已有变化/)).toHaveTextContent("故事核心");
+    expect(input).toHaveValue("原来审定的主线");
+    expect(screen.getByText("关键准备 5 / 7")).toBeVisible();
+    expect(screen.getByRole("button", { name: "确认并继续" })).toBeDisabled();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it("does not bypass outline prerequisites even after every review box is checked", async () => {
+    outlineSetup();
+    stored = [];
+    setup("outline");
+    fireEvent.change(await screen.findByRole("textbox", { name: "主线大纲" }), { target: { value: "临时大纲草稿" } });
+    outlineReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
+    expect(screen.getByRole("button", { name: "确认并继续" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    await screen.findByText("草稿已保存");
+    expect(stored[0]).toMatchObject({ content: "", pendingContent: "临时大纲草稿", storyState: "UNSET", references: [] });
+  });
+
+  it("reviews the opening chapter against the confirmed story and outline before writing", async () => {
+    outlineSetup();
+    nodes.push({ id: "first", kind: "CHAPTER", title: "第一章", parentId: "volume", archived: false, revision: 1, sortOrder: 0 });
+    stored.push(confirmed("plan-node:outline"));
+    setup("opening");
+    fireEvent.change(await screen.findByRole("textbox", { name: "开篇章节计划" }), { target: { value: "收信后隐瞒线索，导致监察员跟踪。" } });
+    expect(screen.getByRole("button", { name: "确认并继续" })).toBeDisabled();
+    openingReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
+    fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
+    await screen.findByRole("link", { name: "进入正文" });
+    expect(readPlanningReview(stored.find((section) => section.id === "plan-node:first"))?.basis).toEqual(expect.arrayContaining([
+      { id: "plan-node:outline", version: 1 },
+    ]));
+  });
+
+  it("retains a previously saved draft after a confirmation conflict and a remote refresh", async () => {
+    stored = [{ ...emptyPlanningSection("seed-premise"), pendingContent: "作者保存过的草稿", version: 2 }];
+    mocks.savePlanningSection.mockRejectedValue(new Error("版本冲突"));
+    const client = setup();
+    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
+    await screen.findByRole("alert");
+    act(() => client.setQueryData(["planning-sections"], [{ ...stored[0], pendingContent: "其他来源的新稿", version: 3 }]));
+    expect(input).toHaveValue("作者保存过的草稿");
+    expect(await screen.findByRole("button", { name: "读取最新内容" })).toBeVisible();
+  });
+
+  it("requires explicit approval to unlock and preserves the formal content", async () => {
+    stored = [{ ...confirmed("seed-premise"), storyState: "LOCKED" }];
+    setup("premise");
+    await screen.findByRole("textbox", { name: "故事核心" });
+    fireEvent.click(screen.getByRole("button", { name: "解除锁定" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "解除锁定" }));
+    await screen.findByRole("button", { name: "修订草稿" });
+    expect(stored[0]).toMatchObject({ content: "已决定：seed-premise", storyState: "CONFIRMED", pendingContent: "" });
+    expect(screen.getByRole("textbox", { name: "故事核心" })).toHaveAttribute("readonly");
   });
 });

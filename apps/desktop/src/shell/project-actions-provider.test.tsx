@@ -131,7 +131,7 @@ describe("project switching", () => {
     fireEvent.click(screen.getByText("create"));
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalled());
     expect(mocks.createProject).toHaveBeenCalledWith("E:\\new-story", "new-story");
-    expect(mocks.navigate).toHaveBeenCalledWith({ to: "/preparation", search: {}, hash: "", replace: true, ignoreBlocker: true });
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: "/planning", search: {}, hash: "", replace: true, ignoreBlocker: true });
   });
   it("serializes commands from multiple entry points", async () => {
     let resolveDialog!: (path: string | null) => void;

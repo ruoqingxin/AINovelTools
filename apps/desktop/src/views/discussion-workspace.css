@@ -14,6 +14,11 @@
 .discussion-stage-three .discussion-session-toolbar { display: flex; flex-wrap: wrap; padding: 0; gap: 12px; }
 .discussion-stage-three .discussion-session-picker { flex: 1 1 220px; min-width: 0; }
 .discussion-stage-three .discussion-session-create { margin-top: 18px; }
+.discussion-stage-three .discussion-session-fields { grid-template-columns: minmax(0, 1fr); }
+.discussion-session-options { min-width: 0; }
+.discussion-session-options > summary { cursor: pointer; color: var(--muted); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.discussion-session-options > div { display: grid; gap: 12px; margin-top: 12px; }
+.discussion-session-fields > button { justify-self: start; }
 .discussion-stage-three .discussion-candidate-drawer { margin-top: 18px; }
 .discussion-stage-three .discussion-design-panel { display: block; width: 100%; padding: 0; border: 0; background: transparent; box-shadow: none; overflow: visible; }
 .discussion-stage-three .discussion-design-panel > .section-heading { padding-bottom: 12px; }

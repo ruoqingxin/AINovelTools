@@ -8,6 +8,7 @@ import {
 import { isRootKind, kindLabels, rootDefinitions } from "./project-workspace-utils";
 import { groupNodesByParent } from "./project-workspace-index";
 import { ChapterDirectory } from "./chapter-directory";
+import { preparationStatus, preparationStatusLabels } from "./creation-preparation";
 
 type ProjectPlanTreeProps = {
   chapterMode: boolean;
@@ -37,7 +38,8 @@ export function ProjectPlanTree(props: ProjectPlanTreeProps) {
         <button type="button" className="plan-row" data-kind={node.kind.toLowerCase()}
           data-selected={props.selectedId === node.id && (node.kind !== "WORK_DESIGN" || props.selectedPlanningSectionId === "seed-tone") || undefined}
           data-archived={node.archived || undefined} style={{ paddingLeft: `${10 + depth * 22}px` }} onClick={() => props.onSelectNode(node)}>
-          {!isTopLevelPlanningNode ? <span className="plan-kind">{kindLabels[node.kind]}</span> : null}<span className="plan-title">{node.kind === "WORK_DESIGN" ? "本书偏好" : node.kind === "OUTLINE" ? "故事方向" : node.kind === "VOLUME_MANAGER" ? "分卷与章节" : node.title}</span>
+          {!isTopLevelPlanningNode ? <span className="plan-kind">{kindLabels[node.kind]}</span> : null}<span className="plan-title">{node.kind === "WORK_DESIGN" ? "本书偏好" : node.kind === "OUTLINE" ? "主线大纲" : node.kind === "VOLUME_MANAGER" ? "分卷与章节" : node.title}</span>
+          {node.kind === "OUTLINE" || node.kind === "VOLUME" ? <small className="plan-confirmation-state">{preparationStatusLabels[preparationStatus(sectionsById.get(`plan-node:${node.id}`), props.planningSections)]}</small> : null}
         </button>
         {node.kind === "WORK_DESIGN" && !node.archived ? <details className="plan-reference-tree"
           open={props.selectedId === node.id && props.selectedPlanningSectionId !== "seed-tone"}>
@@ -75,7 +77,7 @@ export function ProjectPlanTree(props: ProjectPlanTreeProps) {
           const root = props.rootNodeFor(rootKind);
           return (
             <section className="plan-root-section" key={rootKind}>
-              {root ? renderNode(root) : <button type="button" className="plan-preset-row" onClick={() => void props.onCreateStarterNode(rootKind, label)}><Plus size={14} /><span>{rootKind === "WORK_DESIGN" ? "本书偏好" : rootKind === "OUTLINE" ? "故事方向" : "分卷与章节"}</span></button>}
+              {root ? renderNode(root) : <button type="button" className="plan-preset-row" onClick={() => void props.onCreateStarterNode(rootKind, label)}><Plus size={14} /><span>{rootKind === "WORK_DESIGN" ? "本书偏好" : rootKind === "OUTLINE" ? "主线大纲" : "分卷与章节"}</span></button>}
             </section>
           );
         })}

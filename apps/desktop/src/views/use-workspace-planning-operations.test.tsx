@@ -16,13 +16,16 @@ vi.mock("../lib/tauri-client", async () => ({
 
 const manager: PlanNode = { id: "manager", kind: "VOLUME_MANAGER", parentId: null, title: "分卷管理", archived: false, revision: 4, sortOrder: 0 };
 const volume: PlanNode = { ...manager, id: "volume", parentId: manager.id, kind: "VOLUME", title: "第一卷" };
-const source: PlanningSection = { ...emptyPlanningSection("plan-node:manager"), content: "正式规划", pendingContent: "第1卷·入城｜阶段目标", version: 7 };
+const source: PlanningSection = { ...emptyPlanningSection("plan-node:manager"), content: "正式规划", pendingContent: "第1卷·入城｜阶段目标", storyState: "CONFIRMED", version: 7 };
 const split: PlanningSection = { ...emptyPlanningSection("chapter-split-volume"), pendingContent: "第2章·重逢｜新冲突", version: 3 };
 const profile = { id: "profile", hasSecret: true } as ModelProfile;
+const preferences: PlanningSection = { ...emptyPlanningSection("seed-tone"),
+  content: "约 20 万字，大致三卷，章节数暂不定。节奏轻快，不写过度血腥。", storyState: "CONFIRMED", version: 2 };
 
-function setup(selected: PlanNode = manager) {
+function setup(selected: PlanNode = manager, ready = true, bookPreferences = preferences, preferencesDirty = false) {
   const stored = { ...source, id: `plan-node:${selected.id}` };
-  const sections = [stored, split, { ...source, id: "plan-node:volume", content: "本卷目标", pendingContent: "" }];
+  const sections = [stored, split, { ...source, id: "plan-node:volume", content: "本卷目标", pendingContent: "" },
+    { ...source, id: "plan-node:outline", content: "已确认大纲", pendingContent: ready ? "" : "待确认修订" }, bookPreferences];
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(["planning-sections"], sections);
   const onError = vi.fn();
@@ -33,11 +36,12 @@ function setup(selected: PlanNode = manager) {
     const splitDraft = usePlanningDraft(split.id, split, true);
     const operations = useWorkspacePlanningOperations({
       projectId: "project", selected, planningSections: sections, sectionsById: new Map(sections.map((item) => [item.id, item])),
+      outlineSectionId: "plan-node:outline", preferencesDirty,
       volumeNodes: [volume], chapterNodes: [{ ...volume, id: "chapter", kind: "CHAPTER", parentId: volume.id }],
       nodeDraft, splitDraft, nodePlanTab: "formal",
-      nodeGeneration: { profile, preference: recommendedTaskPreference("volumePlanning"), guidance: "保留冲突", targets: { wordCount: "80000", volumeCount: "4", chapterCount: "40" } },
+      nodeGeneration: { profile, preference: recommendedTaskPreference("volumePlanning"), guidance: "保留冲突" },
       splitGeneration: { volume, profile, preference: recommendedTaskPreference("chapterSplit"),
-        guidance: "节奏紧凑", busy: false, sectionId: split.id, targetCount: 10, existingCount: 1, batchSize: 3 },
+        guidance: "节奏紧凑", busy: false, sectionId: split.id, existingCount: 1, batchSize: 3 },
       onError, onVolumesAdopted,
     });
     return { operations, nodeDraft, splitDraft };
@@ -47,7 +51,8 @@ function setup(selected: PlanNode = manager) {
 
 describe("workspace planning operation boundary", () => {
   afterEach(() => cleanup());
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => { vi.resetAllMocks(); vi.spyOn(window, "confirm").mockReturnValue(true); });
+  afterEach(() => vi.restoreAllMocks());
 
   it("keeps generation context and task settings separate from pending candidates", async () => {
     mocks.enqueuePlanningAiJob.mockResolvedValue({});
@@ -56,10 +61,9 @@ describe("workspace planning operation boundary", () => {
     expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledWith(expect.objectContaining({
       profileId: "profile", sectionId: source.id, taskKey: "volumePlanning",
       allowRewrite: false, temperature: 0.55, maxOutputTokens: 6144,
-      existingContext: "plan-node:manager: 正式规划\nplan-node:volume: 本卷目标",
-      userGuidance: expect.stringContaining("保留冲突"),
+      existingContext: `plan-node:volume: 本卷目标\nplan-node:outline: 已确认大纲\n本书偏好: ${preferences.content}`,
+      userGuidance: "保留冲突",
     }));
-    expect(mocks.enqueuePlanningAiJob.mock.calls[0][0].userGuidance).toContain("计划分卷数：4 卷");
     expect(result.current.operations.generatingNodePlan).toBe(false);
   });
 
@@ -74,10 +78,39 @@ describe("workspace planning operation boundary", () => {
     expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledOnce();
     expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledWith(expect.objectContaining({
       sectionId: split.id, taskKey: "chapterSplit", temperature: 0.3, maxOutputTokens: 4096,
-      userGuidance: "节奏紧凑\n本卷预计共 10 章；当前本卷已拆 1 章；本次最多生成 3 章，从第 2 章开始连续编号\n本卷正式规划：本卷目标",
+      existingContext: expect.stringContaining(`本书偏好: ${preferences.content}`),
+      userGuidance: "节奏紧凑\n当前本卷已拆 1 章；本次最多生成 3 章，从第 2 章开始连续编号\n本卷正式规划：本卷目标",
     }));
     await act(async () => { finish(); await running; });
     expect(result.current.operations.generatingChapterSplit).toBe(false);
+  });
+
+  it.each([
+    { ...preferences, storyState: "AUTHOR_RESERVED" as const },
+    { ...preferences, storyState: "DEFERRED" as const },
+    { ...preferences, pendingContent: "未确认的十卷方案" },
+  ])("does not treat unresolved preferences as confirmed generation context: $storyState", async (bookPreferences) => {
+    mocks.enqueuePlanningAiJob.mockResolvedValue({});
+    const { result } = setup(manager, true, bookPreferences);
+    await act(async () => {
+      await result.current.operations.generateNodePlan();
+      await result.current.operations.generateChapterSplit();
+    });
+    expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledTimes(2);
+    for (const [input] of mocks.enqueuePlanningAiJob.mock.calls) {
+      expect(input.existingContext).not.toContain(preferences.content);
+      expect(input.existingContext).not.toContain("未确认的十卷方案");
+    }
+  });
+
+  it("waits for preference edits to be saved before generating either plan", async () => {
+    const { result, onError } = setup(manager, true, preferences, true);
+    await act(async () => {
+      await result.current.operations.generateNodePlan();
+      await result.current.operations.generateChapterSplit();
+    });
+    expect(mocks.enqueuePlanningAiJob).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith("请先保存本书偏好，再生成候选。");
   });
 
   it("acknowledges only the submitted plan and preserves newer edits and unrelated cache entries", async () => {
@@ -97,5 +130,56 @@ describe("workspace planning operation boundary", () => {
     expect(result.current.nodeDraft.dirty).toBe(true);
     expect(client.getQueryData<PlanningSection[]>(["planning-sections"])).toEqual(expect.arrayContaining([saved, split]));
     expect(result.current.operations.savingNodePlan).toBe(false);
+  });
+
+  it("blocks downstream generation and adoption when the outline has an unresolved revision", async () => {
+    const { result, onError } = setup(manager, false);
+    await act(async () => {
+      await result.current.operations.generateNodePlan();
+      await result.current.operations.generateChapterSplit();
+      await result.current.operations.adoptVolumeManagerPlan();
+      await result.current.operations.adoptChapterSplitPlan();
+    });
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining("先确认或复核主线大纲"));
+    expect(mocks.enqueuePlanningAiJob).not.toHaveBeenCalled();
+    expect(mocks.adoptPlanBatch).not.toHaveBeenCalled();
+    expect(result.current.nodeDraft.form.pendingContent).toBe(source.pendingContent);
+  });
+
+  it("prevents the old save and adopt operations from implicitly confirming an outline", async () => {
+    const { result, onError } = setup({ ...manager, id: "outline", kind: "OUTLINE" });
+    await act(async () => {
+      await result.current.operations.saveNodePlan();
+      await result.current.operations.adoptNodePlan();
+    });
+    expect(onError).toHaveBeenCalledWith("主线大纲须经过作者审阅后确认。");
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it("keeps saved candidates when replacement or batch confirmation is cancelled", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { result } = setup();
+    await act(async () => {
+      await result.current.operations.generateNodePlan();
+      await result.current.operations.generateChapterSplit();
+      await result.current.operations.adoptVolumeManagerPlan();
+      await result.current.operations.adoptChapterSplitPlan();
+    });
+    expect(mocks.enqueuePlanningAiJob).not.toHaveBeenCalled();
+    expect(mocks.adoptPlanBatch).not.toHaveBeenCalled();
+    expect(result.current.nodeDraft.form.pendingContent).toBe(source.pendingContent);
+    expect(result.current.splitDraft.form.pendingContent).toBe(split.pendingContent);
+  });
+
+  it("saves chapter candidates without creating chapters or confirming the source", async () => {
+    mocks.savePlanningSection.mockImplementation(async (section) => ({ ...section, version: 4 }));
+    const { result } = setup();
+    act(() => result.current.splitDraft.setForm((form) => ({ ...form, pendingContent: "第3章·新计划｜新冲突" })));
+    await act(async () => result.current.operations.saveChapterSplitDraft());
+    expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
+      id: split.id, content: "", pendingContent: "第3章·新计划｜新冲突", version: 3, storyState: "UNSET",
+    }));
+    expect(mocks.adoptPlanBatch).not.toHaveBeenCalled();
+    expect(result.current.splitDraft.dirty).toBe(false);
   });
 });

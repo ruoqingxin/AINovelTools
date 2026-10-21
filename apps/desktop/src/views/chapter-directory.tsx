@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { useState } from "react";
 import type { PlanNode } from "../lib/tauri-client";
+import { SearchField } from "./search-field";
 
 export function ChapterDirectory({ nodes, selectedId, onSelect, onCreate, showScenes = false }: {
   nodes: PlanNode[]; selectedId: string | null; onSelect: (node: PlanNode) => void; onCreate: () => void;
@@ -20,8 +21,7 @@ export function ChapterDirectory({ nodes, selectedId, onSelect, onCreate, showSc
   }
   return <div className="chapter-directory">
     <div className="directory-toolbar">
-      <label><Search size={15} /><input aria-label="搜索章节" placeholder="搜索章节" value={search}
-        onChange={(event) => setSearch(event.target.value)} /></label>
+      <SearchField label="搜索章节" value={search} onChange={setSearch} />
       <button type="button" className="icon-command" aria-label="新建章节" title="新建章节" onClick={onCreate}><Plus size={17} /></button>
     </div>
     {volumes.map((volume) => {

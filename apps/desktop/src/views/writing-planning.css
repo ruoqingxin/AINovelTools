@@ -39,7 +39,7 @@
 .writing-planning-workspace .plan-design-item[data-selected] { color: #245bb3; background: #eaf1fc; }
 .chapter-directory { min-width: 0; }
 .directory-toolbar { display: flex; gap: 6px; padding: 8px 0; }
-.directory-toolbar label { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; padding: 0 8px; min-height: 34px; border: 1px solid var(--line); border-radius: 5px; color: #68717f; }
+.directory-toolbar .search-field { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; padding: 0 8px; min-height: 34px; border: 1px solid var(--line); border-radius: 5px; color: #68717f; }
 .directory-toolbar input { width: 100%; min-width: 0; padding: 0; border: 0; outline: none; background: transparent; font: inherit; font-size: 13px; }
 .directory-volume > div { display: flex; align-items: center; gap: 4px; padding: 6px 0; }
 .directory-volume-toggle { display: grid; place-items: center; width: 24px; height: 30px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
@@ -92,8 +92,7 @@
 .writing-planning-workspace .volume-manager-panel, .writing-planning-workspace .chapter-split-ai-panel, .writing-planning-workspace .volume-manager-ai-panel { border: 0; border-radius: 0; padding: 16px 0; background: white; }
 .writing-planning-workspace .outline-volume-list { border: 0; border-top: 1px solid var(--line); border-radius: 0; background: white; }
 .writing-planning-workspace .outline-volume-row { border-radius: 0; background: white; }
-.writing-planning-workspace .volume-manager-targets label, .writing-planning-workspace .chapter-split-controls label { color: #515e71; font-size: 13px; }
-.writing-planning-workspace .volume-manager-targets input,
+.writing-planning-workspace .chapter-split-controls label { color: #515e71; font-size: 13px; }
 .writing-planning-workspace .chapter-split-controls input,
 .writing-planning-workspace .chapter-split-controls select { border-color: var(--line); border-radius: 5px; color: #303640; font-size: 13px; }
 .writing-planning-workspace .chapter-split-ai-heading { flex-wrap: wrap; }
@@ -140,7 +139,7 @@
   .writing-planning-workspace .chapter-focus-header { align-items: start; flex-wrap: wrap; padding: 12px 10px; }
   .compact-plan-savebar { align-items: start; }
   .compact-plan-savebar label, .compact-plan-savebar > div { width: 100%; }
-  .writing-planning-workspace .volume-manager-targets, .writing-planning-workspace .chapter-split-controls { grid-template-columns: minmax(0, 1fr); }
+  .writing-planning-workspace .chapter-split-controls { grid-template-columns: minmax(0, 1fr); }
 }
 .free-planning-editor { display: flex; flex: 1; flex-direction: column; gap: 12px; }
 .free-planning-editor > * { flex-shrink: 0; }
@@ -154,3 +153,21 @@
 .plan-reference-tree { margin: 8px 0 0 10px; }
 .plan-reference-tree > summary { color: #66758b; cursor: pointer; font-size: 12px; padding: 8px 0; }
 .planning-start-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.writing-planning-workspace .book-preferences-editor,
+.writing-planning-workspace .plan-inspector-work-design .book-preferences-editor {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.book-preferences-editor .free-planning-editor,
+.book-preferences-editor .free-planning-editor > label { flex: 0 0 auto; }
+.book-preferences-editor .free-planning-editor > label > textarea { flex: none; min-height: 112px; }
+.volume-book-preferences { margin: 16px 0 8px; }
+.volume-book-preferences > summary { cursor: pointer; font-size: 13px; }
+.volume-book-preferences > summary > small { margin-left: 12px; color: var(--muted); font-size: 12px; }
+.volume-book-preferences[open] > summary { margin-bottom: 12px; }
+.volume-book-preferences-preview { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.volume-book-preferences[open] + .volume-book-preferences-preview { display: none; }

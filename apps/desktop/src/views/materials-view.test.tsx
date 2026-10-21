@@ -51,12 +51,27 @@ describe("MaterialsView", () => {
     expect(screen.queryByRole("textbox", { name: "摘要内容" })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "新建参考摘要" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "新建参考摘要" }));
+    expect(screen.getByLabelText("摘要内容")).toHaveFocus();
+    expect(screen.getByRole("button", { name: "新建参考摘要" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "保存摘要" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("摘要内容"), { target: { value: "作者参考" } });
     fireEvent.click(screen.getByRole("button", { name: "保存摘要" }));
     await waitFor(() => expect(mocks.upsertSummaryMaterial).toHaveBeenCalledWith(expect.objectContaining({
       content: "作者参考", generationMode: "MANUAL_REFERENCE", precision: "L0", lifecycleStatus: "ACTIVE",
     })));
+  });
+  it("clears a no-match search without discarding an unsaved material", async () => {
+    mocks.listSummaryMaterials.mockResolvedValue([summary]);
+    renderView();
+    await screen.findByRole("button", { name: /章节记忆正文/ });
+    fireEvent.click(screen.getByRole("button", { name: "新建参考摘要" }));
+    fireEvent.change(screen.getByLabelText("摘要内容"), { target: { value: "正在整理的新笔记" } });
+    fireEvent.change(screen.getByLabelText("搜索参考资料"), { target: { value: "不存在" } });
+    expect(screen.getByText("没有匹配资料")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "清空搜索" }));
+    expect(screen.getByLabelText("摘要内容")).toHaveValue("正在整理的新笔记");
+    expect(screen.getByRole("button", { name: /章节记忆正文/ })).toBeVisible();
+    expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
   });
   it("identifies chapter memories by source chapter and searches those names", async () => {
     mocks.listSummaryMaterials.mockResolvedValue([{ ...summary, updatedAt: "2026-10-14T10:00:00Z" }]);
@@ -98,6 +113,19 @@ describe("MaterialsView", () => {
       await waitFor(() => expect(list.scrollTop).toBe(145));
     } finally { media.mockRestore(); }
   });
+  it("keeps focus on the new material input on narrow screens", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      matches: query.includes("max-width"), addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList));
+    renderView();
+    await waitFor(() => expect(screen.getByRole("button", { name: "新建参考摘要" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "新建参考摘要" }));
+    expect(screen.getByLabelText("摘要内容")).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByRole("button", { name: "写作卡片" }));
+    fireEvent.click(screen.getByRole("button", { name: "新建卡片" }));
+    expect(screen.getByLabelText("标题")).toHaveFocus();
+  });
   it("renders large lists in batches while searching the full collection", async () => {
     mocks.listWritingCards.mockResolvedValue(Array.from({ length: 205 }, (_, index) => ({
       id: `card-${index}`, title: `卡片 ${index}`, content: `正文 ${index}`, enabled: true, cardType: "STYLE_RULE",
@@ -130,6 +158,7 @@ describe("MaterialsView", () => {
     expect(saved.id).not.toBe(summary.id);
     expect(saved).toMatchObject({ content: "手工改写", generationMode: "MANUAL_REFERENCE", precision: "L0",
       sourceId: summary.sourceId, sourceVersion: summary.sourceVersion });
+    expect(await screen.findByText("参考副本已保存，原摘要未改动。")).toBeVisible();
   });
   it("guards dirty switching and locks switching during a save; failure keeps the draft", async () => {
     let reject!: (error: Error) => void;
@@ -155,14 +184,64 @@ describe("MaterialsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "写作卡片" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "新建卡片" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "新建卡片" }));
+    expect(screen.getByLabelText("标题")).toHaveFocus();
+    expect(screen.getByLabelText("排序")).not.toBeVisible();
     fireEvent.change(screen.getByLabelText("标题"), { target: { value: "节奏" } });
     fireEvent.change(screen.getByLabelText("卡片内容"), { target: { value: "交替长短句" } });
+    fireEvent.click(screen.getByText("高级信息"));
     fireEvent.change(screen.getByLabelText("排序"), { target: { value: "" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("排序需填写有效整数");
     expect(screen.getByRole("button", { name: "保存卡片" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("排序"), { target: { value: "4" } });
     expect(mocks.upsertWritingCard).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
     await waitFor(() => expect(mocks.upsertWritingCard).toHaveBeenCalledWith(expect.objectContaining({ sortOrder: 4 })));
+  });
+  it("saves only the current material with the shortcut and ignores IME composition", async () => {
+    renderView();
+    await waitFor(() => expect(screen.getByRole("button", { name: "新建参考摘要" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "新建参考摘要" }));
+    const content = screen.getByLabelText("摘要内容");
+    fireEvent.keyDown(content, { key: "s", ctrlKey: true });
+    expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
+    fireEvent.change(content, { target: { value: "待保存的摘要" } });
+    expect(screen.getByText("有未保存修改")).toBeVisible();
+    fireEvent.keyDown(content, { key: "s", ctrlKey: true, isComposing: true });
+    expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
+    fireEvent.keyDown(content, { key: "s", ctrlKey: true });
+    await waitFor(() => expect(mocks.upsertSummaryMaterial).toHaveBeenCalledTimes(1));
+    expect(mocks.upsertWritingCard).not.toHaveBeenCalled();
+  });
+  it("keeps the current material editor when its selected list item is clicked again", async () => {
+    mocks.listSummaryMaterials.mockResolvedValue([summary]);
+    renderView(); await selectSummary();
+    fireEvent.click(screen.getByRole("button", { name: "编辑参考副本" }));
+    fireEvent.change(screen.getByLabelText("摘要内容"), { target: { value: "尚未保存的副本" } });
+    const confirm = vi.spyOn(window, "confirm");
+    await selectSummary();
+    expect(screen.getByLabelText("摘要内容")).toHaveValue("尚未保存的副本");
+    expect(confirm).not.toHaveBeenCalled();
+  });
+  it("does not save an unchanged manual reference", async () => {
+    mocks.listSummaryMaterials.mockResolvedValue([{ ...summary, generationMode: "MANUAL_REFERENCE" }]);
+    renderView(); await selectSummary();
+    fireEvent.click(screen.getByRole("button", { name: "编辑资料" }));
+    expect(screen.getByRole("button", { name: "保存摘要" })).toBeDisabled();
+    fireEvent.keyDown(screen.getByLabelText("摘要内容"), { key: "s", metaKey: true });
+    expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("摘要内容"), { target: { value: "修改后" } });
+    expect(screen.getByRole("button", { name: "保存摘要" })).toBeEnabled();
+  });
+  it("permits an unchanged automatic summary to be saved as a separate manual copy", async () => {
+    mocks.listSummaryMaterials.mockResolvedValue([summary]);
+    renderView(); await selectSummary();
+    fireEvent.click(screen.getByRole("button", { name: "编辑参考副本" }));
+    expect(screen.getByRole("button", { name: "另存为参考摘要" })).toBeEnabled();
+    fireEvent.keyDown(screen.getByLabelText("摘要内容"), { key: "s", metaKey: true });
+    await waitFor(() => expect(mocks.upsertSummaryMaterial).toHaveBeenCalledWith(expect.objectContaining({
+      generationMode: "MANUAL_REFERENCE", content: summary.content,
+    })));
+    expect(mocks.upsertSummaryMaterial.mock.calls[0][0].id).not.toBe(summary.id);
   });
   it("enqueues real regeneration, follows failure, and permits another refresh", async () => {
     mocks.listSummaryMaterials.mockResolvedValue([summary]);

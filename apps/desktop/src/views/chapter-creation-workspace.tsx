@@ -176,6 +176,11 @@ export function ChapterCreationWorkspace({
             onClick={() => state.setManuscriptTab("manuscript")}>阅读</button>
         </div>
         <div className="creation-local-tools">
+          <button type="button" className="creation-plan-trigger" aria-label="本章计划" title={planDirty ? "本章计划有未保存修改" : "本章计划"}
+            aria-pressed={assistantVisible && assistantTab === "plan"}
+            onClick={() => { setFocused(false); selectAssistantTab("plan"); setAssistantOpen(true); }}>
+            <ClipboardList size={16} /><span>本章计划</span>{planDirty ? <span className="plan-unsaved-dot" aria-label="计划未保存" /> : null}
+          </button>
           <WritingDisplayControls focused={focused} onFocusChange={setFocused} />
           <button type="button" className="icon-command" title="历史版本" aria-label="历史版本"
             onClick={() => state.setManuscriptTab("versions")}><History size={17} />
@@ -243,6 +248,10 @@ export function ChapterCreationWorkspace({
         <div className="creation-document-heading"><h3>已保存正文</h3>
           <span>{state.manuscript.data ? formatSavedAt(state.manuscript.data.createdAt) : "尚无版本"}</span>
         </div>
+        {state.chapterDirty ? <div className="creation-memory-status" role="status">
+          <span>当前草稿有未保存修改</span>
+          <button type="button" className="secondary-action" onClick={() => state.setManuscriptTab("candidate")}>继续编辑草稿</button>
+        </div> : null}
         {state.manuscript.data ? <ManuscriptReader documentJson={state.manuscript.data.documentJson} /> : <div className="creation-empty">
           <BookOpenText size={24} /><p>本章尚无已保存正文</p>
           <button type="button" className="primary-action" onClick={() => state.setManuscriptTab("candidate")}>开始写作</button>
@@ -306,7 +315,13 @@ export function ChapterCreationWorkspace({
         {visitedAssistantTabs.includes("plan") ? <div className="creation-plan">
           {volume ? <details><summary>{volume.title}</summary><p>{volumePlan.trim() || "尚未填写分卷规划"}</p></details> : null}
           <label htmlFor="creation-chapter-plan">本章计划</label>
-          <textarea id="creation-chapter-plan" disabled={!planReady} rows={12} value={chapterPlan} onChange={(event) => onPlanChange(event.target.value)}
+          <textarea id="creation-chapter-plan" disabled={!planReady} rows={8} value={chapterPlan} onChange={(event) => onPlanChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey
+                || event.key.toLowerCase() !== "s" || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              if (planReady && !savingPlan && planDirty && chapterPlan.trim()) void onSavePlan();
+            }}
             placeholder="本章想写的情境、事件或接下来的一步…" />
           <button type="button" className="primary-action" onClick={() => void onSavePlan()}
             disabled={!planReady || savingPlan || !planDirty || !chapterPlan.trim()}><Save size={14} />{savingPlan ? "保存中…" : "保存计划"}</button>

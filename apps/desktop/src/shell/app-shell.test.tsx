@@ -75,7 +75,7 @@ describe("global workspace shell", () => {
     await screen.findByRole("link", { name: "资料" });
     const navigation = within(screen.getByRole("complementary", { name: "主要导航" }));
     expect(navigation.getAllByRole("link").map((link) => link.getAttribute("aria-label")))
-      .toEqual(["创作准备", "写作", "构思", "大纲", "资料", "待办", "设置"]);
+      .toEqual(["大纲规划", "写作", "构思", "资料", "待办", "设置"]);
     expect(within(screen.getByLabelText("全局工具")).getByRole("link", { name: "搜索" })).toBeVisible();
     expect(within(screen.getByLabelText("全局工具")).getByRole("link", { name: "后台活动" })).toBeVisible();
     expect(navigation.queryByRole("link", { name: "项目" })).not.toBeInTheDocument();

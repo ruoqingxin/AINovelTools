@@ -110,6 +110,31 @@ describe("KnowledgeRecordsView", () => {
     render(<QueryClientProvider client={client}><KnowledgeRecordsView /></QueryClientProvider>);
     return client;
   }
+  it("resets filtered empty records without discarding an edited draft", async () => {
+    mocks.listRelations.mockResolvedValue([existing]);
+    renderRecords();
+    fireEvent.click(await screen.findByRole("button", { name: /同盟/ }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑记录" }));
+    fireEvent.change(screen.getByLabelText("关系类型"), { target: { value: "正在修改" } });
+    fireEvent.change(screen.getByLabelText("搜索剧情记录"), { target: { value: "不存在" } });
+    fireEvent.change(screen.getByLabelText("审核状态筛选"), { target: { value: "ARCHIVED" } });
+    fireEvent.click(screen.getByRole("button", { name: "重置筛选" }));
+    expect(screen.getByLabelText("搜索剧情记录")).toHaveValue("");
+    expect(screen.getByLabelText("审核状态筛选")).toHaveValue("ALL");
+    expect(screen.getByLabelText("关系类型")).toHaveValue("正在修改");
+    expect(screen.getByRole("button", { name: /同盟/ })).toBeVisible();
+    expect(mocks.updateRelation).not.toHaveBeenCalled();
+  });
+  it("shows a load failure without also claiming there are no records and retries in place", async () => {
+    mocks.listRelations.mockRejectedValueOnce(new Error("记录读取失败"));
+    renderRecords();
+    expect(await screen.findByRole("alert")).toHaveTextContent("记录读取失败");
+    expect(screen.queryByText("暂无关系记录")).not.toBeInTheDocument();
+    expect(screen.queryByText("选择一条剧情记录")).not.toBeInTheDocument();
+    mocks.listRelations.mockResolvedValue([existing]);
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("button", { name: /同盟/ })).toBeVisible();
+  });
   it("does not treat a clean loaded record as dirty and guards actual edits", async () => {
     mocks.listRelations.mockResolvedValue([existing]);
     renderRecords();

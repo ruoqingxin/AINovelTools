@@ -135,8 +135,9 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
   const dirtyEntry = Object.values(entries).find((entry) => entry.dirty);
   const dirty = Boolean(dirtyEntry);
   const shouldBlock = useCallback(
-    ({ current, next }: { current: { pathname: string }; next: { pathname: string } }) => (
-      Object.values(entriesRef.current).some((entry) => entry.dirty) && current.pathname !== next.pathname
+    ({ current, next }: { current: { pathname: string; search?: Record<string, unknown> }; next: { pathname: string; search?: Record<string, unknown> } }) => (
+      Object.values(entriesRef.current).some((entry) => entry.dirty)
+      && (current.pathname !== next.pathname || current.pathname === "/planning" && JSON.stringify(current.search) !== JSON.stringify(next.search))
     ),
     [],
   );

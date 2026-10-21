@@ -147,6 +147,54 @@ describe("SearchView", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "novel" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("index unavailable");
     expect(screen.getByRole("link", { name: "前往数据管理修复" })).toHaveAttribute("href", "/settings#data-management");
+    mocks.searchProject.mockResolvedValue([result(1)]);
+    fireEvent.click(screen.getByRole("button", { name: "重试搜索" }));
+    expect(await screen.findByText("result-1")).toBeVisible();
+    expect(screen.getByRole("textbox")).toHaveValue("novel");
+    expect(mocks.rebuildSearchIndex).not.toHaveBeenCalled();
+  });
+
+  it("widens an empty filtered search without losing the keyword", async () => {
+    window.history.replaceState(null, "", "/search?q=雾城&type=CARD");
+    mocks.searchProject.mockImplementation(async (_query, type) => type ? [] : [result(1)]);
+    renderSearch();
+    fireEvent.click(await screen.findByRole("button", { name: "搜索全部类型" }));
+    expect(await screen.findByText("result-1")).toBeVisible();
+    expect(screen.getByRole("combobox")).toHaveValue("");
+    expect(screen.getByRole("textbox")).toHaveValue("雾城");
+  });
+
+  it("clears the current search with one click and keeps focus", async () => {
+    window.history.replaceState(null, "", "/search?q=雾城&type=CARD");
+    mocks.searchProject.mockResolvedValue([result(1)]);
+    renderSearch();
+    await screen.findByText("result-1");
+    fireEvent.click(screen.getByRole("button", { name: "清空搜索项目内容" }));
+    expect(screen.getByRole("textbox")).toHaveValue("");
+    expect(screen.getByRole("textbox")).toHaveFocus();
+    expect(screen.getByRole("combobox")).toHaveValue("CARD");
+    expect(screen.queryByText("result-1")).not.toBeInTheDocument();
+  });
+
+  it("recovers a project read failure without leaving an indefinite searching state", async () => {
+    window.history.replaceState(null, "", "/search?q=雾城");
+    mocks.getCurrentProject.mockRejectedValueOnce(new Error("project unavailable"));
+    renderSearch();
+    expect(await screen.findByRole("alert")).toHaveTextContent("project unavailable");
+    expect(screen.queryByText("正在搜索…")).not.toBeInTheDocument();
+    expect(mocks.searchProject).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByText("没有匹配结果。");
+    expect(mocks.searchProject).toHaveBeenCalledWith("雾城", undefined, 50, 0);
+  });
+
+  it("does not show a permanent loading state when no project is open", async () => {
+    window.history.replaceState(null, "", "/search?q=雾城");
+    mocks.getCurrentProject.mockResolvedValue(null);
+    renderSearch();
+    expect(await screen.findByText("尚未打开作品")).toBeVisible();
+    expect(screen.queryByText("正在搜索…")).not.toBeInTheDocument();
+    expect(mocks.searchProject).not.toHaveBeenCalled();
   });
 
   it("restores query and filter and links an exact manuscript revision with its return context", async () => {

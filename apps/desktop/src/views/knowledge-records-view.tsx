@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Milestone, Pencil, Plus, Save, Search, Sparkles, UserRoundCheck } from "lucide-react";
+import { Link2, Milestone, Pencil, Plus, Save, Sparkles, UserRoundCheck } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import {
   createBelief,
@@ -25,6 +25,7 @@ import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { manuscriptSourceHref } from "../lib/manuscript-source";
 import "./library-workspace.css";
+import { SearchField } from "./search-field";
 
 type RecordTab = "relations" | "events" | "beliefs" | "foreshadowings";
 
@@ -239,18 +240,23 @@ export function KnowledgeRecordsView() {
           <option value="NEEDS_REVIEW">待复核</option>
           <option value="ARCHIVED">已归档</option>
         </select>
-        <label className="search-field"><Search size={15} /><input aria-label="搜索剧情记录" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索记录" /></label>
+        <SearchField label="搜索剧情记录" value={search} onChange={setSearch} placeholder="搜索记录" />
         <button type="button" className="primary-action" disabled={busy || !project.data} onClick={startNew}><Plus size={15} />新建记录</button>
       </div>
       {error ? <p className="project-error" role="alert">{error}</p> : null}
       {notice ? <p className="project-notice" role="status">{notice}</p> : null}
 
-      {project.isError ? <p role="alert" className="project-error">{errorMessage(project.error)}</p> : null}
+      {project.isError ? <p role="alert" className="project-error">{errorMessage(project.error)}
+        <button type="button" className="secondary-action" disabled={project.isFetching} onClick={() => void project.refetch()}>重试作品信息</button></p> : null}
       <div className="library-layout">
         <aside className="library-list" aria-label="剧情记录列表">
           {query.isError ? <p className="project-error" role="alert">无法加载记录：{errorMessage(query.error)}<button type="button" onClick={() => void query.refetch()}>重试</button></p> : null}
           {query.isPending ? <p className="plan-empty">正在加载记录…</p> : null}
-          {!query.isPending && !visibleRecords.length ? <p className="plan-empty">暂无匹配的{tabs.find((item) => item.id === tab)?.label}记录。</p> : null}
+          {query.isSuccess && !visibleRecords.length ? <div className="library-list-empty">
+            <p className="plan-empty">{content.length ? "没有符合条件的记录。" : `暂无${tabs.find((item) => item.id === tab)?.label}记录`}</p>
+            {search || lifecycleFilter !== "ALL" ? <button type="button" className="secondary-action" onClick={() => {
+              setSearch(""); setLifecycleFilter("ALL");
+            }}>重置筛选</button> : null}</div> : null}
           {visibleRecords.map((item) => <button type="button" className="library-item" data-selected={selectedId === item.id} disabled={busy} key={item.id} onClick={() => {
             if (item.id === selectedId || !mayLeave()) return;
             setSelectedId(item.id); setEditing(false); setError(null); setNotice(null);
@@ -266,7 +272,8 @@ export function KnowledgeRecordsView() {
             return anchor ? <a key={id} href={manuscriptSourceHref({ projectId: project.data?.projectId, evidenceAnchorId: id }, "/knowledge/records")}>
               {chapterList.find((chapter) => chapter.id === anchor.chapterId)?.title ?? "未命名章节"} · 查看来源证据</a> : <p key={id}>证据暂不可用</p>;
           })}</div>
-        </> : !editing ? <div className="library-empty"><p>选择一条剧情记录</p></div> : null}
+        </> : !editing ? <div className="library-empty"><p>{query.isPending ? "正在加载记录…" : query.isError ? "记录暂不可用"
+          : !content.length ? "尚未添加剧情记录" : "选择一条剧情记录"}</p></div> : null}
         {editing ? <form className="library-form" onSubmit={(form) => { form.preventDefault(); void save(); }}>
           <div className="section-heading"><h2>{selectedId ? `编辑${tabs.find((item) => item.id === tab)?.label}记录` : `新建${tabs.find((item) => item.id === tab)?.label}记录`}</h2><span>{selectedId ? `编辑基于 v${editVersion}` : `${evidenceIds.length} 条证据`}</span></div>
           {selectedId && editVersion !== activeVersion ? <p role="status" className="project-notice">记录已有新版本，本地修改仍保留。保存时将检查版本冲突。</p> : null}

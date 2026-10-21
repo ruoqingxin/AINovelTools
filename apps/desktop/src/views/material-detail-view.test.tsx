@@ -98,6 +98,26 @@ describe("material detail navigation", () => {
     expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
   });
 
+  it("saves a card in place with a clear confirmation and retains its source return link", async () => {
+    mocks.upsertWritingCard.mockImplementation(async (value) => {
+      mocks.getWritingCard.mockResolvedValue(value);
+      return value;
+    });
+    renderTarget("?card=card-1&targetProject=project-1&returnTo=%2Fsearch%3Fq%3D节奏");
+    fireEvent.click(await screen.findByRole("button", { name: "编辑资料" }));
+    expect(screen.getByRole("button", { name: "保存卡片" })).toBeDisabled();
+    const content = screen.getByLabelText("卡片内容");
+    fireEvent.change(content, { target: { value: "修改后的节奏规则" } });
+    fireEvent.keyDown(content, { key: "s", ctrlKey: true });
+    expect(await screen.findByText("资料已保存")).toBeVisible();
+    expect(screen.getByText("修改后的节奏规则")).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "卡片内容" })).not.toBeInTheDocument();
+    const returnUrl = new URL(screen.getByRole("link", { name: "返回来源" }).getAttribute("href")!, window.location.origin);
+    expect(returnUrl.pathname).toBe("/search");
+    expect(returnUrl.searchParams.get("q")).toBe("节奏");
+    expect(mocks.upsertWritingCard).toHaveBeenCalledOnce();
+  });
+
   it("does not expose an external return or a manual label as manuscript evidence", async () => {
     mocks.getSummaryMaterial.mockResolvedValue({ ...summary, generationMode: "MANUAL_REFERENCE" });
     renderTarget("?summary=summary-1&targetProject=project-1&returnTo=https%3A%2F%2Fother.test");

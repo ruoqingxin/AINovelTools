@@ -1,0 +1,20 @@
+.clearable-search-field { min-width: 0; border-radius: 5px; }
+.clearable-search-field > svg { flex: 0 0 auto; }
+.clearable-search-field > input { width: 0; }
+.clearable-search-field:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.clearable-search-field .search-field-clear {
+  display: inline-flex;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.clearable-search-field .search-field-clear:hover { background: var(--surface-subtle); }

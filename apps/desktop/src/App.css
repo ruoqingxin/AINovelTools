@@ -400,10 +400,6 @@ textarea:focus-visible,
 .chapter-split-progress span, .chapter-split-progress small { font-size:9px; }
 .chapter-split-progress strong { color:#34588f; font-size:12px; }
 .chapter-split-candidate textarea { width:100%; min-height:154px; padding:9px 10px; border:1px solid #d8c89d; border-radius:6px; color:#604f31; background:#fff; font:inherit; font-size:11px; line-height:1.6; resize:vertical; }
-.volume-manager-targets { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
-.volume-manager-targets label { display:grid; gap:5px; color:#526b91; font-size:10px; font-weight:600; }
-.volume-manager-targets input { min-width:0; height:36px; padding:0 10px; border:1px solid #c6d5eb; border-radius:7px; color:#405a7f; background:#fff; font:inherit; font-size:11px; }
-.volume-manager-targets input:focus { border-color:#7fa6f6; outline:2px solid rgba(79,127,224,.12); }
 .volume-manager-candidate textarea { width:100%; min-height:124px; padding:9px 10px; border:1px solid #d8c89d; border-radius:6px; color:#604f31; background:#fff; font:inherit; font-size:11px; line-height:1.6; resize:vertical; }
 .node-plan-job { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 10px; align-items:center; color:#7183a0; font-size:10px; }
 .node-plan-job > div { grid-column:1 / -1; height:5px; overflow:hidden; border-radius:4px; background:#e2eaf7; }
@@ -2905,7 +2901,7 @@ textarea:focus-visible,
 
 @media (max-width: 780px) {
   .planning-phase-strip { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .volume-manager-targets, .chapter-split-controls { grid-template-columns:1fr; }
+  .chapter-split-controls { grid-template-columns:1fr; }
   .outline-next-step, .volume-split-next-step { align-items:flex-start; flex-direction:column; }
   .outline-next-actions { width:100%; }
   .outline-next-actions button { flex:1 1 auto; }

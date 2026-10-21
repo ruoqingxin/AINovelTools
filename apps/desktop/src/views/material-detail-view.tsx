@@ -12,6 +12,7 @@ import { automaticSummary, MaterialEditor, SummaryActions } from "./material-con
 export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<typeof parseMaterialTarget>> }) {
   const [editing, setEditing] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject, staleTime: 30_000 });
   const valid = Boolean(target.kind && target.id && target.projectId && project.data?.projectId === target.projectId);
   const summary = useQuery({
@@ -42,6 +43,7 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
       </div>
     </div>
     <KnowledgeSectionNav />
+    {notice ? <p role="status" className="project-notice">{notice}</p> : null}
     {project.isPending || valid && result.isPending ? <p role="status">正在读取资料…</p> : null}
     {unavailable ? <p className="project-error" role="alert">资料链接无效或不属于当前项目，未打开其他资料。</p> : null}
     {project.isError || valid && result.isError ? <div className="project-error" role="alert">资料读取失败：{errorMessage(project.error ?? result.error)}
@@ -51,7 +53,10 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
       <h2>{currentCard?.title ?? (currentSummary?.generationMode === "EXTRACTIVE_AUTO" ? "章节记忆" : currentSummary?.generationMode === "EXTRACTIVE_AUTO_SETTINGS" ? "设定概览" : currentSummary?.generationMode === "EXTRACTIVE_AUTO_PROJECT" ? "项目概览" : "参考摘要")}</h2>
       {editing && project.data && target.kind ? <MaterialEditor key={item.id} kind={target.kind} projectId={project.data.projectId}
         summary={currentSummary ?? undefined} card={currentCard ?? undefined} onCancel={() => setEditing(false)}
-        onSaved={(id) => { if (id !== item.id) window.location.assign(materialHref("SUMMARY", id, target.projectId, returnTo ?? undefined)); else setEditing(false); }} /> : <>
+        onSaved={(id) => {
+          if (id !== item.id) window.location.assign(materialHref("SUMMARY", id, target.projectId, returnTo ?? undefined));
+          else { setEditing(false); setNotice("资料已保存"); }
+        }} /> : <>
       <details className="library-advanced"><summary>来源与高级信息</summary><dl className="material-detail-metadata">
         <div><dt>对象</dt><dd><code>{item.id}</code></dd></div>
         <div><dt>来源标识</dt><dd><code>{item.sourceVersion ?? "无"}</code></dd></div>
@@ -60,7 +65,7 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
         {currentCard ? <div><dt>状态 / 范围</dt><dd>{currentCard.enabled ? "已启用" : "已停用"} · {currentCard.scope}</dd></div> : null}
       </dl></details>
       <p className="material-detail-content">{item.content}</p>
-      <div className="library-actions"><button type="button" className="secondary-action" disabled={actionBusy} onClick={() => setEditing(true)}><Pencil size={15} />
+      <div className="library-actions"><button type="button" className="secondary-action" disabled={actionBusy} onClick={() => { setEditing(true); setNotice(null); }}><Pencil size={15} />
         {currentSummary && automaticSummary(currentSummary) ? "编辑参考副本" : "编辑资料"}</button></div>
       {currentSummary ? <SummaryActions item={currentSummary} onBusyChange={setActionBusy} /> : null}
       {sourceHref ? <a className="secondary-action" href={sourceHref}><BookOpenText size={15} />查看摘要来源正文</a> : null}

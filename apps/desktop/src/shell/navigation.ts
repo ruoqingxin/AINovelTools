@@ -1,16 +1,16 @@
-import { BookOpenText, ClipboardList, FileSearch, ListTree, MessageSquareText, ShieldCheck } from "lucide-react";
+import { BookOpenText, FileSearch, ListTree, MessageSquareText, ShieldCheck } from "lucide-react";
 
 export const primaryNavigation = [
-  { label: "创作准备", icon: ClipboardList, path: "/preparation" },
+  { label: "大纲规划", icon: ListTree, path: "/planning" },
   { label: "写作", icon: BookOpenText, path: "/writing" },
   { label: "构思", icon: MessageSquareText, path: "/discussion" },
-  { label: "大纲", icon: ListTree, path: "/planning" },
   { label: "资料", icon: FileSearch, path: "/knowledge" },
   { label: "待办", icon: ShieldCheck, path: "/review" },
 ] as const;
 
 export function primaryDestination(pathname: string) {
   if (pathname === "/chapters") return "/writing";
+  if (pathname === "/preparation") return "/planning";
   if (pathname === "/knowledge/review") return "/review";
   return primaryNavigation.find(({ path }) => pathname === path || pathname.startsWith(`${path}/`))?.path;
 }

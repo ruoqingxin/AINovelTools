@@ -273,8 +273,11 @@ describe("DiscussionView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
     const title = await screen.findByDisplayValue("作品共创讨论");
+    expect(title).toHaveFocus();
+    expect(screen.getByLabelText("构思类型")).not.toBeVisible();
+    expect(screen.getByLabelText("范围")).not.toBeVisible();
     fireEvent.change(title, { target: { value: "第二卷剧情讨论" } });
-    fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
+    fireEvent.submit(title.closest("form")!);
 
     await waitFor(() =>
       expect(mocks.createDiscussionSession).toHaveBeenCalledWith({
@@ -304,6 +307,7 @@ describe("DiscussionView", () => {
     renderView();
 
     fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
+    fireEvent.click(await screen.findByText(/^分类与范围/));
     const scopeSelect = await screen.findByLabelText("范围");
     fireEvent.change(scopeSelect, { target: { value: "SELECTION" } });
     fireEvent.change(await screen.findByLabelText("章节"), {
@@ -536,6 +540,7 @@ describe("DiscussionView", () => {
   it("creates an item discussion without requiring a name or chapter", async () => {
     renderView();
     fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
+    fireEvent.click(await screen.findByText(/^分类与范围/));
     fireEvent.change(await screen.findByLabelText("构思类型"), { target: { value: "ITEM" } });
     fireEvent.click(screen.getByRole("button", { name: "建立会话" }));
     await waitFor(() => expect(mocks.createDiscussionSession).toHaveBeenCalledWith(

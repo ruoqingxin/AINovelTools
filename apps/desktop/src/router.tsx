@@ -11,9 +11,11 @@ import type { ReactNode } from "react";
 import { AppShell } from "./shell/app-shell";
 import { EmptyProjectView } from "./views/empty-project-view";
 import { useQuery } from "@tanstack/react-query";
-import { getCurrentProject, listPlanNodes } from "./lib/tauri-client";
+import { getCurrentProject, listPlanningSections, listPlanNodes } from "./lib/tauri-client";
 import { parseManuscriptSource } from "./lib/manuscript-source";
 import { parseDiscussionSource } from "./lib/discussion-source";
+import { buildPreparationStages, preparationProgress } from "./views/creation-preparation";
+import { readPlanningReview } from "./views/planning-review";
 
 const ProjectWorkspaceView = lazyRouteComponent(() => import("./views/project-workspace-view"), "ProjectWorkspaceView");
 const StoryBibleView = lazyRouteComponent(() => import("./views/story-bible-view"), "StoryBibleView");
@@ -27,7 +29,7 @@ const KnowledgeRecordsView = lazyRouteComponent(() => import("./views/knowledge-
 const AuthorSettingsView = lazyRouteComponent(() => import("./views/author-settings-view"), "AuthorSettingsView");
 const ManuscriptSourceView = lazyRouteComponent(() => import("./views/manuscript-source-view"), "ManuscriptSourceView");
 const DiscussionSourceView = lazyRouteComponent(() => import("./views/discussion-source-view"), "DiscussionSourceView");
-const CreationPreparationView = lazyRouteComponent(() => import("./views/creation-preparation-view"), "CreationPreparationView");
+const PlanningWorkspaceView = lazyRouteComponent(() => import("./views/planning-workspace-view"), "PlanningWorkspaceView");
 
 function RouteErrorView({ error, reset }: { error: Error; reset: () => void }) {
   const goBack = () => {
@@ -59,17 +61,20 @@ function ProjectIndexView() {
   const { manage } = useSearch({ from: "/" });
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes, enabled: Boolean(project.data) && manage !== "1" });
+  const sections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections, enabled: Boolean(project.data) && manage !== "1" });
   if (manage === "1") return <EmptyProjectView />;
   if (project.isPending) return <p className="route-loading">正在读取作品…</p>;
   if (project.isError) throw project.error;
   if (!project.data) return <EmptyProjectView />;
-  if (nodes.isPending) return <p className="route-loading">正在读取创作进度…</p>;
-  if (nodes.isError) throw nodes.error;
-  return <Navigate to={nodes.data.some((node) => node.kind === "CHAPTER" && !node.archived) ? "/writing" : "/preparation"} replace />;
+  if (nodes.isPending || sections.isPending) return <p className="route-loading">正在读取创作进度…</p>;
+  if (nodes.isError || sections.isError) throw nodes.error ?? sections.error;
+  const preparationStarted = sections.data.some((section) => readPlanningReview(section));
+  const preparationIncomplete = preparationStarted && !preparationProgress(buildPreparationStages(nodes.data), sections.data).ready;
+  return <Navigate to={nodes.data.some((node) => node.kind === "CHAPTER" && !node.archived) && !preparationIncomplete ? "/writing" : "/planning"} replace />;
 }
 
 function PlanningEntryView() {
-  return <ProjectGate><ProjectWorkspaceView /></ProjectGate>;
+  return <ProjectGate><PlanningWorkspaceView /></ProjectGate>;
 }
 
 function WritingEntryView() {
@@ -113,12 +118,17 @@ const indexRoute = createRoute({
 const planningRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/planning",
+  validateSearch: (search: Record<string, unknown>): Record<string, unknown> & { mode?: "structure" | "prepare"; item?: string } => ({
+    ...search,
+    mode: search.mode === "structure" ? "structure" as const : search.mode === "prepare" ? "prepare" as const : undefined,
+    item: typeof search.item === "string" ? search.item : undefined,
+  }),
   component: PlanningEntryView,
 });
 const preparationRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/preparation",
-  component: () => <ProjectGate><CreationPreparationView /></ProjectGate>,
+  component: () => <Navigate to="/planning" search={{ mode: "prepare" }} replace />,
 });
 
 const writingRoute = createRoute({

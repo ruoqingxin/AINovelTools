@@ -36,7 +36,8 @@ export function ReviewCenterView() {
       </select>
     </div>
     {queue.isPending ? <p className="plan-empty" role="status">正在加载待办…</p>
-      : queue.isError ? <p className="project-error" role="alert">待办加载失败：{errorMessage(queue.error)}</p>
+      : queue.isError ? <p className="project-error" role="alert">待办加载失败：{errorMessage(queue.error)}
+        <button type="button" className="secondary-action" disabled={queue.isFetching} onClick={() => void queue.refetch()}><RefreshCw size={14} />重试加载</button></p>
       : items.length ? <div className="todo-list" aria-label="待处理事项">
         {items.map((item) => <article className="todo-row" key={`${item.kind}-${item.targetId}`} data-risk={item.highRisk || undefined}>
           <div className="todo-target"><strong>{item.targetTitle}</strong><span>{todoLabels[item.kind].title} · {item.count} 项</span></div>
@@ -44,6 +45,7 @@ export function ReviewCenterView() {
             <span>{todoLabels[item.kind].status}</span></div>
           <a className="secondary-action" href={todoHref(item, queue.data.projectId)}>{todoLabels[item.kind].action}</a>
         </article>)}
-      </div> : <div className="activity-empty"><ClipboardCheck size={26} /><p>{kind === "ALL" ? "暂无待处理事项" : "此类暂无待办"}</p></div>}
+      </div> : <div className="activity-empty"><ClipboardCheck size={26} /><p>{kind === "ALL" ? "暂无待处理事项" : "此类暂无待办"}</p>
+        {kind !== "ALL" ? <button type="button" className="secondary-action" onClick={() => setKind("ALL")}>查看全部待办</button> : null}</div>}
   </section>;
 }

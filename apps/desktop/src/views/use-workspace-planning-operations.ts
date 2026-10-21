@@ -1,8 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { adoptPlanBatch, enqueuePlanningAiJob, errorMessage, savePlanningSection, type AiTaskPreference, type ModelProfile, type PlanNode, type PlanningSection } from "../lib/tauri-client";
-import { buildVolumePlanTargetGuidance, nodePlanId, nodePlanPrompt, parseChapterPlanCandidates, parseVolumePlanCandidates } from "./project-workspace-utils";
+import { nodePlanId, nodePlanPrompt, parseChapterPlanCandidates, parseVolumePlanCandidates } from "./project-workspace-utils";
 import type { usePlanningDraft } from "./use-planning-draft";
+import { preparationStatus } from "./creation-preparation";
 
 type PlanningDraft = ReturnType<typeof usePlanningDraft>;
 type PlanningModel = { profile: ModelProfile | undefined; preference: AiTaskPreference; guidance: string };
@@ -10,18 +11,20 @@ type WorkspacePlanningOptions = {
   projectId: string | undefined;
   selected: PlanNode | null;
   planningSections: PlanningSection[] | undefined;
+  outlineSectionId?: string;
+  nodeJobBusy?: boolean;
+  preferencesDirty?: boolean;
   sectionsById: Map<string, PlanningSection>;
   volumeNodes: PlanNode[];
   chapterNodes: PlanNode[];
   nodeDraft: PlanningDraft;
   splitDraft: PlanningDraft;
   nodePlanTab: "formal" | "pending";
-  nodeGeneration: PlanningModel & { targets: { wordCount: string; volumeCount: string; chapterCount: string } };
+  nodeGeneration: PlanningModel;
   splitGeneration: PlanningModel & {
     volume: PlanNode | undefined;
     busy: boolean;
     sectionId: string;
-    targetCount: number;
     existingCount: number;
     batchSize: number;
   };
@@ -38,10 +41,10 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
   const { projectId, selected, sectionsById, volumeNodes, chapterNodes, nodeDraft, splitDraft, nodePlanTab, onVolumesAdopted } = options;
   const planningSections = options.planningSections;
   const setError = options.onError;
-  const { profile: nodeTaskProfile, preference: nodeTaskPreference, guidance: nodePlanGuidance, targets: volumePlanTargets } = options.nodeGeneration;
+  const { profile: nodeTaskProfile, preference: nodeTaskPreference, guidance: nodePlanGuidance } = options.nodeGeneration;
   const { volume: chapterSplitVolume, profile: chapterSplitProfile, preference: chapterSplitPreference,
     guidance: chapterSplitGuidance, busy: chapterSplitJobBusy, sectionId: chapterSplitSectionId,
-    targetCount: chapterSplitTargetCount, existingCount: chapterSplitExistingCount, batchSize: chapterSplitBatchSize } = options.splitGeneration;
+    existingCount: chapterSplitExistingCount, batchSize: chapterSplitBatchSize } = options.splitGeneration;
   const nodePlanPendingDraft = nodeDraft.form.pendingContent;
   const chapterSplitPendingDraft = splitDraft.form.pendingContent;
   const [savingNodePlan, setSavingNodePlan] = useState(false);
@@ -49,9 +52,34 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
   const [generatingChapterSplit, setGeneratingChapterSplit] = useState(false);
   const currentNodeForm = useRef(nodeDraft.form);
   currentNodeForm.current = nodeDraft.form;
+  const nodeGenerating = useRef(false);
+  const splitGenerating = useRef(false);
+  const outlineReady = preparationStatus(options.outlineSectionId ? sectionsById.get(options.outlineSectionId) : undefined, planningSections ?? []) === "confirmed";
+  const volumeReady = preparationStatus(chapterSplitVolume ? sectionsById.get(nodePlanId(chapterSplitVolume.id)) : undefined, planningSections ?? []) === "confirmed";
+  const formalContext = () => (planningSections ?? []).filter((item) => preparationStatus(item, planningSections ?? []) === "confirmed")
+    .map((item) => `${item.id === "seed-tone" ? "本书偏好" : item.id}: ${item.content}`).join("\n");
+
+  function requireSavedPreferences() {
+    if (!options.preferencesDirty) return true;
+    setError("请先保存本书偏好，再生成候选。");
+    return false;
+  }
+
+  function requireOutline() {
+    if (outlineReady) return true;
+    setError("请先确认或复核主线大纲，当前草稿与候选已保留。");
+    return false;
+  }
+
+  function requireVolume() {
+    if (volumeReady) return true;
+    setError("请先确认本卷规划，再拆分或采用章节计划。");
+    return false;
+  }
 
   async function saveNodePlan() {
     if (!selected || selected.kind === "WORK_DESIGN") return;
+    if (selected.kind === "OUTLINE") { setError("主线大纲须经过作者审阅后确认。"); return; }
     const snapshot = nodeDraft.beginSave();
     if (!snapshot) return;
     setSavingNodePlan(true);
@@ -61,12 +89,12 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
       const saved = await savePlanningSection({ ...snapshot.form, version: snapshot.baseline.version,
         ...(pending ? { pendingContent: snapshot.form.pendingContent.trim() }
           : { content: snapshot.form.content.trim(), storyState: selected.kind === "CHAPTER" ? "CONFIRMED" as const
-            : selected.kind === "OUTLINE" && ["UNSET", "AI_SUGGESTED"].includes(snapshot.form.storyState)
-              ? "CONFIRMED" as const : snapshot.form.storyState }) });
+            : snapshot.form.storyState }) });
       nodeDraft.acknowledge(snapshot, saved);
       cacheSavedSection(saved);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
     } catch (cause) {
+      nodeDraft.retainFailedSave(snapshot);
       setError(errorMessage(cause));
       void client.invalidateQueries({ queryKey: ["planning-sections"] });
     } finally {
@@ -76,29 +104,56 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
   }
 
   async function generateNodePlan() {
-    if (!selected || selected.kind === "WORK_DESIGN" || !nodeTaskProfile) return;
+    if (!selected || selected.kind === "WORK_DESIGN" || !nodeTaskProfile || nodeGenerating.current || options.nodeJobBusy) return;
+    if (!requireSavedPreferences() || !requireOutline()) return;
+    if (nodeDraft.dirty) { setError("请先保存当前规划草稿，再生成候选。"); return; }
+    if (nodePlanPendingDraft.trim() && !window.confirm("重新生成将替换当前已保存的规划候选，正式内容保留。继续吗？")) return;
+    nodeGenerating.current = true;
     setGeneratingNodePlan(true);
     setError(null);
     try {
-      const existing = (planningSections ?? []).filter((item) => item.content.trim()).map((item) => `${item.id}: ${item.content}`).join("\n");
-      const targetGuidance = selected.kind === "VOLUME_MANAGER" ? buildVolumePlanTargetGuidance(volumePlanTargets) : "";
-      const userGuidance = [nodePlanGuidance.trim(), targetGuidance].filter(Boolean).join("\n");
+      const existing = formalContext();
+      const userGuidance = nodePlanGuidance.trim();
       await enqueuePlanningAiJob({ profileId: nodeTaskProfile.id, mode: "GENERATE", sectionId: nodePlanId(selected.id), sectionTitle: selected.title, sectionPrompt: nodePlanPrompt(selected.kind), existingContext: existing, referenceContent: "", userGuidance: userGuidance || "请先给出可执行的候选方案，保留作者可修改的空间。", allowRewrite: false, taskKey: selected.kind === "OUTLINE" ? "outline" : "volumePlanning", temperature: nodeTaskPreference.temperature ?? undefined, maxOutputTokens: nodeTaskPreference.maxOutputTokens ?? undefined });
       await client.invalidateQueries({ queryKey: ["jobs"] });
     } catch (cause) { setError(errorMessage(cause)); }
-    finally { setGeneratingNodePlan(false); }
+    finally { nodeGenerating.current = false; setGeneratingNodePlan(false); }
+  }
+
+  async function saveChapterSplitDraft() {
+    if (!chapterSplitVolume || savingNodePlan || chapterSplitJobBusy) return;
+    const snapshot = splitDraft.beginSave();
+    if (!snapshot) return;
+    setSavingNodePlan(true);
+    setError(null);
+    try {
+      const saved = await savePlanningSection({ ...snapshot.form, version: snapshot.baseline.version });
+      splitDraft.acknowledge(snapshot, saved);
+      cacheSavedSection(saved);
+      await client.invalidateQueries({ queryKey: ["planning-sections"] });
+    } catch (cause) {
+      splitDraft.retainFailedSave(snapshot);
+      setError(errorMessage(cause));
+      void client.invalidateQueries({ queryKey: ["planning-sections"] });
+    } finally {
+      splitDraft.finishSave(snapshot);
+      setSavingNodePlan(false);
+    }
   }
 
   async function generateChapterSplit() {
-    if (!chapterSplitVolume || !chapterSplitProfile || generatingChapterSplit || chapterSplitJobBusy) return;
+    if (!chapterSplitVolume || !chapterSplitProfile || splitGenerating.current || chapterSplitJobBusy) return;
+    if (!requireSavedPreferences() || !requireOutline() || !requireVolume()) return;
+    if (splitDraft.dirty) { setError("请先保存或采用当前拆章候选，再生成下一批。"); return; }
+    if (chapterSplitPendingDraft.trim() && !window.confirm("重新拆分将替换当前已保存的章节候选，已有章节保留。继续吗？")) return;
+    splitGenerating.current = true;
     setGeneratingChapterSplit(true);
     setError(null);
     try {
       const volumePlan = sectionsById.get(nodePlanId(chapterSplitVolume.id))?.content.trim() ?? "";
-      const existing = (planningSections ?? []).filter((item) => item.content.trim()).map((item) => `${item.id}: ${item.content}`).join("\n");
+      const existing = formalContext();
       const startChapterNumber = chapterNodes.length + 1;
       const targetGuidance = [
-        chapterSplitTargetCount ? `本卷预计共 ${chapterSplitTargetCount} 章` : "",
         `当前本卷已拆 ${chapterSplitExistingCount} 章`,
         `本次最多生成 ${chapterSplitBatchSize} 章，从第 ${startChapterNumber} 章开始连续编号`,
       ].filter(Boolean).join("；");
@@ -127,25 +182,30 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
       setError(errorMessage(cause));
     } finally {
       setGeneratingChapterSplit(false);
+      splitGenerating.current = false;
     }
   }
 
   async function adoptChapterSplitPlan() {
-    if (!chapterSplitVolume || savingNodePlan || !projectId) return;
+    if (!chapterSplitVolume || savingNodePlan || !projectId || chapterSplitJobBusy) return;
+    if (!requireOutline() || !requireVolume()) return;
     const parsed = options.chapterCandidates ?? parseChapterPlanCandidates(chapterSplitPendingDraft);
     const candidates = parsed.filter((candidate) => !options.excludedChapters?.has(candidate.title));
     if (!candidates.length) {
       setError("没有识别到可创建的章节，请按“第X章·标题｜本章目标｜关键冲突｜结尾钩子”的格式检查候选。");
       return;
     }
-    if (candidates.length < parsed.length && !window.confirm(`仅创建已勾选的 ${candidates.length} 章，未勾选的 ${parsed.length - candidates.length} 条候选将不采用；本批候选区会清空。继续吗？`)) return;
+    if (candidates.some((candidate) => !candidate.content.trim())) {
+      setError("每章都需要具体计划，空白计划不能采用。");
+      return;
+    }
     const volumeChapterTitles = new Set(chapterNodes.filter((chapter) => chapter.parentId === chapterSplitVolume.id).map((chapter) => chapter.title));
     const newCandidates = candidates.filter((candidate) => !volumeChapterTitles.has(candidate.title));
     if (!newCandidates.length) {
       setError("候选中的章节均已存在，没有需要创建的新章节。");
       return;
     }
-    if (chapterSplitExistingCount && !window.confirm(`本卷已有 ${chapterSplitExistingCount} 个章节，继续将追加 ${newCandidates.length} 个新章节。确定继续吗？`)) return;
+    if (!window.confirm(`审定本批章节计划：向「${chapterSplitVolume.title}」追加 ${newCandidates.length} 章，不改写已有 ${chapterSplitExistingCount} 章。${candidates.length < parsed.length ? `未勾选的 ${parsed.length - candidates.length} 条候选不采用；` : ""}本批候选区会清空。确认采用吗？`)) return;
     const snapshot = splitDraft.beginSave();
     if (!snapshot) return;
     setSavingNodePlan(true);
@@ -177,6 +237,7 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
   async function adoptNodePlan() {
     const pending = nodePlanPendingDraft;
     if (!selected || !pending.trim()) return;
+    if (selected.kind === "OUTLINE") { setError("主线大纲须经过作者审阅后确认。"); return; }
     const snapshot = nodeDraft.beginSave();
     if (!snapshot) return;
     setSavingNodePlan(true);
@@ -187,6 +248,7 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
       cacheSavedSection(saved);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
     } catch (cause) {
+      nodeDraft.retainFailedSave(snapshot);
       setError(errorMessage(cause));
       void client.invalidateQueries({ queryKey: ["planning-sections"] });
     }
@@ -202,21 +264,25 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
   }
 
   async function adoptVolumeManagerPlan() {
-    if (!selected || selected.kind !== "VOLUME_MANAGER" || savingNodePlan || !projectId) return;
+    if (!selected || selected.kind !== "VOLUME_MANAGER" || savingNodePlan || !projectId || options.nodeJobBusy) return;
+    if (!requireOutline()) return;
     const parsed = options.volumeCandidates ?? parseVolumePlanCandidates(nodePlanPendingDraft);
     const candidates = parsed.filter((candidate) => !options.excludedVolumes?.has(candidate.title));
     if (!candidates.length) {
       setError("没有识别到可创建的分卷，请按“第X卷·标题｜阶段目标｜主要矛盾｜卷末转折”的格式填写。");
       return;
     }
-    if (candidates.length < parsed.length && !window.confirm(`仅创建已勾选的 ${candidates.length} 卷，未勾选的 ${parsed.length - candidates.length} 条候选将不采用；本批候选区会清空。继续吗？`)) return;
+    if (candidates.some((candidate) => !candidate.content.trim())) {
+      setError("每卷都需要阶段计划，空白计划不能采用。");
+      return;
+    }
     const existingTitles = new Set(volumeNodes.filter((node) => node.parentId === selected.id).map((node) => node.title));
     const newCandidates = candidates.filter((candidate) => !existingTitles.has(candidate.title));
     if (!newCandidates.length) {
       setError("候选中的分卷均已存在，没有需要创建的新分卷。");
       return;
     }
-    if (volumeNodes.length && !window.confirm(`当前已有 ${volumeNodes.length} 个分卷，继续将追加 ${newCandidates.length} 个新分卷。确定继续吗？`)) return;
+    if (!window.confirm(`审定分卷方案：追加 ${newCandidates.length} 卷，不改写已有 ${volumeNodes.length} 卷。${candidates.length < parsed.length ? `未勾选的 ${parsed.length - candidates.length} 条候选不采用；` : ""}本批候选区会清空。确认采用吗？`)) return;
     const snapshot = nodeDraft.beginSave();
     if (!snapshot) return;
     setSavingNodePlan(true);
@@ -252,6 +318,6 @@ export function useWorkspacePlanningOperations(options: WorkspacePlanningOptions
 
   return {
     savingNodePlan, generatingNodePlan, generatingChapterSplit,
-    saveNodePlan, generateNodePlan, generateChapterSplit, adoptChapterSplitPlan, adoptNodePlan, adoptVolumeManagerPlan,
+    saveNodePlan, saveChapterSplitDraft, generateNodePlan, generateChapterSplit, adoptChapterSplitPlan, adoptNodePlan, adoptVolumeManagerPlan,
   };
 }
