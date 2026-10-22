@@ -22,6 +22,7 @@ import { AiModelNote } from "./ai-model-note";
 import { usePlanningDraft } from "./use-planning-draft";
 import { PlanningDiscussionSources } from "./planning-discussion-sources";
 import { FreePlanningEditor } from "./free-planning-editor";
+import { PlanningSectionDiscussion } from "./planning-section-discussion";
 
 type PlanningItem = { id: string; label: string; prompt: string; guidance: string };
 type PlanningGroup = { id: string; label: string; children: PlanningItem[] };
@@ -33,7 +34,8 @@ export const planningSectionGroups: PlanningGroup[] = [
     label: "开篇定位",
     children: [
       { id: "seed-premise", label: "核心前提与开局情境", prompt: "主角在什么异常局面中，必须完成什么高风险目标，否则会失去什么最重要的东西", guidance: "用 1—3 句话写清特殊世界或规则、突发事件、主角目标和失败后果。先回答“故事为什么现在开始”，不用展开背景百科。" },
-      { id: "seed-genre-promise", label: "类型、题材与阅读承诺", prompt: "这是什么类型的故事，写给谁看，读者会持续获得什么样的满足", guidance: "写明类型、题材和主要爽点或情绪体验，并给出大致兑现频率，例如每卷一次翻盘、每 20 章一次副本收获。" },
+      { id: "seed-genre", label: "题材", prompt: "你想写什么题材？", guidance: "先确定一种主要题材。" },
+      { id: "seed-genre-promise", label: "阅读期待", prompt: "你最想让读者感受到什么？", guidance: "记录一种主要阅读感受。" },
       { id: "seed-hook", label: "核心卖点与独特钩子", prompt: "为什么读者要点开这本书，而不是同类作品", guidance: "提炼一个最独特的身份、能力、世界、关系或叙事钩子，最好浓缩成“谁利用什么，在什么世界对抗什么”的一句话。" },
       { id: "seed-tone", label: "本书偏好", prompt: "记录作者明确提出的预计篇幅、卷章安排、风格基调和表达边界", guidance: "只记录作者已决定的偏好，允许大致范围；未提到的内容留白，不要求确定感情线、主角底线或剧情走向。" },
     ],
@@ -42,9 +44,10 @@ export const planningSectionGroups: PlanningGroup[] = [
     id: "story-engine",
     label: "故事驱动",
     children: [
-      { id: "engine-protagonist", label: "主角目标与内在需求", prompt: "主角外在想完成什么，内在真正缺少或必须面对什么", guidance: "分开写外在目标和内在需求。外在目标推动情节，内在需求决定主角如何成长、改变或付出代价。" },
-      { id: "engine-antagonism", label: "对抗系统与升级机制", prompt: "主角靠什么变强，资源从哪里来，强化的门槛和代价是什么，敌人如何逐层升级", guidance: "用“资源 → 获得方式 → 成长转化 → 新能力 → 新敌人或新代价”写一条链。说明为什么敌人不能直接碾压主角。" },
-      { id: "engine-stakes", label: "赌注、代价与失败后果", prompt: "成功、失败和拒绝行动分别会让主角、同伴、阵营和世界失去什么", guidance: "至少写小、中、大三档赌注。失败应带来永久损失、关系破裂、身份暴露、角色死亡或规则恶化等真实后果，而不是简单重来。" },
+      { id: "engine-protagonist", label: "主角", prompt: "主角是个怎样的人？", guidance: "用几句话介绍主角。" },
+      { id: "engine-motivation", label: "行动动机", prompt: "什么让主角必须行动？", guidance: "写下主角无法置身事外的原因。" },
+      { id: "engine-antagonism", label: "主要阻力", prompt: "主角最大的阻碍是什么？", guidance: "先确定一项主要阻力。" },
+      { id: "engine-stakes", label: "失败代价", prompt: "如果失败，主角会失去什么？", guidance: "先写最重要的损失。" },
       { id: "engine-theme", label: "核心谜团与主题命题", prompt: "读者要追问什么真相，人物选择最终在讨论什么问题", guidance: "把“谜团（真相是什么）”和“主题（故事在说什么）”分开写。谜团负责追读，主题负责让结局有余味。" },
       { id: "engine-ending", label: "结局状态与承诺兑现", prompt: "主角最终达成了什么、放弃了什么，开局问题和读者期待如何得到回答", guidance: "不用写死每个细节，但要确定主角最后成为怎样的人，以及主线、人物弧光、爽点、情感点和核心谜团如何收束。" },
     ],
@@ -66,8 +69,10 @@ const sections = planningSectionGroups.flatMap((group) => group.children);
 const sectionIds = new Set(sections.map((section) => section.id));
 export const essentialPlanningSectionIds = [
   "seed-premise",
+  "seed-genre",
   "seed-genre-promise",
   "engine-protagonist",
+  "engine-motivation",
   "engine-antagonism",
   "engine-stakes",
   "engine-ending",
@@ -132,6 +137,7 @@ export function StoryPlanningWorkbench(props: {
   const [operationGuidance, setOperationGuidance] = useState("");
   const [allowImportRewrite, setAllowImportRewrite] = useState(false);
   const [previousForm, setPreviousForm] = useState<PlanningSection | null>(null);
+  const [discussionBusy, setDiscussionBusy] = useState(false);
   const selectedDefinition = sections.find((section) => section.id === selectedId) ?? sections[0];
   const selectedGroup = planningSectionGroups.find((group) => group.children.some((item) => item.id === selectedId));
   const pendingDirty = form.pendingContent !== baseline.pendingContent;
@@ -154,7 +160,7 @@ export function StoryPlanningWorkbench(props: {
   const sectionJobs = useMemo(() => (jobs.data ?? []).filter((job) => planningJobInput(job)?.sectionId === selectedId), [jobs.data, selectedId]);
   const activeJob = sectionJobs.find((job) => job.status === "QUEUED" || job.status === "RUNNING");
   const latestJob = sectionJobs[0];
-  const aiBusy = generating || importing || Boolean(activeJob);
+  const aiBusy = generating || importing || Boolean(activeJob) || discussionBusy;
   const visibleJob = activeJob ?? (latestJob?.status === "FAILED" || latestJob?.status === "CANCELLED" ? latestJob : null);
   const visibleFailure = visibleJob?.status === "FAILED"
     ? classifyAiFailure(visibleJob.errorSummary)
@@ -194,9 +200,9 @@ export function StoryPlanningWorkbench(props: {
   }, [client, latestJob?.errorSummary, latestJob?.id, latestJob?.status]);
 
   useEffect(() => {
-    props.onDirtyChange?.(dirty || saving);
+    props.onDirtyChange?.(dirty || saving || discussionBusy);
     return () => props.onDirtyChange?.(false);
-  }, [dirty, saving, props.onDirtyChange]);
+  }, [dirty, saving, discussionBusy, props.onDirtyChange]);
 
   function confirmDiscardPending() {
     if (!pendingDirty) return true;
@@ -434,8 +440,22 @@ export function StoryPlanningWorkbench(props: {
   if (storedSections.isPending) return <p role="status">正在读取作品设定…</p>;
   if (storedSections.isError && !storedSections.data) return <p className="project-error" role="alert">{errorMessage(storedSections.error)}</p>;
 
+  const discussion = <PlanningSectionDiscussion sectionId={selectedId} title={selectedDefinition.label}
+    question={selectedDefinition.prompt} draftContent={form.pendingContent}
+    referenceContent={selectedId === "seed-tone" ? [
+      form.content ? `当前笔记（可能含未保存修改）：\n${form.content}` : "",
+      form.pendingContent ? `待采用内容：\n${form.pendingContent}` : "",
+    ].filter(Boolean).join("\n\n") : undefined}
+    disabled={!planningDraft.ready || saving || generating || importing || Boolean(activeJob)}
+    readOnly={form.storyState === "LOCKED"} onBusyChange={setDiscussionBusy}
+    onUseDraft={(content) => {
+      setForm((current) => ({ ...current, pendingContent: content }));
+      setEditorTab("pending"); setShowEditor(true); setNotice(null);
+    }} />;
+
   if (selectedId === "seed-tone") return <section className="story-planning-workbench book-preferences-editor" aria-label="本书偏好">
     {!props.compact ? <h2>本书偏好</h2> : null}
+    {discussion}
     <FreePlanningEditor draft={planningDraft} label="篇幅、风格与边界" rows={4} stateLabels={planningStoryStateLabels}
       placeholder="想写约 20 万字，大致分三卷，章节数暂不定。轻松、克制，带一点悬疑，第三人称，不写过度血腥。"
       onSave={() => void savePreferences()} onAdopt={() => void confirmPending()} />
@@ -455,6 +475,7 @@ export function StoryPlanningWorkbench(props: {
           <div className="story-planning-editor-heading">
             <div><span className="story-planning-current-label">{selectedGroup?.label}</span><h3>{selectedDefinition.label}</h3></div>
           </div>
+          {discussion}
           <div className="story-planning-action-panel">
             <div className="story-planning-action-choices">
               {editorTab === "formal" ? <button type="button" className="secondary-action" onClick={startWriting} disabled={saving}><PenLine size={15} />编辑内容</button> : null}

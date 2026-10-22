@@ -619,7 +619,10 @@ impl ProjectManager {
             title: title.trim().to_owned(),
             scope_kind,
             scope_id,
-            scope_text: if scope_kind == DiscussionScopeKind::Selection {
+            scope_text: if matches!(
+                scope_kind,
+                DiscussionScopeKind::Selection | DiscussionScopeKind::Project
+            ) {
                 scope_text.map(|value| value.trim().to_owned())
             } else {
                 None
@@ -1058,6 +1061,38 @@ fn parse_uuid(column: usize, value: &str) -> rusqlite::Result<Uuid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_discussion_preserves_planning_focus_when_reopened() {
+        let root =
+            std::env::temp_dir().join(format!("ainovel-planning-discussion-{}", Uuid::new_v4()));
+        let mut manager = ProjectManager::new();
+        manager
+            .create(&root, "Planning discussion")
+            .expect("project");
+        let focus = r#"{"kind":"planning-section","sectionId":"seed-premise","title":"故事核心","question":"想写什么故事？"}"#;
+        let session = manager
+            .create_discussion_session(
+                "故事核心讨论".into(),
+                DiscussionScopeKind::Project,
+                None,
+                Some(focus.into()),
+            )
+            .expect("discussion");
+        drop(manager);
+        let mut reopened = ProjectManager::new();
+        reopened.open(&root).expect("reopen");
+        let loaded = reopened
+            .get_discussion_session(session.id)
+            .expect("session");
+        assert_eq!(loaded.scope_text.as_deref(), Some(focus));
+        assert!(
+            reopened
+                .list_planning_sections()
+                .expect("sections")
+                .is_empty()
+        );
+    }
 
     #[test]
     fn discussion_messages_are_immutable_and_candidates_promote_only_to_pending_planning() {

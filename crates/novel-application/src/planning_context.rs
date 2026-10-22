@@ -3,10 +3,12 @@ use std::fmt::Write as _;
 
 pub const PLANNING_PROMPT_VERSION: &str = "planning-v7";
 
-const CORE_PROJECT_SECTION_IDS: [&str; 6] = [
+const CORE_PROJECT_SECTION_IDS: [&str; 8] = [
     "seed-premise",
+    "seed-genre",
     "seed-genre-promise",
     "engine-protagonist",
+    "engine-motivation",
     "engine-antagonism",
     "engine-stakes",
     "engine-ending",
@@ -1341,8 +1343,10 @@ mod tests {
     fn planning_plan_keeps_core_sections_under_a_small_budget() {
         let project = [
             "seed-premise: 主角在灾后城市寻找失踪姐姐。",
+            "seed-genre: 都市悬疑。",
             "seed-genre-promise: 都市悬疑，持续推进谜团。",
             "engine-protagonist: 外在目标是找人，内在需求是接受失去。",
+            "engine-motivation: 不愿再次失去唯一的亲人。",
             "engine-antagonism: 对手掌握城市资源。",
             "engine-stakes: 失败会失去最后的家人线索。",
             "engine-ending: 主角接受真相并建立新的生活。",

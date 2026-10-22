@@ -8,15 +8,15 @@ type PlanningReview = {
 };
 
 export const outlineReviewChecks = [
-  "主角的目标与关键选择有明确动机",
-  "主要事件前后有因果承接",
-  "阻力逐步升级，转折伴随代价",
-  "阶段高潮回应主线，未定部分已保留",
+  "主角的行动理由成立",
+  "前后事件能够衔接",
+  "转折有充分铺垫",
+  "结局回应故事主线",
 ];
 export const openingReviewChecks = [
-  "本章事件承接已确认的主线大纲",
-  "人物行动带来明确的局面变化",
-  "开篇冲突与章末悬念符合阅读期待",
+  "开篇承接故事主线",
+  "主要事件推动了故事",
+  "章末让人愿意继续读",
 ];
 
 export function readPlanningReview(section?: PlanningSection): PlanningReview | null {

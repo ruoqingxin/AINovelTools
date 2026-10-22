@@ -19,8 +19,10 @@ fn is_core_planning_section(section_id: &str) -> bool {
     matches!(
         section_id,
         "seed-premise"
+            | "seed-genre"
             | "seed-genre-promise"
             | "engine-protagonist"
+            | "engine-motivation"
             | "engine-antagonism"
             | "engine-stakes"
             | "engine-ending"

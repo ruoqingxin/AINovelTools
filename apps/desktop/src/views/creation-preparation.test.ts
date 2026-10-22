@@ -28,13 +28,24 @@ describe("creation preparation progress", () => {
   it("reuses existing planning IDs and does not require optional relationship or ending decisions", () => {
     const stages = buildPreparationStages(nodes);
     const sections = stages.flatMap((stage) => stage.items).filter((item) => item.required).map((item) => confirmed(item.sectionId!));
-    expect(preparationProgress(stages, sections)).toMatchObject({ ready: true, confirmed: 7, total: 7 });
+    expect(preparationProgress(stages, sections)).toMatchObject({ ready: true, confirmed: 10, total: 10 });
     expect(stages[3].items[0].sectionId).toBe("plan-node:first");
   });
   it("withdraws readiness when a confirmed key decision has an unresolved revision", () => {
     const stages = buildPreparationStages(nodes);
     const sections = stages.flatMap((stage) => stage.items).filter((item) => item.required).map((item) => confirmed(item.sectionId!));
     sections[0].pendingContent = "另一种开局";
-    expect(preparationProgress(stages, sections)).toMatchObject({ ready: false, confirmed: 6, missing: [{ id: "premise" }] });
+    expect(preparationProgress(stages, sections)).toMatchObject({ ready: false, confirmed: 9, missing: [{ id: "premise" }] });
+  });
+  it("asks one short question per item without multiline fill-in templates", () => {
+    const items = buildPreparationStages(nodes).flatMap((stage) => stage.items);
+    expect(new Set(items.map((item) => item.sectionId)).size).toBe(items.length);
+    for (const item of items) {
+      expect(item.question.match(/？/g)).toHaveLength(1);
+      expect(item.question.length).toBeLessThanOrEqual(20);
+      expect(item.placeholder).not.toContain("\n");
+    }
+    expect(items.filter((item) => ["genre", "promise", "protagonist", "motivation"].includes(item.id)).map((item) => item.title))
+      .toEqual(["题材", "阅读期待", "主角", "行动动机"]);
   });
 });

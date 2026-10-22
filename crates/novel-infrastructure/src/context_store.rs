@@ -3,12 +3,14 @@ use novel_application::{ContextCandidate, ContextCandidateKind};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 
-pub(super) const WRITING_SETTING_SECTIONS: [(&str, &str); 15] = [
+pub(super) const WRITING_SETTING_SECTIONS: [(&str, &str); 17] = [
     ("seed-premise", "核心前提与开局情境"),
+    ("seed-genre", "故事题材"),
     ("seed-genre-promise", "类型、题材与阅读承诺"),
     ("seed-hook", "核心卖点与独特钩子"),
     ("seed-tone", "本书偏好：篇幅、风格与边界"),
     ("engine-protagonist", "主角目标与内在需求"),
+    ("engine-motivation", "行动动机"),
     ("engine-antagonism", "对抗系统与升级机制"),
     ("engine-stakes", "赌注、代价与失败后果"),
     ("engine-theme", "核心谜团与主题命题"),
@@ -24,8 +26,10 @@ const MAX_WRITING_SETTING_SECTION_CHARS: usize = 1_400;
 const MAX_WRITING_SETTINGS_CHARS: usize = 10_000;
 const SETTING_TRUNCATION_MARKER: &str = "\n[正式设定片段已按上下文预算截断]";
 const MAX_SUMMARY_CONTEXT_CHARS: usize = 1_200;
-const DISCUSSION_BACKGROUND_SECTIONS: [(&str, &str); 4] = [
+const DISCUSSION_BACKGROUND_SECTIONS: [(&str, &str); 6] = [
+    ("seed-genre", "故事题材"),
     ("seed-genre-promise", "题材与阅读体验"),
+    ("engine-motivation", "行动动机"),
     ("seed-tone", "本书偏好"),
     ("frame-setting", "世界背景与重要规则"),
     ("seed-premise", "核心前提"),
@@ -929,6 +933,34 @@ mod tests {
             candidate.evidence.validate().expect("normalized relevance");
         }
         assert_eq!(relevance_with_floor(u16::MAX, 6_000), 10_000);
+    }
+
+    #[test]
+    fn split_preparation_decisions_reach_writing_and_discussion_without_promoting_drafts() {
+        let sections = [
+            section("seed-genre", PlanningStoryState::Confirmed, "都市悬疑", ""),
+            section(
+                "engine-motivation",
+                PlanningStoryState::Confirmed,
+                "必须找到失踪的妹妹",
+                "",
+            ),
+            section(
+                "seed-genre-promise",
+                PlanningStoryState::AiSuggested,
+                "",
+                "未经确认的阅读期待",
+            ),
+        ];
+        let writing = build_writing_setting_context(&sections, true);
+        assert!(writing.contains("故事题材"));
+        assert!(writing.contains("都市悬疑"));
+        assert!(writing.contains("行动动机"));
+        assert!(writing.contains("必须找到失踪的妹妹"));
+        let discussion = build_discussion_setting_context(&sections);
+        assert!(discussion.contains("都市悬疑"));
+        assert!(discussion.contains("必须找到失踪的妹妹"));
+        assert!(!discussion.contains("未经确认的阅读期待"));
     }
 
     #[test]

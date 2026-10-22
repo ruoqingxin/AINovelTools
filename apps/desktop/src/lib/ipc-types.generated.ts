@@ -437,6 +437,7 @@ export type InputArgsAskProjectDiscussion = {
 export type InputAskProjectDiscussionInput = {
     maxOutputTokens?: number | null;
     message: string;
+    planningDraft?: string | null;
     profileId: string;
     sessionId: string;
     temperature?: number | null;

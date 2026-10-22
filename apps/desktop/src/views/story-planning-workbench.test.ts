@@ -10,7 +10,7 @@ describe("planningSectionGroups", () => {
       "故事驱动",
       "连载建设",
     ]);
-    expect(sections).toHaveLength(15);
+    expect(sections).toHaveLength(17);
     expect(new Set(sections.map((section) => section.id)).size).toBe(sections.length);
     expect(sections.every((section) => section.label.trim() && section.prompt.trim() && section.guidance.trim())).toBe(true);
   });
@@ -18,7 +18,7 @@ describe("planningSectionGroups", () => {
   it("keeps a small essential set and advances to the next unfinished item", () => {
     const allIds = new Set(planningSectionGroups.flatMap((group) => group.children.map((section) => section.id)));
     expect(essentialPlanningSectionIds.every((id) => allIds.has(id))).toBe(true);
-    expect(nextIncompletePlanningSectionId("seed-premise", new Set(["seed-premise", "seed-genre-promise"]))).toBe("seed-hook");
+    expect(nextIncompletePlanningSectionId("seed-premise", new Set(["seed-premise", "seed-genre-promise"]))).toBe("seed-genre");
     expect(nextIncompletePlanningSectionId("frame-narrative", allIds)).toBeNull();
   });
 });

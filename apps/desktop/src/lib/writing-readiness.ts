@@ -2,10 +2,12 @@ import type { PlanningSection } from "./tauri-client";
 
 export const suggestedWritingSections = [
   { id: "seed-premise", label: "核心前提与开局情境" },
-  { id: "seed-genre-promise", label: "类型、题材与阅读承诺" },
+  { id: "seed-genre", label: "题材" },
+  { id: "seed-genre-promise", label: "阅读期待" },
   { id: "seed-hook", label: "核心卖点与独特钩子" },
   { id: "seed-tone", label: "基调、尺度与篇幅体量" },
-  { id: "engine-protagonist", label: "主角目标与内在需求" },
+  { id: "engine-protagonist", label: "主角" },
+  { id: "engine-motivation", label: "行动动机" },
   { id: "engine-antagonism", label: "对抗系统与升级机制" },
   { id: "engine-stakes", label: "赌注、代价与失败后果" },
   { id: "engine-theme", label: "核心谜团与主题命题" },

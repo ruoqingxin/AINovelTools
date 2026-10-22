@@ -5,7 +5,11 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { StoryPlanningWorkbench } from "./story-planning-workbench";
 import { emptyPlanningSection } from "./use-planning-draft";
 
-const mocks = vi.hoisted(() => ({ listPlanningSections: vi.fn(), savePlanningSection: vi.fn(), listModelProfiles: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  listPlanningSections: vi.fn(), savePlanningSection: vi.fn(), listModelProfiles: vi.fn(),
+  getCurrentProject: vi.fn(), listDiscussionSessions: vi.fn(), listDiscussionMessages: vi.fn(),
+  createDiscussionSession: vi.fn(), askProjectDiscussion: vi.fn(), getProjectAiTaskOverrides: vi.fn(),
+}));
 vi.mock("../lib/tauri-client", async () => ({ ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks }));
 vi.mock("../lib/jobs-query", () => ({ useJobs: () => ({ data: [] }) }));
 vi.mock("../lib/ai-task-preferences", async () => ({
@@ -21,11 +25,52 @@ function setup() {
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.listModelProfiles.mockResolvedValue([]);
+  mocks.getCurrentProject.mockResolvedValue({ projectId: "project" });
+  mocks.listDiscussionSessions.mockResolvedValue([]);
+  mocks.listDiscussionMessages.mockResolvedValue([]);
+  mocks.getProjectAiTaskOverrides.mockResolvedValue({});
   mocks.listPlanningSections.mockResolvedValue([stored]);
   mocks.savePlanningSection.mockImplementation((section) => Promise.resolve({ ...section, version: 5 }));
 });
 afterEach(cleanup);
 describe("planning content editor", () => {
+  it("discusses an existing setting without changing the formal version until confirmation", async () => {
+    mocks.listModelProfiles.mockResolvedValue([{ id: "model", capability: "CHAT", hasSecret: true }]);
+    const discussionSession = {
+      id: "discussion", projectId: "project", scopeKind: "PROJECT",
+      scopeText: JSON.stringify({ kind: "planning-section", sectionId: "seed-premise", title: "故事核心", question: "" }),
+    };
+    mocks.createDiscussionSession.mockImplementation(async () => {
+      mocks.listDiscussionSessions.mockResolvedValue([discussionSession]);
+      return discussionSession;
+    });
+    const answer = "我们聊出的新方向";
+    const exchange = {
+      userMessage: { id: "user", sessionId: "discussion", role: "USER", content: "我想重新考虑" },
+      assistantMessage: { id: "ai", sessionId: "discussion", role: "ASSISTANT", content: answer },
+    };
+    mocks.askProjectDiscussion.mockImplementation(async () => {
+      mocks.listDiscussionMessages.mockResolvedValue([exchange.userMessage, exchange.assistantMessage]);
+      return exchange;
+    });
+    setup();
+    await screen.findByRole("textbox", { name: "正式规划" });
+    fireEvent.click(screen.getByRole("button", { name: "发起讨论" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "核心前提与开局情境的讨论输入" })).toBeEnabled());
+    fireEvent.change(await screen.findByRole("textbox", { name: "核心前提与开局情境的讨论输入" }),
+      { target: { value: "我想重新考虑" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "载入草稿" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "载入草稿" }));
+    expect(screen.getByRole("textbox", { name: "规划草稿" })).toHaveValue(answer);
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认为正式内容" }));
+    await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
+      id: "seed-premise", content: answer, pendingContent: "", storyState: "CONFIRMED", version: 4,
+    })));
+  });
+
   it("saves book preferences directly with version checks and retains old candidates", async () => {
     const preferences = {
       ...emptyPlanningSection("seed-tone"), version: 7, storyState: "LOCKED" as const,

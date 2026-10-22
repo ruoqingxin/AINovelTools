@@ -12,6 +12,7 @@ pub(crate) struct AskProjectDiscussionInput {
     pub(crate) session_id: uuid::Uuid,
     pub(crate) profile_id: uuid::Uuid,
     pub(crate) message: String,
+    pub(crate) planning_draft: Option<String>,
     pub(crate) temperature: Option<f64>,
     pub(crate) max_output_tokens: Option<u32>,
 }
@@ -294,7 +295,7 @@ pub(crate) async fn summarize_discussion_design(
                 novel_infrastructure::DiscussionStoreError::Conflict,
             ));
         }
-        let (label, scope) = discussion_scope(&manager, &session)?;
+        let (label, scope) = discussion_scope(&manager, &session, None)?;
         let scope_content = workspace_context(&manager, &workspace, &scope)?;
         let linked_snapshot = if let Some(id) = workspace.linked_entity_id {
             manager
@@ -595,6 +596,14 @@ pub(crate) async fn ask_project_discussion(
             message: "单条讨论最多 20000 字，请拆分发送。".into(),
         });
     }
+    if input.planning_draft.as_ref().is_some_and(|draft| {
+        draft.chars().count() > novel_infrastructure::DISCUSSION_DRAFT_MAX_CHARS
+    }) {
+        return Err(ApiError {
+            code: "INVALID_INPUT",
+            message: "本项讨论参考草稿最多 50000 字，请缩短草稿后重试。".into(),
+        });
+    }
     let profile = {
         let store = state
             .model_profiles
@@ -630,7 +639,8 @@ pub(crate) async fn ask_project_discussion(
         let session = manager
             .get_discussion_session(input.session_id)
             .map_err(ApiError::from)?;
-        let (scope_label, scope_content) = discussion_scope(&manager, &session)?;
+        let (scope_label, scope_content) =
+            discussion_scope(&manager, &session, input.planning_draft.as_deref())?;
         let workspace = manager
             .get_discussion_workspace(session.id)
             .map_err(ApiError::from)?;
@@ -730,12 +740,86 @@ pub(crate) async fn ask_project_discussion(
     })
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanningDiscussionFocus {
+    kind: String,
+    section_id: String,
+    title: String,
+    question: String,
+}
+
+fn planning_discussion_scope(
+    session: &novel_infrastructure::DiscussionSession,
+    sections: &[novel_infrastructure::PlanningSection],
+    planning_draft: Option<&str>,
+    nodes: &[novel_infrastructure::PlanNode],
+) -> Option<(String, String)> {
+    if session.scope_kind != novel_infrastructure::DiscussionScopeKind::Project {
+        return None;
+    }
+    let focus: PlanningDiscussionFocus =
+        serde_json::from_str(session.scope_text.as_deref()?).ok()?;
+    if focus.kind != "planning-section" || focus.section_id.trim().is_empty() {
+        return None;
+    }
+    let node_kind = match focus.section_id.as_str() {
+        "preparation:outline" => Some(novel_infrastructure::PlanNodeKind::Outline),
+        "preparation:opening" => Some(novel_infrastructure::PlanNodeKind::Chapter),
+        _ => None,
+    };
+    let resolved_id = node_kind.and_then(|kind| {
+        nodes
+            .iter()
+            .find(|node| !node.archived && node.kind == kind)
+            .map(|node| format!("plan-node:{}", node.id))
+    });
+    let section_id = resolved_id.as_deref().unwrap_or(&focus.section_id);
+    let section = sections.iter().find(|section| section.id == section_id);
+    let mut content = section.map_or_else(
+        || "本项尚未记录内容，允许从一个模糊想法开始。".to_owned(),
+        |section| {
+            format!(
+                "当前记录（状态 {}）：\n{}\n\n修订草稿（尚未确认）：\n{}\n\n作者备注：\n{}",
+                section.story_state.as_str(),
+                section.content,
+                section.pending_content,
+                section.consequence,
+            )
+        },
+    );
+    if let Some(draft) = planning_draft {
+        content.push_str("\n\n作者当前正在编辑的草稿（尚未保存或确认，以此为本轮最新草稿）：\n");
+        content.push_str(if draft.trim().is_empty() {
+            "当前草稿为空。"
+        } else {
+            draft
+        });
+    }
+    Some((
+        format!("「{}」的逐项讨论", focus.title),
+        format!(
+            "本次只讨论创作条目「{}」（{}）。\n切入问题：{}\n\n{}\n\n\
+            与作者通过多轮交流共同完善这一项。先回应作者当前想法、顾虑或修改，必要时只追问一个最关键的问题；\
+            不要求先填表、完成其他准备或确定整本书。不要每次都重写完整方案，不替作者做最终决定。\
+            只有作者要求整理时，才把已认可的方向整理为可修改的定稿草案，保留尚未决定的问题。\
+            已确认或锁定内容是当前依据；修订草稿和本次对话中的建议均不是已确认事实。\
+            作者可以推翻先前讨论方向。讨论本身不代表确认，也不得声称已保存或已确认设定。",
+            focus.title, focus.section_id, focus.question, content,
+        ),
+    ))
+}
+
 fn discussion_scope(
     manager: &novel_infrastructure::ProjectManager,
     session: &novel_infrastructure::DiscussionSession,
+    planning_draft: Option<&str>,
 ) -> Result<(String, String), ApiError> {
     let nodes = manager.list_plan_nodes().map_err(ApiError::from)?;
     let sections = manager.list_planning_sections().map_err(ApiError::from)?;
+    if let Some(scope) = planning_discussion_scope(session, &sections, planning_draft, &nodes) {
+        return Ok(scope);
+    }
     let scope_id = session.scope_id.or_else(|| match session.scope_kind {
         novel_infrastructure::DiscussionScopeKind::Project => None,
         novel_infrastructure::DiscussionScopeKind::Volume => nodes
@@ -877,6 +961,104 @@ fn plan_kind_label(kind: novel_infrastructure::PlanNodeKind) -> &'static str {
 #[cfg(test)]
 mod design_tests {
     use super::*;
+
+    #[test]
+    fn preparation_discussion_resolves_the_outline_created_after_the_conversation_started() {
+        let session = novel_infrastructure::DiscussionSession {
+            id: uuid::Uuid::new_v4(),
+            project_id: uuid::Uuid::new_v4(),
+            title: "主线大纲讨论".into(),
+            scope_kind: novel_infrastructure::DiscussionScopeKind::Project,
+            scope_id: None,
+            scope_text: Some(r#"{"kind":"planning-section","sectionId":"preparation:outline","title":"主线大纲","question":""}"#.into()),
+            summary: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let (_, empty) = planning_discussion_scope(&session, &[], None, &[]).expect("uncreated");
+        assert!(empty.contains("本项尚未记录内容"));
+        let node = novel_infrastructure::PlanNode {
+            id: uuid::Uuid::new_v4(),
+            parent_id: None,
+            kind: novel_infrastructure::PlanNodeKind::Outline,
+            title: "主线大纲".into(),
+            sort_order: 0,
+            archived: false,
+            revision: 1,
+        };
+        let section = novel_infrastructure::PlanningSection {
+            id: format!("plan-node:{}", node.id),
+            content: "后来确定的主线".into(),
+            pending_content: String::new(),
+            story_state: novel_infrastructure::PlanningStoryState::Confirmed,
+            rationale: String::new(),
+            consequence: String::new(),
+            references: vec![],
+            updated_at: String::new(),
+        };
+        let (_, resolved) =
+            planning_discussion_scope(&session, &[section], None, &[node]).expect("resolved");
+        assert!(resolved.contains("后来确定的主线"));
+    }
+
+    #[test]
+    fn planning_discussion_scope_loads_current_section_without_treating_drafts_as_confirmed() {
+        let session = novel_infrastructure::DiscussionSession {
+            id: uuid::Uuid::new_v4(),
+            project_id: uuid::Uuid::new_v4(),
+            title: "故事核心讨论".into(),
+            scope_kind: novel_infrastructure::DiscussionScopeKind::Project,
+            scope_id: None,
+            scope_text: Some(r#"{"kind":"planning-section","sectionId":"seed-premise","title":"故事核心","question":"故事从哪里开始？"}"#.into()),
+            summary: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let mut sections = vec![novel_infrastructure::PlanningSection {
+            id: "seed-premise".into(),
+            content: "已确认的邮差".into(),
+            pending_content: "尚未决定的失忆方向".into(),
+            story_state: novel_infrastructure::PlanningStoryState::Confirmed,
+            rationale: String::new(),
+            consequence: "是否保留失忆仍待讨论".into(),
+            references: vec![],
+            updated_at: String::new(),
+        }];
+        let (label, content) =
+            planning_discussion_scope(&session, &sections, None, &[]).expect("scope");
+        assert!(label.contains("故事核心"));
+        assert!(content.contains("已确认的邮差"));
+        assert!(content.contains("修订草稿（尚未确认）：\n尚未决定的失忆方向"));
+        assert!(content.contains("只追问一个最关键的问题"));
+        sections[0].content = "修改后的邮差".into();
+        let (_, refreshed) =
+            planning_discussion_scope(&session, &sections, None, &[]).expect("fresh scope");
+        assert!(refreshed.contains("修改后的邮差"));
+        assert!(!refreshed.contains("已确认的邮差"));
+        assert!(
+            planning_discussion_scope(&session, &[], None, &[])
+                .expect("empty")
+                .1
+                .contains("模糊想法")
+        );
+        let unrelated = novel_infrastructure::DiscussionSession {
+            scope_text: Some("普通参考文字".into()),
+            ..session
+        };
+        assert!(planning_discussion_scope(&unrelated, &sections, None, &[]).is_none());
+        let (_, live) =
+            planning_discussion_scope(&unrelated, &sections, Some("未保存的即时想法"), &[])
+                .unwrap_or_default();
+        assert!(!live.contains("未保存的即时想法"));
+        let focused = novel_infrastructure::DiscussionSession {
+            scope_text: Some(r#"{"kind":"planning-section","sectionId":"seed-premise","title":"故事核心","question":""}"#.into()),
+            ..unrelated
+        };
+        let (_, live) =
+            planning_discussion_scope(&focused, &sections, Some("未保存的即时想法"), &[])
+                .expect("live");
+        assert!(live.contains("以此为本轮最新草稿）：\n未保存的即时想法"));
+    }
 
     #[test]
     fn structured_design_parser_accepts_json_and_code_fences_without_inventing_fields() {

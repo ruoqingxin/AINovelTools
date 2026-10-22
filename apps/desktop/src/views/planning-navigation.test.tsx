@@ -84,7 +84,7 @@ describe("exact planning navigation", () => {
   it("allows early outline drafts but never confirms incomplete preparation through a plain save", async () => {
     mocks.listPlanNodes.mockResolvedValue([{ ...scene, id: "outline-1", kind: "OUTLINE", title: "大纲" }]);
     renderPlan("?planNode=outline-1&targetProject=project-1");
-    const note = await screen.findByLabelText("主线大纲");
+    const note = await screen.findByLabelText("引发事件");
     await waitFor(() => expect(note).toBeEnabled());
     expect(screen.queryByText("故事大纲尚未开放")).not.toBeInTheDocument();
     expect(note).not.toHaveAttribute("readonly");
@@ -93,10 +93,15 @@ describe("exact planning navigation", () => {
     fireEvent.change(note, { target: { value: "先写一个接到旧电话的开场，结局不定。" } });
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
     await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
-      id: "plan-node:outline-1", content: "", pendingContent: "先写一个接到旧电话的开场，结局不定。", storyState: "UNSET", version: 0,
+      id: "outline-step-outline-1-inciting", content: "", pendingContent: "先写一个接到旧电话的开场，结局不定。", storyState: "UNSET", version: 0,
     })));
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: "汇总审阅" }));
     expect(screen.getByRole("button", { name: "确认为正式大纲" })).toBeDisabled();
     expect(screen.getByRole("region", { name: "作者审阅" })).toBeVisible();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.getByText("这个故事的主线怎样发展？")).toBeVisible();
+    expect(screen.getByRole("button", { name: "汇总为大纲草稿" })).toBeDisabled();
   });
 
   it("keeps old planning notes behind optional references without completion pressure", async () => {

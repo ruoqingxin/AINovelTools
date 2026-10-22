@@ -1,0 +1,21 @@
+.planning-section-discussion { min-width: 0; margin: 12px 0; }
+.planning-discussion-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.planning-discussion-heading strong { font-size: 14px; overflow-wrap: anywhere; }
+.planning-discussion-body { margin-top: 12px; border-block: 1px solid var(--line); padding-block: 12px; }
+.planning-discussion-messages { max-height: 420px; min-height: 60px; overflow-y: auto; overscroll-behavior: contain; }
+.planning-discussion-messages article { padding: 12px 8px; border-bottom: 1px solid var(--line); }
+.planning-discussion-messages article[data-role="user"] { background: var(--surface-subtle); border-left: 2px solid var(--accent); }
+.planning-discussion-messages article > strong { font-size: 12px; color: var(--muted); }
+.planning-discussion-messages article > div { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75; margin: 6px 0 10px; }
+.planning-discussion-question { margin: 12px 0; color: var(--muted); }
+.planning-discussion-composer { display: grid; gap: 6px; font-size: 13px; margin-top: 12px; }
+.planning-discussion-composer textarea { width: 100%; box-sizing: border-box; min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: inherit; font: inherit; line-height: 1.7; resize: vertical; }
+.planning-discussion-commands { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.planning-discussion-commands > span { font-size: 12px; color: var(--muted); margin-right: auto; }
+.planning-discussion-commands button { min-height: 32px; }
+.planning-discussion-model { margin-top: 10px; font-size: 12px; }
+.preparation-editor:has(.planning-discussion-body) .preparation-savebar { position: static; }
+@media (max-width: 600px) {
+  .planning-discussion-commands > span { flex-basis: 100%; }
+  .planning-discussion-messages { max-height: 340px; }
+}
