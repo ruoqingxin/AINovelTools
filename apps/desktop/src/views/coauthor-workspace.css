@@ -99,6 +99,9 @@
 .coauthor-checks { min-width: 0; font-size: 13px; }
 .coauthor-decision-history { margin-top: 10px; }
 .coauthor-format-mapping { margin: 10px 0; }
+.coauthor-run-directory { margin-bottom: 16px; }
+.coauthor-run-picker { display: flex; gap: 8px; align-items: center; }
+.coauthor-run-picker select { min-width: 0; flex: 1; width: 100%; }
 .coauthor-format-mapping dl { margin: 10px 0; }
 .coauthor-format-mapping dd { margin: 4px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .coauthor-decision-history small, .coauthor-memory-context small { display: block; color: var(--muted); overflow-wrap: anywhere; }

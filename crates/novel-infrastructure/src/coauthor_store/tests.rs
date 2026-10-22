@@ -598,7 +598,7 @@ fn reopen_marks_orphan_runs_interrupted_and_keeps_checkpoints() {
     manager.open(&root).unwrap();
     let restored = manager.coauthor_state(&scope).unwrap();
     assert_eq!(restored.runs[0].status, "INTERRUPTED");
-    assert_eq!(restored.runs[0].output, "未完成的句子");
+    assert_eq!(manager.coauthor_run(&scope, restored.runs[0].id).unwrap().output, "未完成的句子");
     assert_eq!(
         manager
             .list_discussion_messages(scope.session_id, 100)

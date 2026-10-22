@@ -34,8 +34,18 @@ try {
         const messages=[
           {id:"m1",sessionId:"s1",role:"USER",content:"我想在金丹后面增加一个新境界，突破的代价改为失去记忆。"},
           {id:"m2",sessionId:"s1",role:"ASSISTANT",content:"《修炼体系》里已有炼气、筑基、金丹三个阶段，原本的突破代价是寿元。\\n\\n可以沿着已有体系扩展，在金丹后加一层“照魂境”。你已选择失忆代价，我会把它作为当前分支的方向，原设定暂不替换。"},
+          {id:"m-old",sessionId:"s1",role:"ASSISTANT",content:"早期试写仍使用寿元代价，保留作为历史对照。",contextVersion:"coauthor:historical-run-00"},
           {id:"m3",sessionId:"s1",role:"USER",content:"先拿主角突破写一段。他忘了母亲的声音，压抑一点。"}
         ];
+        state.runs=Array.from({length:25},(_,index)=>({
+          id:"historical-run-"+String(24-index).padStart(2,"0"),sessionId:"s1",userMessageId:"old-message-"+index,
+          status:"COMPLETED",documentVersion:1,output:"历史试写 "+index,
+          audit:index===24?[{kind:"draft_proposal",baseDocument:structuredClone(doc),
+            document:{...doc,content:"旧建议：突破消耗寿元。"}}]:[]
+        }));
+        function lightState(){
+          return {...structuredClone(state),runs:state.runs.slice(0,20).map(({audit,output,...summary})=>summary)};
+        }
         let changes=null;
         let reversal=null;
         let impacts=[];
@@ -106,7 +116,18 @@ try {
           if(command==="bootstrap_status")return {};
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
           if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
-          if(command==="get_coauthor_state")return structuredClone(state);
+          if(command==="get_coauthor_state")return lightState();
+          if(command==="list_coauthor_runs"){
+            const start=args.beforeRunId?state.runs.findIndex(run=>run.id===args.beforeRunId)+1:0;
+            if(args.beforeRunId&&start===0)throw new Error("Unknown run cursor");
+            return {runs:state.runs.slice(start,start+20).map(({audit,output,...summary})=>structuredClone(summary)),
+              hasMore:start+20<state.runs.length};
+          }
+          if(command==="get_coauthor_run"){
+            const run=state.runs.find(run=>run.id===args.id);
+            if(!run)throw new Error("Unknown historical run");
+            return structuredClone(run);
+          }
           if(command==="list_coauthor_decision_history")return {
             current:{decision:structuredClone(state.decisions[0]),aliases:["突破代价","境界代偿"],quote:"代价改为失去记忆"},
             revisions:[{decision:structuredClone(state.decisions[0]),quote:"代价改为失去记忆"},
@@ -143,7 +164,7 @@ try {
               audit:[]};
             state.runs.unshift(run);
             messages.push({id:crypto.randomUUID(),sessionId:"s1",role:"ASSISTANT",content:run.output,contextVersion:"coauthor:"+run.id});
-            return {state:structuredClone(state),runId:input.runId};
+            return {state:lightState(),runId:input.runId,run:structuredClone(run)};
           }
           if(command==="cancel_coauthor_run")return;
           if(command==="list_coauthor_document_history")return [doc];
@@ -201,6 +222,34 @@ try {
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-discussion.png`), fullPage: true });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
     assert.equal(overflow, false, `Horizontal overflow at ${viewport.width}px`);
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.some((name) =>
+      name === "get_coauthor_run" || name === "list_coauthor_runs")), false,
+    "Opening the workspace must not load historical audits or the run directory");
+    await page.getByRole("button", { name: "依据与记录", exact: true }).click();
+    const sourcesPanel = page.getByRole("dialog", { name: "依据与运行记录" });
+    await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).waitFor();
+    await sourcesPanel.getByText("保留的回复", { exact: true }).click();
+    await sourcesPanel.getByText("历史试写 24", { exact: true }).waitFor({ state: "visible" });
+    await sourcesPanel.getByRole("button", { name: "更早运行", exact: true }).click();
+    await sourcesPanel.getByText("第 2 页", { exact: true }).waitFor();
+    await sourcesPanel.getByLabel("查看运行", { exact: true }).selectOption("historical-run-01");
+    await sourcesPanel.getByText("基础稿件", { exact: false }).waitFor();
+    await sourcesPanel.getByLabel("查看运行", { exact: true }).selectOption("historical-run-00");
+    await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-run-directory.png`), fullPage: true });
+    assert.equal(await sourcesPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
+    await sourcesPanel.getByRole("button", { name: "较新运行", exact: true }).click();
+    await sourcesPanel.getByText("第 1 页", { exact: true }).waitFor();
+    await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).click();
+    const oldProposal = page.getByRole("dialog", { name: "改稿差异", exact: true });
+    await oldProposal.getByLabel("AI 建议稿", { exact: true }).waitFor();
+    assert.equal(await oldProposal.getByLabel("AI 建议稿", { exact: true }).inputValue(), "旧建议：突破消耗寿元。");
+    assert.equal(await oldProposal.getByRole("button", { name: "采用整份工作稿修改", exact: true }).isDisabled(), true);
+    assert.equal(await oldProposal.evaluate((el) => el.scrollWidth > el.clientWidth), false);
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-historical-proposal.png`), fullPage: true });
+    await oldProposal.getByRole("button", { name: "关闭改稿差异", exact: true }).click();
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("run_coauthor")), false,
+      "Historical comparison must not start a model");
     await page.getByLabel("讨论输入", { exact: true }).fill("前半段保留，最后一句再克制一点。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await page.getByText("我保留前半段，只推敲最后一句。", { exact: true }).first().waitFor();

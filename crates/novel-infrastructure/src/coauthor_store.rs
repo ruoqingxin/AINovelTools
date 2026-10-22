@@ -18,6 +18,8 @@ mod source_checks;
 pub use source_checks::*;
 mod decisions;
 pub use decisions::*;
+mod runs;
+pub use runs::*;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -115,7 +117,7 @@ pub struct CoauthorRun {
 pub struct CoauthorState {
     pub document: CoauthorDocument,
     pub decisions: Vec<CoauthorDecision>,
-    pub runs: Vec<CoauthorRun>,
+    pub runs: Vec<CoauthorRunSummary>,
 }
 
 pub(crate) fn decode<T: serde::de::DeserializeOwned>(json: String) -> Result<T, CoauthorError> {
@@ -169,34 +171,7 @@ impl ProjectManager {
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        let mut statement = db.connection.prepare(
-            "SELECT id, user_message_id, status, document_version, output, audit
-             FROM coauthor_runs WHERE session_id=?1 ORDER BY rowid DESC LIMIT 20",
-        )?;
-        let runs = statement
-            .query_map([scope.session_id.to_string()], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                ))
-            })?
-            .map(|row| {
-                let (id, message, status, version, output, audit) = row?;
-                Ok(CoauthorRun {
-                    id: id.parse().map_err(|_| CoauthorError::NotFound)?,
-                    session_id: scope.session_id,
-                    user_message_id: message.parse().map_err(|_| CoauthorError::NotFound)?,
-                    status,
-                    document_version: version,
-                    output,
-                    audit: decode(audit)?,
-                })
-            })
-            .collect::<Result<Vec<_>, CoauthorError>>()?;
+        let runs = self.list_coauthor_runs(scope, None)?.runs;
         Ok(CoauthorState {
             document,
             decisions,
@@ -328,13 +303,8 @@ impl ProjectManager {
         run_id: Uuid,
         expected_version: i64,
     ) -> Result<CoauthorDocument, CoauthorError> {
-        let state = self.coauthor_state(scope)?;
-        let run = state
-            .runs
-            .iter()
-            .find(|run| run.id == run_id)
-            .ok_or(CoauthorError::NotFound)?;
-        if run.status != "COMPLETED" || state.runs.first().map(|run| run.id) != Some(run_id) {
+        let run = self.coauthor_run(scope, run_id)?;
+        if run.status != "COMPLETED" || self.list_coauthor_runs(scope, None)?.runs.first().map(|run| run.id) != Some(run_id) {
             return Err(CoauthorError::Conflict);
         }
         let proposed = run

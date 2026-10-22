@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyAiTaskPreferences } from "../lib/ai-task-preferences";
-import type { CoauthorDocument, CoauthorState, IpcRequests } from "../lib/tauri-client";
+import type { CoauthorDocument, CoauthorRun, CoauthorState, IpcRequests } from "../lib/tauri-client";
 import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 import { CoauthorView } from "./coauthor-view";
 
@@ -14,10 +14,13 @@ const baseline: CoauthorDocument = {
   sessionId: "s1", version: 1, kind: "MANUSCRIPT", title: "突破",
   content: "前半段保留。\n后半段寿元消散。", targetKey: null, targetRevision: null, narrativePosition: "金丹初期",
 };
-let stored: CoauthorState;
+let stored: Omit<CoauthorState, "runs"> & { runs: CoauthorRun[] };
 let pending: Array<{ input: IpcRequests["run_coauthor"]["input"]; resolve: (value: unknown) => void }>;
 let handlers: Array<(event: { payload: { runId: string; sessionId: string; kind: string; content: string } }) => void>;
-let posted: Array<{ id: string; sessionId: string; role: string; content: string }>;
+let posted: Array<{ id: string; sessionId: string; role: string; content: string; contextVersion?: string }>;
+function lightState(): CoauthorState {
+  return { ...structuredClone(stored), runs: stored.runs.map(({ output: _output, audit: _audit, ...summary }) => summary) };
+}
 
 function renderWorkspace() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -44,7 +47,7 @@ async function finish(request: (typeof pending)[number], status = "COMPLETED", c
     audit: [{ kind: "draft_proposal", baseDocument: baseline, document }],
   };
   stored.runs = [run, ...stored.runs];
-  await act(async () => request.resolve({ state: structuredClone(stored), runId: run.id }));
+  await act(async () => request.resolve({ state: lightState(), runId: run.id, run }));
 }
 
 beforeEach(() => {
@@ -58,7 +61,13 @@ beforeEach(() => {
     switch (command) {
       case "current_project": return { projectId: "p1" };
       case "list_discussion_sessions": return [{ id: "s1", projectId: "p1", title: "境界讨论", scopeKind: "PROJECT" }];
-      case "get_coauthor_state": return structuredClone(stored);
+      case "get_coauthor_state": return lightState();
+      case "list_coauthor_runs": return { runs: lightState().runs, hasMore: false };
+      case "get_coauthor_run": {
+        const run = stored.runs.find((entry) => entry.id === args.id);
+        if (!run) throw new Error("指定运行不存在");
+        return structuredClone(run);
+      }
       case "get_ai_task_preferences": return emptyAiTaskPreferences;
       case "get_project_ai_task_overrides": return {};
       case "list_model_profiles": return [{ id: "model", hasSecret: true, name: "测试模型", capability: "CHAT" }];
@@ -87,6 +96,96 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it("does not fetch run audits or the directory while writing with the panels closed", async () => {
+    stored.runs = [{ id: "latest", sessionId: "s1", userMessageId: "m", documentVersion: 1,
+      status: "COMPLETED", output: "", audit: [] }];
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "get_coauthor_run" || name === "list_coauthor_runs")).toBe(false);
+    expect(screen.getByRole("button", { name: "查看运行结果" })).toBeVisible();
+  });
+
+  it("reads a historical reply by exact run id outside the recent directory and blocks applying its whole proposal", async () => {
+    stored.runs = [{ id: "latest", sessionId: "s1", userMessageId: "m", documentVersion: 1,
+      status: "COMPLETED", output: "", audit: [] }];
+    posted = [{ id: "old-message", sessionId: "s1", role: "ASSISTANT", content: "过去的试写", contextVersion: "coauthor:historical" }];
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => command === "get_coauthor_run"
+      && args.id === "historical" ? { id: "historical", sessionId: "s1", userMessageId: "old-user", documentVersion: 1,
+        status: "COMPLETED", output: "过去的试写", audit: [
+          { kind: "draft_proposal", baseDocument: baseline, document: { ...baseline, content: "旧建议正文" } },
+        ] } : original(command, args));
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: "依据与记录" }));
+    expect(await screen.findByText("已完成 · 基础稿件 v1")).toBeVisible();
+    expect(mocks.invoke).toHaveBeenCalledWith("get_coauthor_run", { scope: { projectId: "p1", sessionId: "s1" }, id: "historical" });
+    fireEvent.click(within(screen.getByRole("dialog", { name: "依据与运行记录" })).getByRole("button", { name: "查看改稿差异" }));
+    expect(await screen.findByLabelText("AI 建议稿")).toHaveValue("旧建议正文");
+    expect(screen.getByRole("button", { name: "采用整份工作稿修改" })).toBeDisabled();
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor" || name === "apply_coauthor_proposal")).toBe(false);
+  });
+
+  it("shows exact-run errors without inventing a missing-history conclusion or clearing author input", async () => {
+    posted = [{ id: "old-message", sessionId: "s1", role: "ASSISTANT", content: "旧回复", contextVersion: "coauthor:missing" }];
+    renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "保留我的输入" } });
+    fireEvent.click(screen.getByRole("button", { name: "依据与记录" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("运行记录无法核实");
+    expect(screen.getByLabelText("讨论输入")).toHaveValue("保留我的输入");
+    expect(screen.queryByText("此记录不在最近的运行列表中，原始讨论仍保留。")).not.toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor" || name === "apply_coauthor_proposal")).toBe(false);
+  });
+
+  it("disables both adoption paths when a cached proposal cannot be verified on refresh", async () => {
+    stored.runs = [{ id: "latest", sessionId: "s1", userMessageId: "m", documentVersion: 1,
+      status: "COMPLETED", output: "", audit: [
+        { kind: "draft_proposal", baseDocument: baseline, document: { ...baseline, content: "缓存建议" } },
+      ] }];
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: "查看运行结果" }));
+    await screen.findByLabelText("AI 建议稿");
+    await waitFor(() => expect(screen.getByRole("button", { name: "采用整份工作稿修改" })).toBeEnabled());
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => command === "get_coauthor_run"
+      ? Promise.reject(new Error("详情暂不可用")) : original(command, args));
+    fireEvent.click(screen.getByRole("button", { name: "刷新运行记录" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("详情暂不可用");
+    expect(screen.getByText("以下为上次读取的运行记录，当前状态尚未核实。")).toBeVisible();
+    expect(screen.getByLabelText("AI 建议稿")).toHaveValue("缓存建议");
+    expect(screen.getByRole("button", { name: "采用整份工作稿修改" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeDisabled();
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+  });
+
+  it("clears the prior proposal selection when switching between historical runs", async () => {
+    stored.runs = ["latest", "earlier"].map((id) => ({
+      id, sessionId: "s1", userMessageId: id, documentVersion: 1, status: "COMPLETED", output: `回复 ${id}`,
+      audit: [{ kind: "draft_proposal", baseDocument: baseline, document: { ...baseline, content: `建议 ${id}` } }],
+    }));
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    fireEvent.click(screen.getByRole("button", { name: "依据" }));
+    const sources = await screen.findByRole("dialog", { name: "依据与运行记录" });
+    fireEvent.click(await within(sources).findByRole("button", { name: "查看改稿差异" }));
+    const first = await screen.findByLabelText("AI 建议稿");
+    await waitFor(() => expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeEnabled());
+    fireEvent.select(first, { target: { selectionStart: 0, selectionEnd: 2 } });
+    fireEvent.click(screen.getByRole("button", { name: "关闭改稿差异" }));
+    fireEvent.click(screen.getByRole("button", { name: "依据" }));
+    const reopened = await screen.findByRole("dialog", { name: "依据与运行记录" });
+    await waitFor(() => expect(within(reopened).getByLabelText("查看运行")).toBeEnabled());
+    fireEvent.change(within(reopened).getByLabelText("查看运行"), { target: { value: "earlier" } });
+    await waitFor(() => expect(within(reopened).getByRole("button", { name: "查看改稿差异" })).toBeEnabled());
+    fireEvent.click(within(reopened).getByRole("button", { name: "查看改稿差异" }));
+    await waitFor(() => expect(screen.getByLabelText("AI 建议稿")).toHaveValue("建议 earlier"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "仅采用选中文字" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("请先在 AI 建议稿中选择要采用的文字。");
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+  });
+
   it("corrects a decision by stable identity and expected version without rewriting the manuscript", async () => {
     stored.decisions = [{ id: "decision", topic: "突破代价", content: "寿元", status: "CHOSEN", sourceMessageId: "old-author", version: 2 }];
     const base = mocks.invoke.getMockImplementation()!;

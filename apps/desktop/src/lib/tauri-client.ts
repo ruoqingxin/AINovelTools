@@ -180,6 +180,12 @@ export function assembleContextWithProjectKnowledge(input: AssembleContextInput)
 export function getCoauthorState(scope: IpcRequests["get_coauthor_state"]["scope"]) {
   return invoke("get_coauthor_state", { scope });
 }
+export function listCoauthorRuns(input: IpcRequests["list_coauthor_runs"]) {
+  return invoke("list_coauthor_runs", input);
+}
+export function getCoauthorRun(input: IpcRequests["get_coauthor_run"]) {
+  return invoke("get_coauthor_run", input);
+}
 export function createCoauthorSourceCheck(input: IpcRequests["create_coauthor_source_check"]) {
   return invoke("create_coauthor_source_check", input);
 }

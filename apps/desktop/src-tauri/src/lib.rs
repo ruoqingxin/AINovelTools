@@ -32,6 +32,7 @@ use commands::ai::{
 use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::coauthor::{
     get_coauthor_state,save_coauthor_document,list_coauthor_document_history,
+    list_coauthor_runs,get_coauthor_run,
     run_coauthor,cancel_coauthor_run,apply_coauthor_proposal,publish_coauthor_document,
     fork_coauthor_session,read_coauthor_source,correct_coauthor_decision,
     list_coauthor_decision_history,
@@ -245,6 +246,8 @@ pub fn run() {
             promote_discussion_candidate_to_foreshadowing_review,
             ask_project_discussion,
             get_coauthor_state,
+            list_coauthor_runs,
+            get_coauthor_run,
             create_coauthor_source_check,
             list_coauthor_source_checks,
             get_coauthor_source_check,

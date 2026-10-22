@@ -156,6 +156,7 @@ export type IpcErrors = {
     get_coauthor_changeset: ApiError;
     get_coauthor_check_notes: ApiError;
     get_coauthor_reversal: ApiError;
+    get_coauthor_run: ApiError;
     get_coauthor_source_check: ApiError;
     get_coauthor_state: ApiError;
     get_consistency_review_trace: ApiError;
@@ -179,6 +180,7 @@ export type IpcErrors = {
     list_chapter_extractions: ApiError;
     list_coauthor_decision_history: ApiError;
     list_coauthor_document_history: ApiError;
+    list_coauthor_runs: ApiError;
     list_coauthor_source_checks: ApiError;
     list_current_facts: ApiError;
     list_discussion_candidates: ApiError;
@@ -352,6 +354,7 @@ export type IpcRequests = {
     get_coauthor_changeset: InputArgsGetCoauthorChangeset;
     get_coauthor_check_notes: InputArgsGetCoauthorCheckNotes;
     get_coauthor_reversal: InputArgsGetCoauthorReversal;
+    get_coauthor_run: InputArgsGetCoauthorRun;
     get_coauthor_source_check: InputArgsGetCoauthorSourceCheck;
     get_coauthor_state: InputArgsGetCoauthorState;
     get_consistency_review_trace: InputArgsGetConsistencyReviewTrace;
@@ -375,6 +378,7 @@ export type IpcRequests = {
     list_chapter_extractions: InputArgsListChapterExtractions;
     list_coauthor_decision_history: InputArgsListCoauthorDecisionHistory;
     list_coauthor_document_history: InputArgsListCoauthorDocumentHistory;
+    list_coauthor_runs: InputArgsListCoauthorRuns;
     list_coauthor_source_checks: InputArgsListCoauthorSourceChecks;
     list_current_facts: InputArgsListCurrentFacts;
     list_discussion_candidates: InputArgsListDiscussionCandidates;
@@ -903,6 +907,10 @@ export type InputArgsGetCoauthorReversal = {
     id: string;
     scope: InputCoauthorScope;
 };
+export type InputArgsGetCoauthorRun = {
+    id: string;
+    scope: InputCoauthorScope;
+};
 export type InputArgsGetCoauthorSourceCheck = {
     id: string;
     offset: number;
@@ -996,6 +1004,10 @@ export type InputArgsListCoauthorDecisionHistory = {
 };
 export type InputArgsListCoauthorDocumentHistory = {
     beforeVersion?: number | null;
+    scope: InputCoauthorScope;
+};
+export type InputArgsListCoauthorRuns = {
+    beforeRunId?: string | null;
     scope: InputCoauthorScope;
 };
 export type InputArgsListCoauthorSourceChecks = {
@@ -1495,6 +1507,7 @@ export type IpcResponses = {
     get_coauthor_changeset: CoauthorChangeSet;
     get_coauthor_check_notes: CoauthorCheckNotesPage;
     get_coauthor_reversal: CoauthorReversal | null;
+    get_coauthor_run: CoauthorRun;
     get_coauthor_source_check: CoauthorCheckPage;
     get_coauthor_state: CoauthorState;
     get_consistency_review_trace: ReviewTrace;
@@ -1518,6 +1531,7 @@ export type IpcResponses = {
     list_chapter_extractions: ChapterExtractionProposal[];
     list_coauthor_decision_history: CoauthorDecisionHistory;
     list_coauthor_document_history: CoauthorDocument[];
+    list_coauthor_runs: CoauthorRunsPage;
     list_coauthor_source_checks: CoauthorChecksPage;
     list_current_facts: Fact[];
     list_discussion_candidates: DiscussionCandidate[];
@@ -2300,16 +2314,23 @@ export type CoauthorCheckNote = {
     start: number;
     version: number;
 };
-export type CoauthorState = {
-    decisions: CoauthorDecision[];
-    document: CoauthorDocument;
-    runs: CoauthorRun[];
-};
 export type CoauthorRun = {
     audit: unknown[];
     documentVersion: number;
     id: string;
     output: string;
+    sessionId: string;
+    status: string;
+    userMessageId: string;
+};
+export type CoauthorState = {
+    decisions: CoauthorDecision[];
+    document: CoauthorDocument;
+    runs: CoauthorRunSummary[];
+};
+export type CoauthorRunSummary = {
+    documentVersion: number;
+    id: string;
     sessionId: string;
     status: string;
     userMessageId: string;
@@ -2569,6 +2590,10 @@ export type CoauthorDecisionRevision = {
     decision: CoauthorDecision;
     quote: string | null;
 };
+export type CoauthorRunsPage = {
+    hasMore: boolean;
+    runs: CoauthorRunSummary[];
+};
 export type CoauthorChecksPage = {
     checks: CoauthorSourceCheck[];
     hasMore: boolean;
@@ -2645,6 +2670,7 @@ export type WorldStateEntry = {
     subject: string;
 };
 export type CoauthorResult = {
+    run: CoauthorRun;
     runId: string;
     state: CoauthorState;
 };

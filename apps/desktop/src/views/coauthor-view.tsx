@@ -1,11 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Check, ClipboardList, FileText, GitBranch, History, ListChecks, MessageSquareText, Plus, Save, Send, Square, X } from "lucide-react";
+import { BookOpen, Check, ClipboardList, FileText, GitBranch, History, ListChecks, MessageSquareText, Plus, RefreshCw, Save, Send, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "../lib/ipc-transport";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
   applyCoauthorProposal, cancelCoauthorRun, correctCoauthorDecision, createDiscussionSession, errorMessage,
-  forkCoauthorSession, getCoauthorState, getCurrentProject, getProjectAiTaskOverrides,
+  forkCoauthorSession, getCoauthorState, getCoauthorRun, getCurrentProject, getProjectAiTaskOverrides,
   listCoauthorDocumentHistory, listDiscussionMessages, listDiscussionSessions, listModelProfiles,
   publishCoauthorDocument, readCoauthorSource, runCoauthor, saveCoauthorDocument,
   type CoauthorDecision, type CoauthorDocument, type CoauthorRun, type CoauthorScope, type CoauthorSource,
@@ -19,6 +19,7 @@ import { WorkspacePanel } from "./workspace-panel";
 import { CoauthorChangesPanel } from "./coauthor-changes-panel";
 import { CoauthorChecksPanel } from "./coauthor-checks-panel";
 import { CoauthorDecisionHistory, DecisionContext } from "./coauthor-decision-history";
+import { CoauthorRunDirectory } from "./coauthor-run-directory";
 import "./coauthor-workspace.css";
 
 const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
@@ -188,9 +189,15 @@ function CoauthorSession({ scope, initial, onFork }: {
   } : undefined;
   const profile = resolveTaskChatProfile(profiles.data, effective, "discussion");
   const preference = resolveTaskPreference(effective, "discussion");
-  const run = state.runs.find((entry) => entry.id === runId);
+  const runQuery = useQuery({
+    queryKey: ["coauthor-run", scope.projectId, scope.sessionId, runId],
+    queryFn: () => getCoauthorRun({ scope, id: runId }),
+    enabled: Boolean(runId && (panel === "sources" || panel === "proposal")), retry: false,
+  });
+  const run = runQuery.data;
+  const runVerified = runQuery.isSuccess && !runQuery.isFetching;
   const proposal = proposalFor(run);
-  const canApply = run?.status === "COMPLETED" && proposal
+  const canApply = runVerified && run?.status === "COMPLETED" && proposal && state.runs[0]?.id === run.id
     && draft.document.version === proposal.baseDocument.version && sameDraft(draft.document, proposal.baseDocument);
   const visible = [...new Map([...older, ...(messages.data ?? [])].map((message) => [message.id, message])).values()];
   const canSend = Boolean(profile?.hasSecret && preferences.isSuccess && overrides.isSuccess && messages.isSuccess
@@ -204,6 +211,8 @@ function CoauthorSession({ scope, initial, onFork }: {
     const el = thread.current;
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight;
   }, [stream, messages.data, active]);
+  useEffect(() => { proposalSelection.current = ""; }, [run]);
+  useEffect(() => { setSource(null); }, [runId]);
   useEffect(() => {
     if (!transitioning || !activeRef.current) return;
     const runId = activeRef.current;
@@ -223,6 +232,8 @@ function CoauthorSession({ scope, initial, onFork }: {
     const epoch = ++stateEpoch.current;
     const updated = await getCoauthorState(scope);
     if (mounted.current && stateEpoch.current === epoch) setState(updated);
+    await client.invalidateQueries({ queryKey: ["coauthor-run", scope.projectId, scope.sessionId] });
+    await client.invalidateQueries({ queryKey: ["coauthor-runs", scope.projectId, scope.sessionId] });
     await client.invalidateQueries({ queryKey: ["discussion-messages", scope.sessionId] });
     return updated;
   }
@@ -279,6 +290,8 @@ function CoauthorSession({ scope, initial, onFork }: {
         temperature: preference.temperature, maxOutputTokens: preference.maxOutputTokens,
       });
       if (!mounted.current) return;
+      client.setQueryData(["coauthor-run", scope.projectId, scope.sessionId, started], result.run);
+      void client.invalidateQueries({ queryKey: ["coauthor-runs", scope.projectId, scope.sessionId] });
       await client.invalidateQueries({ queryKey: ["discussion-messages", scope.sessionId] });
       if (activeRef.current !== started) {
         if (!activeRef.current) { stateEpoch.current++; setState(result.state); setRunId(started); setStream(""); }
@@ -286,7 +299,7 @@ function CoauthorSession({ scope, initial, onFork }: {
       }
       acknowledge();
       stateEpoch.current++; setState(result.state); setRunId(started);
-      const completed = result.state.runs.find((entry) => entry.id === started);
+      const completed = result.run;
       const pending = proposalFor(completed);
       if (completed?.status === "COMPLETED" && pending && allowEdits
         && draft.current.current.version === snapshot.version && sameDraft(draft.current.current, snapshot)) {
@@ -425,7 +438,8 @@ function CoauthorSession({ scope, initial, onFork }: {
                 setRunId(message.contextVersion!.slice(9)); setPanel("sources");
               }}><BookOpen size={13} />依据与记录</button>}
               {message.contextVersion?.startsWith("coauthor:") && <small>{statuses[state.runs.find((entry) =>
-                entry.id === message.contextVersion!.slice(9))?.status ?? ""]}</small>}
+                entry.id === message.contextVersion!.slice(9))?.status
+                  ?? (run?.id === message.contextVersion.slice(9) ? run.status : "")]}</small>}
             </header>
             <div>{message.content}</div>
           </article>)}
@@ -471,7 +485,7 @@ function CoauthorSession({ scope, initial, onFork }: {
             if (el.selectionEnd > el.selectionStart) setSelection(el.value.slice(el.selectionStart, el.selectionEnd));
           }} />
         <footer><small>{[...draft.document.content].length} 字 · 工作稿</small>
-          {proposal && <button onClick={() => setPanel("proposal")}>查看改稿差异</button>}</footer>
+          {runId && <button onClick={() => setPanel("proposal")}>{proposal ? "查看改稿差异" : "查看运行结果"}</button>}</footer>
       </section>
     </div>
     <WorkspacePanel open={panel !== null} title={panel === "checks" ? "查证范围与进度" : panel === "changes" ? "关联变更与影响" : panel === "sources" ? "依据与运行记录" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : panel === "publish" ? "正式采用预览" : "改稿差异"}
@@ -491,12 +505,11 @@ function CoauthorSession({ scope, initial, onFork }: {
           }
         }} />}
       {panel === "sources" && <>
-        <select aria-label="查看运行" value={runId} onChange={(event) => { setRunId(event.target.value); setSource(null); }}>
-          <option value="">选择运行</option>{state.runs.map((entry) => <option key={entry.id} value={entry.id}>{statuses[entry.status] ?? entry.status} · {entry.id.slice(0, 8)}</option>)}
-        </select>
+        <CoauthorRunDirectory key={`${scope.projectId}:${scope.sessionId}`} scope={scope} selected={runId}
+          onSelect={(id) => { setRunId(id); setSource(null); }} />
         {run && <p>{statuses[run.status]} · 基础稿件 v{run.documentVersion}</p>}
-        {run && run.status !== "COMPLETED" && run.output && <details><summary>保留的回复（未完成）</summary><pre>{run.output}</pre></details>}
-        {run?.status === "RUNNING" && <button disabled={busy} onClick={() => void act(async () => {
+        {run?.output && <details><summary>{run.status === "COMPLETED" ? "保留的回复" : "保留的回复（未完成）"}</summary><pre>{run.output}</pre></details>}
+        {run?.status === "RUNNING" && <button disabled={busy || !runVerified} onClick={() => void act(async () => {
           await cancelCoauthorRun({ scope, runId: run.id }); await refresh();
         })}>停止此运行</button>}
         {sourcesFor(run).map((hit) => <article className="coauthor-source" key={`${hit.key}:${hit.revision}`}>
@@ -504,7 +517,8 @@ function CoauthorSession({ scope, initial, onFork }: {
           <DecisionContext context={hit.decisionContext} />
           <button onClick={() => void act(async () => { setSource(await readCoauthorSource({ scope, key: hit.key, revision: hit.revision, offset: 0 })); })}>查看原文</button>
         </article>)}
-        {!run && <p>此记录不在最近的运行列表中，原始讨论仍保留。</p>}
+        {!runId && <p>选择一份运行记录。</p>}
+        {proposal && <button disabled={!runVerified} onClick={() => setPanel("proposal")}>查看改稿差异</button>}
         {source && <section className="coauthor-source-text"><h3>{source.title}</h3><small>修订 {source.revision}</small><pre>{source.content}</pre>
           <DecisionContext context={source.decisionContext} />
           {source.offset + [...source.content].length < source.totalChars && <button disabled={busy} onClick={() => void act(async () => {
@@ -517,6 +531,13 @@ function CoauthorSession({ scope, initial, onFork }: {
             : step.kind === "tool" ? `工具：${step.name}` : step.kind === "initial_search" ? "自动检索候选"
               : step.kind === "draft_proposal" ? "准备工作稿修改，未正式提交" : step.message ?? step.kind}</li>;
         })}</ol></details>}
+      </>}
+      {(panel === "sources" || panel === "proposal") && runId && <>
+        {runQuery.isPending && <p role="status">正在读取本次运行记录…</p>}
+        {runQuery.error && <p role="alert" className="project-error">运行记录无法核实：{errorMessage(runQuery.error)}</p>}
+        {run && !runVerified && <p role="status">以下为上次读取的运行记录，当前状态尚未核实。</p>}
+        <button type="button" className="icon-command" title="刷新运行记录" aria-label="刷新运行记录"
+          disabled={runQuery.isFetching} onClick={() => void runQuery.refetch()}><RefreshCw size={16} /></button>
       </>}
       {panel === "decisions" && <>
         <p>仅适用于当前讨论与分支，尚未改变正式设定。</p>
@@ -578,7 +599,7 @@ function CoauthorSession({ scope, initial, onFork }: {
             const saved = await applyCoauthorProposal({ scope, runId, expectedVersion: snapshot.version });
             if (mounted.current) draft.acceptSaved(saved, snapshot);
           })}>采用整份工作稿修改</button>
-          <button disabled={busy || Boolean(active)} onClick={() => {
+          <button disabled={busy || Boolean(active) || !runVerified} onClick={() => {
             const text = proposalSelection.current;
             if (!text) { setError("请先在 AI 建议稿中选择要采用的文字。"); return; }
             const current = draft.current.current;
@@ -588,6 +609,7 @@ function CoauthorSession({ scope, initial, onFork }: {
           }}>仅采用选中文字</button>
           {!canApply && <p>整稿修改已过期或本轮未完成。当前稿件保留，可比较后仅采用所选文字。</p>}
         </>}
+        {runVerified && !proposal && <p>此运行没有保存工作稿修改建议。</p>}
       </>}
     </WorkspacePanel>
   </div>;

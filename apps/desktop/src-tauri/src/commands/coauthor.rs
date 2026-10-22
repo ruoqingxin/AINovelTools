@@ -8,6 +8,7 @@ use novel_infrastructure::{
     CoauthorChangeRequest, CoauthorChangeSet, CoauthorChangesPage, CoauthorImpact,
     CoauthorChangeItemInput, CoauthorImpactInput,
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
+    CoauthorRun, CoauthorRunsPage,
     CoauthorManuscriptBlock,
     CoauthorOutlinePage,
     CoauthorReversal,
@@ -83,6 +84,7 @@ pub(crate) struct CoauthorInput {
 pub(crate) struct CoauthorResult {
     pub state: CoauthorState,
     pub run_id: uuid::Uuid,
+    pub run: CoauthorRun,
 }
 
 fn invalid(message: &str) -> ApiError {
@@ -106,11 +108,8 @@ impl Drop for RunGuard<'_> {
             cancelled.store(true, Ordering::Relaxed);
         }
         if let Ok(mut manager) = self.state.manager.lock()
-            && let Ok(state) = manager.coauthor_state(&self.scope)
-            && let Some(run) = state
-                .runs
-                .iter()
-                .find(|run| run.id == self.id && run.status == "RUNNING")
+            && let Ok(run) = manager.coauthor_run(&self.scope, self.id)
+            && run.status == "RUNNING"
         {
             let _ = manager.finish_coauthor_run(
                 &self.scope,
@@ -121,6 +120,22 @@ impl Drop for RunGuard<'_> {
             );
         }
     }
+}
+
+#[tauri::command]
+pub(crate) fn list_coauthor_runs(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, before_run_id: Option<uuid::Uuid>,
+) -> Result<CoauthorRunsPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_coauthor_runs(&scope, before_run_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn get_coauthor_run(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid,
+) -> Result<CoauthorRun, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .coauthor_run(&scope, id).map_err(Into::into)
 }
 
 fn tools() -> Vec<Value> {
@@ -930,7 +945,7 @@ fn execute_tool(
             }
             let args: ChangeArgs = arguments(call)?;
             validate_change_reads(&args, seen)?;
-            if manager.coauthor_state(&input.scope)?.document != *document {
+            if manager.coauthor_document(&input.scope)? != *document {
                 return Err(CoauthorError::Invalid("当前稿件正在变更，请先展示并保存改稿结果，再基于作者看到的版本准备关联采用。".into()));
             }
             let changes = manager.prepare_coauthor_changeset(&input.scope, CoauthorChangeRequest {
@@ -994,16 +1009,17 @@ pub(crate) async fn run_coauthor(
         &preference,
     ) as usize;
     let cancelled = Arc::new(AtomicBool::new(false));
-    let (initial, recent, found, scope_info, memories, memory_contexts) = {
+    let (initial, recent, found, scope_info, memories, memory_contexts, old_running) = {
         let mut manager = state
             .manager
             .lock()
             .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-        let initial = manager.coauthor_state(&input.scope)?;
+        let initial = manager.coauthor_document(&input.scope)?;
+        let old_running = manager.coauthor_running_ids(&input.scope)?;
         if input
             .selection
             .as_ref()
-            .is_some_and(|s| !s.is_empty() && !initial.document.content.contains(s))
+            .is_some_and(|s| !s.is_empty() && !initial.content.contains(s))
         {
             return Err(invalid("选区已变化，请重新选择。"));
         }
@@ -1039,7 +1055,7 @@ pub(crate) async fn run_coauthor(
             &input.message,
             input.expected_document_version,
         )?;
-        (initial, recent, found, scope_info, memories, memory_contexts)
+        (initial, recent, found, scope_info, memories, memory_contexts, old_running)
     };
     let _guard = RunGuard {
         state: &state,
@@ -1051,16 +1067,15 @@ pub(crate) async fn run_coauthor(
             .ai_cancellations
             .lock()
             .map_err(|_| ApiError::internal("AI cancellation mutex poisoned"))?;
-        for old in &initial.runs {
-            if old.status == "RUNNING"
-                && let Some(token) = registry.get(&old.id)
+        for old in &old_running {
+            if let Some(token) = registry.get(old)
             {
                 token.store(true, Ordering::Relaxed);
             }
         }
         registry.insert(input.run_id, Arc::clone(&cancelled));
     }
-    let mut document = initial.document.clone();
+    let mut document = initial.clone();
     let mut seen: HashMap<String, ReadEvidence> = HashMap::new();
     let mut audit = vec![json!({"kind":"initial_search","result":found})];
     let mut messages = vec![json!({"role":"system","content":PROMPT})];
@@ -1257,8 +1272,8 @@ pub(crate) async fn run_coauthor(
                 }
                 if let Ok(mut manager) = state.manager.lock() {
                     let mut checkpoint = audit.clone();
-                    if document != initial.document {
-                        checkpoint.push(json!({"kind":"draft_proposal","document":document,"baseDocument":initial.document}));
+                    if document != initial {
+                        checkpoint.push(json!({"kind":"draft_proposal","document":document,"baseDocument":initial}));
                     }
                     let _ = manager.checkpoint_coauthor_run(
                         &input.scope,
@@ -1284,9 +1299,9 @@ pub(crate) async fn run_coauthor(
             }
         }
     }
-    if document != initial.document {
+    if document != initial {
         audit.push(
-            json!({"kind":"draft_proposal","document":document,"baseDocument":initial.document}),
+            json!({"kind":"draft_proposal","document":document,"baseDocument":initial}),
         );
     }
     if let Some(error) = failure {
@@ -1308,6 +1323,7 @@ pub(crate) async fn run_coauthor(
     Ok(CoauthorResult {
         state: manager.coauthor_state(&input.scope)?,
         run_id: input.run_id,
+        run: manager.coauthor_run(&input.scope, input.run_id)?,
     })
 }
 
