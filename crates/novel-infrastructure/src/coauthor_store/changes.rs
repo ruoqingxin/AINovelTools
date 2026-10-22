@@ -11,6 +11,8 @@ pub struct CoauthorChangeItemInput {
     pub target_key: Option<String>,
     pub target_revision: Option<String>,
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub manuscript_edits: Vec<CoauthorManuscriptEdit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -32,7 +34,11 @@ pub struct CoauthorChangeRequest {
     pub items: Vec<CoauthorChangeItemInput>,
     pub impacts: Vec<CoauthorImpactInput>,
     pub coverage: String,
+    #[serde(default = "include_draft_default")]
+    pub include_draft: bool,
 }
+
+fn include_draft_default() -> bool { true }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +47,14 @@ pub struct CoauthorChangeItem {
     pub document: CoauthorDocument,
     pub before: Option<CoauthorSource>,
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub manuscript_edits: Vec<CoauthorManuscriptEdit>,
+    #[serde(default)]
+    pub manuscript_draft_version: Option<i64>,
+    #[serde(default)]
+    pub manuscript_before_json: Option<String>,
+    #[serde(default)]
+    pub manuscript_after_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -150,7 +164,8 @@ impl ProjectManager {
         }
         if !valid_label(&request.title, 200)
             || !valid_label(&request.coverage, 2000)
-            || request.items.len() > 7
+            || request.items.len() + usize::from(request.include_draft) > 8
+            || (!request.include_draft && (request.items.is_empty() || !request.draft_depends_on.is_empty()))
             || request.impacts.len() > 40
         {
             return Err(CoauthorError::Invalid(
@@ -170,13 +185,21 @@ impl ProjectManager {
         if base_document.version != request.expected_document_version {
             return Err(CoauthorError::Conflict);
         }
-        let mut items = vec![CoauthorChangeItem {
-            id: "draft".into(),
-            before: db.validate_coauthor_publication(&base_document)?,
-            document: base_document.clone(),
-            depends_on: request.draft_depends_on,
-        }];
+        let mut items = Vec::new();
+        if request.include_draft {
+            items.push(CoauthorChangeItem {
+                id: "draft".into(),
+                before: db.validate_coauthor_publication(&base_document)?,
+                document: base_document.clone(),
+                depends_on: request.draft_depends_on,
+                manuscript_edits: vec![], manuscript_draft_version: None,
+                manuscript_before_json: None, manuscript_after_json: None,
+            });
+        }
         for item in request.items {
+            if item.id == "draft" {
+                return Err(CoauthorError::Invalid("draft 为当前工作稿的保留标识。".into()));
+            }
             let document = CoauthorDocument {
                 session_id: scope.session_id,
                 version: base_document.version,
@@ -187,12 +210,23 @@ impl ProjectManager {
                 target_revision: item.target_revision,
                 narrative_position: base_document.narrative_position.clone(),
             };
-            items.push(CoauthorChangeItem {
+            let mut change = CoauthorChangeItem {
                 id: item.id,
-                before: db.validate_coauthor_publication(&document)?,
+                before: None,
                 document,
                 depends_on: item.depends_on,
-            });
+                manuscript_edits: item.manuscript_edits, manuscript_draft_version: None,
+                manuscript_before_json: None, manuscript_after_json: None,
+            };
+            if change.manuscript_edits.is_empty() {
+                change.before = db.validate_coauthor_publication(&change.document)?;
+            } else {
+                if !change.document.content.is_empty() {
+                    return Err(CoauthorError::Invalid("正文局部修改的 content 必须为空，由准确原文与修改范围生成预览。".into()));
+                }
+                db.prepare_manuscript_item(&mut change)?;
+            }
+            items.push(change);
         }
         validate_dependencies(&items)?;
         let targets: Vec<_> = items
@@ -209,6 +243,8 @@ impl ProjectManager {
             .map(|item| {
                 item.document.content.chars().count()
                     + item.before.as_ref().map_or(0, |source| source.total_chars)
+                    + item.manuscript_before_json.as_ref().map_or(0, |json| json.chars().count())
+                    + item.manuscript_after_json.as_ref().map_or(0, |json| json.chars().count())
             })
             .sum::<usize>()
             > 1_000_000
@@ -422,7 +458,8 @@ impl ProjectManager {
                     item.document.title,
                 )));
             }
-            db.validate_coauthor_publication(&item.document)?;
+            if item.manuscript_edits.is_empty() { db.validate_coauthor_publication(&item.document)?; }
+            else { db.validate_manuscript_item(item)?; }
         }
         // Evidence is checked before any targets change. Every todo is committed
         // alongside the exact subset that introduced its dependency.
@@ -439,12 +476,13 @@ impl ProjectManager {
             .iter()
             .filter(|item| selected.contains(&item.id))
         {
-            let key = db.publish_coauthor_item(
+            let reason = format!("coauthor-change:{}:{}", changes.id, item.id);
+            let key = if item.manuscript_edits.is_empty() { db.publish_coauthor_item(
                 &tx,
                 scope,
                 &item.document,
-                &format!("coauthor-change:{}:{}", changes.id, item.id),
-            )?;
+                &reason,
+            )? } else { db.publish_manuscript_item(&tx, scope, item, &reason)? };
             let source = db.coauthor_source(&key)?.ok_or(CoauthorError::NotFound)?;
             changes.published.push(CoauthorPublishedItem {
                 item_id: item.id.clone(),

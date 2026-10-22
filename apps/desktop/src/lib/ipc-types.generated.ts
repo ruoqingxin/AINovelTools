@@ -1033,6 +1033,7 @@ export type InputCoauthorChangeRequest = {
     draftDependsOn: string[];
     expectedDocumentVersion: number;
     impacts: InputCoauthorImpactInput[];
+    includeDraft?: boolean;
     items: InputCoauthorChangeItemInput[];
     title: string;
 };
@@ -1048,9 +1049,17 @@ export type InputCoauthorChangeItemInput = {
     dependsOn: string[];
     id: string;
     kind: InputCoauthorDocumentKind;
+    manuscriptEdits?: InputCoauthorManuscriptEdit[];
     targetKey?: string | null;
     targetRevision?: string | null;
     title: string;
+};
+export type InputCoauthorManuscriptEdit = {
+    after: string;
+    before: string;
+    blockId: string;
+    end: number;
+    start: number;
 };
 export type InputArgsPromoteDiscussionCandidate = {
     expectedStatus: InputDiscussionCandidateStatus;
@@ -1661,6 +1670,10 @@ export type CoauthorChangeItem = {
     dependsOn: string[];
     document: CoauthorDocument;
     id: string;
+    manuscriptAfterJson: string | null;
+    manuscriptBeforeJson: string | null;
+    manuscriptDraftVersion: number | null;
+    manuscriptEdits: CoauthorManuscriptEdit[];
 };
 export type CoauthorSource = {
     content: string;
@@ -1671,6 +1684,13 @@ export type CoauthorSource = {
     sessionId: string | null;
     title: string;
     totalChars: number;
+};
+export type CoauthorManuscriptEdit = {
+    after: string;
+    before: string;
+    blockId: string;
+    end: number;
+    start: number;
 };
 export type CoauthorPublishedItem = {
     itemId: string;

@@ -4,6 +4,8 @@ use serde_json::Value;
 mod publication;
 mod changes;
 pub use changes::*;
+mod manuscript;
+pub use manuscript::*;
 mod schema;
 mod sources;
 pub use sources::{CoauthorSearchPage, CoauthorSource};

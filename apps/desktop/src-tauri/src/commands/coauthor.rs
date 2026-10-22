@@ -8,6 +8,7 @@ use novel_infrastructure::{
     CoauthorChangeRequest, CoauthorChangeSet, CoauthorChangesPage, CoauthorImpact,
     CoauthorChangeItemInput, CoauthorImpactInput,
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
+    CoauthorManuscriptBlock,
     ModelToolCall,
 };
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,10 @@ new 只用于新建试写、换稿件类型或明确重写全文，不能用它�
 正文写进 edit_draft 的 after，讨论回复解释必要变化，不把指导语塞进小说。不必在回复里再重复整篇稿件。
 link_source 仅在作者要以已读取的正式资料为修改目标时使用，必须使用真实 key 和 revision。
 作者要采用正文并更新设定时，使用 prepare_changeset 准备关联变更，当前已保存稿件的标识固定为 draft。
-先读取将被替换的设定原文，再提出完整的新设定稿；当前仅支持替换概念设定，已有富文本正文和大纲不可直接覆盖。
+先读取将被替换的设定原文，再提出完整的新设定稿；当前仅支持替换概念设定，大纲不可直接覆盖。
+修改已有正文时先用 read_manuscript_blocks 分页读取真实块与格式片段，再在 prepare_changeset 的 manuscriptEdits 中给出 blockId、start、end、before、after。
+正文字符范围按 Unicode 字符计数（不是 UTF-16），相对该块原文从0开始，包含start、不包含end；一处修改不能跨越文字格式片段或段落，复杂修改应拆分。准确保留非目标部分、原格式和章节标题。
+局部正文项的 content 必须为空，程序生成真实的富文本前后预览；这不是纯文本覆盖。仅修改已有正式资料时 includeDraft=false，不夹带无关工作稿。
 稿件依赖某个新规则时，draftDependsOn 写入对应的变更标识；不要用空依赖绕开部分采用检查。
 影响待办必须有实际读过的正式原文及准确引文，说明为什么需要复查，不把词面相似冒充已确认矛盾。
 coverage 如实说明查过什么、未查什么；没有全范围查证不能声称查全或修复全书。
@@ -125,6 +129,13 @@ fn tools() -> Vec<Value> {
             &["key", "revision"],
         ),
         tool(
+            "read_manuscript_blocks",
+            "按来源身份与修订分页读取正文块、Unicode字符范围和格式片段。offset按块文字及块间一个换行计算；继续使用nextOffset，不用普通文本读取结果猜测块标识。",
+            json!({"key":{"type":"string"},"revision":{"type":"string"},
+                "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}}),
+            &["key", "revision"],
+        ),
+        tool(
             "read_draft",
             "读取当前工作稿。可分页，不代表正式正文。",
             json!({"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}}),
@@ -162,11 +173,16 @@ fn tools() -> Vec<Value> {
             "为作者核对准备关联变更，不正式写入。当前已保存稿件固定为draft，其余标识自定；依赖需明确列出。影响必须有已读原文。禁止假称已采用。",
             json!({
                 "title":{"type":"string"},
+                "includeDraft":{"type":"boolean"},
                 "draftDependsOn":{"type":"array","items":{"type":"string"}},
-                "items":{"type":"array","maxItems":7,"items":{"type":"object","additionalProperties":false,
+                "items":{"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,
                     "properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["SETTING","OUTLINE","MANUSCRIPT"]},
                         "title":{"type":"string"},"content":{"type":"string"},"targetKey":{"type":["string","null"]},
-                        "targetRevision":{"type":["string","null"]},"dependsOn":{"type":"array","items":{"type":"string"}}},
+                        "targetRevision":{"type":["string","null"]},"dependsOn":{"type":"array","items":{"type":"string"}},
+                        "manuscriptEdits":{"type":"array","maxItems":80,"items":{"type":"object","additionalProperties":false,
+                            "properties":{"blockId":{"type":"string"},"start":{"type":"integer","minimum":0},
+                                "end":{"type":"integer","minimum":1},"before":{"type":"string"},"after":{"type":"string"}},
+                            "required":["blockId","start","end","before","after"]}}},
                     "required":["id","kind","title","content","targetKey","targetRevision","dependsOn"]}},
                 "impacts":{"type":"array","maxItems":40,"items":{"type":"object","additionalProperties":false,
                     "properties":{"itemIds":{"type":"array","items":{"type":"string"}},"key":{"type":"string"},
@@ -456,7 +472,11 @@ struct ChangeArgs {
     items: Vec<CoauthorChangeItemInput>,
     impacts: Vec<CoauthorImpactInput>,
     coverage: String,
+    #[serde(default = "include_draft_default")]
+    include_draft: bool,
 }
+
+fn include_draft_default() -> bool { true }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -471,6 +491,7 @@ struct ReadEvidence {
     revision: String,
     fragments: Vec<String>,
     sent_fragments: usize,
+    anchors: Vec<(usize, CoauthorManuscriptBlock)>,
 }
 
 fn validate_change_reads(args: &ChangeArgs, seen: &HashMap<String, ReadEvidence>) -> Result<(), CoauthorError> {
@@ -488,6 +509,19 @@ fn validate_change_reads(args: &ChangeArgs, seen: &HashMap<String, ReadEvidence>
             evidence.fragments.iter().take(evidence.sent_fragments).any(|fragment| fragment.contains(&impact.quote)))
         {
             return Err(CoauthorError::Invalid("影响引句不在本轮已读取的原文片段中，请先读取对应段落。".into()));
+        }
+    }
+    for item in &args.items {
+        for edit in &item.manuscript_edits {
+            let evidence = item.target_key.as_ref().and_then(|key| seen.get(key));
+            if !evidence.is_some_and(|evidence| evidence.anchors.iter().any(|(index, block)| {
+                *index < evidence.sent_fragments && block.block_id == edit.block_id
+                    && block.runs.iter().any(|run| run.start <= edit.start && run.end >= edit.end
+                        && edit.start < edit.end && run.text.chars().skip(edit.start-run.start)
+                            .take(edit.end-edit.start).collect::<String>() == edit.before)
+            })) {
+                return Err(CoauthorError::Invalid("正文修改必须先读取并接收对应块及准确字符范围的原文，不能猜测块标识或跨页修改。".into()));
+            }
         }
     }
     Ok(())
@@ -567,15 +601,32 @@ fn execute_tool(
                 args.limit,
             )?;
             let evidence = seen.entry(source.key.clone()).or_insert_with(|| ReadEvidence {
-                revision: source.revision.clone(), fragments: vec![], sent_fragments: 0,
+                revision: source.revision.clone(), fragments: vec![], sent_fragments: 0, anchors: vec![],
             });
             if evidence.revision != source.revision {
                 evidence.revision.clone_from(&source.revision);
                 evidence.fragments.clear();
                 evidence.sent_fragments = 0;
+                evidence.anchors.clear();
             }
             evidence.fragments.push(source.content.clone());
             Ok(json!(source))
+        }
+        "read_manuscript_blocks" => {
+            let args: SourceArgs = arguments(call)?;
+            let page = manager.read_coauthor_manuscript(&input.scope, &args.key, &args.revision, args.offset, args.limit)?;
+            let evidence = seen.entry(page.key.clone()).or_insert_with(|| ReadEvidence {
+                revision: page.revision.clone(), fragments: vec![], sent_fragments: 0, anchors: vec![],
+            });
+            if evidence.revision != page.revision {
+                evidence.revision.clone_from(&page.revision);
+                evidence.fragments.clear(); evidence.anchors.clear(); evidence.sent_fragments = 0;
+            }
+            for block in &page.blocks {
+                evidence.anchors.push((evidence.fragments.len(), block.clone()));
+                evidence.fragments.push(block.text.clone());
+            }
+            Ok(json!(page))
         }
         "read_draft" => {
             let args: ReadArgs = arguments(call)?;
@@ -653,7 +704,7 @@ fn execute_tool(
                 return Err(CoauthorError::Invalid("本轮禁止修改工作稿目标。".into()));
             }
             let args: SourceArgs = arguments(call)?;
-            if seen.get(&args.key).map(|evidence| &evidence.revision) != Some(&args.revision) {
+            if !seen.get(&args.key).is_some_and(|evidence| evidence.revision == args.revision && evidence.sent_fragments > 0) {
                 return Err(CoauthorError::Invalid(
                     "必须先读取真实来源，才能关联采用目标。".into(),
                 ));
@@ -685,6 +736,7 @@ fn execute_tool(
                 expected_document_version: document.version, title: args.title,
                 draft_depends_on: args.draft_depends_on, items: args.items,
                 impacts: args.impacts, coverage: args.coverage,
+                include_draft: args.include_draft,
             }, Some(input.run_id))?;
             Ok(json!({"prepared":true,"formalCommit":false,"changeSetId":changes.id,
                 "title":changes.title,"itemCount":changes.items.len(),"impactCount":changes.impacts.len(),
@@ -880,7 +932,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v2",
+                    prompt_version: "coauthor-v3",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -901,7 +953,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v2","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v3","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -1096,8 +1148,10 @@ mod tests {
     #[test]
     fn changes_require_read_versions_for_targets_and_impact_evidence() {
         let args = ChangeArgs {
+            include_draft: true,
             title: "关联采用".into(), draft_depends_on: vec!["realm".into()],
             items: vec![CoauthorChangeItemInput {
+                manuscript_edits: vec![],
                 id: "realm".into(), kind: CoauthorDocumentKind::Setting,
                 title: "境界".into(), content: "消耗记忆".into(),
                 target_key: Some("ENTITY:realm".into()), target_revision: Some("r1".into()),
@@ -1111,13 +1165,13 @@ mod tests {
         };
         let mut seen = HashMap::new();
         assert!(validate_change_reads(&args, &seen).is_err());
-        seen.insert("ENTITY:realm".into(), ReadEvidence { revision: "r1".into(), fragments: vec!["境界原文".into()], sent_fragments: 1 });
+        seen.insert("ENTITY:realm".into(), ReadEvidence { revision: "r1".into(), fragments: vec!["境界原文".into()], sent_fragments: 1, anchors: vec![] });
         assert!(validate_change_reads(&args, &seen).is_err());
-        seen.insert("MANUSCRIPT:old".into(), ReadEvidence { revision: "outdated".into(), fragments: vec!["旧章原文".into()], sent_fragments: 1 });
+        seen.insert("MANUSCRIPT:old".into(), ReadEvidence { revision: "outdated".into(), fragments: vec!["旧章原文".into()], sent_fragments: 1, anchors: vec![] });
         assert!(validate_change_reads(&args, &seen).is_err());
-        seen.insert("MANUSCRIPT:old".into(), ReadEvidence { revision: "m1".into(), fragments: vec!["未包含所引句子的另一页".into()], sent_fragments: 1 });
+        seen.insert("MANUSCRIPT:old".into(), ReadEvidence { revision: "m1".into(), fragments: vec!["未包含所引句子的另一页".into()], sent_fragments: 1, anchors: vec![] });
         assert!(validate_change_reads(&args, &seen).is_err());
-        seen.insert("MANUSCRIPT:old".into(), ReadEvidence { revision: "m1".into(), fragments: vec!["这里是旧章原文。".into()], sent_fragments: 0 });
+        seen.insert("MANUSCRIPT:old".into(), ReadEvidence { revision: "m1".into(), fragments: vec!["这里是旧章原文。".into()], sent_fragments: 0, anchors: vec![] });
         assert!(validate_change_reads(&args, &seen).is_err());
         seen.get_mut("MANUSCRIPT:old").unwrap().sent_fragments = 1;
         assert!(validate_change_reads(&args, &seen).is_ok());
@@ -1129,6 +1183,7 @@ mod tests {
         let names = tools.iter().map(|tool| tool["function"]["name"].as_str().unwrap()).collect::<Vec<_>>();
         assert!(names.contains(&"prepare_changeset"));
         assert!(names.contains(&"get_changes"));
+        assert!(names.contains(&"read_manuscript_blocks"));
         assert!(!names.contains(&"commit_coauthor_changeset"));
         assert!(!names.contains(&"update_coauthor_impact"));
         let call = ModelToolCall {
@@ -1141,5 +1196,40 @@ mod tests {
             },
         };
         assert!(arguments::<ChangeArgs>(&call).is_err());
+    }
+
+    #[test]
+    fn manuscript_edits_require_sent_block_ranges_not_only_plain_text_or_unsent_results() {
+        let mut args = ChangeArgs {
+            include_draft: false, title: "局部改稿".into(), draft_depends_on: vec![],
+            items: vec![CoauthorChangeItemInput {
+                id: "patch".into(), kind: CoauthorDocumentKind::Manuscript,
+                title: "旧章".into(), content: String::new(),
+                target_key: Some("MANUSCRIPT:old".into()), target_revision: Some("r1".into()),
+                depends_on: vec![], manuscript_edits: vec![novel_infrastructure::CoauthorManuscriptEdit {
+                    block_id: "p".into(), start: 1, end: 3, before: "寿元".into(), after: "记忆".into(),
+                }],
+            }], impacts: vec![], coverage: "未检查全书".into(),
+        };
+        let mut seen = HashMap::from([("MANUSCRIPT:old".into(), ReadEvidence {
+            revision: "r1".into(), fragments: vec!["😀寿元".into()], sent_fragments: 1, anchors: vec![],
+        })]);
+        assert!(validate_change_reads(&args, &seen).is_err());
+        let evidence = seen.get_mut("MANUSCRIPT:old").unwrap();
+        evidence.anchors.push((1, CoauthorManuscriptBlock {
+            block_id: "p".into(), offset: 0, total_chars: 3, text: "😀寿元".into(),
+            runs: vec![novel_infrastructure::CoauthorTextRun {
+                start: 0, end: 3, text: "😀寿元".into(), marks: vec![],
+            }],
+        }));
+        evidence.fragments.push("😀寿元".into());
+        assert!(validate_change_reads(&args, &seen).is_err());
+        seen.get_mut("MANUSCRIPT:old").unwrap().sent_fragments = 2;
+        assert!(validate_change_reads(&args, &seen).is_ok());
+        args.items[0].manuscript_edits[0].block_id = "guessed".into();
+        assert!(validate_change_reads(&args, &seen).is_err());
+        args.items[0].manuscript_edits[0].block_id = "p".into();
+        args.items[0].manuscript_edits[0].end = 4;
+        assert!(validate_change_reads(&args, &seen).is_err());
     }
 }

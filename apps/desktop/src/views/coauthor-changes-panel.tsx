@@ -8,6 +8,7 @@ import {
 import { useConfirmAction } from "../shell/confirm-action-provider";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { sameDraft } from "./use-coauthor-draft";
+import { ManuscriptReader } from "./manuscript-reader";
 
 const labels: Record<string, string> = {
   PENDING: "待核对", COMMITTED: "已提交", DISCARDED: "已放弃", RESOLVED: "已处理",
@@ -190,13 +191,25 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
             onChange={(event) => setSelected((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} />
           <strong>{item.document.title}</strong><span>{kinds[item.document.kind]}</span>
         </label>
-        <p className="coauthor-notice">{item.document.targetKey ? `替换：${item.document.targetKey}` : "新建正式条目"}</p>
+        <p className="coauthor-notice">{item.document.targetKey
+          ? `${item.manuscriptEdits?.length ? "局部修改" : "替换"}：${item.document.targetKey}` : "新建正式条目"}</p>
+        {Boolean(item.manuscriptEdits?.length) && <small>原文修订：{item.document.targetRevision}</small>}
         {item.dependsOn.length > 0 && <p className="coauthor-notice">依赖：{item.dependsOn.map((id) =>
           changes.items.find((entry) => entry.id === id)?.document.title ?? id).join("、")}</p>}
-        {item.before && <p className="coauthor-notice">完整替换会重置结构属性为全书设定，旧修订作者规则不继承；别名、标签和旧修订保留。</p>}
+        {item.before && item.document.kind === "SETTING" && <p className="coauthor-notice">完整替换会重置结构属性为全书设定，旧修订作者规则不继承；别名、标签和旧修订保留。</p>}
+        {Boolean(item.manuscriptEdits?.length) && <section aria-label="正文局部修改范围">
+          {item.manuscriptEdits?.map((edit, index) => <div key={index}>
+            <small>块 {edit.blockId} · 字符 {edit.start} 至 {edit.end}（不含末位）</small>
+            <div className="coauthor-diff"><pre>{edit.before}</pre><pre>{edit.after || "（删除）"}</pre></div>
+          </div>)}
+        </section>}
         <div className="coauthor-diff">
-          <section><h4>正式原文{item.before ? ` · ${item.before.title}` : ""}</h4><pre>{item.before?.content ?? "无，新建条目"}</pre></section>
-          <section><h4>采用后 · {item.document.title}</h4><pre>{item.document.content}</pre></section>
+          <section><h4>正式原文{item.before ? ` · ${item.before.title}` : ""}</h4>
+            {item.manuscriptBeforeJson ? <ManuscriptReader documentJson={item.manuscriptBeforeJson} ariaLabel="局部修改前正文" />
+              : <pre>{item.before?.content ?? "无，新建条目"}</pre>}</section>
+          <section><h4>采用后 · {item.document.title}</h4>
+            {item.manuscriptAfterJson ? <ManuscriptReader documentJson={item.manuscriptAfterJson} ariaLabel="局部修改后正文" />
+              : <pre>{item.document.content}</pre>}</section>
         </div>
         {changes.published.find((entry) => entry.itemId === item.id) && <small className="coauthor-receipt">
           已采用：{changes.published.find((entry) => entry.itemId === item.id)?.sourceKey}

@@ -38,6 +38,18 @@ try {
         ];
         let changes=null;
         let impacts=[];
+        function richManuscript(cost){
+          return JSON.stringify({type:"doc",content:[
+            {type:"heading",attrs:{blockId:"h",level:2},content:[{type:"text",text:"入城前夜"}]},
+            {type:"blockquote",attrs:{blockId:"q"},content:[
+              {type:"paragraph",attrs:{blockId:"p"},content:[
+                {type:"text",text:"甲😀失去"+cost,marks:[{type:"bold"}]},
+                {type:"text",text:"，母亲的声音仍在雨里。",marks:[{type:"italic"}]}
+              ]}
+            ]},
+            {type:"paragraph",attrs:{blockId:"end"},content:[{type:"text",text:"他把魂灯放回窗边。窗外的雨没有停。"}]}
+          ]});
+        }
         function preparedChanges(){
           return {id:"change1",version:1,title:"采用突破正文并更新修炼体系",status:"PENDING",
             baseDocument:structuredClone(state.document),runId:null,coverage:"已核对修炼体系与旧章片段；其余正文和伏笔尚未检查。",
@@ -46,7 +58,13 @@ try {
               {id:"realm",document:{...state.document,kind:"SETTING",title:"修炼体系",content:"炼气、筑基、金丹、照魂。突破照魂境需要失去一段记忆。",
                 targetKey:"ENTITY:realm",targetRevision:"r1"},
                 before:{key:"ENTITY:realm",kind:"ENTITY",title:"修炼体系",revision:"r1",content:"炼气、筑基、金丹。突破消耗寿元。",
-                  totalChars:20,offset:0,sessionId:null},dependsOn:[]}],
+                  totalChars:20,offset:0,sessionId:null},dependsOn:[]},
+              {id:"opening",document:{...state.document,title:"第一章 · 入城前夜",content:"甲😀失去记忆，母亲的声音仍在雨里。",
+                targetKey:"MANUSCRIPT:opening",targetRevision:"opening1"},
+                before:{key:"MANUSCRIPT:opening",kind:"MANUSCRIPT",title:"第一章 · 入城前夜",revision:"opening1",
+                  content:"甲😀失去寿元，母亲的声音仍在雨里。",totalChars:20,offset:0,sessionId:null},dependsOn:["realm"],
+                manuscriptEdits:[{blockId:"p",start:4,end:6,before:"寿元",after:"记忆"}],manuscriptDraftVersion:0,
+                manuscriptBeforeJson:richManuscript("寿元"),manuscriptAfterJson:richManuscript("记忆")}],
             impacts:[{itemIds:["realm"],key:"MANUSCRIPT:old",revision:"old1",
               quote:"他仍记得母亲唤他的声音。",reason:"旧章描写可能依赖原有突破代价，需要核对叙事位置。"}]};
         }
@@ -81,7 +99,7 @@ try {
           if(command==="list_coauthor_document_history")return [doc];
           if(command==="get_coauthor_changes"){
             changes??=preparedChanges();
-            return {changeSets:[{id:changes.id,version:changes.version,title:changes.title,status:changes.status,itemCount:2}],
+            return {changeSets:[{id:changes.id,version:changes.version,title:changes.title,status:changes.status,itemCount:changes.items.length}],
               impacts:structuredClone(impacts),hasMoreChanges:false,hasMoreImpacts:false};
           }
           if(command==="get_coauthor_changeset")return structuredClone(changes);
@@ -89,7 +107,7 @@ try {
             if(changes.status==="COMMITTED")return structuredClone(changes);
             if(args.selectedIds.includes("draft")&&!args.selectedIds.includes("realm"))throw new Error("missing dependency");
             changes={...changes,status:"COMMITTED",version:2,selectedIds:args.selectedIds,
-              published:args.selectedIds.map(id=>({itemId:id,sourceKey:id==="draft"?"MANUSCRIPT:new":"ENTITY:realm",revision:"v2"}))};
+              published:args.selectedIds.map(id=>({itemId:id,sourceKey:id==="draft"?"MANUSCRIPT:new":id==="opening"?"MANUSCRIPT:opening":"ENTITY:realm",revision:"v2"}))};
             if(args.selectedIds.includes("draft"))state.document={...state.document,version:state.document.version+1,
               targetKey:"MANUSCRIPT:new",targetRevision:"v2"};
             impacts=[{id:"impact1",changeSetId:changes.id,version:1,title:"第九章 · 雨夜",evidence:changes.impacts[0],
@@ -141,6 +159,15 @@ try {
     await page.waitForTimeout(50);
     assert.equal(await changesPanel.getByRole("button", { name: "确认采用所选变更" }).isDisabled(), true);
     await setting.check();
+    const beforeManuscript = changesPanel.getByLabel("局部修改前正文", { exact: true });
+    const afterManuscript = changesPanel.getByLabel("局部修改后正文", { exact: true });
+    await afterManuscript.waitFor();
+    assert.equal(await beforeManuscript.locator("strong").innerText(), "甲😀失去寿元");
+    assert.equal(await afterManuscript.locator("strong").innerText(), "甲😀失去记忆");
+    assert.equal(await afterManuscript.locator("em").innerText(), "，母亲的声音仍在雨里。");
+    assert.equal(await afterManuscript.getAttribute("contenteditable"), "false");
+    await changesPanel.getByRole("region", { name: "正文局部修改范围" }).evaluate((el) => el.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-rich-manuscript.png`), fullPage: true });
     await changesPanel.locator(".coauthor-change-review").evaluate((el) => el.scrollIntoView({ block: "start" }));
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-changes.png`), fullPage: true });
     const panelOverflow = await changesPanel.evaluate((el) => el.scrollWidth > el.clientWidth);
@@ -150,7 +177,7 @@ try {
     await confirmation.waitFor({ state: "visible" });
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-confirmation.png`), fullPage: true });
     await confirmation.getByRole("button", { name: "采用所选变更", exact: true }).click();
-    await changesPanel.getByText("已正式采用 2 项；其他内容未同步。", { exact: true }).waitFor();
+    await changesPanel.getByText("已正式采用 3 项；其他内容未同步。", { exact: true }).waitFor();
     await changesPanel.getByRole("button", { name: "处理待办" }).click();
     await changesPanel.getByLabel("待办状态").selectOption("ACCEPTED_DIFFERENCE");
     await changesPanel.getByLabel("待办处理依据").fill("保留为突破之前的回忆，不修改旧章。");

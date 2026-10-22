@@ -74,6 +74,10 @@
 .coauthor-change-review, .coauthor-impact-list { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; min-width: 0; scroll-margin-top: 64px; }
 .coauthor-change-item { border-bottom: 1px solid var(--border); padding: 16px 0; }
 .coauthor-change-item .coauthor-diff pre { height: auto; min-height: 72px; max-height: 320px; margin: 8px 0; }
+.coauthor-change-item > section[aria-label="正文局部修改范围"] .coauthor-diff pre { min-height: 0; }
+.coauthor-change-item .manuscript-reader-content { min-width: 0; max-height: 320px; overflow-y: auto; overflow-wrap: anywhere; }
+.coauthor-change-item .manuscript-reader-body { padding: 8px 0; min-height: 72px; font-size: 14px; line-height: 1.8; }
+.coauthor-change-item .manuscript-reader-body h2 { font-size: 16px; }
 .coauthor-change-check { display: flex; align-items: flex-start; gap: 8px; min-width: 0; font-size: 13px; }
 .coauthor-change-check strong { overflow-wrap: anywhere; }
 .coauthor-change-check input { width: 16px; height: 16px; flex: 0 0 16px; margin-top: 2px; }

@@ -42,12 +42,13 @@ beforeEach(() => {
   changes = {
     id: "c1", version: 1, title: "采用失忆版本", status: "PENDING", baseDocument: structuredClone(document),
     items: [
-      { id: "draft", document: structuredClone(document), before: null, dependsOn: ["realm"] },
+      { id: "draft", document: structuredClone(document), before: null, dependsOn: ["realm"],
+        manuscriptEdits: [], manuscriptDraftVersion: null, manuscriptBeforeJson: null, manuscriptAfterJson: null },
       { id: "realm", document: { ...document, kind: "SETTING", title: "修炼体系", content: "突破消耗记忆。",
         targetKey: "ENTITY:realm", targetRevision: "r1" }, before: {
         key: "ENTITY:realm", kind: "ENTITY", title: "旧修炼体系", revision: "r1",
         content: "突破消耗寿元。", sessionId: null, offset: 0, totalChars: 8,
-      }, dependsOn: [] },
+      }, dependsOn: [], manuscriptEdits: [], manuscriptDraftVersion: null, manuscriptBeforeJson: null, manuscriptAfterJson: null },
     ],
     impacts: [{ itemIds: ["realm"], key: "MANUSCRIPT:old", revision: "m1", quote: "他还记得声音", reason: "复查突破后描写" }],
     coverage: "仅查了体系与旧章，未检查全书", selectedIds: [], published: [], runId: "run1",
@@ -70,6 +71,45 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("linked coauthor changes", () => {
+  it("compares local manuscript ranges and rich formatting without adding the unrelated working draft", async () => {
+    const rich = (text: string) => JSON.stringify({ type: "doc", content: [
+      { type: "paragraph", attrs: { blockId: "p" }, content: [
+        { type: "text", text, marks: [{ type: "bold" }] },
+        { type: "text", text: "，保留斜体。", marks: [{ type: "italic" }] },
+      ] },
+    ] });
+    changes.items = [{
+      id: "patch", document: { ...document, title: "旧章", content: "甲😀失去记忆，保留斜体。",
+        targetKey: "MANUSCRIPT:old", targetRevision: "r1" },
+      before: { key: "MANUSCRIPT:old", kind: "MANUSCRIPT", title: "旧章", revision: "r1",
+        content: "甲😀失去寿元，保留斜体。", offset: 0, totalChars: 13, sessionId: null },
+      dependsOn: [], manuscriptEdits: [{ blockId: "p", start: 4, end: 6, before: "寿元", after: "记忆" }],
+      manuscriptDraftVersion: 0, manuscriptBeforeJson: rich("甲😀失去寿元"), manuscriptAfterJson: rich("甲😀失去记忆"),
+    }];
+    changes.impacts = [];
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "get_coauthor_changes") return page;
+      if (command === "get_coauthor_changeset") return changes;
+      if (command === "commit_coauthor_changeset") return { ...changes, status: "COMMITTED", version: 2,
+        selectedIds: ["patch"], published: [{ itemId: "patch", sourceKey: "MANUSCRIPT:old", revision: "r2" }] };
+      throw new Error(command);
+    });
+    renderPanel(); await openReview();
+    const before = await screen.findByLabelText("局部修改前正文");
+    const after = await screen.findByLabelText("局部修改后正文");
+    expect(before.querySelector("strong")).toHaveTextContent("甲😀失去寿元");
+    expect(after.querySelector("strong")).toHaveTextContent("甲😀失去记忆");
+    expect(after.querySelector("em")).toHaveTextContent("，保留斜体。");
+    expect(after).toHaveAttribute("contenteditable", "false");
+    expect(screen.getByRole("region", { name: "正文局部修改范围" })).toHaveTextContent("字符 4 至 6");
+    expect(screen.queryByText(/完整替换会重置/)).not.toBeInTheDocument();
+    await confirmSelected();
+    await waitFor(() => expect(committed).toHaveBeenCalledWith(document, false));
+    expect(mocks.invoke).toHaveBeenCalledWith("commit_coauthor_changeset", {
+      scope, id: "c1", expectedVersion: 1, selectedIds: ["patch"],
+    });
+  });
+
   it("shows actual before and after and commits only after explicit group confirmation", async () => {
     renderPanel();
     const review = await openReview();
