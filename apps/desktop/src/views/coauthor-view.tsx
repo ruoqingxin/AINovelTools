@@ -20,6 +20,7 @@ import { CoauthorChangesPanel } from "./coauthor-changes-panel";
 import { CoauthorChecksPanel } from "./coauthor-checks-panel";
 import { CoauthorDecisionHistory, DecisionContext } from "./coauthor-decision-history";
 import { CoauthorRunDirectory } from "./coauthor-run-directory";
+import { CoauthorKnowledge } from "./coauthor-knowledge";
 import "./coauthor-workspace.css";
 
 const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
@@ -513,14 +514,18 @@ function CoauthorSession({ scope, initial, onFork }: {
           await cancelCoauthorRun({ scope, runId: run.id }); await refresh();
         })}>停止此运行</button>}
         {sourcesFor(run).map((hit) => <article className="coauthor-source" key={`${hit.key}:${hit.revision}`}>
-          <strong>{hit.title}</strong><small>{hit.kind} · {hit.read ? "已读取原文片段" : "检索命中"} · {hit.sent ? "已随请求发送" : "尚未随请求发送"}</small><p>{hit.content}</p>
+          <strong>{hit.title}</strong><small>{hit.kind} · {hit.read ? (hit.knowledgeContext ? "已读取记录" : "已读取原文片段") : "检索命中"} · {hit.sent ? "已随请求发送" : "尚未随请求发送"}</small><p>{hit.content}</p>
           <DecisionContext context={hit.decisionContext} />
-          <button onClick={() => void act(async () => { setSource(await readCoauthorSource({ scope, key: hit.key, revision: hit.revision, offset: 0 })); })}>查看原文</button>
+          <CoauthorKnowledge key={`${scope.projectId}:${scope.sessionId}:${hit.key}:${hit.revision}`} scope={scope} source={hit}
+            onRead={(key, revision) => void act(async () => { setSource(await readCoauthorSource({ scope, key, revision, offset: 0 })); })} />
+          <button onClick={() => void act(async () => { setSource(await readCoauthorSource({ scope, key: hit.key, revision: hit.revision, offset: 0 })); })}>{hit.knowledgeContext ? "查看记录" : "查看原文"}</button>
         </article>)}
         {!runId && <p>选择一份运行记录。</p>}
         {proposal && <button disabled={!runVerified} onClick={() => setPanel("proposal")}>查看改稿差异</button>}
         {source && <section className="coauthor-source-text"><h3>{source.title}</h3><small>修订 {source.revision}</small><pre>{source.content}</pre>
           <DecisionContext context={source.decisionContext} />
+          <CoauthorKnowledge key={`${scope.projectId}:${scope.sessionId}:${source.key}:${source.revision}`} scope={scope} source={source}
+            onRead={(key, revision) => void act(async () => { setSource(await readCoauthorSource({ scope, key, revision, offset: 0 })); })} />
           {source.offset + [...source.content].length < source.totalChars && <button disabled={busy} onClick={() => void act(async () => {
             const next = await readCoauthorSource({ scope, key: source.key, revision: source.revision, offset: source.offset + [...source.content].length });
             if (mounted.current) setSource(next);

@@ -186,6 +186,12 @@ export function listCoauthorRuns(input: IpcRequests["list_coauthor_runs"]) {
 export function getCoauthorRun(input: IpcRequests["get_coauthor_run"]) {
   return invoke("get_coauthor_run", input);
 }
+export function listCoauthorRelatedKnowledge(input: IpcRequests["list_coauthor_related_knowledge"]) {
+  return invoke("list_coauthor_related_knowledge", input);
+}
+export function readCoauthorKnowledgeEvidence(input: IpcRequests["read_coauthor_knowledge_evidence"]) {
+  return invoke("read_coauthor_knowledge_evidence", input);
+}
 export function createCoauthorSourceCheck(input: IpcRequests["create_coauthor_source_check"]) {
   return invoke("create_coauthor_source_check", input);
 }

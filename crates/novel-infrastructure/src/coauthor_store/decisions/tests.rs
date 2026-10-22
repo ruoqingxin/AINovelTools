@@ -654,7 +654,7 @@ fn migration_backfills_only_known_links_preserves_raw_messages_and_retries_atomi
         .execute_batch(
             "DROP TABLE coauthor_decision_fts; DROP TABLE coauthor_decision_mentions;
          DROP TABLE coauthor_decision_evidence; DROP TABLE coauthor_decision_aliases;
-         DELETE FROM schema_migrations WHERE version=57;
+         DELETE FROM schema_migrations WHERE version>=57;
          CREATE TRIGGER fail57 BEFORE INSERT ON schema_migrations WHEN NEW.version=57
          BEGIN SELECT RAISE(ABORT,'migration failure'); END;",
         )

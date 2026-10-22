@@ -14,6 +14,8 @@ mod reversal_targets;
 mod schema;
 mod sources;
 pub use sources::{CoauthorSearchPage, CoauthorSource};
+mod knowledge;
+pub use knowledge::*;
 mod source_checks;
 pub use source_checks::*;
 mod decisions;

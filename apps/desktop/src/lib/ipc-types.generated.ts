@@ -180,6 +180,7 @@ export type IpcErrors = {
     list_chapter_extractions: ApiError;
     list_coauthor_decision_history: ApiError;
     list_coauthor_document_history: ApiError;
+    list_coauthor_related_knowledge: ApiError;
     list_coauthor_runs: ApiError;
     list_coauthor_source_checks: ApiError;
     list_current_facts: ApiError;
@@ -218,6 +219,7 @@ export type IpcErrors = {
     promote_discussion_candidate_to_foreshadowing_review: ApiError;
     publish_coauthor_document: ApiError;
     rate_ai_proposal: ApiError;
+    read_coauthor_knowledge_evidence: ApiError;
     read_coauthor_source: ApiError;
     rebuild_search_index: ApiError;
     rebuild_summary_material: ApiError;
@@ -378,6 +380,7 @@ export type IpcRequests = {
     list_chapter_extractions: InputArgsListChapterExtractions;
     list_coauthor_decision_history: InputArgsListCoauthorDecisionHistory;
     list_coauthor_document_history: InputArgsListCoauthorDocumentHistory;
+    list_coauthor_related_knowledge: InputArgsListCoauthorRelatedKnowledge;
     list_coauthor_runs: InputArgsListCoauthorRuns;
     list_coauthor_source_checks: InputArgsListCoauthorSourceChecks;
     list_current_facts: InputArgsListCurrentFacts;
@@ -416,6 +419,7 @@ export type IpcRequests = {
     promote_discussion_candidate_to_foreshadowing_review: InputArgsPromoteDiscussionCandidateToForeshadowingReview;
     publish_coauthor_document: InputArgsPublishCoauthorDocument;
     rate_ai_proposal: InputArgsRateAiProposal;
+    read_coauthor_knowledge_evidence: InputArgsReadCoauthorKnowledgeEvidence;
     read_coauthor_source: InputArgsReadCoauthorSource;
     rebuild_search_index: InputArgsRebuildSearchIndex;
     rebuild_summary_material: InputArgsRebuildSummaryMaterial;
@@ -1006,6 +1010,12 @@ export type InputArgsListCoauthorDocumentHistory = {
     beforeVersion?: number | null;
     scope: InputCoauthorScope;
 };
+export type InputArgsListCoauthorRelatedKnowledge = {
+    key: string;
+    offset: number;
+    revision: string;
+    scope: InputCoauthorScope;
+};
 export type InputArgsListCoauthorRuns = {
     beforeRunId?: string | null;
     scope: InputCoauthorScope;
@@ -1162,6 +1172,14 @@ export type InputArgsRateAiProposal = {
     id: string;
     note?: string | null;
     rating: InputAiProposalFeedbackRating;
+};
+export type InputArgsReadCoauthorKnowledgeEvidence = {
+    anchorId: string;
+    key: string;
+    limit: number;
+    offset: number;
+    revision: string;
+    scope: InputCoauthorScope;
 };
 export type InputArgsReadCoauthorSource = {
     key: string;
@@ -1531,6 +1549,7 @@ export type IpcResponses = {
     list_chapter_extractions: ChapterExtractionProposal[];
     list_coauthor_decision_history: CoauthorDecisionHistory;
     list_coauthor_document_history: CoauthorDocument[];
+    list_coauthor_related_knowledge: CoauthorSearchPage;
     list_coauthor_runs: CoauthorRunsPage;
     list_coauthor_source_checks: CoauthorChecksPage;
     list_current_facts: Fact[];
@@ -1569,6 +1588,7 @@ export type IpcResponses = {
     promote_discussion_candidate_to_foreshadowing_review: DiscussionCandidate;
     publish_coauthor_document: string;
     rate_ai_proposal: AiProposalFeedback;
+    read_coauthor_knowledge_evidence: CoauthorKnowledgeEvidence;
     read_coauthor_source: CoauthorSource;
     rebuild_search_index: null;
     rebuild_summary_material: SummaryMaterial;
@@ -1780,6 +1800,7 @@ export type CoauthorSource = {
     decisionContext?: CoauthorDecisionContext | null;
     key: string;
     kind: string;
+    knowledgeContext?: CoauthorKnowledgeContext | null;
     offset: number;
     revision: string;
     sessionId: string | null;
@@ -1802,6 +1823,26 @@ export type CoauthorDecision = {
     status: string;
     topic: string;
     version: number;
+};
+export type CoauthorKnowledgeContext = {
+    anchors: CoauthorKnowledgeAnchor[];
+    facts: CoauthorKnowledgeLink[];
+    hasMoreAnchors: boolean;
+    projectId: string;
+    status: string;
+    version: number;
+};
+export type CoauthorKnowledgeAnchor = {
+    blockId: string | null;
+    chapterId: string | null;
+    id: string;
+    revisionId: string | null;
+    status: string;
+};
+export type CoauthorKnowledgeLink = {
+    key: string;
+    revision: string;
+    title: string;
 };
 export type CoauthorManuscriptEdit = {
     after: string;
@@ -2590,6 +2631,12 @@ export type CoauthorDecisionRevision = {
     decision: CoauthorDecision;
     quote: string | null;
 };
+export type CoauthorSearchPage = {
+    coverage: string;
+    hasMore: boolean;
+    hits: CoauthorSource[];
+    pendingIndexUpdates: number;
+};
 export type CoauthorRunsPage = {
     hasMore: boolean;
     runs: CoauthorRunSummary[];
@@ -2654,6 +2701,21 @@ export type MergeConflict = {
     blockId: string;
     current: string | null;
     draft: string | null;
+};
+export type CoauthorKnowledgeEvidence = {
+    anchorId: string;
+    blockId: string;
+    chapterId: string;
+    content: string;
+    end: number;
+    isCurrentRevision: boolean;
+    knowledgeKey: string;
+    knowledgeRevision: string;
+    nextOffset: number;
+    offset: number;
+    revisionId: string;
+    start: number;
+    totalChars: number;
 };
 export type WorldState = {
     createdAt: string;

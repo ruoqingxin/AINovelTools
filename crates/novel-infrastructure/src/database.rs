@@ -1220,6 +1220,9 @@ impl Database {
         if applied.unwrap_or(0) < 57 {
             self.migrate_coauthor_decision_memory()?;
         }
+        if applied.unwrap_or(0) < 58 {
+            self.migrate_coauthor_knowledge()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }

@@ -37,10 +37,21 @@ try {
           {id:"m-old",sessionId:"s1",role:"ASSISTANT",content:"早期试写仍使用寿元代价，保留作为历史对照。",contextVersion:"coauthor:historical-run-00"},
           {id:"m3",sessionId:"s1",role:"USER",content:"先拿主角突破写一段。他忘了母亲的声音，压抑一点。"}
         ];
+        const fact={key:"FACT:one",kind:"FACT",title:"陆沉 · 掌握 · 魂灯",revision:"fact1",
+          content:"已审核事实记录，不是正文原句。",offset:0,totalChars:17,sessionId:null,
+          knowledgeContext:{projectId:"p1",version:1,status:"CURRENT",facts:[],hasMoreAnchors:false,
+            anchors:[{id:"anchor1",chapterId:"chapter1",revisionId:"original1",blockId:"p1",status:"CURRENT_REVISION"}]}};
+        const relation={...fact,key:"RELATION:one",kind:"RELATION",title:"守护",revision:"relation1",
+          content:"关系记录：守护。",totalChars:8,knowledgeContext:{...fact.knowledgeContext,facts:[
+            {key:fact.key,revision:fact.revision,title:fact.title},
+            {key:"FACT:two",revision:"fact2",title:"苏瑶 · 守在 · 门外"}]}};
+        const secondFact={...fact,key:"FACT:two",title:"苏瑶 · 守在 · 门外",revision:"fact2",
+          content:"已审核事实记录：苏瑶守在门外。"};
         state.runs=Array.from({length:25},(_,index)=>({
           id:"historical-run-"+String(24-index).padStart(2,"0"),sessionId:"s1",userMessageId:"old-message-"+index,
           status:"COMPLETED",documentVersion:1,output:"历史试写 "+index,
-          audit:index===24?[{kind:"draft_proposal",baseDocument:structuredClone(doc),
+          audit:index===24?[{kind:"initial_search",result:{hits:[fact],hasMore:false,pendingIndexUpdates:0,coverage:"仅关键词命中"}},
+            {kind:"draft_proposal",baseDocument:structuredClone(doc),
             document:{...doc,content:"旧建议：突破消耗寿元。"}}]:[]
         }));
         function lightState(){
@@ -112,7 +123,7 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:57};
+          if(command==="health_query")return {schemaVersion:58};
           if(command==="bootstrap_status")return {};
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
           if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
@@ -127,6 +138,23 @@ try {
             const run=state.runs.find(run=>run.id===args.id);
             if(!run)throw new Error("Unknown historical run");
             return structuredClone(run);
+          }
+          if(command==="list_coauthor_related_knowledge"){
+            assertSource(args,fact);
+            return {hits:[structuredClone(relation)],hasMore:false,pendingIndexUpdates:0,coverage:"仅直接关系"};
+          }
+          if(command==="read_coauthor_knowledge_evidence"){
+            assertSource(args,fact);
+            if(args.anchorId!=="anchor1")throw new Error("Unknown evidence anchor");
+            return {knowledgeKey:fact.key,knowledgeRevision:fact.revision,anchorId:"anchor1",chapterId:"chapter1",
+              revisionId:"original1",blockId:"p1",start:0,end:8,content:"陆沉😀掌握魂灯。",
+              offset:0,nextOffset:8,totalChars:8,isCurrentRevision:true};
+          }
+          if(command==="read_coauthor_source"){
+            const source=[fact,relation,secondFact].find(source=>source.key===args.key);
+            if(!source)throw new Error("Unknown knowledge source");
+            assertSource(args,source);
+            return structuredClone(source);
           }
           if(command==="list_coauthor_decision_history")return {
             current:{decision:structuredClone(state.decisions[0]),aliases:["突破代价","境界代偿"],quote:"代价改为失去记忆"},
@@ -214,6 +242,10 @@ try {
           }
           if(command.startsWith("list_"))return [];
           throw new Error("Unimplemented browser fixture command: "+command);
+        }
+        function assertSource(args,source){
+          if(args.scope.projectId!=="p1"||args.scope.sessionId!=="s1"||
+            args.key!==source.key||args.revision!==source.revision)throw new Error("Incorrect knowledge identity");
         }`,
     }));
     await page.goto(`${values.url}/discussion`);
@@ -228,6 +260,24 @@ try {
     await page.getByRole("button", { name: "依据与记录", exact: true }).click();
     const sourcesPanel = page.getByRole("dialog", { name: "依据与运行记录" });
     await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).waitFor();
+    await sourcesPanel.getByText("已审核事实记录 · v1", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.some(name =>
+      name === "read_coauthor_knowledge_evidence" || name === "list_coauthor_related_knowledge")), false,
+    "Knowledge metadata must not eagerly load manuscript evidence or relationships");
+    await sourcesPanel.getByText("正文证据 · p1", { exact: true }).click();
+    await sourcesPanel.getByText("陆沉😀掌握魂灯。", { exact: true }).waitFor({ state: "visible" });
+    const evidenceUrl = new URL(await sourcesPanel.getByRole("link", { name: "定位原修订" }).getAttribute("href"), values.url);
+    assert.equal(evidenceUrl.searchParams.get("sourceEvidence"), "anchor1");
+    assert.equal(evidenceUrl.searchParams.get("sourceRevision"), "original1");
+    assert.equal(evidenceUrl.searchParams.get("sourceBlock"), "p1");
+    await sourcesPanel.getByText("直接关联关系", { exact: true }).click();
+    await sourcesPanel.getByRole("button", { name: "查看关系记录", exact: true }).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-knowledge.png`), fullPage: true });
+    await sourcesPanel.getByRole("button", { name: "查看关系记录", exact: true }).click();
+    await sourcesPanel.getByText("关系记录 · v1", { exact: true }).waitFor();
+    await sourcesPanel.getByRole("button", { name: "终点事实 · 苏瑶 · 守在 · 门外", exact: true }).click();
+    await sourcesPanel.getByRole("heading", { name: "苏瑶 · 守在 · 门外", exact: true }).waitFor();
+    assert.equal(await sourcesPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
     await sourcesPanel.getByText("保留的回复", { exact: true }).click();
     await sourcesPanel.getByText("历史试写 24", { exact: true }).waitFor({ state: "visible" });
     await sourcesPanel.getByRole("button", { name: "更早运行", exact: true }).click();

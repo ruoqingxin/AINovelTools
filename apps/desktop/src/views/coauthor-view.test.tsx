@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyAiTaskPreferences } from "../lib/ai-task-preferences";
-import type { CoauthorDocument, CoauthorRun, CoauthorState, IpcRequests } from "../lib/tauri-client";
+import type { CoauthorDocument, CoauthorRun, CoauthorSource, CoauthorState, IpcRequests } from "../lib/tauri-client";
 import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 import { CoauthorView } from "./coauthor-view";
 
@@ -96,6 +96,37 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it("preserves fact provenance from historical audits and lazily reads original manuscript evidence", async () => {
+    const fact: CoauthorSource = {
+      key: "FACT:one", kind: "FACT", title: "陆沉 · 掌握 · 魂灯", revision: "fact1",
+      content: "已审核事实记录，不是正文原句。", totalChars: 17, offset: 0, sessionId: null,
+      knowledgeContext: { projectId: "p1", version: 1, status: "CURRENT", facts: [], hasMoreAnchors: false,
+        anchors: [{ id: "a", chapterId: "chapter", revisionId: "r1", blockId: "p1", status: "CURRENT_REVISION" }] },
+    };
+    stored.runs = [{ id: "latest", sessionId: "s1", userMessageId: "m", documentVersion: 1,
+      status: "COMPLETED", output: "", audit: [{ kind: "initial_search", result: { hits: [fact] } }] }];
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, args: Record<string, unknown>) =>
+      command === "read_coauthor_knowledge_evidence" ? {
+        knowledgeKey: fact.key, knowledgeRevision: fact.revision, anchorId: "a", chapterId: "chapter",
+        revisionId: "r1", blockId: "p1", start: 0, end: 8, content: "陆沉😀掌握魂灯。",
+        offset: 0, nextOffset: 8, totalChars: 8, isCurrentRevision: true,
+      } : original(command, args));
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: "依据" }));
+    const panel = await screen.findByRole("dialog", { name: "依据与运行记录" });
+    expect(await within(panel).findByText("已审核事实记录 · v1")).toBeVisible();
+    expect(within(panel).getByRole("button", { name: "查看记录" })).toBeVisible();
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "read_coauthor_knowledge_evidence")).toBe(false);
+    fireEvent.click(within(panel).getByText("正文证据 · p1"));
+    expect(await within(panel).findByText("陆沉😀掌握魂灯。")).toBeVisible();
+    expect(mocks.invoke).toHaveBeenCalledWith("read_coauthor_knowledge_evidence", {
+      scope: { projectId: "p1", sessionId: "s1" }, key: fact.key, revision: fact.revision, anchorId: "a", offset: 0, limit: 2000,
+    });
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor" || name === "list_coauthor_related_knowledge")).toBe(false);
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+  });
+
   it("does not fetch run audits or the directory while writing with the panels closed", async () => {
     stored.runs = [{ id: "latest", sessionId: "s1", userMessageId: "m", documentVersion: 1,
       status: "COMPLETED", output: "", audit: [] }];

@@ -102,6 +102,9 @@
 .coauthor-run-directory { margin-bottom: 16px; }
 .coauthor-run-picker { display: flex; gap: 8px; align-items: center; }
 .coauthor-run-picker select { min-width: 0; flex: 1; width: 100%; }
+.coauthor-knowledge { margin-block: 12px; padding-inline-start: 12px; border-inline-start: 2px solid var(--border-color, #d7dce2); overflow-wrap: anywhere; min-width: 0; }
+.coauthor-knowledge > button { display: block; max-width: 100%; white-space: normal; text-align: start; margin-block: 6px; }
+.coauthor-knowledge details { margin-block: 8px; }
 .coauthor-format-mapping dl { margin: 10px 0; }
 .coauthor-format-mapping dd { margin: 4px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .coauthor-decision-history small, .coauthor-memory-context small { display: block; color: var(--muted); overflow-wrap: anywhere; }

@@ -56,7 +56,7 @@ struct SourceAnchor {
     active: bool,
 }
 
-fn row_uuid(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Uuid> {
+pub(super) fn row_uuid(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Uuid> {
     Uuid::parse_str(&row.get::<_, String>(index)?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
             index,

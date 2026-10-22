@@ -14,6 +14,8 @@ pub struct CoauthorSource {
     pub total_chars: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_context: Option<CoauthorDecisionContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_context: Option<CoauthorKnowledgeContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -102,11 +104,14 @@ impl ProjectManager {
             "SELECT s.source_key FROM coauthor_fts f JOIN coauthor_sources s ON s.source_key=f.source_key
              WHERE coauthor_fts MATCH ?1
              AND ((?2=1 AND s.kind='MESSAGE' AND s.session_id=?3) OR (?2=0 AND s.kind<>'MESSAGE'))
+             AND (s.kind NOT IN ('FACT','RELATION')
+                OR (s.kind='FACT' AND EXISTS(SELECT 1 FROM facts k WHERE k.knowledge_id=substr(s.source_key,6) AND k.project_id=?5))
+                OR (s.kind='RELATION' AND EXISTS(SELECT 1 FROM relations k WHERE k.id=substr(s.source_key,10) AND k.project_id=?5)))
              ORDER BY rank, s.source_key LIMIT 13 OFFSET ?4",
         )?;
         let keys = stmt
             .query_map(
-                rusqlite::params![expression, history, scope.session_id.to_string(), offset],
+                rusqlite::params![expression, history, scope.session_id.to_string(), offset, scope.project_id.to_string()],
                 |row| row.get::<_, String>(0),
             )?
             .collect::<Result<Vec<_>, _>>()?;
@@ -149,6 +154,9 @@ impl ProjectManager {
             return Err(CoauthorError::Conflict);
         }
         if source.session_id.is_some_and(|id| id != scope.session_id) {
+            return Err(CoauthorError::NotFound);
+        }
+        if source.knowledge_context.as_ref().is_some_and(|context|context.project_id!=scope.project_id) {
             return Err(CoauthorError::NotFound);
         }
         db.attach_decision_context(&mut source)?;
@@ -238,6 +246,9 @@ impl Database {
         let (kind, id) = key
             .split_once(':')
             .ok_or_else(|| CoauthorError::Invalid("来源身份无效。".into()))?;
+        if matches!(kind, "FACT" | "RELATION") {
+            return self.coauthor_knowledge_source(key);
+        }
         let record: Option<(String,String,Option<String>,String)> = match kind {
             "ENTITY" => self.connection.query_row(
                 "SELECT r.name, r.description || char(10) || '别名：' || r.aliases_json ||
@@ -304,6 +315,7 @@ impl Database {
                 offset: 0,
                 total_chars,
                 decision_context:None,
+                knowledge_context:None,
             }
         }))
     }

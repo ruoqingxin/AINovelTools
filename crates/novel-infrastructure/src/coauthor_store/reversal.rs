@@ -203,6 +203,11 @@ impl Database {
         let audit: Vec<Value> = decode(audit)?;
         let mut dependencies = std::collections::BTreeMap::new();
         for step in audit {
+            if step["kind"]=="tool" && step["name"]=="read_knowledge_evidence"
+                && let (Some(key),Some(revision))=(step["result"]["knowledgeKey"].as_str(),step["result"]["knowledgeRevision"].as_str())
+            {
+                dependencies.insert(key.to_owned(),revision.to_owned());
+            }
             if step["kind"] == "tool"
                 && matches!(
                     step["name"].as_str(),
@@ -229,7 +234,8 @@ impl Database {
         for dependency in dependencies {
             if self
                 .coauthor_source(&dependency.key)?
-                .is_none_or(|source| source.revision != dependency.revision)
+                .is_none_or(|source| source.revision != dependency.revision
+                    || source.knowledge_context.as_ref().is_some_and(|context|context.status!="CURRENT"))
             {
                 return Err(CoauthorError::Invalid(
                     "准备方案时读取的来源已经变化或撤销，请重新查证后再准备采用。".into(),
