@@ -229,11 +229,36 @@ pub(crate) fn list_author_settings(
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub(crate) enum DiscussionDesignTarget {
+    Auto,
+    CharacterCard,
+    ProjectSetting,
+}
+
+impl DiscussionDesignTarget {
+    fn instruction(&self) -> &'static str {
+        match self {
+            Self::Auto => {
+                "按讨论对象整理资料：角色用 CHARACTER，境界体系等全书统一规则用 CONCEPT，并在 attributes 中记录 settingScope=\"PROJECT\"；仅针对某个角色或物品的属性不标记为全书规则。"
+            }
+            Self::CharacterCard => {
+                "整理为人物卡，entityType 必须是 CHARACTER。将作者已认可的身份、外貌、性格、动机、经历、能力、关系和秘密完整保存在描述与有明确名称的属性中。未知信息留白，不为了填满人物卡而编造。"
+            }
+            Self::ProjectSetting => {
+                "整理为全书设定，entityType 必须是 CONCEPT，attributes.settingScope 必须是 PROJECT。境界体系等同一套规则整理为一份完整资料，保留层级顺序、突破条件、能力差异、限制、代价和例外等已确定内容；不要把各境界拆成互不相干的资料。此候选经作者确认后将成为全书统一规则。"
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SummarizeDiscussionDesignInput {
     pub(crate) session_id: uuid::Uuid,
     pub(crate) profile_id: uuid::Uuid,
     pub(crate) expected_workspace_version: i64,
+    pub(crate) design_target: Option<DiscussionDesignTarget>,
     pub(crate) temperature: Option<f64>,
     pub(crate) max_output_tokens: Option<u32>,
 }
@@ -349,7 +374,7 @@ pub(crate) async fn summarize_discussion_design(
                 .join("\n\n");
             let mut context = manager.assemble_discussion_design_context(&novel_application::DiscussionContextInput {
                 scope_label: label.clone(), scope_content: scope_content.clone(), history: history.clone(),
-                user_message: "请根据构思草稿和提供的整段讨论，整理成实体与作者设定候选；只采用作者已选择的方向，不替作者决定未决内容。关联已有实体时保留它已有的属性，仅整理本次作者选择的修改。".into(),
+                user_message: format!("请根据构思草稿和提供的整段讨论，整理成资料候选；没有手工笔记时直接从对话识别作者已接受的最终选择。只采用作者已选择的方向，排除被否定、被后续修改和仍待决定的方案；不要把 AI 曾给出的所有建议都收入结论。关联已有资料时保留未被作者修改的内容。{}", input.design_target.as_ref().unwrap_or(&DiscussionDesignTarget::Auto).instruction()),
                 input_token_budget: budget,
                 focus: None,
             }).map_err(|error| ApiError { code: "INVALID_INPUT", message: error.to_string() })?;
@@ -401,7 +426,8 @@ pub(crate) async fn summarize_discussion_design(
     )
     .await
     .map_err(ApiError::from)?;
-    let entities = parse_design_entities(&outcome.output)?;
+    let mut entities = parse_design_entities(&outcome.output)?;
+    apply_design_target(&mut entities, input.design_target.as_ref())?;
     let proposal = novel_infrastructure::DiscussionDesignProposal {
         id: uuid::Uuid::new_v4(),
         session_id: workspace.session_id,
@@ -432,6 +458,37 @@ pub(crate) async fn summarize_discussion_design(
     manager
         .create_discussion_design_proposal(proposal)
         .map_err(ApiError::from)
+}
+
+fn apply_design_target(
+    entities: &mut [novel_infrastructure::DiscussionDesignEntity],
+    target: Option<&DiscussionDesignTarget>,
+) -> Result<(), ApiError> {
+    for entity in entities {
+        let expected = match target {
+            Some(DiscussionDesignTarget::CharacterCard) => {
+                Some(novel_infrastructure::EntityType::Character)
+            }
+            Some(DiscussionDesignTarget::ProjectSetting) => {
+                Some(novel_infrastructure::EntityType::Concept)
+            }
+            _ => None,
+        };
+        if expected.is_some_and(|expected| entity.entity_type != expected) {
+            return Err(ApiError {
+                code: "INVALID_AI_RESPONSE",
+                message: "整理结果与所选资料类型不符，请重新整理。讨论原文保持不变。".into(),
+            });
+        }
+        if matches!(target, Some(DiscussionDesignTarget::ProjectSetting)) {
+            let attributes = entity.attributes.as_object_mut().ok_or_else(|| ApiError {
+                code: "INVALID_AI_RESPONSE",
+                message: "设定属性格式无效，请重新整理。".into(),
+            })?;
+            attributes.insert("settingScope".into(), serde_json::json!("PROJECT"));
+        }
+    }
+    Ok(())
 }
 
 fn parse_design_entities(
@@ -631,7 +688,7 @@ pub(crate) async fn ask_project_discussion(
     let input_token_budget =
         super::ai::effective_task_input_budget(&profile, max_output_tokens, &preference);
 
-    let (scope_label, context, history) = {
+    let (scope_label, context) = {
         let manager = state
             .manager
             .lock()
@@ -645,9 +702,10 @@ pub(crate) async fn ask_project_discussion(
             .get_discussion_workspace(session.id)
             .map_err(ApiError::from)?;
         let recent_messages = manager
-            .list_discussion_messages(session.id, 12)
+            .list_discussion_messages(session.id, 40)
             .map_err(ApiError::from)?;
-        let history = render_history(&recent_messages, None, 5_000);
+        let history_limit = (input_token_budget as usize / 3).clamp(2_000, 24_000);
+        let history = render_history(&recent_messages, None, history_limit);
         let recent_topic = recent_messages
             .iter()
             .rev()
@@ -685,7 +743,7 @@ pub(crate) async fn ask_project_discussion(
                 ("discussionHistory", &history),
             ],
         );
-        (scope_label, context, history)
+        (scope_label, context)
     };
     let secret = profile
         .secret_ref
@@ -718,11 +776,7 @@ pub(crate) async fn ask_project_discussion(
         .manager
         .lock()
         .map_err(|_| ApiError::internal("project mutex poisoned"))?;
-    let assistant_context_summary = if history.is_empty() {
-        context.task_contract.goal
-    } else {
-        format!("{} · 已载入最近讨论", context.task_contract.goal)
-    };
+    let assistant_context_summary = discussion_context_summary(&context);
     let (user_message, assistant_message) = manager
         .append_discussion_exchange(
             input.session_id,
@@ -738,6 +792,32 @@ pub(crate) async fn ask_project_discussion(
         user_message,
         assistant_message,
     })
+}
+
+fn discussion_context_summary(context: &novel_application::ContextPackage) -> String {
+    let mut sources = Vec::new();
+    for evidence in &context.retrieval_evidence {
+        // Only expose sources whose evidence header actually survived the prompt budget.
+        let marker = format!("来源修订 {}]\n", evidence.source_revision);
+        if let Some((_, content)) = context.user_prompt.split_once(&marker) {
+            let title = content.lines().next().unwrap_or_default();
+            if !title.is_empty() {
+                sources.push(title.chars().take(140).collect::<String>());
+            }
+        }
+    }
+    let mut summary = if sources.is_empty() {
+        "本轮没有载入相关项目资料，未检索到的内容仍为未知。".to_owned()
+    } else {
+        format!(
+            "本轮参考（按话题选取，不代表读取全书）：\n{}",
+            sources.join("\n")
+        )
+    };
+    if context.truncated {
+        summary.push_str("\n部分内容已按模型上下文预算截取。");
+    }
+    summary
 }
 
 #[derive(Deserialize)]
@@ -789,23 +869,25 @@ fn planning_discussion_scope(
         },
     );
     if let Some(draft) = planning_draft {
-        content.push_str("\n\n作者当前正在编辑的草稿（尚未保存或确认，以此为本轮最新草稿）：\n");
-        content.push_str(if draft.trim().is_empty() {
+        let draft = if draft.trim().is_empty() {
             "当前草稿为空。"
         } else {
             draft
-        });
+        };
+        content = format!(
+            "作者当前正在编辑的草稿（尚未保存或确认，以此为本轮最新草稿）：\n{draft}\n\n{content}"
+        );
     }
     Some((
         format!("「{}」的逐项讨论", focus.title),
         format!(
-            "本次只讨论创作条目「{}」（{}）。\n切入问题：{}\n\n{}\n\n\
+            "本次只讨论创作条目「{}」（{}）。\n{}\n\n切入问题：{}\n\n\
             与作者通过多轮交流共同完善这一项。先回应作者当前想法、顾虑或修改，必要时只追问一个最关键的问题；\
             不要求先填表、完成其他准备或确定整本书。不要每次都重写完整方案，不替作者做最终决定。\
             只有作者要求整理时，才把已认可的方向整理为可修改的定稿草案，保留尚未决定的问题。\
             已确认或锁定内容是当前依据；修订草稿和本次对话中的建议均不是已确认事实。\
             作者可以推翻先前讨论方向。讨论本身不代表确认，也不得声称已保存或已确认设定。",
-            focus.title, focus.section_id, focus.question, content,
+            focus.title, focus.section_id, content, focus.question,
         ),
     ))
 }
@@ -815,7 +897,12 @@ fn discussion_scope(
     session: &novel_infrastructure::DiscussionSession,
     planning_draft: Option<&str>,
 ) -> Result<(String, String), ApiError> {
-    let nodes = manager.list_plan_nodes().map_err(ApiError::from)?;
+    let nodes = manager
+        .list_plan_nodes()
+        .map_err(ApiError::from)?
+        .into_iter()
+        .filter(|node| !node.archived)
+        .collect::<Vec<_>>();
     let sections = manager.list_planning_sections().map_err(ApiError::from)?;
     if let Some(scope) = planning_discussion_scope(session, &sections, planning_draft, &nodes) {
         return Ok(scope);
@@ -866,9 +953,18 @@ fn discussion_scope(
     let mut scope_content = if let Some(plan) = plan {
         let formal = plan.content.trim();
         let pending = plan.pending_content.trim();
+        let label = if matches!(
+            plan.story_state,
+            novel_infrastructure::PlanningStoryState::Confirmed
+                | novel_infrastructure::PlanningStoryState::Locked
+        ) {
+            "已确认规划（不代表正文已发生）"
+        } else {
+            "未确认规划记录（不是正式设定）"
+        };
         match (formal.is_empty(), pending.is_empty()) {
-            (false, false) => format!("正式规划：{formal}\n待定候选：{pending}"),
-            (false, true) => format!("正式规划：{formal}"),
+            (false, false) => format!("{label}：{formal}\n待定候选：{pending}"),
+            (false, true) => format!("{label}：{formal}"),
             (true, false) => format!("待定候选：{pending}"),
             (true, true) => "当前范围尚未填写规划。".to_owned(),
         }
@@ -961,6 +1057,64 @@ fn plan_kind_label(kind: novel_infrastructure::PlanNodeKind) -> &'static str {
 #[cfg(test)]
 mod design_tests {
     use super::*;
+
+    #[test]
+    fn selected_design_target_is_validated_and_project_settings_have_explicit_scope() {
+        let json = r#"[{"entityType":"CONCEPT","name":"境界体系","description":"炼气后才能筑基。","attributes":{"境界顺序":["炼气","筑基"]},"settings":["炼气后才能筑基。"]}]"#;
+        let mut entities = parse_design_entities(json).expect("parse");
+        apply_design_target(&mut entities, Some(&DiscussionDesignTarget::ProjectSetting))
+            .expect("scope");
+        assert_eq!(entities[0].attributes["settingScope"], "PROJECT");
+        assert!(
+            apply_design_target(&mut entities, Some(&DiscussionDesignTarget::CharacterCard))
+                .is_err()
+        );
+        assert!(
+            DiscussionDesignTarget::CharacterCard
+                .instruction()
+                .contains("未知信息留白")
+        );
+        assert!(
+            DiscussionDesignTarget::ProjectSetting
+                .instruction()
+                .contains("一份完整资料")
+        );
+    }
+
+    #[test]
+    fn context_sources_only_report_evidence_that_survived_the_prompt_budget() {
+        let make = |name: &str| novel_domain::RetrievalEvidence {
+            chunk: novel_domain::KnowledgeChunk {
+                id: uuid::Uuid::new_v4(),
+                source_id: uuid::Uuid::new_v4(),
+                source_revision: name.into(),
+                source_hash: "sha256:test".into(),
+                chunk_index: 0,
+                chunking_version: "test".into(),
+                content: format!("摘要「{name}」：{}", "参考内容".repeat(1_000)),
+                embedding: None,
+            },
+            method: novel_domain::RetrievalMethod::Keyword,
+            authority: novel_domain::ContextAuthority::Reference,
+            relevance: 900,
+        };
+        let context = novel_application::ContextAssembler::assemble_discussion(
+            &novel_application::DiscussionContextInput {
+                scope_label: "本书".into(),
+                scope_content: String::new(),
+                history: String::new(),
+                user_message: "聊聊代价。".into(),
+                input_token_budget: 4_096,
+                focus: None,
+            },
+            &[make("summary:one"), make("summary:two")],
+        )
+        .expect("context");
+        let summary = discussion_context_summary(&context);
+        assert!(summary.contains("不代表读取全书"));
+        assert!(summary.contains("上下文预算截取"));
+        assert_eq!(summary.matches("摘要「").count(), 1);
+    }
 
     #[test]
     fn preparation_discussion_resolves_the_outline_created_after_the_conversation_started() {

@@ -75,6 +75,20 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("per-section planning conversations", () => {
+  it("shows the saved context sources separately from the assistant reply", async () => {
+    sessions = [session()];
+    history = [{ ...message("grounded", "ASSISTANT", "可以让这次使用付出更具体的代价。"),
+      contextSummary: "本轮参考（按话题选取，不代表读取全书）：\n当前正文「渡河」\n作者确认规则「魂灯」" }];
+    setup();
+    await open();
+    const summary = await screen.findByText("本轮参考", { selector: "summary" });
+    const details = summary.closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+    fireEvent.click(summary);
+    expect(within(details).getByText(/当前正文「渡河」/)).toBeVisible();
+    expect(mocks.onUseDraft).not.toHaveBeenCalled();
+  });
+
   it("does not create sessions, request discussion history, or save settings on mount", () => {
     setup();
     expect(screen.getByRole("button", { name: "发起讨论" })).toBeVisible();

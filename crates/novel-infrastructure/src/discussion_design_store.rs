@@ -352,6 +352,250 @@ mod tests {
         drop(manager);
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn confirmed_project_rules_apply_without_keyword_matches_and_revisions_replace_old_rules() {
+        let (mut manager, root, session_id) = project();
+        let make_proposal = |manager: &mut ProjectManager, description: &str, levels: Vec<&str>| {
+            let mut candidate = design("境界体系");
+            candidate.entity_type = EntityType::Concept;
+            candidate.description = description.into();
+            candidate.attributes =
+                serde_json::json!({"settingScope": "PROJECT", "境界顺序": levels});
+            candidate.settings = vec![description.into()];
+            let version = manager
+                .get_discussion_workspace(session_id)
+                .expect("workspace")
+                .version;
+            manager
+                .create_discussion_design_proposal(DiscussionDesignProposal {
+                    id: Uuid::new_v4(),
+                    session_id,
+                    workspace_version: version,
+                    entities: vec![candidate],
+                    source_message_ids: vec![],
+                    context_version: "context".into(),
+                    omitted_message_count: 0,
+                    status: "PENDING".into(),
+                    promoted_entity_ids: vec![],
+                    created_at: String::new(),
+                })
+                .expect("proposal")
+        };
+        let discussion = novel_application::DiscussionContextInput {
+            scope_label: "本书".into(),
+            scope_content: String::new(),
+            history: String::new(),
+            user_message: "帮我设计一场集市里的追逐。".into(),
+            input_token_budget: 32_768,
+            focus: None,
+        };
+        let writing = novel_application::AssembleContextInput {
+            chapter_id: Uuid::nil(),
+            target_revision_id: None,
+            action: AiAction::Draft,
+            chapter_title: "市集".into(),
+            chapter_plan: String::new(),
+            volume_plan: String::new(),
+            document_json: r#"{"type":"doc","content":[]}"#.into(),
+            selection: None,
+            instruction: Some("描写少年穿过集市。".into()),
+            input_token_budget: 32_768,
+        };
+        let first = make_proposal(
+            &mut manager,
+            "全书只有炼气、筑基两境，禁止跨境飞行。",
+            vec!["炼气", "筑基"],
+        );
+        assert!(
+            !manager
+                .assemble_discussion_context(&discussion)
+                .expect("pending")
+                .user_prompt
+                .contains("禁止跨境飞行")
+        );
+        assert!(manager.list_entities(false).expect("entities").is_empty());
+        let ids = manager
+            .confirm_discussion_design(first.id, first.entities)
+            .expect("confirm");
+        let workspace = manager
+            .get_discussion_workspace(session_id)
+            .expect("linked");
+        assert_eq!(workspace.linked_entity_id, Some(ids[0]));
+        assert_eq!(workspace.version, 1);
+        for context in [
+            manager
+                .assemble_discussion_context(&discussion)
+                .expect("discussion"),
+            manager
+                .assemble_context_with_project_knowledge(&writing)
+                .expect("writing"),
+        ] {
+            assert!(context.user_prompt.contains("全书已确认设定「境界体系」"));
+            assert!(context.user_prompt.contains("禁止跨境飞行"));
+            assert!(context.user_prompt.contains("境界顺序"));
+        }
+        let second = make_proposal(
+            &mut manager,
+            "全书改为凡人、炼气、筑基三境，筑基后才可御剑。",
+            vec!["凡人", "炼气", "筑基"],
+        );
+        assert_eq!(second.entities[0].target_entity_id, Some(ids[0]));
+        let updated = manager
+            .confirm_discussion_design(second.id, second.entities)
+            .expect("update");
+        assert_eq!(updated, ids);
+        assert_eq!(manager.list_entities(false).expect("one card").len(), 1);
+        assert_eq!(
+            manager
+                .list_entity_revisions(ids[0])
+                .expect("history")
+                .len(),
+            2
+        );
+        assert!(
+            manager
+                .list_current_facts()
+                .expect("not manuscript facts")
+                .is_empty()
+        );
+        drop(manager);
+        let mut manager = ProjectManager::new();
+        manager.open(&root).expect("reopen");
+        for context in [
+            manager
+                .assemble_discussion_context(&discussion)
+                .expect("discussion"),
+            manager
+                .assemble_context_with_project_knowledge(&writing)
+                .expect("writing"),
+        ] {
+            assert!(context.user_prompt.contains("筑基后才可御剑"));
+            assert!(!context.user_prompt.contains("禁止跨境飞行"));
+        }
+        drop(manager);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn character_cards_keep_all_reviewed_information_and_failed_confirmations_roll_back() {
+        let (mut manager, root, session_id) = project();
+        let mut candidate = design("沈砚");
+        candidate.entity_type = EntityType::Character;
+        candidate.description = "谨慎的年轻邮差，寻找失踪的妹妹。".into();
+        candidate.attributes = serde_json::json!({"外貌": "左眉有疤", "性格": "谨慎但不冷漠", "目标": "找到妹妹", "秘密": "曾替人藏信"});
+        let create = |manager: &mut ProjectManager| {
+            manager
+                .create_discussion_design_proposal(DiscussionDesignProposal {
+                    id: Uuid::new_v4(),
+                    session_id,
+                    workspace_version: 0,
+                    entities: vec![candidate.clone()],
+                    source_message_ids: vec![],
+                    context_version: "context".into(),
+                    omitted_message_count: 0,
+                    status: "PENDING".into(),
+                    promoted_entity_ids: vec![],
+                    created_at: String::new(),
+                })
+                .expect("proposal")
+        };
+        let proposal = create(&mut manager);
+        manager.current.as_ref().expect("project").database.connection.execute(
+            "CREATE TRIGGER fail_card_confirmation BEFORE INSERT ON author_settings BEGIN SELECT RAISE(ABORT,'test failure'); END",
+            [],
+        ).expect("trigger");
+        assert!(
+            manager
+                .confirm_discussion_design(proposal.id, proposal.entities.clone())
+                .is_err()
+        );
+        assert!(manager.list_entities(false).expect("rollback").is_empty());
+        assert_eq!(
+            manager
+                .get_discussion_workspace(session_id)
+                .expect("workspace")
+                .version,
+            0
+        );
+        manager
+            .current
+            .as_ref()
+            .expect("project")
+            .database
+            .connection
+            .execute("DROP TRIGGER fail_card_confirmation", [])
+            .expect("remove trigger");
+        let ids = manager
+            .confirm_discussion_design(proposal.id, proposal.entities.clone())
+            .expect("retry");
+        let revision = manager
+            .list_entity_revisions(ids[0])
+            .expect("card")
+            .remove(0);
+        assert_eq!(revision.name, "沈砚");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&revision.fixed_attributes_json)
+                .expect("attributes"),
+            candidate.attributes
+        );
+        assert_eq!(
+            manager
+                .get_discussion_workspace(session_id)
+                .expect("linked")
+                .linked_entity_id,
+            Some(ids[0])
+        );
+        drop(manager);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_index_failure_does_not_partially_publish_a_confirmed_card() {
+        let (mut manager, root, session_id) = project();
+        let proposal = proposal(&mut manager, session_id);
+        manager
+            .current
+            .as_ref()
+            .expect("project")
+            .database
+            .connection
+            .execute("DROP TABLE search_index", [])
+            .expect("break index");
+        assert!(
+            manager
+                .confirm_discussion_design(proposal.id, proposal.entities)
+                .is_err()
+        );
+        assert!(
+            manager
+                .list_entities(false)
+                .expect("no published card")
+                .is_empty()
+        );
+        assert!(
+            manager
+                .list_author_settings()
+                .expect("no published rules")
+                .is_empty()
+        );
+        assert_eq!(
+            manager
+                .get_discussion_workspace(session_id)
+                .expect("workspace")
+                .version,
+            0
+        );
+        assert_eq!(
+            manager
+                .list_discussion_design_proposals(session_id, None)
+                .expect("proposal")[0]
+                .status,
+            "PENDING"
+        );
+        drop(manager);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 impl DiscussionTopicKind {
@@ -913,7 +1157,22 @@ impl ProjectManager {
                 [entity_id.to_string()],
                 |row| row.get(0),
             )?;
-            for setting in &entity.settings {
+            let fallback_setting;
+            let settings = if entity.entity_type == EntityType::Concept
+                && entity
+                    .attributes
+                    .get("settingScope")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("PROJECT")
+                && entity.settings.is_empty()
+                && !entity.description.trim().is_empty()
+            {
+                fallback_setting = vec![entity.description.clone()];
+                &fallback_setting
+            } else {
+                &entity.settings
+            };
+            for setting in settings {
                 tx.execute(
                     "INSERT INTO author_settings (id,project_id,entity_id,entity_revision_id,content,visibility,source_proposal_id)
                      VALUES (?1,?2,?3,?4,?5,?6,?7)",
@@ -923,13 +1182,39 @@ impl ProjectManager {
             }
             promoted.push(entity_id);
         }
+        // A one-object conversation continues editing that same card after confirmation.
+        if let [entity_id] = promoted.as_slice() {
+            let linked: Option<String> = tx
+                .query_row(
+                    "SELECT linked_entity_id FROM discussion_workspaces WHERE session_id=?1",
+                    [proposal.session_id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+            if linked.as_deref() != Some(entity_id.to_string().as_str()) {
+                tx.execute(
+                    "INSERT INTO discussion_workspaces (session_id, linked_entity_id, version)
+                     VALUES (?1,?2,?3)
+                     ON CONFLICT(session_id) DO UPDATE SET linked_entity_id=excluded.linked_entity_id,
+                         version=excluded.version, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+                    rusqlite::params![proposal.session_id.to_string(), entity_id.to_string(), current_version + 1],
+                )?;
+                tx.execute(
+                    "INSERT INTO discussion_draft_revisions (session_id,version,topic_kind,linked_entity_id,draft_json)
+                     SELECT session_id,version,topic_kind,linked_entity_id,draft_json
+                     FROM discussion_workspaces WHERE session_id=?1",
+                    [proposal.session_id.to_string()],
+                )?;
+            }
+        }
         tx.execute(
             "UPDATE discussion_design_proposals SET status='CONFIRMED',
                  promoted_entity_ids_json=?1, confirmed_entities_json=?2 WHERE id=?3 AND status='PENDING'",
             rusqlite::params![json_string(&promoted)?, json_string(&entities)?, id.to_string()],
         )?;
+        Database::rebuild_search_index_in_tx(&tx, project_id)?;
         tx.commit()?;
-        session.database.rebuild_search_index(project_id)?;
         Ok(promoted)
     }
 

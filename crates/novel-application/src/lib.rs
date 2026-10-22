@@ -414,7 +414,7 @@ mod tests {
             package.task_contract.role,
             super::AiTaskRole::DiscussionFacilitator
         );
-        assert_eq!(package.prompt_version, "r5.1-discussion-v3");
+        assert_eq!(package.prompt_version, "r5.1-discussion-v4");
         assert!(package.user_prompt.contains("[P0 作者本次问题]"));
         assert!(package.user_prompt.contains("如果推迟到第三卷会怎样？"));
         assert!(package.user_prompt.contains("林澈还不知道使者已经死亡。"));
@@ -432,6 +432,118 @@ mod tests {
                 .output_contract
                 .contains("不输出修改后的正式对象")
         );
+    }
+
+    #[test]
+    fn discussion_uses_the_configured_budget_and_finds_scope_details_beyond_the_intro() {
+        let input = super::DiscussionContextInput {
+            scope_label: "魂灯草稿".into(),
+            scope_content: format!(
+                "作者最新草稿（未确认）。{}魂灯寿元代价不可转嫁。{}",
+                "风景".repeat(8_000),
+                "尾声".repeat(300)
+            ),
+            history: "作者与 AI 的长对话。".repeat(8_000),
+            user_message: "魂灯的寿元代价怎么表现？".into(),
+            input_token_budget: 120_000,
+            focus: None,
+        };
+        let context = super::ContextAssembler::assemble_discussion(&input, &[]).expect("context");
+        assert!(context.user_prompt.contains("作者最新草稿"));
+        assert!(context.user_prompt.contains("魂灯寿元代价不可转嫁"));
+        assert!(context.user_prompt.chars().count() > 24_000);
+        assert!(context.estimated_input_tokens <= input.input_token_budget);
+        let mut small = input;
+        small.input_token_budget = 8_192;
+        let small =
+            super::ContextAssembler::assemble_discussion(&small, &[]).expect("small context");
+        assert!(small.user_prompt.contains("魂灯寿元代价不可转嫁"));
+        assert!(small.section_audit.iter().any(|section| section.kind
+            == super::ContextSectionKind::ChapterPlan
+            && section.truncated));
+        assert!(small.estimated_input_tokens <= 8_192);
+    }
+
+    #[test]
+    fn discussion_selection_preserves_manuscripts_and_several_reference_sources() {
+        let make = |kind, source: &str, relevance| {
+            super::ContextCandidate::new(
+                kind,
+                novel_domain::RetrievalEvidence {
+                    chunk: novel_domain::KnowledgeChunk {
+                        id: uuid::Uuid::new_v4(),
+                        source_id: uuid::Uuid::new_v4(),
+                        source_revision: source.into(),
+                        source_hash: "sha256:test".into(),
+                        chunk_index: 0,
+                        chunking_version: "test".into(),
+                        content: source.into(),
+                        embedding: None,
+                    },
+                    method: novel_domain::RetrievalMethod::Keyword,
+                    authority: novel_domain::ContextAuthority::Reference,
+                    relevance,
+                },
+            )
+        };
+        let mut candidates = (0..20)
+            .map(|index| {
+                make(
+                    super::ContextCandidateKind::Keyword,
+                    &format!("writing-card:{index}"),
+                    7_000,
+                )
+            })
+            .collect::<Vec<_>>();
+        candidates.extend([
+            make(
+                super::ContextCandidateKind::ProjectSetting,
+                "planning:book",
+                10_000,
+            ),
+            make(
+                super::ContextCandidateKind::Keyword,
+                "manuscript:current",
+                900,
+            ),
+            make(
+                super::ContextCandidateKind::Keyword,
+                "manuscript-draft:current",
+                900,
+            ),
+            make(super::ContextCandidateKind::Summary, "summary:chapter", 900),
+            make(
+                super::ContextCandidateKind::Summary,
+                "discussion-notes:other",
+                900,
+            ),
+        ]);
+        candidates.push(candidates[0].clone());
+        let selected = super::ContextPlanner::plan_discussion(&candidates, 8);
+        for source in [
+            "planning:book",
+            "manuscript:current",
+            "manuscript-draft:current",
+            "summary:chapter",
+            "discussion-notes:other",
+        ] {
+            assert!(
+                selected
+                    .iter()
+                    .any(|item| item.chunk.source_revision == source),
+                "missing {source}"
+            );
+        }
+        assert_eq!(selected.len(), 8);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|item| item.chunk.id)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            8
+        );
+        assert!(super::ContextPlanner::plan_discussion(&candidates, 0).is_empty());
     }
 
     #[test]

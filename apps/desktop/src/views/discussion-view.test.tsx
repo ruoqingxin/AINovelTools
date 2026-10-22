@@ -706,6 +706,44 @@ describe("DiscussionView", () => {
     ));
   });
 
+  it.each([
+    ["CHARACTER_CARD", "人物卡", "CHARACTER", "沈砚", {}],
+    ["PROJECT_SETTING", "全书设定", "CONCEPT", "境界体系", { settingScope: "PROJECT", realms: ["炼气", "筑基"] }],
+  ] as const)("organizes conversation directly into %s without manually collecting chosen notes", async (target, label, entityType, name, attributes) => {
+    mocks.listDiscussionMessages.mockResolvedValue([
+      { ...userMessage, content: "前面的方案不用了，就按我们最后讨论的方向。" },
+      { ...assistantMessage, content: "已按最终方向整理，尚未入库。" },
+    ]);
+    const proposal: DiscussionDesignProposal = {
+      id: `proposal-${target}`, sessionId: session.id, workspaceVersion: 0,
+      entities: [{ entityType, name, description: "多轮讨论最终认可的完整资料。", aliases: [], tags: [],
+        attributes, settings: ["最终确认的规则。"], visibility: "AUTHOR_ONLY", targetEntityId: null, expectedEntityVersion: null }],
+      sourceMessageIds: [userMessage.id, assistantMessage.id], contextVersion: "context",
+      omittedMessageCount: 0, status: "PENDING", promotedEntityIds: [], createdAt: "",
+    };
+    mocks.summarizeDiscussionDesign.mockImplementation(async () => {
+      mocks.listDiscussionDesignProposals.mockResolvedValue([proposal]);
+      return proposal;
+    });
+    renderView();
+    await screen.findByText("前面的方案不用了，就按我们最后讨论的方向。");
+    fireEvent.click(screen.getByRole("button", { name: "整理为资料" }));
+    fireEvent.change(await screen.findByLabelText("整理资料类型"), { target: { value: target } });
+    const summarize = screen.getByRole("button", { name: `整理${label}` });
+    await waitFor(() => expect(summarize).toBeEnabled());
+    fireEvent.click(summarize);
+    await screen.findByRole("heading", { name: "整理结果" });
+    expect(mocks.summarizeDiscussionDesign).toHaveBeenCalledWith(expect.objectContaining({ designTarget: target }));
+    expect(mocks.saveDiscussionWorkspace).not.toHaveBeenCalled();
+    expect(mocks.confirmDiscussionDesign).not.toHaveBeenCalled();
+    expect(screen.getByRole("checkbox", { name: label })).toBeChecked();
+    if (target === "PROJECT_SETTING") expect(screen.getByLabelText("境界体系的适用范围")).toHaveValue("PROJECT");
+    fireEvent.change(screen.getByLabelText("描述"), { target: { value: "作者审核后修正的资料。" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认选中内容入库" }));
+    await waitFor(() => expect(mocks.confirmDiscussionDesign).toHaveBeenCalledWith(proposal.id,
+      [expect.objectContaining({ entityType, description: "作者审核后修正的资料。", attributes })]));
+  });
+
   it("starts with a compact session toolbar and requires content before organizing", async () => {
     renderView();
     await screen.findByRole("heading", { name: "这次想构思什么？" });
@@ -713,7 +751,7 @@ describe("DiscussionView", () => {
     expect(screen.queryByRole("textbox", { name: "已选定内容" })).not.toBeInTheDocument();
     openNotebook();
     expect(screen.getByRole("button", { name: "整理为实体与设定" })).toBeDisabled();
-    expect(screen.getByText("尚无已选定内容")).toBeInTheDocument();
+    expect(screen.getByText("尚无讨论或已选定内容")).toBeInTheDocument();
     expect(screen.getByText("模型与费用").closest("details")).not.toHaveAttribute("open");
     fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
     expect(screen.getByLabelText("标题")).toBeInTheDocument();

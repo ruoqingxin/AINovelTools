@@ -25,6 +25,7 @@ export type InputReviewPurpose = "ADMISSION" | "MANUSCRIPT";
 export type InputAiProposalFeedbackRating = "HELPFUL" | "NOT_HELPFUL";
 export type InputAiTaskPreference = string | InputAiTaskPreferenceDetails | null;
 export type InputWritingReviewPolicy = "ADVISORY" | "BALANCED" | "REQUIRED";
+export type InputDiscussionDesignTarget = "AUTO" | "CHARACTER_CARD" | "PROJECT_SETTING";
 export type InputModelCapability = "CHAT" | "EMBEDDING";
 export type InputPrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
 export type InputModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
@@ -1092,6 +1093,7 @@ export type InputArgsSummarizeDiscussionDesign = {
     input: InputSummarizeDiscussionDesignInput;
 };
 export type InputSummarizeDiscussionDesignInput = {
+    designTarget?: InputDiscussionDesignTarget | null;
     expectedWorkspaceVersion: number;
     maxOutputTokens?: number | null;
     profileId: string;

@@ -24,6 +24,10 @@
 .discussion-stage-three .discussion-design-panel > .section-heading { padding-bottom: 12px; }
 .discussion-stage-three .discussion-design-panel h2 { font-size: 16px; }
 .discussion-stage-three .discussion-save-state { margin-left: auto; }
+.discussion-organize-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-bottom: 12px; }
+.discussion-organize-actions label { display: grid; gap: 6px; flex: 1 1 140px; min-width: 0; font-size: 12px; }
+.discussion-organize-actions select { width: 100%; min-height: 34px; max-width: 100%; }
+.discussion-organize-actions button { flex: 0 1 auto; }
 .discussion-stage-three .discussion-message-actions { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .discussion-stage-three .discussion-message-actions > div { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
 .discussion-stage-three .discussion-message-actions label { display: grid; gap: 6px; flex: 1 1 140px; min-width: 0; }

@@ -119,6 +119,7 @@ export function DiscussionView() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [designPending, setDesignPending] = useState(false);
   const [showDraft, setShowDraft] = useState(() => new URLSearchParams(window.location.search).get("design") === "results");
+  const [organizeRequest, setOrganizeRequest] = useState(0);
   const [showSessions, setShowSessions] = useState(false);
   const wide = useWideWorkspace(1100);
   const [draftFocus, setDraftFocus] = useState<{ field: "chosen" | "alternatives" | "questions" } | null>(null);
@@ -597,6 +598,11 @@ export function DiscussionView() {
         <button type="button" className="secondary-action" disabled={busy} onClick={() => {
           setShowSessionForm((current) => !current); setShowSessions(true); setError(null);
         }}><Plus size={15} />新建讨论</button>
+        <button type="button" className="primary-action" disabled={!sessionId || busy || designPending}
+          onClick={(event) => {
+            draftReturnFocus.current = event.currentTarget;
+            setShowDraft(true); setOrganizeRequest((value) => value + 1);
+          }}><Sparkles size={15} />整理为资料</button>
         <button type="button" className="secondary-action" aria-expanded={showDraft} onClick={(event) => {
           draftReturnFocus.current = event.currentTarget; setShowDraft((current) => !current);
         }}><BookmarkPlus size={15} />构思草稿</button>
@@ -700,6 +706,9 @@ export function DiscussionView() {
           {messages.isPending && sessionId ? <p className="plan-empty">正在加载讨论…</p> : visibleMessages.map((messageItem) => <article className="discussion-message" data-role={messageItem.role.toLowerCase()} data-message-id={messageItem.id} key={messageItem.id}>
             <header><strong>{messageLabel(messageItem)}</strong><small>{messageItem.contextVersion ? `上下文 ${messageItem.contextVersion.slice(0, 8)}` : "未绑定生成上下文"}</small></header>
             <div className="discussion-message-content">{messageItem.content}</div>
+            {messageItem.role === "ASSISTANT" && messageItem.contextSummary ? <details className="discussion-context-sources">
+              <summary>本轮参考</summary><p>{messageItem.contextSummary}</p>
+            </details> : null}
             <button type="button" className="secondary-action discussion-remember" title="收集当前消息或选中的片段" aria-expanded={collectingId === messageItem.id}
               disabled={busy || designPending} onClick={(event) => openCollector(messageItem, event.currentTarget)}>
               <BookmarkPlus size={12} />收集片段
@@ -774,6 +783,8 @@ export function DiscussionView() {
       {sessionId ? <DiscussionDesignPanel key={sessionId} sessionId={sessionId} profile={designProfile}
         settingsScope={projectOverrides.data?.discussionDesign ? "PROJECT" : "GLOBAL"}
         preference={designPreference} conversationBusy={busy}
+        hasDiscussion={visibleMessages.some((message) => message.role === "USER")} projectId={activeSession?.projectId}
+        organizeRequest={organizeRequest}
         draftFocus={draftFocus} onPendingChange={setDesignPending} /> : null}
       </WorkspacePanel>
     </div>

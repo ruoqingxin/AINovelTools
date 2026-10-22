@@ -12,6 +12,7 @@ import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { useProjectTransition } from "../shell/project-actions-provider";
 import { AiModelNote } from "./ai-model-note";
 import type { AiTaskSettingsScope } from "../lib/ai-task-preferences";
+import { entityHref } from "../lib/entity-navigation";
 
 export const discussionTopics = [
   { id: "FREE", label: "自由构思" },
@@ -74,8 +75,9 @@ function workspaceBackup(sessionId: string): DiscussionWorkspace | null {
   return null;
 }
 
-function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, onPendingChange }: {
+function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, onPendingChange, projectId }: {
   proposal: DiscussionDesignProposal; onConfirmed: () => Promise<void>;
+  projectId?: string;
   currentWorkspaceVersion: number | undefined;
   onPendingChange: (id: string, pending: boolean) => void;
 }) {
@@ -117,6 +119,21 @@ function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, 
     setEntities((current) => current.map((entity, item) => item === index ? { ...entity, ...changes } : entity));
   }
 
+  function settingScope(index: number) {
+    try { return JSON.parse(attributes[index]).settingScope === "PROJECT" ? "PROJECT" : "RELATED"; }
+    catch { return "RELATED"; }
+  }
+
+  function changeSettingScope(index: number, scope: string) {
+    try {
+      const parsed: unknown = JSON.parse(attributes[index]);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("属性必须是 JSON 对象。");
+      const next = { ...parsed, settingScope: scope };
+      setAttributes((current) => current.map((value, item) => item === index ? JSON.stringify(next, null, 2) : value));
+      setError(null);
+    } catch (cause) { setError(errorMessage(cause)); }
+  }
+
   async function confirm() {
     if (stale) return;
     setError(null);
@@ -152,8 +169,10 @@ function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, 
   }
 
   if (proposal.status === "CONFIRMED") return <div className="discussion-design-confirmed">
-    <Check size={14} /><span>已确认 {proposal.promotedEntityIds.length} 个实体</span>
-    <a href="/knowledge">实体库</a><a href="/knowledge/settings">作者设定</a>
+    <Check size={14} /><span>已确认 {proposal.promotedEntityIds.length} 份资料</span>
+    {projectId ? proposal.promotedEntityIds.map((id, index) => <a key={id}
+      href={entityHref(id, projectId, `/discussion#${proposal.sessionId}`)}>打开资料{proposal.promotedEntityIds.length > 1 ? ` ${index + 1}` : ""}</a>)
+      : <a href="/knowledge">人物与世界资料</a>}<a href="/knowledge/settings">作者设定</a>
   </div>;
 
   return <section className="discussion-proposal-editor">
@@ -166,12 +185,16 @@ function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, 
       <div className="discussion-entity-select">
         <label><input type="checkbox" disabled={busy} checked={selected[index]} onChange={(event) =>
           setSelected((current) => current.map((value, item) => item === index ? event.target.checked : value))} />
-          {entityLabels[entity.entityType]}</label>
+          {entity.entityType === "CHARACTER" ? "人物卡" : entity.entityType === "CONCEPT" && settingScope(index) === "PROJECT" ? "全书设定" : entityLabels[entity.entityType]}</label>
         <span>{entity.targetEntityId ? `更新已有实体 v${entity.expectedEntityVersion}` : "新实体"}</span>
       </div>
       <fieldset disabled={!selected[index] || busy}>
         <label>名称<input value={entity.name} maxLength={200} onChange={(event) => update(index, { name: event.target.value })} /></label>
         <label>描述<textarea rows={4} value={entity.description} onChange={(event) => update(index, { description: event.target.value })} /></label>
+        {entity.entityType === "CONCEPT" ? <label>设定适用范围<select aria-label={`${entity.name}的适用范围`}
+          value={settingScope(index)} onChange={(event) => changeSettingScope(index, event.target.value)}>
+          <option value="RELATED">相关话题参考</option><option value="PROJECT">全书统一规则</option>
+        </select></label> : null}
         <label>别名<input value={aliasTexts[index]} onChange={(event) => setAliasTexts((current) =>
           current.map((value, item) => item === index ? event.target.value : value))} /></label>
         <label>标签<input value={tagTexts[index]} onChange={(event) => setTagTexts((current) =>
@@ -204,12 +227,15 @@ function EntityProposalEditor({ proposal, currentWorkspaceVersion, onConfirmed, 
   </section>;
 }
 
-export function DiscussionDesignPanel({ sessionId, profile, preference, settingsScope, conversationBusy, draftFocus, onPendingChange }: {
+export function DiscussionDesignPanel({ sessionId, profile, preference, settingsScope, conversationBusy, draftFocus, onPendingChange, hasDiscussion = false, projectId, organizeRequest = 0 }: {
   sessionId: string; profile: ModelProfile | undefined; preference: AiTaskPreference;
   settingsScope?: AiTaskSettingsScope;
   conversationBusy: boolean;
   draftFocus: { field: "chosen" | "alternatives" | "questions" } | null;
   onPendingChange: (pending: boolean) => void;
+  hasDiscussion?: boolean;
+  projectId?: string;
+  organizeRequest?: number;
 }) {
   const client = useQueryClient();
   const workspaceQuery = useQuery({
@@ -226,6 +252,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
   const [notice, setNotice] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showResults, setShowResults] = useState(() => new URLSearchParams(window.location.search).get("design") === "results");
+  const [designTarget, setDesignTarget] = useState<"AUTO" | "CHARACTER_CARD" | "PROJECT_SETTING">("AUTO");
   const [activeField, setActiveField] = useState<typeof draftFields[number]["id"]>("chosen");
   const [olderVersions, setOlderVersions] = useState<DiscussionWorkspace[]>([]);
   const [olderProposals, setOlderProposals] = useState<DiscussionDesignProposal[]>([]);
@@ -250,8 +277,12 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
   const totalChars = workspace
     ? chars(workspace.draft.chosen) + chars(workspace.draft.alternatives) + chars(workspace.draft.questions)
     : 0;
-  const hasContent = Boolean(workspace?.draft.chosen.trim());
+  const hasContent = Boolean(workspace?.draft.chosen.trim()) || hasDiscussion;
   const pendingResults = Object.values(proposalPending).some(Boolean);
+
+  useEffect(() => {
+    if (organizeRequest > 0) setShowResults(false);
+  }, [organizeRequest]);
 
   useEffect(() => {
     if (!draftFocus) return;
@@ -262,6 +293,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
   useEffect(() => {
     if (workspaceQuery.data && (!initialized.current || !dirty && workspaceQuery.data.version > (saved?.version ?? -1))) {
       if (!initialized.current) {
+        if (workspaceQuery.data.topicKind === "CHARACTER") setDesignTarget("CHARACTER_CARD");
         const backup = workspaceBackup(sessionId);
         if (backup && JSON.stringify(backup.draft) !== JSON.stringify(workspaceQuery.data.draft)) {
           if (backup.version === workspaceQuery.data.version) {
@@ -334,6 +366,7 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
     try {
       await summarizeDiscussionDesign({
         sessionId, profileId: profile.id, expectedWorkspaceVersion: snapshot.version,
+        designTarget,
         ...(preference.temperature !== null ? { temperature: preference.temperature } : {}),
         maxOutputTokens: Math.min(preference.maxOutputTokens ?? 8192, 16384),
       });
@@ -353,6 +386,8 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
       client.invalidateQueries({ queryKey: ["entity-cards"] }),
       client.invalidateQueries({ queryKey: ["entity-revisions"] }),
       client.invalidateQueries({ queryKey: ["author-settings"] }),
+      client.invalidateQueries({ queryKey: ["discussion-workspace", sessionId] }),
+      client.invalidateQueries({ queryKey: ["discussion-draft-revisions", sessionId] }),
     ]);
     setNotice("已确认入库。");
   }
@@ -399,6 +434,19 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
       <button type="button" onClick={() => void workspaceQuery.refetch()}>重试</button></p> : null}
     {!workspace && workspaceQuery.isPending ? <p>正在加载草稿…</p> : null}
     {workspace && !showResults ? <>
+      <div className="discussion-organize-actions">
+        <label>资料类型<select aria-label="整理资料类型" value={designTarget} disabled={busy || conversationBusy}
+          onChange={(event) => setDesignTarget(event.target.value as typeof designTarget)}>
+          <option value="AUTO">自动识别</option><option value="CHARACTER_CARD">人物卡</option><option value="PROJECT_SETTING">全书设定</option>
+        </select></label>
+        <button type="button" className="primary-action" onClick={() => void summarize()}
+          disabled={busy || conversationBusy || !profile?.hasSecret || !hasContent || totalChars > DISCUSSION_LIMITS.draftChars}>
+          <Sparkles size={14} />{busy ? "处理中…" : designTarget === "CHARACTER_CARD" ? "整理人物卡" : designTarget === "PROJECT_SETTING" ? "整理全书设定" : "整理为实体与设定"}
+        </button>
+      </div>
+      <AiModelNote taskLabel="构思整理" taskKey="discussionDesign" settingsScope={settingsScope} profile={profile} preference={preference} />
+      {!profile?.hasSecret ? <p className="discussion-panel-state">模型未就绪</p>
+        : !hasContent ? <p className="discussion-panel-state">尚无讨论或已选定内容</p> : null}
       {recovery ? <section className="discussion-local-recovery">
         <p>发现未保存的本机草稿，保存版本已变化。</p>
         <button type="button" className="secondary-action" disabled={busy} onClick={() => {
@@ -449,13 +497,6 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
           onClick={() => setShowHistory((current) => !current)} aria-expanded={showHistory}>
           <History size={15} /></button>
       </div>
-      <AiModelNote taskLabel="构思整理" taskKey="discussionDesign" settingsScope={settingsScope} profile={profile} preference={preference} />
-      <button type="button" className="primary-action" onClick={() => void summarize()}
-        disabled={busy || conversationBusy || !profile?.hasSecret || !hasContent || totalChars > DISCUSSION_LIMITS.draftChars}>
-        <Sparkles size={14} />{busy ? "处理中…" : "整理为实体与设定"}
-      </button>
-      {!profile?.hasSecret ? <p className="discussion-panel-state">模型未就绪</p>
-        : !hasContent ? <p className="discussion-panel-state">尚无已选定内容</p> : null}
     </> : null}
     {!showResults && proposals.data?.length ? <button type="button" className="secondary-action"
       onClick={() => setShowResults(true)}><Check size={14} />查看整理结果 · {proposals.data.length}</button> : null}
@@ -475,10 +516,10 @@ export function DiscussionDesignPanel({ sessionId, profile, preference, settings
     </section> : null}
     {proposals.isError ? <p className="project-error" role="alert">{errorMessage(proposals.error)}</p> : null}
     {showResults ? [...(proposals.data ?? []), ...olderProposals].map((proposal, index) => index === 0
-      ? <EntityProposalEditor key={proposal.id} proposal={proposal} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={updateProposalPending} />
+      ? <EntityProposalEditor key={proposal.id} proposal={proposal} projectId={projectId} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={updateProposalPending} />
       : <details className="discussion-older-proposal" key={proposal.id}><summary>
         {proposal.status === "CONFIRMED" ? "已确认" : "待确认"} · {proposal.entities.map((entity) => entity.name).join("、")}
-      </summary><EntityProposalEditor proposal={proposal} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={updateProposalPending} /></details>) : null}
+      </summary><EntityProposalEditor proposal={proposal} projectId={projectId} currentWorkspaceVersion={saved?.version} onConfirmed={confirmed} onPendingChange={updateProposalPending} /></details>) : null}
     {showResults && hasMoreProposals.current && (olderProposals.length ? olderProposals.length % 20 === 0 : proposals.data?.length === 20)
       ? <button type="button" className="secondary-action" disabled={historyBusy} onClick={() => void loadOlderProposals()}>更早整理结果</button> : null}
   </aside>;

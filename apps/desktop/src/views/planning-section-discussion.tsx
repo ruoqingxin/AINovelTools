@@ -12,6 +12,7 @@ import { useConfirmAction } from "../shell/confirm-action-provider";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { AiModelNote } from "./ai-model-note";
 import "./planning-section-discussion.css";
+import "./discussion-source.css";
 
 type Props = {
   sectionId: string;
@@ -190,6 +191,9 @@ function SectionDiscussion(props: Props) {
         {visibleMessages.map((entry) => <article key={entry.id} data-role={entry.role.toLowerCase()}>
           <strong>{entry.role === "USER" ? "你" : "AI"}</strong>
           <div>{entry.content}</div>
+          {entry.role === "ASSISTANT" && entry.contextSummary ? <details className="discussion-context-sources">
+            <summary>本轮参考</summary><p>{entry.contextSummary}</p>
+          </details> : null}
           {entry.role === "ASSISTANT" ? <button type="button" className="secondary-action"
             disabled={busy || disabled || readOnly} onClick={() => void useDraft(entry.content)}>
             <Check size={13} />载入草稿</button> : null}

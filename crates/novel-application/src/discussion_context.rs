@@ -62,7 +62,7 @@ impl DiscussionRelevance {
     /// Keeps a lead and relevant source excerpts, never a model-written summary.
     #[must_use]
     pub fn excerpt(&self, value: &str, limit: usize) -> String {
-        const MARKER: &str = "\n[相关片段，完整原文已保存]\n";
+        const MARKER: &str = "\n[本轮仅提供相关片段]\n";
         let value = value.trim();
         let chars = value.chars().collect::<Vec<_>>();
         if chars.len() <= limit {
@@ -118,7 +118,7 @@ mod tests {
         let excerpt = query.excerpt(&content, 600);
         assert!(excerpt.starts_with("背景简介"));
         assert!(excerpt.contains("代价不可转嫁"));
-        assert!(excerpt.contains("完整原文已保存"));
+        assert!(excerpt.contains("本轮仅提供相关片段"));
         assert!(excerpt.chars().count() <= 600);
         assert!(query.excerpt(&content, 5).chars().count() <= 5);
     }
