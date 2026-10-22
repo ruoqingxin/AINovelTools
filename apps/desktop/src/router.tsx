@@ -23,7 +23,8 @@ const MaterialsView = lazyRouteComponent(() => import("./views/materials-view"),
 const SearchView = lazyRouteComponent(() => import("./views/search-view"), "SearchView");
 const JobsView = lazyRouteComponent(() => import("./views/jobs-view"), "JobsView");
 const SettingsView = lazyRouteComponent(() => import("./views/settings-view"), "SettingsView");
-const DiscussionView = lazyRouteComponent(() => import("./views/discussion-view"), "DiscussionView");
+const DiscussionView = lazyRouteComponent(() => import("./views/coauthor-view"), "CoauthorView");
+const HistoricalDiscussionReview = lazyRouteComponent(() => import("./views/discussion-view"), "DiscussionView");
 const ReviewCenterView = lazyRouteComponent(() => import("./views/review-center-view"), "ReviewCenterView");
 const KnowledgeRecordsView = lazyRouteComponent(() => import("./views/knowledge-records-view"), "KnowledgeRecordsView");
 const AuthorSettingsView = lazyRouteComponent(() => import("./views/author-settings-view"), "AuthorSettingsView");
@@ -89,7 +90,8 @@ function ChaptersEntryView() {
 
 function DiscussionEntryView() {
   const search = useRouterState({ select: (state) => state.location.searchStr });
-  return <ProjectGate>{parseDiscussionSource(search) ? <DiscussionSourceView search={search} /> : <DiscussionView />}</ProjectGate>;
+  return <ProjectGate>{parseDiscussionSource(search) ? <DiscussionSourceView search={search} />
+    : new URLSearchParams(search).get("design") === "results" ? <HistoricalDiscussionReview /> : <DiscussionView />}</ProjectGate>;
 }
 
 function ReviewEntryView() {

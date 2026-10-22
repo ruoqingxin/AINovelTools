@@ -106,7 +106,7 @@ async function published(path, jobId, projectId) {
   const manifest = JSON.parse(await readFile(join(path, "manifest.json"), "utf8"));
   assert.equal(manifest.jobId, jobId);
   assert.equal(manifest.projectId, projectId);
-  assert.equal(manifest.schemaVersion, 51);
+  assert.equal(manifest.schemaVersion, 52);
   assert.equal(manifest.formatVersion, 1);
   for (const [name, expected] of Object.entries(manifest.files)) {
     assert(name === "project.json" || name === "project.sqlite" || name.startsWith("attachments/"));

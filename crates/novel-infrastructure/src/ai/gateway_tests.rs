@@ -66,6 +66,95 @@ fn server(
 }
 
 #[tokio::test]
+async fn native_tools_round_trip_over_http_and_keep_arguments_out_of_text_stream() {
+    let (url, thread) = server(|mut socket| {
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+        let first = serde_json::json!({"choices":[{"delta":{"tool_calls":[{
+            "index":0,"id":"call_read","type":"function",
+            "function":{"name":"read_source","arguments":"{\"key\":\"ENTITY:1\","}
+        }]}}]});
+        let second = serde_json::json!({"choices":[{"delta":{"tool_calls":[{
+            "index":0,"function":{"arguments":"\"revision\":\"r1\"}"}
+        }]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":21,"completion_tokens":8}});
+        write!(
+            socket,
+            "data: {first}\n\ndata: {second}\n\ndata: [DONE]\n\n"
+        )
+        .unwrap();
+    });
+    let gateway = ModelGateway::default();
+    let messages = vec![serde_json::json!({"role":"user","content":"查已有境界"})];
+    let tools = vec![
+        serde_json::json!({"type":"function","function":{"name":"read_source",
+        "parameters":{"type":"object","properties":{}}}}),
+    ];
+    let mut text = String::new();
+    let result = gateway
+        .generate_tool_turn(
+            &profile(url),
+            "local-test",
+            &messages,
+            &tools,
+            GenerationOptions::default(),
+            Arc::new(AtomicBool::new(false)),
+            |chunk| text.push_str(chunk),
+        )
+        .await
+        .unwrap();
+    thread.join().unwrap();
+    assert!(text.is_empty());
+    assert_eq!(result.calls[0].function.name, "read_source");
+    assert_eq!(result.usage.as_ref().unwrap().input_tokens, 21);
+    let mut next = messages;
+    next.push(result.message());
+    next.push(serde_json::json!({"role":"tool","tool_call_id":"call_read","content":"原文"}));
+    let (_, body) = gateway.tool_request_preview(
+        &profile("http://127.0.0.1/v1".into()),
+        &next,
+        &tools,
+        GenerationOptions::default(),
+    );
+    assert_eq!(body["messages"][1]["tool_calls"][0]["id"], "call_read");
+    assert_eq!(body["messages"][2]["tool_call_id"], "call_read");
+}
+
+#[tokio::test]
+async fn native_tool_cancellation_interrupts_a_provider_without_a_final_event() {
+    let (release, held) = mpsc::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&cancelled);
+    let (url, thread) = server(move |mut socket| {
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"preview\"}}]}\n\n").unwrap();
+        socket.flush().unwrap();
+        let _ = held.recv_timeout(Duration::from_secs(3));
+    });
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        ModelGateway::default().generate_tool_turn(
+            &profile(url),
+            "local-test",
+            &[serde_json::json!({"role":"user","content":"write"})],
+            &[],
+            GenerationOptions::default(),
+            cancelled,
+            |chunk| {
+                if !chunk.is_empty() {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            },
+        ),
+    )
+    .await;
+    release.send(()).unwrap();
+    thread.join().unwrap();
+    assert!(matches!(result, Ok(Err(AiError::Cancelled))));
+}
+
+#[tokio::test]
 async fn stream_delivers_a_complete_event_before_the_response_ends() {
     let (release, held) = mpsc::channel();
     let (url, thread) = server(move |mut socket| {

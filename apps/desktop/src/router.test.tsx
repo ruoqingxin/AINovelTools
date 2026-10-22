@@ -13,7 +13,8 @@ vi.mock("./views/empty-project-view", () => ({ EmptyProjectView: () => <p>No pro
 vi.mock("./views/project-workspace-view", () => ({
   ProjectWorkspaceView: ({ mode = "planning" }: { mode?: string }) => <p>Workspace {mode}</p>,
 }));
-vi.mock("./views/discussion-view", () => ({ DiscussionView: () => <p>Discussion</p> }));
+vi.mock("./views/coauthor-view", () => ({ CoauthorView: () => <p>Discussion</p> }));
+vi.mock("./views/discussion-view", () => ({ DiscussionView: () => <p>Historical design review</p> }));
 vi.mock("./views/review-center-view", () => ({ ReviewCenterView: () => <p>Review</p> }));
 vi.mock("./views/settings-view", () => ({ SettingsView: () => <p>Settings</p> }));
 vi.mock("./views/story-bible-view", () => ({ StoryBibleView: () => <p>Materials entities</p> }));
@@ -82,6 +83,7 @@ describe("project routes", () => {
     ["/chapters?sourceEvidence=anchor-1", "Verified source"],
     ["/writing?sourceRevision=", "Verified source"],
     ["/discussion", "Discussion"],
+    ["/discussion?design=results&targetSession=old-session", "Historical design review"],
     ["/discussion?sourceCandidate=old-candidate", "Verified discussion source"],
     ["/discussion?sourceCandidate=", "Verified discussion source"],
     ["/review", "Review"],

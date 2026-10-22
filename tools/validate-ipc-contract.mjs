@@ -59,7 +59,11 @@ export function assertTypedTransport(source, filename) {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
       const module = node.moduleSpecifier?.text;
       if (module === "@tauri-apps/api/core" || module === "@tauri-apps/api/event") {
-        throw new Error(`Raw Tauri transport outside ipc-transport.ts: ${filename}`);
+        const bindings = ts.isImportDeclaration(node) && node.importClause?.namedBindings;
+        const detectionOnly = module === "@tauri-apps/api/core" && !node.importClause?.name
+          && bindings && ts.isNamedImports(bindings) && bindings.elements.length > 0
+          && bindings.elements.every((entry) => (entry.propertyName ?? entry.name).text === "isTauri");
+        if (!detectionOnly) throw new Error(`Raw Tauri transport outside ipc-transport.ts: ${filename}`);
       }
     }
     if (ts.isCallExpression(node) && (

@@ -625,7 +625,7 @@ mod tests {
             assert_eq!(f.count("plan_nodes"), 2);
             f.reopen();
             assert_eq!(f.count("plan_nodes"), 2);
-            assert_eq!(f.db().health().unwrap().schema_version, 51);
+            assert_eq!(f.db().health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
         }
     }
 

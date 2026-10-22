@@ -6,7 +6,7 @@ use eventsource_stream::{EventStreamError, Eventsource};
 mod tests;
 
 pub struct ModelGateway {
-    client: reqwest::Client,
+    pub(super) client: reqwest::Client,
 }
 
 impl Default for ModelGateway {

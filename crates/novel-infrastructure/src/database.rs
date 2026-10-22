@@ -1202,6 +1202,9 @@ impl Database {
             )?;
             transaction.commit()?;
         }
+        if applied.unwrap_or(0) < 52 {
+            self.migrate_coauthor()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }
@@ -2258,7 +2261,7 @@ mod tests {
         db.connection
             .execute_batch(
                 "ALTER TABLE chapter_extraction_items DROP COLUMN version;
-                 DELETE FROM schema_migrations WHERE version=51;",
+                 DELETE FROM schema_migrations WHERE version>=51;",
             )
             .unwrap();
         assert_eq!(db.health().unwrap().schema_version, 50);
@@ -2271,7 +2274,7 @@ mod tests {
             db.list_manuscript_revisions(chapter.id).unwrap()[0],
             revision
         );
-        assert_eq!(db.health().unwrap().schema_version, 51);
+        assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
         assert!(
             db.connection
                 .execute("UPDATE chapter_extraction_items SET version=0", [])
@@ -2290,7 +2293,7 @@ mod tests {
         db.connection
             .execute_batch(
                 "ALTER TABLE chapter_extraction_items DROP COLUMN version;
-                 DELETE FROM schema_migrations WHERE version=51;
+                 DELETE FROM schema_migrations WHERE version>=51;
                  CREATE TRIGGER fail_extraction_migration BEFORE INSERT ON schema_migrations WHEN NEW.version=51
                  BEGIN SELECT RAISE(ABORT,'migration failure'); END;",
             )
@@ -2311,7 +2314,7 @@ mod tests {
             .execute_batch("DROP TRIGGER fail_extraction_migration")
             .unwrap();
         db.migrate().unwrap();
-        assert_eq!(db.health().unwrap().schema_version, 51);
+        assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     }
 
     #[test]

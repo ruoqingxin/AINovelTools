@@ -24,6 +24,7 @@ export type InputManuscriptExportScope = {
 export type InputReviewPurpose = "ADMISSION" | "MANUSCRIPT";
 export type InputAiProposalFeedbackRating = "HELPFUL" | "NOT_HELPFUL";
 export type InputAiTaskPreference = string | InputAiTaskPreferenceDetails | null;
+export type InputCoauthorDocumentKind = "SETTING" | "OUTLINE" | "MANUSCRIPT";
 export type InputWritingReviewPolicy = "ADVISORY" | "BALANCED" | "REQUIRED";
 export type InputDiscussionDesignTarget = "AUTO" | "CHARACTER_CARD" | "PROJECT_SETTING";
 export type InputModelCapability = "CHAT" | "EMBEDDING";
@@ -35,6 +36,7 @@ export type ExtractionItemKind = "ENTITY" | "FACT" | "RELATION" | "EVENT" | "FOR
 export type ExtractionItemStatus = "PENDING_REVIEW" | "ACCEPTED" | "DEFERRED" | "REJECTED";
 export type PlanNodeKind = "WORK_DESIGN" | "OUTLINE" | "VOLUME_MANAGER" | "VOLUME" | "CHAPTER" | "SCENE";
 export type PlanningStoryState = "UNSET" | "UNKNOWN" | "DEFERRED" | "AUTHOR_RESERVED" | "AI_SUGGESTED" | "CONFIRMED" | "LOCKED" | "RETIRED";
+export type CoauthorDocumentKind = "SETTING" | "OUTLINE" | "MANUSCRIPT";
 export type DiscussionMessageRole = "USER" | "ASSISTANT";
 export type AiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE" | "CONSISTENCY_CHECK";
 export type ContextAuthority = "PROJECT_SETTING" | "AUTHORITATIVE_FACT" | "TASK_MATERIAL" | "REFERENCE";
@@ -92,10 +94,12 @@ export type IpcErrors = {
     acknowledge_failed_jobs: ApiError;
     adopt_extraction_item: ApiError;
     adopt_plan_batch: ApiError;
+    apply_coauthor_proposal: ApiError;
     ask_project_discussion: ApiError;
     assemble_context_with_project_knowledge: ApiError;
     bootstrap_status: null;
     cancel_ai_task: ApiError;
+    cancel_coauthor_run: ApiError;
     cancel_job: ApiError;
     claim_next_job: ApiError;
     clear_planning_embedding: ApiError;
@@ -103,6 +107,7 @@ export type IpcErrors = {
     close_project: null;
     commit_manuscript_draft: ApiError;
     confirm_discussion_design: ApiError;
+    correct_coauthor_decision: ApiError;
     create_belief: ApiError;
     create_diagnostic_package: ApiError;
     create_discussion_candidate: ApiError;
@@ -132,6 +137,7 @@ export type IpcErrors = {
     extract_entities_from_text: ApiError;
     feature_catalog: null;
     finalize_knowledge_candidates: ApiError;
+    fork_coauthor_session: ApiError;
     generate_ai_proposal: ApiError;
     generate_planning_content: ApiError;
     generate_planning_embedding: ApiError;
@@ -142,6 +148,7 @@ export type IpcErrors = {
     get_ai_usage_summary: ApiError;
     get_audit_flow_settings: ApiError;
     get_chapter_entity_references: ApiError;
+    get_coauthor_state: ApiError;
     get_consistency_review_trace: ApiError;
     get_discussion_source: ApiError;
     get_discussion_workspace: ApiError;
@@ -161,6 +168,7 @@ export type IpcErrors = {
     list_author_todos: ApiError;
     list_beliefs: ApiError;
     list_chapter_extractions: ApiError;
+    list_coauthor_document_history: ApiError;
     list_current_facts: ApiError;
     list_discussion_candidates: ApiError;
     list_discussion_design_proposals: ApiError;
@@ -193,18 +201,22 @@ export type IpcErrors = {
     open_project: ApiError;
     promote_discussion_candidate: ApiError;
     promote_discussion_candidate_to_foreshadowing_review: ApiError;
+    publish_coauthor_document: ApiError;
     rate_ai_proposal: ApiError;
+    read_coauthor_source: ApiError;
     rebuild_search_index: ApiError;
     rebuild_summary_material: ApiError;
     rebuild_world_state: ApiError;
     remove_project_ai_task_override: ApiError;
     retry_job: ApiError;
     review_knowledge_candidate: ApiError;
+    run_coauthor: ApiError;
     run_next_job: ApiError;
     save_ai_budget_settings: ApiError;
     save_ai_task_preferences: ApiError;
     save_audit_flow_settings: ApiError;
     save_chapter_entity_references: ApiError;
+    save_coauthor_document: ApiError;
     save_discussion_workspace: ApiError;
     save_manuscript_draft: ApiError;
     save_model_secret: ApiError;
@@ -239,6 +251,7 @@ export type IpcEvents = {
     "ai-task-attempt": AiTaskAttempt;
     "ai-task-chunk": AiStreamChunk;
     "ai-task-started": AiTaskStarted;
+    "coauthor-progress": CoauthorProgress;
 };
 export type AiTaskAttempt = {
     attempt: number;
@@ -253,14 +266,22 @@ export type AiStreamChunk = {
 export type AiTaskStarted = {
     taskId: string;
 };
+export type CoauthorProgress = {
+    content: string;
+    kind: string;
+    runId: string;
+    sessionId: string;
+};
 export type IpcRequests = {
     acknowledge_failed_jobs: InputArgsAcknowledgeFailedJobs;
     adopt_extraction_item: InputArgsAdoptExtractionItem;
     adopt_plan_batch: InputArgsAdoptPlanBatch;
+    apply_coauthor_proposal: InputArgsApplyCoauthorProposal;
     ask_project_discussion: InputArgsAskProjectDiscussion;
     assemble_context_with_project_knowledge: InputArgsAssembleContextWithProjectKnowledge;
     bootstrap_status: InputArgsBootstrapStatus;
     cancel_ai_task: InputArgsCancelAiTask;
+    cancel_coauthor_run: InputArgsCancelCoauthorRun;
     cancel_job: InputArgsCancelJob;
     claim_next_job: InputArgsClaimNextJob;
     clear_planning_embedding: InputArgsClearPlanningEmbedding;
@@ -268,6 +289,7 @@ export type IpcRequests = {
     close_project: InputArgsCloseProject;
     commit_manuscript_draft: InputArgsCommitManuscriptDraft;
     confirm_discussion_design: InputArgsConfirmDiscussionDesign;
+    correct_coauthor_decision: InputArgsCorrectCoauthorDecision;
     create_belief: InputArgsCreateBelief;
     create_diagnostic_package: InputArgsCreateDiagnosticPackage;
     create_discussion_candidate: InputArgsCreateDiscussionCandidate;
@@ -297,6 +319,7 @@ export type IpcRequests = {
     extract_entities_from_text: InputArgsExtractEntitiesFromText;
     feature_catalog: InputArgsFeatureCatalog;
     finalize_knowledge_candidates: InputArgsFinalizeKnowledgeCandidates;
+    fork_coauthor_session: InputArgsForkCoauthorSession;
     generate_ai_proposal: InputArgsGenerateAiProposal;
     generate_planning_content: InputArgsGeneratePlanningContent;
     generate_planning_embedding: InputArgsGeneratePlanningEmbedding;
@@ -307,6 +330,7 @@ export type IpcRequests = {
     get_ai_usage_summary: InputArgsGetAiUsageSummary;
     get_audit_flow_settings: InputArgsGetAuditFlowSettings;
     get_chapter_entity_references: InputArgsGetChapterEntityReferences;
+    get_coauthor_state: InputArgsGetCoauthorState;
     get_consistency_review_trace: InputArgsGetConsistencyReviewTrace;
     get_discussion_source: InputArgsGetDiscussionSource;
     get_discussion_workspace: InputArgsGetDiscussionWorkspace;
@@ -326,6 +350,7 @@ export type IpcRequests = {
     list_author_todos: InputArgsListAuthorTodos;
     list_beliefs: InputArgsListBeliefs;
     list_chapter_extractions: InputArgsListChapterExtractions;
+    list_coauthor_document_history: InputArgsListCoauthorDocumentHistory;
     list_current_facts: InputArgsListCurrentFacts;
     list_discussion_candidates: InputArgsListDiscussionCandidates;
     list_discussion_design_proposals: InputArgsListDiscussionDesignProposals;
@@ -358,18 +383,22 @@ export type IpcRequests = {
     open_project: InputArgsOpenProject;
     promote_discussion_candidate: InputArgsPromoteDiscussionCandidate;
     promote_discussion_candidate_to_foreshadowing_review: InputArgsPromoteDiscussionCandidateToForeshadowingReview;
+    publish_coauthor_document: InputArgsPublishCoauthorDocument;
     rate_ai_proposal: InputArgsRateAiProposal;
+    read_coauthor_source: InputArgsReadCoauthorSource;
     rebuild_search_index: InputArgsRebuildSearchIndex;
     rebuild_summary_material: InputArgsRebuildSummaryMaterial;
     rebuild_world_state: InputArgsRebuildWorldState;
     remove_project_ai_task_override: InputArgsRemoveProjectAiTaskOverride;
     retry_job: InputArgsRetryJob;
     review_knowledge_candidate: InputArgsReviewKnowledgeCandidate;
+    run_coauthor: InputArgsRunCoauthor;
     run_next_job: InputArgsRunNextJob;
     save_ai_budget_settings: InputArgsSaveAiBudgetSettings;
     save_ai_task_preferences: InputArgsSaveAiTaskPreferences;
     save_audit_flow_settings: InputArgsSaveAuditFlowSettings;
     save_chapter_entity_references: InputArgsSaveChapterEntityReferences;
+    save_coauthor_document: InputArgsSaveCoauthorDocument;
     save_discussion_workspace: InputArgsSaveDiscussionWorkspace;
     save_manuscript_draft: InputArgsSaveManuscriptDraft;
     save_model_secret: InputArgsSaveModelSecret;
@@ -432,6 +461,15 @@ export type InputPlanningSection = {
     storyState: InputPlanningStoryState;
     updatedAt: string;
 };
+export type InputArgsApplyCoauthorProposal = {
+    expectedVersion: number;
+    runId: string;
+    scope: InputCoauthorScope;
+};
+export type InputCoauthorScope = {
+    projectId: string;
+    sessionId: string;
+};
 export type InputArgsAskProjectDiscussion = {
     input: InputAskProjectDiscussionInput;
 };
@@ -462,6 +500,10 @@ export type InputAssembleContextInput = {
 export type InputArgsBootstrapStatus = {};
 export type InputArgsCancelAiTask = {
     taskId: string;
+};
+export type InputArgsCancelCoauthorRun = {
+    runId: string;
+    scope: InputCoauthorScope;
 };
 export type InputArgsCancelJob = {
     id: string;
@@ -495,6 +537,13 @@ export type InputDiscussionDesignEntity = {
     tags?: string[];
     targetEntityId?: string | null;
     visibility?: string;
+};
+export type InputArgsCorrectCoauthorDecision = {
+    content: string;
+    expectedVersion: number;
+    id: string;
+    scope: InputCoauthorScope;
+    status: string;
 };
 export type InputArgsCreateBelief = {
     belief: InputBelief;
@@ -732,6 +781,10 @@ export type InputArgsFinalizeKnowledgeCandidates = {
     candidateIds: string[];
     chapterId: string;
 };
+export type InputArgsForkCoauthorSession = {
+    scope: InputCoauthorScope;
+    title: string;
+};
 export type InputArgsGenerateAiProposal = {
     action: InputAiAction;
     chapterId: string;
@@ -777,6 +830,9 @@ export type InputArgsGetAuditFlowSettings = {};
 export type InputArgsGetChapterEntityReferences = {
     chapterId: string;
     projectId: string;
+};
+export type InputArgsGetCoauthorState = {
+    scope: InputCoauthorScope;
 };
 export type InputArgsGetConsistencyReviewTrace = {
     proposalId: string;
@@ -855,6 +911,10 @@ export type InputArgsListAuthorTodos = {};
 export type InputArgsListBeliefs = {};
 export type InputArgsListChapterExtractions = {
     chapterId: string;
+};
+export type InputArgsListCoauthorDocumentHistory = {
+    beforeVersion?: number | null;
+    scope: InputCoauthorScope;
 };
 export type InputArgsListCurrentFacts = {};
 export type InputArgsListDiscussionCandidates = {
@@ -941,10 +1001,20 @@ export type InputArgsPromoteDiscussionCandidateToForeshadowingReview = {
     expectedStatus: InputDiscussionCandidateStatus;
     id: string;
 };
+export type InputArgsPublishCoauthorDocument = {
+    expectedVersion: number;
+    scope: InputCoauthorScope;
+};
 export type InputArgsRateAiProposal = {
     id: string;
     note?: string | null;
     rating: InputAiProposalFeedbackRating;
+};
+export type InputArgsReadCoauthorSource = {
+    key: string;
+    offset: number;
+    revision: string;
+    scope: InputCoauthorScope;
 };
 export type InputArgsRebuildSearchIndex = {};
 export type InputArgsRebuildSummaryMaterial = {
@@ -964,6 +1034,20 @@ export type InputArgsReviewKnowledgeCandidate = {
     expectedStatus: InputCandidateStatus;
     id: string;
     reviewer: string;
+};
+export type InputArgsRunCoauthor = {
+    input: InputCoauthorInput;
+};
+export type InputCoauthorInput = {
+    allowDraftEdits: boolean;
+    expectedDocumentVersion: number;
+    maxOutputTokens?: number | null;
+    message: string;
+    profileId: string;
+    runId: string;
+    scope: InputCoauthorScope;
+    selection?: string | null;
+    temperature?: number | null;
 };
 export type InputArgsRunNextJob = {};
 export type InputArgsSaveAiBudgetSettings = {
@@ -1025,6 +1109,20 @@ export type InputChapterEntitySave = {
     entityIds: string[];
     expectedVersion: number;
     projectId: string;
+};
+export type InputArgsSaveCoauthorDocument = {
+    document: InputCoauthorDocument;
+    scope: InputCoauthorScope;
+};
+export type InputCoauthorDocument = {
+    content: string;
+    kind: InputCoauthorDocumentKind;
+    narrativePosition: string;
+    sessionId: string;
+    targetKey?: string | null;
+    targetRevision?: string | null;
+    title: string;
+    version: number;
 };
 export type InputArgsSaveDiscussionWorkspace = {
     workspace: InputDiscussionWorkspace;
@@ -1187,10 +1285,12 @@ export type IpcResponses = {
     acknowledge_failed_jobs: number;
     adopt_extraction_item: ChapterExtractionItem;
     adopt_plan_batch: PlanBatchReceipt;
+    apply_coauthor_proposal: CoauthorDocument;
     ask_project_discussion: DiscussionExchange;
     assemble_context_with_project_knowledge: ContextPackage;
     bootstrap_status: BootstrapStatus;
     cancel_ai_task: null;
+    cancel_coauthor_run: null;
     cancel_job: Job;
     claim_next_job: Job | null;
     clear_planning_embedding: null;
@@ -1198,6 +1298,7 @@ export type IpcResponses = {
     close_project: ProjectManifest | null;
     commit_manuscript_draft: ManuscriptDraftCommit;
     confirm_discussion_design: string[];
+    correct_coauthor_decision: CoauthorDecision;
     create_belief: Belief;
     create_diagnostic_package: string;
     create_discussion_candidate: DiscussionCandidate;
@@ -1227,6 +1328,7 @@ export type IpcResponses = {
     extract_entities_from_text: ExtractedEntity[];
     feature_catalog: FeatureDescriptor[];
     finalize_knowledge_candidates: ChangeSet;
+    fork_coauthor_session: DiscussionSession;
     generate_ai_proposal: AiProposal;
     generate_planning_content: string;
     generate_planning_embedding: PlanningEmbedding;
@@ -1237,6 +1339,7 @@ export type IpcResponses = {
     get_ai_usage_summary: AiUsageSummary;
     get_audit_flow_settings: AuditFlowSettings;
     get_chapter_entity_references: ChapterEntityReferences;
+    get_coauthor_state: CoauthorState;
     get_consistency_review_trace: ReviewTrace;
     get_discussion_source: DiscussionSource;
     get_discussion_workspace: DiscussionWorkspace;
@@ -1256,6 +1359,7 @@ export type IpcResponses = {
     list_author_todos: AuthorTodoQueue;
     list_beliefs: Belief[];
     list_chapter_extractions: ChapterExtractionProposal[];
+    list_coauthor_document_history: CoauthorDocument[];
     list_current_facts: Fact[];
     list_discussion_candidates: DiscussionCandidate[];
     list_discussion_design_proposals: DiscussionDesignProposal[];
@@ -1288,18 +1392,22 @@ export type IpcResponses = {
     open_project: ProjectManifest;
     promote_discussion_candidate: DiscussionCandidate;
     promote_discussion_candidate_to_foreshadowing_review: DiscussionCandidate;
+    publish_coauthor_document: string;
     rate_ai_proposal: AiProposalFeedback;
+    read_coauthor_source: CoauthorSource;
     rebuild_search_index: null;
     rebuild_summary_material: SummaryMaterial;
     rebuild_world_state: WorldState;
     remove_project_ai_task_override: ProjectAiTaskOverrides;
     retry_job: Job;
     review_knowledge_candidate: KnowledgeCandidate;
+    run_coauthor: CoauthorResult;
     run_next_job: Job | null;
     save_ai_budget_settings: AiBudgetSettings;
     save_ai_task_preferences: AiTaskPreferences;
     save_audit_flow_settings: AuditFlowSettings;
     save_chapter_entity_references: ChapterEntityReferences;
+    save_coauthor_document: CoauthorDocument;
     save_discussion_workspace: DiscussionWorkspace;
     save_manuscript_draft: ManuscriptDraft;
     save_model_secret: ModelProfile;
@@ -1360,6 +1468,16 @@ export type VersionedPlanningSection = {
     references: string[];
     storyState: PlanningStoryState;
     updatedAt: string;
+    version: number;
+};
+export type CoauthorDocument = {
+    content: string;
+    kind: CoauthorDocumentKind;
+    narrativePosition: string;
+    sessionId: string;
+    targetKey: string | null;
+    targetRevision: string | null;
+    title: string;
     version: number;
 };
 export type DiscussionExchange = {
@@ -1467,6 +1585,14 @@ export type ManuscriptRevision = {
     documentSchemaVersion: number;
     id: string;
     parentRevisionId: string | null;
+};
+export type CoauthorDecision = {
+    content: string;
+    id: string;
+    sourceMessageId: string;
+    status: string;
+    topic: string;
+    version: number;
 };
 export type Belief = {
     beliefVersion: number;
@@ -1819,6 +1945,20 @@ export type EntityRevision = {
     sourceVersion: string | null;
     tags: string[];
 };
+export type CoauthorState = {
+    decisions: CoauthorDecision[];
+    document: CoauthorDocument;
+    runs: CoauthorRun[];
+};
+export type CoauthorRun = {
+    audit: unknown[];
+    documentVersion: number;
+    id: string;
+    output: string;
+    sessionId: string;
+    status: string;
+    userMessageId: string;
+};
 export type ReviewTrace = {
     chapterId: string;
     claims: ReviewClaim[];
@@ -2117,6 +2257,16 @@ export type MergeConflict = {
     current: string | null;
     draft: string | null;
 };
+export type CoauthorSource = {
+    content: string;
+    key: string;
+    kind: string;
+    offset: number;
+    revision: string;
+    sessionId: string | null;
+    title: string;
+    totalChars: number;
+};
 export type WorldState = {
     createdAt: string;
     entries: WorldStateEntry[];
@@ -2130,6 +2280,10 @@ export type WorldStateEntry = {
     object: string;
     predicate: string;
     subject: string;
+};
+export type CoauthorResult = {
+    runId: string;
+    state: CoauthorState;
 };
 export type SearchResult = {
     blockId: string | null;

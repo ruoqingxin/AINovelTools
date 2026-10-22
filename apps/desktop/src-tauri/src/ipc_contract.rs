@@ -8,8 +8,10 @@
 
 use crate::commands::ai::*;
 use crate::commands::discussion::*;
+use crate::commands::coauthor::*;
 use crate::errors::ApiError;
 use crate::state::*;
+use novel_infrastructure::{CoauthorDocument, CoauthorScope, CoauthorState};
 
 type SchemaProperties = serde_json::Map<String, serde_json::Value>;
 
@@ -88,10 +90,10 @@ mod tests {
         };
         assert_eq!(keys("requests"), keys("responses"));
         assert_eq!(keys("requests"), keys("errors"));
-        assert_eq!(keys("requests").len(), 141);
+        assert_eq!(keys("requests").len(), 151);
         assert_eq!(
             keys("events"),
-            ["ai-task-attempt", "ai-task-chunk", "ai-task-started"]
+            ["ai-task-attempt", "ai-task-chunk", "ai-task-started", "coauthor-progress"]
         );
     }
 

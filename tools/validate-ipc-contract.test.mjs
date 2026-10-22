@@ -58,3 +58,14 @@ test("production clients cannot bypass the typed transport via imports or re-exp
   assert.throws(() => assertTypedTransport('await import("@tauri-apps/api/core");', "view.ts"), /Raw Tauri/);
   assertTypedTransport('import { invoke } from "./ipc-transport";', "view.ts");
 });
+
+test("read-only environment detection does not bypass transport enforcement", () => {
+  assertTypedTransport('import { isTauri } from "@tauri-apps/api/core";', "theme.ts");
+  assertTypedTransport('import { isTauri as detect } from "@tauri-apps/api/core";', "theme.ts");
+  for (const source of [
+    'import { isTauri, invoke } from "@tauri-apps/api/core";',
+    'import * as core from "@tauri-apps/api/core";',
+    'export * from "@tauri-apps/api/core";',
+    'import core from "@tauri-apps/api/core";',
+  ]) assert.throws(() => assertTypedTransport(source, "view.ts"), /Raw Tauri/);
+});

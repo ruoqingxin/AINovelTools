@@ -173,7 +173,7 @@ fn book_export_uses_hierarchical_order_latest_revisions_and_read_only_snapshot()
         f.manager.list_manuscript_revisions(first.id).unwrap().len(),
         2
     );
-    assert_eq!(f.manager.health().unwrap().schema_version, 51);
+    assert_eq!(f.manager.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
 }
 
 #[test]

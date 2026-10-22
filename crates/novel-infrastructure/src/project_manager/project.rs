@@ -100,6 +100,9 @@ impl ProjectManager {
         }
         let manifest: ProjectManifest = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
         let database = Database::open(root.join("project.sqlite"))?;
+        database.connection.execute(
+            "UPDATE coauthor_runs SET status='INTERRUPTED' WHERE status='RUNNING'", [],
+        ).map_err(DatabaseError::from)?;
         let result = manifest.clone();
         self.current = Some(ProjectSession {
             root: root.clone(),

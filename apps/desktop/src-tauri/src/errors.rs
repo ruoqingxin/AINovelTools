@@ -16,6 +16,21 @@ impl ApiError {
     }
 }
 
+impl From<novel_infrastructure::CoauthorError> for ApiError {
+    fn from(error: novel_infrastructure::CoauthorError) -> Self {
+        use novel_infrastructure::CoauthorError;
+        let code=match error {
+            CoauthorError::WrongProject=>"SOURCE_MISMATCH",
+            CoauthorError::NotFound=>"NOT_FOUND",
+            CoauthorError::Conflict=>"VERSION_CONFLICT",
+            CoauthorError::Invalid(_)=>"INVALID_INPUT",
+            CoauthorError::Discussion(error)=>return error.into(),
+            CoauthorError::Sqlite(_)|CoauthorError::Database(_)=>"DATABASE_ERROR",
+        };
+        Self { code,message:error.to_string() }
+    }
+}
+
 impl From<novel_infrastructure::ManuscriptExportError> for ApiError {
     fn from(error: novel_infrastructure::ManuscriptExportError) -> Self {
         use novel_infrastructure::ManuscriptExportError;

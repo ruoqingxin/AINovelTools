@@ -881,11 +881,13 @@ impl Default for AiTaskPreferences {
 }
 
 mod gateway;
+mod tool_gateway;
 mod parsing;
 mod profile_store;
 mod project_store;
 mod secret_store;
 
 pub use gateway::*;
+pub use tool_gateway::*;
 use parsing::*;
 pub use profile_store::*;

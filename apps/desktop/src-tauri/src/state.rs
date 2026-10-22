@@ -18,6 +18,15 @@ pub(crate) struct AiStreamChunk {
 
 #[derive(Debug, serde::Serialize, Clone, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct CoauthorProgress {
+    pub(crate) run_id: uuid::Uuid,
+    pub(crate) session_id: uuid::Uuid,
+    pub(crate) kind: String,
+    pub(crate) content: String,
+}
+
+#[derive(Debug, serde::Serialize, Clone, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct AiTaskStarted {
     pub(crate) task_id: uuid::Uuid,
 }

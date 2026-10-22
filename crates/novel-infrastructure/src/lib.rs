@@ -31,6 +31,7 @@ mod ai;
 mod batch_store;
 mod chapter_draft_store;
 mod chapter_entity_store;
+mod coauthor_store;
 mod context_store;
 mod database;
 mod discussion_context_store;
@@ -56,6 +57,7 @@ pub use ai::{
     AiTaskPreferences, AiTaskPromptPreference, AiUsageCurrencySummary, AiUsageDailySummary,
     AiUsageSummary, AiUsageTaskSummary, ConsistencyReviewFreshness, EmbeddingGateway,
     GenerationCompletion, GenerationOptions, GenerationOutput, GenerationUsage, ModelGateway,
+    ModelToolCall, ModelToolFunction, ModelToolTurn,
     ModelProfileStore, ProjectAiTaskOverrides, SecretStore, WritingAdmission,
     apply_task_prompt_preferences, render_prompt_template,
 };
@@ -65,6 +67,7 @@ pub use batch_store::{
 pub use chapter_entity_store::{
     ChapterEntityReferences, ChapterEntitySave, EntityChapter, EntityReferenceError,
 };
+pub use coauthor_store::*;
 pub use discussion_design_store::{
     AuthorSetting, DISCUSSION_DRAFT_MAX_CHARS, DISCUSSION_MESSAGE_MAX_CHARS,
     DiscussionDesignEntity, DiscussionDesignProposal, DiscussionDraft, DiscussionTopicKind,
@@ -237,7 +240,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 51;
+pub const CURRENT_SCHEMA_VERSION: i64 = 52;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

@@ -15,6 +15,7 @@ export type DiscussionSourceRequest = IpcRequests["get_discussion_source"]["requ
 export type ExtractionItemTarget = IpcRequests["adopt_extraction_item"]["target"];
 export type PlanBatchInput = IpcRequests["adopt_plan_batch"]["input"];
 export type PlanningAiJobInput = IpcRequests["enqueue_planning_ai_job"]["input"];
+export type CoauthorScope = IpcRequests["get_coauthor_state"]["scope"];
 // Unsaved forms have no stored version; raw IPC responses use VersionedPlanningSection.
 export type PlanningSection = InputPlanningSection & { version?: VersionedPlanningSection["version"] };
 // UI-only object selection is passed as a separate command argument.
@@ -175,6 +176,36 @@ export function listForeshadowings() { return invoke("list_foreshadowings"); }
 export function assembleContextWithProjectKnowledge(input: AssembleContextInput) {
   const { knowledgeObjectIds, ...request } = input;
   return invoke("assemble_context_with_project_knowledge", { input: request, objectIds: knowledgeObjectIds });
+}
+export function getCoauthorState(scope: IpcRequests["get_coauthor_state"]["scope"]) {
+  return invoke("get_coauthor_state", { scope });
+}
+export function saveCoauthorDocument(input: IpcRequests["save_coauthor_document"]) {
+  return invoke("save_coauthor_document", input);
+}
+export function listCoauthorDocumentHistory(input: IpcRequests["list_coauthor_document_history"]) {
+  return invoke("list_coauthor_document_history", input);
+}
+export function runCoauthor(input: IpcRequests["run_coauthor"]["input"]) {
+  return invoke("run_coauthor", { input });
+}
+export function cancelCoauthorRun(input: IpcRequests["cancel_coauthor_run"]) {
+  return invoke("cancel_coauthor_run", input);
+}
+export function applyCoauthorProposal(input: IpcRequests["apply_coauthor_proposal"]) {
+  return invoke("apply_coauthor_proposal", input);
+}
+export function publishCoauthorDocument(input: IpcRequests["publish_coauthor_document"]) {
+  return invoke("publish_coauthor_document", input);
+}
+export function forkCoauthorSession(input: IpcRequests["fork_coauthor_session"]) {
+  return invoke("fork_coauthor_session", input);
+}
+export function readCoauthorSource(input: IpcRequests["read_coauthor_source"]) {
+  return invoke("read_coauthor_source", input);
+}
+export function correctCoauthorDecision(input: IpcRequests["correct_coauthor_decision"]) {
+  return invoke("correct_coauthor_decision", input);
 }
 
 export function getCurrentProject() {
