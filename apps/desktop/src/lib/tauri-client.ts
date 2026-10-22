@@ -222,6 +222,15 @@ export function commitCoauthorChangeset(input: IpcRequests["commit_coauthor_chan
 export function discardCoauthorChangeset(input: IpcRequests["discard_coauthor_changeset"]) {
   return invoke("discard_coauthor_changeset", input);
 }
+export function prepareCoauthorReversal(input: IpcRequests["prepare_coauthor_reversal"]) {
+  return invoke("prepare_coauthor_reversal", input);
+}
+export function getCoauthorReversal(input: IpcRequests["get_coauthor_reversal"]) {
+  return invoke("get_coauthor_reversal", input);
+}
+export function commitCoauthorReversal(input: IpcRequests["commit_coauthor_reversal"]) {
+  return invoke("commit_coauthor_reversal", input);
+}
 export function updateCoauthorImpact(input: IpcRequests["update_coauthor_impact"]) {
   return invoke("update_coauthor_impact", input);
 }

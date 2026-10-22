@@ -67,6 +67,13 @@ pub struct CoauthorPublishedItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct CoauthorSourceDependency {
+    pub key: String,
+    pub revision: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct CoauthorChangeSet {
     pub id: Uuid,
     pub version: i64,
@@ -79,6 +86,12 @@ pub struct CoauthorChangeSet {
     pub selected_ids: Vec<String>,
     pub published: Vec<CoauthorPublishedItem>,
     pub run_id: Option<Uuid>,
+    #[serde(default)]
+    pub undo: Vec<CoauthorUndoRecord>,
+    #[serde(default)]
+    pub reversed_by: Option<Uuid>,
+    #[serde(default)]
+    pub read_dependencies: Vec<CoauthorSourceDependency>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -89,6 +102,7 @@ pub struct CoauthorChangeSummary {
     pub title: String,
     pub status: String,
     pub item_count: u32,
+    pub reversed_by: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -102,6 +116,8 @@ pub struct CoauthorImpact {
     pub status: String,
     pub resolution: String,
     pub source_changed: bool,
+    #[serde(default)]
+    pub origin_reversed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -256,6 +272,8 @@ impl ProjectManager {
         for impact in &request.impacts {
             db.validate_coauthor_impact(impact, &items)?;
         }
+        let read_dependencies = run_id.map(|id| db.coauthor_read_dependencies(id)).transpose()?.unwrap_or_default();
+        db.validate_coauthor_dependencies(&read_dependencies)?;
         let changes = CoauthorChangeSet {
             id: Uuid::new_v4(),
             version: 1,
@@ -268,6 +286,8 @@ impl ProjectManager {
             selected_ids: vec![],
             published: vec![],
             run_id,
+            undo: vec![], reversed_by: None,
+            read_dependencies,
         };
         tx.execute(
             "INSERT INTO coauthor_changesets(id,session_id,version,title,status,item_count,payload)
@@ -344,8 +364,9 @@ impl ProjectManager {
             .ok_or(CoauthorError::WrongProject)?
             .database;
         let mut stmt = db.connection.prepare(
-            "SELECT id,version,title,status,item_count FROM coauthor_changesets
-             WHERE session_id=?1 ORDER BY rowid DESC LIMIT 21 OFFSET ?2",
+            "SELECT c.id,c.version,c.title,c.status,c.item_count,
+                (SELECT r.id FROM coauthor_reversals r WHERE r.change_set_id=c.id AND r.status='COMMITTED')
+             FROM coauthor_changesets c WHERE c.session_id=?1 ORDER BY c.rowid DESC LIMIT 21 OFFSET ?2",
         )?;
         let mut change_sets = stmt
             .query_map(
@@ -360,6 +381,8 @@ impl ProjectManager {
                         title: row.get(2)?,
                         status: row.get(3)?,
                         item_count: row.get(4)?,
+                        reversed_by: row.get::<_, Option<String>>(5)?.map(|id| id.parse()
+                            .map_err(|_| rusqlite::Error::InvalidQuery)).transpose()?,
                     })
                 },
             )?
@@ -379,6 +402,7 @@ impl ProjectManager {
         let has_more_impacts = impacts.len() > 20;
         impacts.truncate(20);
         for impact in &mut impacts {
+            impact.origin_reversed = db.coauthor_reversed_by(impact.change_set_id)?.is_some();
             impact.source_changed = db
                 .coauthor_source(&impact.evidence.key)?
                 .is_none_or(|source| source.revision != impact.evidence.revision);
@@ -409,6 +433,9 @@ impl ProjectManager {
             rusqlite::TransactionBehavior::Immediate,
         )?;
         let mut changes = db.load_coauthor_changeset(scope, id)?;
+        if changes.reversed_by.is_some() {
+            return Err(CoauthorError::Invalid("此采用已撤销，历史回执不能重新执行。".into()));
+        }
         let selected: BTreeSet<_> = selected_ids.into_iter().collect();
         if selected.is_empty()
             || selected
@@ -461,6 +488,7 @@ impl ProjectManager {
             if item.manuscript_edits.is_empty() { db.validate_coauthor_publication(&item.document)?; }
             else { db.validate_manuscript_item(item)?; }
         }
+        db.validate_coauthor_dependencies(&changes.read_dependencies)?;
         // Evidence is checked before any targets change. Every todo is committed
         // alongside the exact subset that introduced its dependency.
         let impacts = changes
@@ -476,6 +504,9 @@ impl ProjectManager {
             .iter()
             .filter(|item| selected.contains(&item.id))
         {
+            let before = if let Some(key) = &item.document.target_key {
+                Some(db.coauthor_native_snapshot(key)?)
+            } else { None };
             let reason = format!("coauthor-change:{}:{}", changes.id, item.id);
             let key = if item.manuscript_edits.is_empty() { db.publish_coauthor_item(
                 &tx,
@@ -488,6 +519,10 @@ impl ProjectManager {
                 item_id: item.id.clone(),
                 source_key: key.clone(),
                 revision: source.revision,
+            });
+            changes.undo.push(CoauthorUndoRecord {
+                item_id: item.id.clone(), before,
+                after_fingerprint: db.coauthor_native_fingerprint(&key)?,
             });
             if item.id == "draft" {
                 db.link_published_coauthor_document(&tx, scope, &item.document, &key)?;
@@ -506,6 +541,7 @@ impl ProjectManager {
                 status: "PENDING".into(),
                 resolution: String::new(),
                 source_changed: false,
+                origin_reversed: false,
             };
             let payload = encode(&impact)?;
             tx.execute(
@@ -588,6 +624,7 @@ impl ProjectManager {
         impact.source_changed = db
             .coauthor_source(&impact.evidence.key)?
             .is_none_or(|source| source.revision != impact.evidence.revision);
+        impact.origin_reversed = db.coauthor_reversed_by(impact.change_set_id)?.is_some();
         Ok(impact)
     }
 }
@@ -608,7 +645,7 @@ impl Database {
         )?)
     }
 
-    fn load_coauthor_changeset(
+    pub(super) fn load_coauthor_changeset(
         &self,
         scope: &CoauthorScope,
         id: Uuid,
@@ -622,7 +659,9 @@ impl Database {
             )
             .optional()?
             .ok_or(CoauthorError::NotFound)?;
-        decode(payload)
+        let mut changes: CoauthorChangeSet = decode(payload)?;
+        changes.reversed_by = self.coauthor_reversed_by(id)?;
+        Ok(changes)
     }
 
     fn validate_coauthor_impact(

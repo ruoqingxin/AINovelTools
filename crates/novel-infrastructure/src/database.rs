@@ -1208,6 +1208,9 @@ impl Database {
         if applied.unwrap_or(0) < 53 {
             self.migrate_coauthor_changes()?;
         }
+        if applied.unwrap_or(0) < 54 {
+            self.migrate_coauthor_reversals()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }
@@ -2132,6 +2135,7 @@ mod tests {
     // These fixtures start from today's schema, then simulate older projects.
     // Remove downstream tables as well as migration records before upgrading.
     fn remove_v53_fixture_tables(db: &Database) {
+        db.connection.execute_batch("DROP TABLE coauthor_reversals;").unwrap();
         db.connection.execute_batch(
             "DROP TABLE coauthor_impact_revisions;
              DROP TABLE coauthor_impacts;

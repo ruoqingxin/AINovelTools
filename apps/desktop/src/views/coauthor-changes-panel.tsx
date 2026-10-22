@@ -9,6 +9,7 @@ import { useConfirmAction } from "../shell/confirm-action-provider";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { sameDraft } from "./use-coauthor-draft";
 import { ManuscriptReader } from "./manuscript-reader";
+import { CoauthorReversalPanel } from "./coauthor-reversal-panel";
 
 const labels: Record<string, string> = {
   PENDING: "待核对", COMMITTED: "已提交", DISCARDED: "已放弃", RESOLVED: "已处理",
@@ -145,7 +146,7 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
         // A lost response is not proof of a failed commit. Check the durable
         // receipt before offering the exact same idempotent request again.
         const actual = await getCoauthorChangeset({ scope, id: reviewed.id }).catch(() => null);
-        if (actual?.status !== "COMMITTED" || actual.version !== reviewed.version + 1
+        if (actual?.status !== "COMMITTED" || actual.reversedBy || actual.version !== reviewed.version + 1
           || [...actual.selectedIds].sort().join("\0") !== [...reviewedIds].sort().join("\0")) {
           throw new Error(`${errorMessage(cause)}。提交状态需重新核对，请刷新此变更集；重试不会重复创建条目。`);
         }
@@ -170,7 +171,7 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
     {notice && <p className="coauthor-notice" role="status">{notice}</p>}
     {!loaded && !error && <p role="status">正在读取变更与待办…</p>}
     {page.changeSets.map((entry) => <article className="coauthor-source" key={entry.id}>
-      <strong>{entry.title}</strong><small>{labels[entry.status]} · {entry.itemCount} 项 · v{entry.version}</small>
+      <strong>{entry.title}</strong><small>{entry.reversedBy ? "已撤销" : labels[entry.status]} · {entry.itemCount} 项 · v{entry.version}</small>
       <button disabled={busy} onClick={() => void act(async () => show(await getCoauthorChangeset({ scope, id: entry.id })))}>
         {entry.status === "COMMITTED" ? "查看采用回执" : entry.status === "DISCARDED" ? "查看已放弃方案" : "核对差异"}
       </button>
@@ -232,6 +233,13 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
           show(await discardCoauthorChangeset({ scope, id: changes.id, expectedVersion: changes.version }));
           await reload();
         })}>放弃此方案</button></>}
+      {changes.status === "COMMITTED" && <CoauthorReversalPanel key={changes.id}
+        scope={scope} changes={changes} disabled={busy} getDocument={getDocument}
+        saveDraft={saveDraft} isGenerating={isGenerating} onReversed={async (base, linked) => {
+          await onCommitted(base, linked);
+          show(await getCoauthorChangeset({ scope, id: changes.id }));
+          await reload();
+        }} />}
     </section>}
     <details className="coauthor-change-create">
       <summary>准备新的变更集</summary>
@@ -258,6 +266,7 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
         <blockquote>{impact.evidence.quote}</blockquote>
         <small>{impact.evidence.key} · 原文修订 {impact.evidence.revision}</small>
         {impact.sourceChanged && <p className="project-error">依据已变更或不可用，请核对当前原文；旧引文仍保留。</p>}
+        {impact.originReversed && <p className="project-error">引发此待办的采用已撤销，请复查处理依据；原处理记录保留。</p>}
         {impact.resolution && <p>处理依据：{impact.resolution}</p>}
         <button disabled={busy} onClick={() => setEditing({ ...impact })}>处理待办</button>
         <button disabled={busy} onClick={() => void act(async () => {

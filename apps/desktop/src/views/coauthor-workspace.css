@@ -90,6 +90,7 @@
 .coauthor-changes form > button { justify-self: start; }
 .coauthor-changes form input:not([type="checkbox"]) { min-width: 0; width: 100%; }
 .coauthor-receipt { display: block; color: var(--accent-strong); padding: 8px 0; }
+.coauthor-reversal { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 20px; min-width: 0; }
 @media (min-width: 981px) { .coauthor-tabs { display: none; } .coauthor-toolbar { justify-content: flex-end; } }
 @media (max-width: 980px) {
   .coauthor-workspace { height: calc(100dvh - 130px); }

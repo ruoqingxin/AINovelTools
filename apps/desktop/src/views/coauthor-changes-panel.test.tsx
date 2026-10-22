@@ -52,9 +52,10 @@ beforeEach(() => {
     ],
     impacts: [{ itemIds: ["realm"], key: "MANUSCRIPT:old", revision: "m1", quote: "他还记得声音", reason: "复查突破后描写" }],
     coverage: "仅查了体系与旧章，未检查全书", selectedIds: [], published: [], runId: "run1",
+    undo: [], reversedBy: null, readDependencies: [],
   };
   page = {
-    changeSets: [{ id: "c1", version: 1, title: changes.title, status: "PENDING", itemCount: 2 }],
+    changeSets: [{ id: "c1", version: 1, title: changes.title, status: "PENDING", itemCount: 2, reversedBy: null }],
     impacts: [], hasMoreChanges: false, hasMoreImpacts: false,
   };
   mocks.invoke.mockImplementation(async (command: string) => {
@@ -64,6 +65,7 @@ beforeEach(() => {
     if (command === "prepare_coauthor_changeset") return structuredClone(changes);
     if (command === "discard_coauthor_changeset") return { ...changes, status: "DISCARDED", version: 2 };
     if (command === "update_coauthor_impact") return {};
+    if (command === "get_coauthor_reversal") return null;
     throw new Error(`Unexpected command ${command}`);
   });
   committed.mockResolvedValue(undefined);
@@ -194,7 +196,7 @@ describe("linked coauthor changes", () => {
   it("requires a reason to resolve an impact and sends its version without changing formal text", async () => {
     page.impacts = [{
       id: "i1", version: 2, changeSetId: "c1", title: "旧章", evidence: changes.impacts[0],
-      status: "PENDING", resolution: "", sourceChanged: true,
+      status: "PENDING", resolution: "", sourceChanged: true, originReversed: false,
     }];
     renderPanel();
     expect(await screen.findByText(/依据已变更或不可用/)).toBeVisible();
@@ -267,7 +269,7 @@ describe("linked coauthor changes", () => {
   it("opens impact evidence using its exact source identity and revision", async () => {
     page.impacts = [{
       id: "i1", version: 1, changeSetId: "c1", title: "旧章", evidence: changes.impacts[0],
-      status: "PENDING", resolution: "", sourceChanged: false,
+      status: "PENDING", resolution: "", sourceChanged: false, originReversed: false,
     }];
     const original = mocks.invoke.getMockImplementation()!;
     mocks.invoke.mockImplementation(async (command: string, args: unknown) => command === "read_coauthor_source"

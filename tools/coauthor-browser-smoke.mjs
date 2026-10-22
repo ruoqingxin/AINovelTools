@@ -37,6 +37,7 @@ try {
           {id:"m3",sessionId:"s1",role:"USER",content:"先拿主角突破写一段。他忘了母亲的声音，压抑一点。"}
         ];
         let changes=null;
+        let reversal=null;
         let impacts=[];
         function richManuscript(cost){
           return JSON.stringify({type:"doc",content:[
@@ -53,7 +54,7 @@ try {
         function preparedChanges(){
           return {id:"change1",version:1,title:"采用突破正文并更新修炼体系",status:"PENDING",
             baseDocument:structuredClone(state.document),runId:null,coverage:"已核对修炼体系与旧章片段；其余正文和伏笔尚未检查。",
-            selectedIds:[],published:[],
+            selectedIds:[],published:[],undo:[],reversedBy:null,readDependencies:[],
             items:[{id:"draft",document:structuredClone(state.document),before:null,dependsOn:["realm"]},
               {id:"realm",document:{...state.document,kind:"SETTING",title:"修炼体系",content:"炼气、筑基、金丹、照魂。突破照魂境需要失去一段记忆。",
                 targetKey:"ENTITY:realm",targetRevision:"r1"},
@@ -74,7 +75,7 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:53};
+          if(command==="health_query")return {schemaVersion:54};
           if(command==="bootstrap_status")return {};
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
           if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
@@ -99,7 +100,7 @@ try {
           if(command==="list_coauthor_document_history")return [doc];
           if(command==="get_coauthor_changes"){
             changes??=preparedChanges();
-            return {changeSets:[{id:changes.id,version:changes.version,title:changes.title,status:changes.status,itemCount:changes.items.length}],
+            return {changeSets:[{id:changes.id,version:changes.version,title:changes.title,status:changes.status,itemCount:changes.items.length,reversedBy:changes.reversedBy}],
               impacts:structuredClone(impacts),hasMoreChanges:false,hasMoreImpacts:false};
           }
           if(command==="get_coauthor_changeset")return structuredClone(changes);
@@ -111,8 +112,31 @@ try {
             if(args.selectedIds.includes("draft"))state.document={...state.document,version:state.document.version+1,
               targetKey:"MANUSCRIPT:new",targetRevision:"v2"};
             impacts=[{id:"impact1",changeSetId:changes.id,version:1,title:"第九章 · 雨夜",evidence:changes.impacts[0],
-              status:"PENDING",resolution:"",sourceChanged:false}];
+              status:"PENDING",resolution:"",sourceChanged:false,originReversed:false}];
             return structuredClone(changes);
+          }
+          if(command==="get_coauthor_reversal")return structuredClone(reversal);
+          if(command==="prepare_coauthor_reversal"){
+            reversal={id:"reversal1",changeSetId:changes.id,version:(reversal?.version??0)+1,status:"PENDING",
+              baseDocument:structuredClone(state.document),blockers:[],impactCount:impacts.length,linkedDraft:true,
+              items:changes.published.map(published=>{
+                const item=changes.items.find(item=>item.id===published.itemId);
+                return {itemId:item.id,title:item.document.title,sourceKey:published.sourceKey,
+                  action:item.before?"RESTORE":"ARCHIVE",
+                  before:{key:published.sourceKey,kind:item.before?.kind??"MANUSCRIPT",title:item.document.title,
+                    revision:published.revision,content:item.document.content,totalChars:item.document.content.length,offset:0,sessionId:null},
+                  after:item.before??null,beforeDocumentJson:item.manuscriptAfterJson??null,
+                  afterDocumentJson:item.manuscriptBeforeJson??null,resultRevision:null};
+              })};
+            return structuredClone(reversal);
+          }
+          if(command==="commit_coauthor_reversal"){
+            reversal={...reversal,status:"COMMITTED",version:reversal.version+1,
+              items:reversal.items.map(item=>({...item,resultRevision:item.action==="RESTORE"?"restored3":null}))};
+            changes={...changes,reversedBy:reversal.id};
+            impacts=impacts.map(item=>({...item,originReversed:true}));
+            state.document={...changes.baseDocument,version:state.document.version+1};
+            return structuredClone(reversal);
           }
           if(command==="update_coauthor_impact"){
             impacts=impacts.map(item=>item.id===args.id?{...item,version:item.version+1,status:args.status,resolution:args.resolution}:item);
@@ -184,6 +208,25 @@ try {
     await changesPanel.getByRole("button", { name: "保存处理", exact: true }).click();
     await changesPanel.getByText("处理依据：保留为突破之前的回忆，不修改旧章。", { exact: true }).waitFor();
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-impacts.png`), fullPage: true });
+    await changesPanel.getByRole("button", { name: "核对整组撤销" }).click();
+    const reversalPanel = changesPanel.getByRole("region", { name: "关联撤销" });
+    await reversalPanel.getByRole("button", { name: "确认撤销本次全部采用" }).waitFor();
+    assert.equal(await reversalPanel.getByLabel("撤销前正文").locator("strong").innerText(), "甲😀失去记忆");
+    assert.equal(await reversalPanel.getByLabel("撤销后正文").locator("strong").innerText(), "甲😀失去寿元");
+    assert.equal(await reversalPanel.getByLabel("撤销后正文").locator("em").innerText(), "，母亲的声音仍在雨里。");
+    await reversalPanel.getByLabel("撤销后正文").evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-reversal-preview.png`), fullPage: true });
+    assert.equal(await changesPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
+    await reversalPanel.getByRole("button", { name: "确认撤销本次全部采用" }).click();
+    const reversalConfirmation = page.getByRole("alertdialog", { name: "撤销已采用的关联变更" });
+    await reversalConfirmation.waitFor({ state: "visible" });
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-reversal-confirmation.png`), fullPage: true });
+    await reversalConfirmation.getByRole("button", { name: "确认整组撤销", exact: true }).click();
+    await reversalPanel.getByText("本次采用已整组撤销，原采用回执与历史内容保留。", { exact: true }).waitFor();
+    await changesPanel.getByText("引发此待办的采用已撤销，请复查处理依据；原处理记录保留。", { exact: true }).waitFor();
+    await changesPanel.getByText("处理依据：保留为突破之前的回忆，不修改旧章。", { exact: true }).waitFor();
+    await reversalPanel.getByRole("heading", { name: "撤销采用", exact: true }).evaluate((el) => el.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-reversal-receipt.png`), fullPage: true });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     reports.push({ viewport, overflow, panelOverflow, boxes, commands: await page.evaluate(() => window.__coauthorCalls) });
     await context.close();

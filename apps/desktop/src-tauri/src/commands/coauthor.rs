@@ -9,6 +9,7 @@ use novel_infrastructure::{
     CoauthorChangeItemInput, CoauthorImpactInput,
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
     CoauthorManuscriptBlock,
+    CoauthorReversal,
     ModelToolCall,
 };
 use serde::{Deserialize, Serialize};
@@ -405,6 +406,31 @@ pub(crate) fn update_coauthor_impact(
 ) -> Result<CoauthorImpact, ApiError> {
     state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
         .update_coauthor_impact(&scope, id, expected_version, &status, &resolution).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn prepare_coauthor_reversal(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid,
+    expected_version: i64, expected_document_version: i64,
+) -> Result<CoauthorReversal, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .prepare_coauthor_reversal(&scope, id, expected_version, expected_document_version).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn get_coauthor_reversal(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid,
+) -> Result<Option<CoauthorReversal>, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .get_coauthor_reversal(&scope, id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn commit_coauthor_reversal(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid, expected_version: i64,
+) -> Result<CoauthorReversal, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .commit_coauthor_reversal(&scope, id, expected_version).map_err(Into::into)
 }
 
 #[derive(Deserialize)]
@@ -1186,6 +1212,8 @@ mod tests {
         assert!(names.contains(&"read_manuscript_blocks"));
         assert!(!names.contains(&"commit_coauthor_changeset"));
         assert!(!names.contains(&"update_coauthor_impact"));
+        assert!(!names.contains(&"commit_coauthor_reversal"));
+        assert!(!names.contains(&"prepare_coauthor_reversal"));
         let call = ModelToolCall {
             id: "forged".into(), call_type: "function".into(),
             function: novel_infrastructure::ModelToolFunction {

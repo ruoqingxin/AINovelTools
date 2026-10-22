@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CoauthorSource {
     pub key: String,

@@ -37,6 +37,7 @@ use commands::coauthor::{
     prepare_coauthor_changeset,get_coauthor_changes,get_coauthor_changeset,
     commit_coauthor_changeset,update_coauthor_impact,
     discard_coauthor_changeset,
+    prepare_coauthor_reversal,get_coauthor_reversal,commit_coauthor_reversal,
 };
 use commands::discussion::{
     ask_project_discussion, confirm_discussion_design, create_discussion_candidate,
@@ -255,6 +256,9 @@ pub fn run() {
             get_coauthor_changeset,
             commit_coauthor_changeset,
             discard_coauthor_changeset,
+            prepare_coauthor_reversal,
+            get_coauthor_reversal,
+            commit_coauthor_reversal,
             update_coauthor_impact,
             get_discussion_source,
             list_planning_discussion_sources,

@@ -106,6 +106,7 @@ export type IpcErrors = {
     clear_recovery_logs: ApiError;
     close_project: null;
     commit_coauthor_changeset: ApiError;
+    commit_coauthor_reversal: ApiError;
     commit_manuscript_draft: ApiError;
     confirm_discussion_design: ApiError;
     correct_coauthor_decision: ApiError;
@@ -152,6 +153,7 @@ export type IpcErrors = {
     get_chapter_entity_references: ApiError;
     get_coauthor_changes: ApiError;
     get_coauthor_changeset: ApiError;
+    get_coauthor_reversal: ApiError;
     get_coauthor_state: ApiError;
     get_consistency_review_trace: ApiError;
     get_discussion_source: ApiError;
@@ -204,6 +206,7 @@ export type IpcErrors = {
     move_plan_node: ApiError;
     open_project: ApiError;
     prepare_coauthor_changeset: ApiError;
+    prepare_coauthor_reversal: ApiError;
     promote_discussion_candidate: ApiError;
     promote_discussion_candidate_to_foreshadowing_review: ApiError;
     publish_coauthor_document: ApiError;
@@ -294,6 +297,7 @@ export type IpcRequests = {
     clear_recovery_logs: InputArgsClearRecoveryLogs;
     close_project: InputArgsCloseProject;
     commit_coauthor_changeset: InputArgsCommitCoauthorChangeset;
+    commit_coauthor_reversal: InputArgsCommitCoauthorReversal;
     commit_manuscript_draft: InputArgsCommitManuscriptDraft;
     confirm_discussion_design: InputArgsConfirmDiscussionDesign;
     correct_coauthor_decision: InputArgsCorrectCoauthorDecision;
@@ -340,6 +344,7 @@ export type IpcRequests = {
     get_chapter_entity_references: InputArgsGetChapterEntityReferences;
     get_coauthor_changes: InputArgsGetCoauthorChanges;
     get_coauthor_changeset: InputArgsGetCoauthorChangeset;
+    get_coauthor_reversal: InputArgsGetCoauthorReversal;
     get_coauthor_state: InputArgsGetCoauthorState;
     get_consistency_review_trace: InputArgsGetConsistencyReviewTrace;
     get_discussion_source: InputArgsGetDiscussionSource;
@@ -392,6 +397,7 @@ export type IpcRequests = {
     move_plan_node: InputArgsMovePlanNode;
     open_project: InputArgsOpenProject;
     prepare_coauthor_changeset: InputArgsPrepareCoauthorChangeset;
+    prepare_coauthor_reversal: InputArgsPrepareCoauthorReversal;
     promote_discussion_candidate: InputArgsPromoteDiscussionCandidate;
     promote_discussion_candidate_to_foreshadowing_review: InputArgsPromoteDiscussionCandidateToForeshadowingReview;
     publish_coauthor_document: InputArgsPublishCoauthorDocument;
@@ -533,6 +539,11 @@ export type InputArgsCommitCoauthorChangeset = {
     id: string;
     scope: InputCoauthorScope;
     selectedIds: string[];
+};
+export type InputArgsCommitCoauthorReversal = {
+    expectedVersion: number;
+    id: string;
+    scope: InputCoauthorScope;
 };
 export type InputArgsCommitManuscriptDraft = {
     baseRevisionId?: string | null;
@@ -863,6 +874,10 @@ export type InputArgsGetCoauthorChangeset = {
     id: string;
     scope: InputCoauthorScope;
 };
+export type InputArgsGetCoauthorReversal = {
+    id: string;
+    scope: InputCoauthorScope;
+};
 export type InputArgsGetCoauthorState = {
     scope: InputCoauthorScope;
 };
@@ -1060,6 +1075,12 @@ export type InputCoauthorManuscriptEdit = {
     blockId: string;
     end: number;
     start: number;
+};
+export type InputArgsPrepareCoauthorReversal = {
+    expectedDocumentVersion: number;
+    expectedVersion: number;
+    id: string;
+    scope: InputCoauthorScope;
 };
 export type InputArgsPromoteDiscussionCandidate = {
     expectedStatus: InputDiscussionCandidateStatus;
@@ -1373,6 +1394,7 @@ export type IpcResponses = {
     clear_recovery_logs: null;
     close_project: ProjectManifest | null;
     commit_coauthor_changeset: CoauthorChangeSet;
+    commit_coauthor_reversal: CoauthorReversal;
     commit_manuscript_draft: ManuscriptDraftCommit;
     confirm_discussion_design: string[];
     correct_coauthor_decision: CoauthorDecision;
@@ -1419,6 +1441,7 @@ export type IpcResponses = {
     get_chapter_entity_references: ChapterEntityReferences;
     get_coauthor_changes: CoauthorChangesPage;
     get_coauthor_changeset: CoauthorChangeSet;
+    get_coauthor_reversal: CoauthorReversal | null;
     get_coauthor_state: CoauthorState;
     get_consistency_review_trace: ReviewTrace;
     get_discussion_source: DiscussionSource;
@@ -1471,6 +1494,7 @@ export type IpcResponses = {
     move_plan_node: PlanNode;
     open_project: ProjectManifest;
     prepare_coauthor_changeset: CoauthorChangeSet;
+    prepare_coauthor_reversal: CoauthorReversal;
     promote_discussion_candidate: DiscussionCandidate;
     promote_discussion_candidate_to_foreshadowing_review: DiscussionCandidate;
     publish_coauthor_document: string;
@@ -1652,10 +1676,13 @@ export type CoauthorChangeSet = {
     impacts: CoauthorImpactInput[];
     items: CoauthorChangeItem[];
     published: CoauthorPublishedItem[];
+    readDependencies: CoauthorSourceDependency[];
+    reversedBy: string | null;
     runId: string | null;
     selectedIds: string[];
     status: string;
     title: string;
+    undo: CoauthorUndoRecord[];
     version: number;
 };
 export type CoauthorImpactInput = {
@@ -1696,6 +1723,37 @@ export type CoauthorPublishedItem = {
     itemId: string;
     revision: string;
     sourceKey: string;
+};
+export type CoauthorSourceDependency = {
+    key: string;
+    revision: string;
+};
+export type CoauthorUndoRecord = {
+    afterFingerprint: string;
+    before: unknown;
+    itemId: string;
+};
+export type CoauthorReversal = {
+    baseDocument: CoauthorDocument;
+    blockers: string[];
+    changeSetId: string;
+    id: string;
+    impactCount: number;
+    items: CoauthorReversalItem[];
+    linkedDraft: boolean;
+    status: string;
+    version: number;
+};
+export type CoauthorReversalItem = {
+    action: string;
+    after: CoauthorSource | null;
+    afterDocumentJson: string | null;
+    before: CoauthorSource;
+    beforeDocumentJson: string | null;
+    itemId: string;
+    resultRevision: string | null;
+    sourceKey: string;
+    title: string;
 };
 export type ManuscriptDraftCommit = {
     draft: ManuscriptDraft;
@@ -2088,6 +2146,7 @@ export type CoauthorChangesPage = {
 export type CoauthorChangeSummary = {
     id: string;
     itemCount: number;
+    reversedBy: string | null;
     status: string;
     title: string;
     version: number;
@@ -2096,6 +2155,7 @@ export type CoauthorImpact = {
     changeSetId: string;
     evidence: CoauthorImpactInput;
     id: string;
+    originReversed: boolean;
     resolution: string;
     sourceChanged: boolean;
     status: string;

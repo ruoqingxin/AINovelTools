@@ -495,8 +495,8 @@ fn migration_53_failure_rolls_back_and_retry_preserves_author_documents() {
     let (manager, root, scope) = project();
     let db = &manager.current.as_ref().unwrap().database;
     db.connection.execute_batch(
-        "DROP TABLE coauthor_impact_revisions; DROP TABLE coauthor_impacts; DROP TABLE coauthor_changesets;
-         DELETE FROM schema_migrations WHERE version=53;
+        "DROP TABLE coauthor_reversals; DROP TABLE coauthor_impact_revisions; DROP TABLE coauthor_impacts; DROP TABLE coauthor_changesets;
+         DELETE FROM schema_migrations WHERE version>=53;
          CREATE TRIGGER fail_53 BEFORE INSERT ON schema_migrations WHEN NEW.version=53
          BEGIN SELECT RAISE(ABORT,'migration failure'); END;",
     ).unwrap();
