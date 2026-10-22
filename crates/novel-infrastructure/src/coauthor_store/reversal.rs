@@ -206,7 +206,7 @@ impl Database {
             if step["kind"] == "tool"
                 && matches!(
                     step["name"].as_str(),
-                    Some("read_source" | "read_manuscript_blocks" | "read_outline_content")
+                    Some("read_source" | "read_manuscript_blocks" | "read_outline_content" | "read_check_source")
                 )
                 && let (Some(key), Some(revision)) = (
                     step["result"]["key"].as_str(),
@@ -426,7 +426,7 @@ impl Database {
                     AND json_extract(i.value,'$.revision')=?3)
                 OR EXISTS(SELECT 1 FROM coauthor_runs run, json_each(run.audit) a
                     WHERE run.id=json_extract(c.payload,'$.runId') AND json_extract(a.value,'$.kind')='tool'
-                    AND json_extract(a.value,'$.name') IN ('read_source','read_manuscript_blocks','read_outline_content')
+                    AND json_extract(a.value,'$.name') IN ('read_source','read_manuscript_blocks','read_outline_content','read_check_source')
                     AND json_extract(a.value,'$.result.key')=?2 AND json_extract(a.value,'$.result.revision')=?3)
              ))", rusqlite::params![id.to_string(),key,revision], |row| row.get(0))?)
     }

@@ -39,6 +39,19 @@ try {
         let changes=null;
         let reversal=null;
         let impacts=[];
+        let sourceChecks=[{id:"check1",title:"突破代价 · 全部旧章",query:"失忆代价是否影响旧章",
+          kinds:["MANUSCRIPT"],total:3,read:2,sent:1,reviewed:1,relevant:1,uncertain:0,
+          stale:1,added:1,pendingIndexUpdates:0,complete:false}];
+        const checkEntries=[
+          {key:"MANUSCRIPT:rain",revision:"rain1",title:"第九章 · 雨夜",totalChars:8000,readChars:8000,
+            sentChars:8000,sentComplete:true,nextOffset:8000,stale:false,assessment:"RELEVANT",
+            reason:"本章的记忆描写可能依赖旧代价，需核对突破前后的叙事位置。",quote:"他仍记得母亲唤他的声音。",lastError:null},
+          {key:"MANUSCRIPT:door",revision:"door1",title:"第十章 · 门后",totalChars:6000,readChars:2000,
+            sentChars:0,sentComplete:false,nextOffset:0,stale:false,assessment:null,reason:"",quote:"",lastError:null},
+          {key:"MANUSCRIPT:old",revision:"old1",title:"第十一章 · 魂灯",totalChars:5000,readChars:5000,
+            sentChars:5000,sentComplete:true,nextOffset:5000,stale:true,assessment:"IRRELEVANT",
+            reason:"原判断基于旧稿，作者随后改写了突破经过。",quote:"",lastError:"原依据已变化，请重新建立范围清单。"}
+        ];
         function richManuscript(cost){
           return JSON.stringify({type:"doc",content:[
             {type:"heading",attrs:{blockId:"h",level:2},content:[{type:"text",text:"入城前夜"}]},
@@ -83,11 +96,19 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:54};
+          if(command==="health_query")return {schemaVersion:55};
           if(command==="bootstrap_status")return {};
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
           if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
           if(command==="get_coauthor_state")return structuredClone(state);
+          if(command==="list_coauthor_source_checks")return {checks:structuredClone(sourceChecks),hasMore:false};
+          if(command==="get_coauthor_source_check")return {check:structuredClone(sourceChecks.find(item=>item.id===args.id)),
+            entries:structuredClone(checkEntries),offset:0,hasMore:false};
+          if(command==="create_coauthor_source_check"){
+            const check={...sourceChecks[0],id:"check2",...args.input};
+            sourceChecks.unshift(check);
+            return {check:structuredClone(check),entries:structuredClone(checkEntries),offset:0,hasMore:false};
+          }
           if(command==="list_model_profiles")return [{id:"model",name:"本地验收模型",capability:"CHAT",hasSecret:true}];
           if(command==="get_ai_task_preferences")return {};
           if(command==="get_project_ai_task_overrides")return {};
@@ -244,6 +265,23 @@ try {
     await changesPanel.getByText("处理依据：保留为突破之前的回忆，不修改旧章。", { exact: true }).waitFor();
     await reversalPanel.getByRole("heading", { name: "撤销采用", exact: true }).evaluate((el) => el.scrollIntoView({ block: "start" }));
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-reversal-receipt.png`), fullPage: true });
+    await changesPanel.getByRole("button", { name: "关闭关联变更与影响", exact: true }).click();
+    await page.getByRole("button", { name: "查证范围", exact: true }).click();
+    const checksPanel = page.getByRole("dialog", { name: "查证范围与进度" });
+    await checksPanel.getByText("范围查证尚未完成。", { exact: true }).waitFor();
+    await checksPanel.getByText("1 项原依据失效 · 1 项新增资料 · 0 项索引待更新", { exact: true }).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-checks.png`), fullPage: true });
+    assert.equal(await checksPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
+    await checksPanel.getByText("新建查证清单", { exact: true }).click();
+    await checksPanel.getByLabel("清单标题").fill("核对新范围");
+    await checksPanel.getByLabel("查证问题").fill("核对全部突破情节和相关设定");
+    await checksPanel.getByLabel("有效设定卡").check();
+    await checksPanel.getByRole("button", { name: "创建清单", exact: true }).click();
+    await checksPanel.getByRole("heading", { name: "核对新范围", exact: true }).waitFor();
+    await checksPanel.getByRole("button", { name: "核对范围变化", exact: true }).click();
+    assert.ok((await page.getByLabel("讨论输入", { exact: true }).inputValue()).includes("继续查证清单 check2"));
+    const runCount = await page.evaluate(() => window.__coauthorCalls.filter((name) => name === "run_coauthor").length);
+    assert.equal(runCount, 1, "Viewing, creating and continuing a check must not auto-run a model");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     reports.push({ viewport, overflow, panelOverflow, boxes, commands: await page.evaluate(() => window.__coauthorCalls) });
     await context.close();

@@ -38,6 +38,7 @@ use commands::coauthor::{
     commit_coauthor_changeset,update_coauthor_impact,
     discard_coauthor_changeset,
     prepare_coauthor_reversal,get_coauthor_reversal,commit_coauthor_reversal,
+    create_coauthor_source_check,list_coauthor_source_checks,get_coauthor_source_check,
 };
 use commands::discussion::{
     ask_project_discussion, confirm_discussion_design, create_discussion_candidate,
@@ -242,6 +243,9 @@ pub fn run() {
             promote_discussion_candidate_to_foreshadowing_review,
             ask_project_discussion,
             get_coauthor_state,
+            create_coauthor_source_check,
+            list_coauthor_source_checks,
+            get_coauthor_source_check,
             save_coauthor_document,
             list_coauthor_document_history,
             run_coauthor,

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Check, ClipboardList, FileText, GitBranch, History, MessageSquareText, Plus, Save, Send, Square, X } from "lucide-react";
+import { BookOpen, Check, ClipboardList, FileText, GitBranch, History, ListChecks, MessageSquareText, Plus, Save, Send, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "../lib/ipc-transport";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
@@ -17,6 +17,7 @@ import { useProjectTransition } from "../shell/project-actions-provider";
 import { sameDraft, useCoauthorDraft } from "./use-coauthor-draft";
 import { WorkspacePanel } from "./workspace-panel";
 import { CoauthorChangesPanel } from "./coauthor-changes-panel";
+import { CoauthorChecksPanel } from "./coauthor-checks-panel";
 import "./coauthor-workspace.css";
 
 const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
@@ -32,20 +33,24 @@ function proposalFor(run?: CoauthorRun): Proposal | null {
   return item ? item as unknown as Proposal : null;
 }
 function sourcesFor(run?: CoauthorRun): Array<CoauthorSource & { read: boolean; sent: boolean }> {
-  const found = new Map<string, CoauthorSource & { read: boolean; sent: boolean }>();
+  const found = new Map<string, CoauthorSource & { read: boolean; sent: boolean; checkReadId?: string }>();
   for (const raw of run?.audit ?? []) {
-    const item = raw as { kind?: string; name?: string; result?: {
-      hits?: CoauthorSource[]; blocks?: Array<{ text: string }>;
+    const item = raw as { kind?: string; name?: string; readIds?: string[]; result?: {
+      hits?: CoauthorSource[]; blocks?: Array<{ text: string }>; readId?: string;
     } & Partial<CoauthorSource> };
-    if (item.kind === "model_request") for (const entry of found.values()) entry.sent = true;
+    if (item.kind === "model_request") for (const entry of found.values()) if (!entry.checkReadId) entry.sent = true;
+    if (item.kind === "check_delivery") for (const entry of found.values()) {
+      if (entry.checkReadId && item.readIds?.includes(entry.checkReadId)) entry.sent = true;
+    }
     for (const hit of item.result?.hits ?? []) {
       const key = `${hit.key}:${hit.revision}`;
       if (!found.has(key)) found.set(key, { ...hit, read: false, sent: false });
     }
-    if (item.kind === "tool" && item.name === "read_source" && item.result?.key) {
+    if (item.kind === "tool" && (item.name === "read_source" || item.name === "read_check_source") && item.result?.key) {
       const source = item.result as CoauthorSource;
       const key = `${source.key}:${source.revision}`;
-      found.set(key, { ...source, read: true, sent: false });
+      found.set(key, { ...source, read: true, sent: false,
+        checkReadId: item.name === "read_check_source" ? item.result?.readId : undefined });
     }
     if (item.kind === "tool" && (item.name === "read_outline_content" || item.name === "read_manuscript_blocks")
       && item.result?.key && item.result.revision) {
@@ -155,7 +160,7 @@ function CoauthorSession({ scope, initial, onFork }: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState("chat");
-  const [panel, setPanel] = useState<"sources" | "decisions" | "history" | "proposal" | "publish" | "changes" | null>(null);
+  const [panel, setPanel] = useState<"sources" | "checks" | "decisions" | "history" | "proposal" | "publish" | "changes" | null>(null);
   const [publication, setPublication] = useState<{ document: CoauthorDocument; before: string } | null>(null);
   const [runId, setRunId] = useState(initial.runs[0]?.id ?? "");
   const [history, setHistory] = useState<CoauthorDocument[]>([]);
@@ -378,6 +383,7 @@ function CoauthorSession({ scope, initial, onFork }: {
       </div>
       <div className="coauthor-tools">
         <button onClick={() => setPanel("sources")}><BookOpen size={15} />依据</button>
+        <button className="icon-command" title="查证范围" aria-label="查证范围" onClick={() => setPanel("checks")}><ListChecks size={17} /></button>
         <button onClick={() => setPanel("decisions")}>决定 <span>{state.decisions.length}</span></button>
         <button onClick={() => setPanel("changes")}><ClipboardList size={15} />关联变更</button>
         <button className="icon-command" title="工作稿版本" aria-label="工作稿版本" onClick={() => void showHistory()} disabled={busy}><History size={17} /></button>
@@ -467,8 +473,14 @@ function CoauthorSession({ scope, initial, onFork }: {
           {proposal && <button onClick={() => setPanel("proposal")}>查看改稿差异</button>}</footer>
       </section>
     </div>
-    <WorkspacePanel open={panel !== null} title={panel === "changes" ? "关联变更与影响" : panel === "sources" ? "依据与运行记录" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : panel === "publish" ? "正式采用预览" : "改稿差异"}
+    <WorkspacePanel open={panel !== null} title={panel === "checks" ? "查证范围与进度" : panel === "changes" ? "关联变更与影响" : panel === "sources" ? "依据与运行记录" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : panel === "publish" ? "正式采用预览" : "改稿差异"}
       onClose={() => { setPanel(null); setSource(null); }}>
+      {panel === "checks" && <CoauthorChecksPanel key={`${scope.projectId}:${scope.sessionId}`} scope={scope}
+        isGenerating={Boolean(active)} onContinue={(check) => {
+          const continuation = `继续查证清单 ${check.id}：${check.query}。先读取清单的当前进度和范围变化，沿未送达的原文范围继续核对；如版本或范围已变化，说明差异并准备新的完整清单。`;
+          changeInput(inputRef.current.trim() ? `${inputRef.current}\n\n${continuation}` : continuation);
+          setPanel(null); setTab("chat");
+        }} />}
       {panel === "changes" && <CoauthorChangesPanel scope={scope} getDocument={() => draft.current.current}
         saveDraft={draft.save} isGenerating={() => Boolean(activeRef.current)} onCommitted={async (snapshot, linkedDraft) => {
           const updated = await refresh();

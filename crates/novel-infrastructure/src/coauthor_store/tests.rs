@@ -463,6 +463,8 @@ fn migration_52_rolls_back_new_tables_on_failure_and_preserves_formal_text_on_re
     ).unwrap();
     db.migrate_coauthor_changes().unwrap();
     db.migrate_coauthor_reversals().unwrap();
+    db.connection.execute_batch("DROP TABLE coauthor_check_reads; DROP TABLE coauthor_check_entries; DROP TABLE coauthor_source_checks;").unwrap();
+    db.migrate_coauthor_source_checks().unwrap();
     assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         db.current_manuscript(chapter.id).unwrap().unwrap(),

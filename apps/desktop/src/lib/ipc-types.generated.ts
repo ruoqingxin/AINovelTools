@@ -111,6 +111,7 @@ export type IpcErrors = {
     confirm_discussion_design: ApiError;
     correct_coauthor_decision: ApiError;
     create_belief: ApiError;
+    create_coauthor_source_check: ApiError;
     create_diagnostic_package: ApiError;
     create_discussion_candidate: ApiError;
     create_discussion_session: ApiError;
@@ -154,6 +155,7 @@ export type IpcErrors = {
     get_coauthor_changes: ApiError;
     get_coauthor_changeset: ApiError;
     get_coauthor_reversal: ApiError;
+    get_coauthor_source_check: ApiError;
     get_coauthor_state: ApiError;
     get_consistency_review_trace: ApiError;
     get_discussion_source: ApiError;
@@ -175,6 +177,7 @@ export type IpcErrors = {
     list_beliefs: ApiError;
     list_chapter_extractions: ApiError;
     list_coauthor_document_history: ApiError;
+    list_coauthor_source_checks: ApiError;
     list_current_facts: ApiError;
     list_discussion_candidates: ApiError;
     list_discussion_design_proposals: ApiError;
@@ -302,6 +305,7 @@ export type IpcRequests = {
     confirm_discussion_design: InputArgsConfirmDiscussionDesign;
     correct_coauthor_decision: InputArgsCorrectCoauthorDecision;
     create_belief: InputArgsCreateBelief;
+    create_coauthor_source_check: InputArgsCreateCoauthorSourceCheck;
     create_diagnostic_package: InputArgsCreateDiagnosticPackage;
     create_discussion_candidate: InputArgsCreateDiscussionCandidate;
     create_discussion_session: InputArgsCreateDiscussionSession;
@@ -345,6 +349,7 @@ export type IpcRequests = {
     get_coauthor_changes: InputArgsGetCoauthorChanges;
     get_coauthor_changeset: InputArgsGetCoauthorChangeset;
     get_coauthor_reversal: InputArgsGetCoauthorReversal;
+    get_coauthor_source_check: InputArgsGetCoauthorSourceCheck;
     get_coauthor_state: InputArgsGetCoauthorState;
     get_consistency_review_trace: InputArgsGetConsistencyReviewTrace;
     get_discussion_source: InputArgsGetDiscussionSource;
@@ -366,6 +371,7 @@ export type IpcRequests = {
     list_beliefs: InputArgsListBeliefs;
     list_chapter_extractions: InputArgsListChapterExtractions;
     list_coauthor_document_history: InputArgsListCoauthorDocumentHistory;
+    list_coauthor_source_checks: InputArgsListCoauthorSourceChecks;
     list_current_facts: InputArgsListCurrentFacts;
     list_discussion_candidates: InputArgsListDiscussionCandidates;
     list_discussion_design_proposals: InputArgsListDiscussionDesignProposals;
@@ -588,6 +594,15 @@ export type InputBelief = {
     projectId: string;
     proposition: string;
     updatedAt: string;
+};
+export type InputArgsCreateCoauthorSourceCheck = {
+    input: InputCoauthorSourceCheckInput;
+    scope: InputCoauthorScope;
+};
+export type InputCoauthorSourceCheckInput = {
+    kinds: string[];
+    query: string;
+    title: string;
 };
 export type InputArgsCreateDiagnosticPackage = {};
 export type InputArgsCreateDiscussionCandidate = {
@@ -878,6 +893,11 @@ export type InputArgsGetCoauthorReversal = {
     id: string;
     scope: InputCoauthorScope;
 };
+export type InputArgsGetCoauthorSourceCheck = {
+    id: string;
+    offset: number;
+    scope: InputCoauthorScope;
+};
 export type InputArgsGetCoauthorState = {
     scope: InputCoauthorScope;
 };
@@ -961,6 +981,10 @@ export type InputArgsListChapterExtractions = {
 };
 export type InputArgsListCoauthorDocumentHistory = {
     beforeVersion?: number | null;
+    scope: InputCoauthorScope;
+};
+export type InputArgsListCoauthorSourceChecks = {
+    offset: number;
     scope: InputCoauthorScope;
 };
 export type InputArgsListCurrentFacts = {};
@@ -1406,6 +1430,7 @@ export type IpcResponses = {
     confirm_discussion_design: string[];
     correct_coauthor_decision: CoauthorDecision;
     create_belief: Belief;
+    create_coauthor_source_check: CoauthorCheckPage;
     create_diagnostic_package: string;
     create_discussion_candidate: DiscussionCandidate;
     create_discussion_session: DiscussionSession;
@@ -1449,6 +1474,7 @@ export type IpcResponses = {
     get_coauthor_changes: CoauthorChangesPage;
     get_coauthor_changeset: CoauthorChangeSet;
     get_coauthor_reversal: CoauthorReversal | null;
+    get_coauthor_source_check: CoauthorCheckPage;
     get_coauthor_state: CoauthorState;
     get_consistency_review_trace: ReviewTrace;
     get_discussion_source: DiscussionSource;
@@ -1470,6 +1496,7 @@ export type IpcResponses = {
     list_beliefs: Belief[];
     list_chapter_extractions: ChapterExtractionProposal[];
     list_coauthor_document_history: CoauthorDocument[];
+    list_coauthor_source_checks: CoauthorChecksPage;
     list_current_facts: Fact[];
     list_discussion_candidates: DiscussionCandidate[];
     list_discussion_design_proposals: DiscussionDesignProposal[];
@@ -1813,6 +1840,43 @@ export type Belief = {
     projectId: string;
     proposition: string;
     updatedAt: string;
+};
+export type CoauthorCheckPage = {
+    check: CoauthorSourceCheck;
+    entries: CoauthorCheckEntry[];
+    hasMore: boolean;
+    offset: number;
+};
+export type CoauthorSourceCheck = {
+    added: number;
+    complete: boolean;
+    id: string;
+    kinds: string[];
+    pendingIndexUpdates: number;
+    query: string;
+    read: number;
+    relevant: number;
+    reviewed: number;
+    sent: number;
+    stale: number;
+    title: string;
+    total: number;
+    uncertain: number;
+};
+export type CoauthorCheckEntry = {
+    assessment: string | null;
+    key: string;
+    lastError: string | null;
+    nextOffset: number;
+    quote: string;
+    readChars: number;
+    reason: string;
+    revision: string;
+    sentChars: number;
+    sentComplete: boolean;
+    stale: boolean;
+    title: string;
+    totalChars: number | null;
 };
 export type DiscussionCandidate = {
     content: string;
@@ -2432,6 +2496,10 @@ export type AuthorTodo = {
     targetId: string;
     targetTitle: string;
     updatedAt: string;
+};
+export type CoauthorChecksPage = {
+    checks: CoauthorSourceCheck[];
+    hasMore: boolean;
 };
 export type DiscussionDesignProposal = {
     contextVersion: string;

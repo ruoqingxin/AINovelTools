@@ -11,6 +11,7 @@ use novel_infrastructure::{
     CoauthorManuscriptBlock,
     CoauthorOutlinePage,
     CoauthorReversal,
+    CoauthorSourceCheckInput, CoauthorCheckPage, CoauthorChecksPage, CoauthorCheckAssessment,
     ModelToolCall,
 };
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,9 @@ link_source 仅在作者要以已读取的正式资料为修改目标时使用�
 稿件依赖某个新规则时，draftDependsOn 写入对应的变更标识；不要用空依赖绕开部分采用检查。
 影响待办必须有实际读过的正式原文及准确引文，说明为什么需要复查，不把词面相似冒充已确认矛盾。
 coverage 如实说明查过什么、未查什么；没有全范围查证不能声称查全或修复全书。
+作者明确要求查全部相关章节或全范围影响时，用 start_source_check 建立指定类别的完整版本清单，不用关键词命中代替范围。普通讨论无需创建清单。
+用 get_source_checks 找回清单及进度，read_check_source 按 nextOffset 续读；完整接收一项所有原文后才能 record_check_result 标记 RELEVANT、IRRELEVANT 或 UNCERTAIN。相关项须引用准确原文，无法判断用 UNCERTAIN。
+资料变化、新增、未送达、未判断、待核对或索引未完成时不能声称查全；complete 仅表示这个清单范围内的读取与逐项判断流程完成，不证明判断正确，也不代表全书已经修复。每次继续前重新查看清单。不要为凑完成而猜测不相关。
 同一轮正在改工作稿时先完成改稿，下一轮基于作者看到的保存版本准备采用，不得把尚未展示的全文自动带入正式变更。
 可用 get_changes 查找当前讨论的变更和待办；正式采用与待办关闭仍只能由作者在界面确认。
 所有正式采用都由界面展示差异后确认；你没有直接正式写入工具。部分采用不等于采用整份回复。";
@@ -130,6 +134,34 @@ fn tools() -> Vec<Value> {
             json!({"key":{"type":"string"},"revision":{"type":"string"},
                 "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}}),
             &["key", "revision"],
+        ),
+        tool(
+            "start_source_check",
+            "仅在作者要求全范围查证时建立完整资料版本清单，不按关键词筛掉候选；不改正式内容。",
+            json!({"title":{"type":"string"},"query":{"type":"string"},
+                "kinds":{"type":"array","minItems":1,"maxItems":3,"items":{"type":"string","enum":["MANUSCRIPT","PLAN","ENTITY"]}}}),
+            &["title","query","kinds"],
+        ),
+        tool(
+            "get_source_checks",
+            "不提供checkId时分页找回当前讨论的查证清单；提供checkId时分页查看条目、已送达范围及是否过期。必须如实报告未完成项。",
+            json!({"checkId":{"type":"string"},"offset":{"type":"integer","minimum":0}}),
+            &[],
+        ),
+        tool(
+            "read_check_source",
+            "按查证清单的确切版本分页读取原文；读取不等于已送达，更不等于已作相关性判断。nextOffset见清单条目。",
+            json!({"checkId":{"type":"string"},"key":{"type":"string"},
+                "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}}),
+            &["checkId","key"],
+        ),
+        tool(
+            "record_check_result",
+            "完整收到一项原文后记录对查证问题的逐项判断。相关项须有准确引文；无法判断用UNCERTAIN。不会创建正式影响待办或修改正文。",
+            json!({"checkId":{"type":"string"},"key":{"type":"string"},"revision":{"type":"string"},
+                "assessment":{"type":"string","enum":["RELEVANT","IRRELEVANT","UNCERTAIN"]},
+                "reason":{"type":"string"},"quote":{"type":"string"}}),
+            &["checkId","key","revision","assessment","reason","quote"],
         ),
         tool(
             "read_manuscript_blocks",
@@ -226,6 +258,30 @@ pub(crate) fn get_coauthor_state(
         .map_err(|_| ApiError::internal("project mutex poisoned"))?
         .coauthor_state(&scope)
         .map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn create_coauthor_source_check(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, input: CoauthorSourceCheckInput,
+) -> Result<CoauthorCheckPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .create_coauthor_source_check(&scope,input).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn list_coauthor_source_checks(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, offset: u32,
+) -> Result<CoauthorChecksPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_coauthor_source_checks(&scope,offset).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn get_coauthor_source_check(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid, offset: u32,
+) -> Result<CoauthorCheckPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .get_coauthor_source_check(&scope,id,offset).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -526,6 +582,25 @@ struct ChangesQuery {
     impacts_offset: u32,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CheckQuery {
+    check_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    offset: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CheckReadArgs {
+    check_id: uuid::Uuid,
+    key: String,
+    #[serde(default)]
+    offset: usize,
+    #[serde(default = "read_limit")]
+    limit: usize,
+}
+
 struct ReadEvidence {
     revision: String,
     fragments: Vec<String>,
@@ -632,6 +707,22 @@ fn execute_tool(
         return Err(CoauthorError::Conflict);
     }
     match call.function.name.as_str() {
+        "start_source_check" => {
+            let args: CoauthorSourceCheckInput = arguments(call)?;
+            Ok(json!(manager.create_coauthor_source_check(&input.scope,args)?))
+        }
+        "get_source_checks" => {
+            let args: CheckQuery = arguments(call)?;
+            match args.check_id {
+                Some(id) => Ok(json!(manager.get_coauthor_source_check(&input.scope,id,args.offset)?)),
+                None => Ok(json!(manager.list_coauthor_source_checks(&input.scope,args.offset)?)),
+            }
+        }
+        "record_check_result" => {
+            let args: CoauthorCheckAssessment = arguments(call)?;
+            let page = manager.assess_coauthor_check_source(&input.scope,input.run_id,args)?;
+            Ok(json!({"check":page.check,"recorded":true,"formalCommit":false}))
+        }
         "search_sources" => {
             let args: SearchArgs = arguments(call)?;
             Ok(json!(manager.search_coauthor_sources(
@@ -641,15 +732,16 @@ fn execute_tool(
                 args.offset
             )?))
         }
-        "read_source" => {
-            let args: SourceArgs = arguments(call)?;
-            let source = manager.read_coauthor_source(
-                &input.scope,
-                &args.key,
-                &args.revision,
-                args.offset,
-                args.limit,
-            )?;
+        "read_source" | "read_check_source" => {
+            let (source,result) = if call.function.name == "read_check_source" {
+                let args: CheckReadArgs = arguments(call)?;
+                let read = manager.read_coauthor_check_source(&input.scope,input.run_id,args.check_id,&args.key,args.offset,args.limit)?;
+                (read.source.clone(),json!(read))
+            } else {
+                let args: SourceArgs = arguments(call)?;
+                let source = manager.read_coauthor_source(&input.scope,&args.key,&args.revision,args.offset,args.limit)?;
+                (source.clone(),json!(source))
+            };
             let evidence = seen.entry(source.key.clone()).or_insert_with(|| ReadEvidence {
                 revision: source.revision.clone(), fragments: vec![], sent_fragments: 0, anchors: vec![], outline_pages: vec![],
             });
@@ -661,7 +753,7 @@ fn execute_tool(
                 evidence.outline_pages.clear();
             }
             evidence.fragments.push(source.content.clone());
-            Ok(json!(source))
+            Ok(result)
         }
         "read_manuscript_blocks" => {
             let args: SourceArgs = arguments(call)?;
@@ -962,6 +1054,7 @@ pub(crate) async fn run_coauthor(
     let mut status = "LIMIT_REACHED";
     let mut failure = None;
     let mut last_checkpoint = std::time::Instant::now();
+    let mut pending_check_reads = Vec::new();
     for round in 0..10 {
         if cancelled.load(Ordering::Relaxed) {
             status = "CANCELLED";
@@ -998,7 +1091,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v3",
+                    prompt_version: "coauthor-v4",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -1019,7 +1112,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v3","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v4","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -1075,6 +1168,15 @@ pub(crate) async fn run_coauthor(
                             u32::try_from(turn.content.chars().count()).unwrap_or(u32::MAX),
                         )
                         .map_err(ApiError::from)?;
+                    if !manager.coauthor_run_active(&input.scope,input.run_id)? {
+                        status = "CANCELLED";
+                        break;
+                    }
+                    manager.acknowledge_coauthor_check_reads(&input.scope,input.run_id,&pending_check_reads)?;
+                    if !pending_check_reads.is_empty() {
+                        audit.push(json!({"kind":"check_delivery","readIds":pending_check_reads}));
+                    }
+                    pending_check_reads.clear();
                 }
                 messages.push(turn.message());
                 if turn.calls.is_empty() {
@@ -1099,6 +1201,11 @@ pub(crate) async fn run_coauthor(
                         Ok(value) => value,
                         Err(error) => json!({"error":error.to_string(),"executed":false}),
                     };
+                    if call.function.name == "read_check_source"
+                        && let Some(id) = value["readId"].as_str().and_then(|id| id.parse().ok())
+                    {
+                        pending_check_reads.push(id);
+                    }
                     audit.push(json!({"kind":"tool","name":call.function.name,"arguments":call.function.arguments,
                         "result":value}));
                     messages.push(
@@ -1251,6 +1358,10 @@ mod tests {
         assert!(names.contains(&"get_changes"));
         assert!(names.contains(&"read_manuscript_blocks"));
         assert!(names.contains(&"read_outline_content"));
+        for name in ["start_source_check","get_source_checks","read_check_source","record_check_result"] {
+            assert!(names.contains(&name));
+        }
+        assert!(!names.contains(&"acknowledge_coauthor_check_reads"));
         assert!(!names.contains(&"commit_coauthor_changeset"));
         assert!(!names.contains(&"update_coauthor_impact"));
         assert!(!names.contains(&"commit_coauthor_reversal"));

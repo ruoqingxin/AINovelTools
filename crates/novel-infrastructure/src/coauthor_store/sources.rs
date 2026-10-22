@@ -163,7 +163,7 @@ impl ProjectManager {
 }
 
 impl Database {
-    fn coauthor_pending_updates(&self) -> Result<usize, CoauthorError> {
+    pub(super) fn coauthor_pending_updates(&self) -> Result<usize, CoauthorError> {
         let count =
             self.connection
                 .query_row("SELECT COUNT(*) FROM coauthor_source_queue", [], |row| {
@@ -172,7 +172,7 @@ impl Database {
         Ok(usize::try_from(count).unwrap_or(usize::MAX))
     }
 
-    fn sync_coauthor_sources(&self) -> Result<(), CoauthorError> {
+    pub(super) fn sync_coauthor_sources(&self) -> Result<(), CoauthorError> {
         let mut stmt = self.connection.prepare(
             "SELECT kind,source_id FROM coauthor_source_queue ORDER BY rowid LIMIT 1000",
         )?;

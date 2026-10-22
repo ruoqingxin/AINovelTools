@@ -96,6 +96,29 @@
 .coauthor-changes form input:not([type="checkbox"]) { min-width: 0; width: 100%; }
 .coauthor-receipt { display: block; color: var(--accent-strong); padding: 8px 0; }
 .coauthor-reversal { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 20px; min-width: 0; }
+.coauthor-checks { min-width: 0; font-size: 13px; }
+.coauthor-check-heading, .coauthor-check-pagination { display: flex; align-items: center; gap: 8px; }
+.coauthor-check-heading select { flex: 1; min-width: 0; max-width: 100%; }
+.coauthor-check-summary { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.coauthor-check-summary small, .coauthor-check-entry small { display: block; color: var(--muted); overflow-wrap: anywhere; }
+.coauthor-check-summary dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
+.coauthor-check-summary dt { color: var(--muted); font-size: 12px; }
+.coauthor-check-summary dd { margin: 5px 0 0; font-size: 16px; font-variant-numeric: tabular-nums; }
+.coauthor-check-entry { padding: 16px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.coauthor-check-entry header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.coauthor-check-entry header strong { overflow-wrap: anywhere; }
+.coauthor-check-entry header span { font-size: 12px; color: var(--muted); }
+.coauthor-check-entry blockquote { margin: 12px 0; padding-left: 12px; border-left: 2px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.coauthor-check-pagination { margin: 12px 0; font-variant-numeric: tabular-nums; }
+.coauthor-checks button { display: inline-flex; align-items: center; gap: 6px; }
+.coauthor-check-create { margin-top: 24px; }
+.coauthor-check-create form { display: grid; gap: 12px; padding-top: 12px; }
+.coauthor-check-create form > label { display: grid; gap: 6px; }
+.coauthor-check-create input:not([type="checkbox"]) { width: 100%; min-width: 0; }
+.coauthor-check-create fieldset { display: flex; flex-wrap: wrap; gap: 14px; border: 1px solid var(--border); min-width: 0; }
+.coauthor-check-create fieldset label { display: inline-flex; align-items: center; gap: 6px; }
+.coauthor-check-create fieldset input { width: 16px; height: 16px; }
+.coauthor-check-create button { justify-self: start; }
 @media (min-width: 981px) { .coauthor-tabs { display: none; } .coauthor-toolbar { justify-content: flex-end; } }
 @media (max-width: 980px) {
   .coauthor-workspace { height: calc(100dvh - 130px); }

@@ -216,4 +216,44 @@ describe("coauthor workspace", () => {
     expect(screen.getByText("MANUSCRIPT · 已读取原文片段 · 尚未随请求发送")).toBeVisible();
     expect(screen.getByText("未发送的正文片段")).toBeVisible();
   });
+
+  it("marks scoped check pages sent only after their own acknowledged delivery", async () => {
+    stored.runs = [{
+      id: "coverage", sessionId: "s1", userMessageId: "u1", documentVersion: 1, status: "FAILED", output: "", audit: [
+        { kind: "tool", name: "read_check_source", result: {
+          key: "MANUSCRIPT:sent", kind: "MANUSCRIPT", revision: "r1", title: "已送达章节", offset: 0, totalChars: 3,
+          content: "送达了", readId: "read-1", checkId: "check" } },
+        { kind: "model_request" },
+        { kind: "check_delivery", readIds: ["read-1"] },
+        { kind: "tool", name: "read_check_source", result: {
+          key: "MANUSCRIPT:failed", kind: "MANUSCRIPT", revision: "r2", title: "请求失败章节", offset: 0, totalChars: 3,
+          content: "未送达", readId: "read-2", checkId: "check" } },
+        { kind: "model_request" }, { kind: "error", message: "provider failed" },
+      ],
+    }];
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    fireEvent.click(screen.getByRole("button", { name: "依据" }));
+    expect(await screen.findByText("MANUSCRIPT · 已读取原文片段 · 已随请求发送")).toBeVisible();
+    expect(screen.getByText("MANUSCRIPT · 已读取原文片段 · 尚未随请求发送")).toBeVisible();
+  });
+
+  it("appends check continuation to existing author input without sending automatically", async () => {
+    const base = mocks.invoke.getMockImplementation()!;
+    const check = { id: "check-1", title: "查全部旧章", query: "查失忆代价", kinds: ["MANUSCRIPT"],
+      total: 1, read: 0, sent: 0, reviewed: 0, relevant: 0, uncertain: 0, stale: 0, added: 0,
+      pendingIndexUpdates: 0, complete: false };
+    mocks.invoke.mockImplementation((command: string, args: Record<string, unknown>) => {
+      if (command === "list_coauthor_source_checks") return Promise.resolve({ checks: [check], hasMore: false });
+      if (command === "get_coauthor_source_check") return Promise.resolve({ check, entries: [], offset: 0, hasMore: false });
+      return base(command, args);
+    });
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "保留我刚才的条件。" } });
+    fireEvent.click(screen.getByRole("button", { name: "查证范围" }));
+    fireEvent.click(await screen.findByRole("button", { name: "继续查证" }));
+    expect((screen.getByLabelText("讨论输入") as HTMLTextAreaElement).value).toContain("保留我刚才的条件。\n\n继续查证清单 check-1");
+    expect(pending).toHaveLength(0);
+  });
 });
