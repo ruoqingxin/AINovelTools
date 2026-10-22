@@ -1,6 +1,6 @@
 use super::*;
 
-fn project() -> (ProjectManager, PathBuf, CoauthorScope) {
+pub(super) fn project() -> (ProjectManager, PathBuf, CoauthorScope) {
     let root = std::env::temp_dir().join(format!("coauthor-test-{}", Uuid::new_v4()));
     let mut manager = ProjectManager::new();
     let manifest = manager.create(&root, "共创").unwrap();
@@ -14,7 +14,7 @@ fn project() -> (ProjectManager, PathBuf, CoauthorScope) {
     (manager, root, scope)
 }
 
-fn entity(manager: &mut ProjectManager, name: &str, description: &str) -> Entity {
+pub(super) fn entity(manager: &mut ProjectManager, name: &str, description: &str) -> Entity {
     manager
         .upsert_entity(EntityInput {
             id: None,
@@ -440,7 +440,7 @@ fn migration_52_rolls_back_new_tables_on_failure_and_preserves_formal_text_on_re
     let revision = db.save_manuscript_checked(chapter.id, None,
         r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"原始正文"}]}]}"#.into(),
         "原修订".into()).unwrap();
-    db.connection.execute_batch("DELETE FROM schema_migrations WHERE version=52;
+    db.connection.execute_batch("DELETE FROM schema_migrations WHERE version>=52;
         DROP TABLE coauthor_documents;
         CREATE TRIGGER fail_coauthor_migration BEFORE INSERT ON schema_migrations WHEN NEW.version=52
         BEGIN SELECT RAISE(ABORT,'failed migration'); END;").unwrap();
@@ -458,6 +458,10 @@ fn migration_52_rolls_back_new_tables_on_failure_and_preserves_formal_text_on_re
         .execute_batch("DROP TRIGGER fail_coauthor_migration")
         .unwrap();
     db.migrate_coauthor().unwrap();
+    db.connection.execute_batch(
+        "DROP TABLE coauthor_impact_revisions; DROP TABLE coauthor_impacts; DROP TABLE coauthor_changesets;",
+    ).unwrap();
+    db.migrate_coauthor_changes().unwrap();
     assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         db.current_manuscript(chapter.id).unwrap().unwrap(),

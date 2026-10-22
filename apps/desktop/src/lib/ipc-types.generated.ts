@@ -22,9 +22,9 @@ export type InputManuscriptExportScope = {
     kind: "CHAPTER";
 };
 export type InputReviewPurpose = "ADMISSION" | "MANUSCRIPT";
+export type InputCoauthorDocumentKind = "SETTING" | "OUTLINE" | "MANUSCRIPT";
 export type InputAiProposalFeedbackRating = "HELPFUL" | "NOT_HELPFUL";
 export type InputAiTaskPreference = string | InputAiTaskPreferenceDetails | null;
-export type InputCoauthorDocumentKind = "SETTING" | "OUTLINE" | "MANUSCRIPT";
 export type InputWritingReviewPolicy = "ADVISORY" | "BALANCED" | "REQUIRED";
 export type InputDiscussionDesignTarget = "AUTO" | "CHARACTER_CARD" | "PROJECT_SETTING";
 export type InputModelCapability = "CHAT" | "EMBEDDING";
@@ -105,6 +105,7 @@ export type IpcErrors = {
     clear_planning_embedding: ApiError;
     clear_recovery_logs: ApiError;
     close_project: null;
+    commit_coauthor_changeset: ApiError;
     commit_manuscript_draft: ApiError;
     confirm_discussion_design: ApiError;
     correct_coauthor_decision: ApiError;
@@ -126,6 +127,7 @@ export type IpcErrors = {
     decide_extraction_item: ApiError;
     delete_model_secret: ApiError;
     detect_candidate_conflicts: ApiError;
+    discard_coauthor_changeset: ApiError;
     discard_manuscript_draft: ApiError;
     dismiss_discussion_candidate: ApiError;
     enqueue_chapter_summary_refresh: ApiError;
@@ -148,6 +150,8 @@ export type IpcErrors = {
     get_ai_usage_summary: ApiError;
     get_audit_flow_settings: ApiError;
     get_chapter_entity_references: ApiError;
+    get_coauthor_changes: ApiError;
+    get_coauthor_changeset: ApiError;
     get_coauthor_state: ApiError;
     get_consistency_review_trace: ApiError;
     get_discussion_source: ApiError;
@@ -199,6 +203,7 @@ export type IpcErrors = {
     merge_manuscript: ApiError;
     move_plan_node: ApiError;
     open_project: ApiError;
+    prepare_coauthor_changeset: ApiError;
     promote_discussion_candidate: ApiError;
     promote_discussion_candidate_to_foreshadowing_review: ApiError;
     publish_coauthor_document: ApiError;
@@ -233,6 +238,7 @@ export type IpcErrors = {
     summarize_discussion_design: ApiError;
     test_model_profile: ApiError;
     update_belief: ApiError;
+    update_coauthor_impact: ApiError;
     update_event: ApiError;
     update_extraction_item: ApiError;
     update_foreshadowing: ApiError;
@@ -287,6 +293,7 @@ export type IpcRequests = {
     clear_planning_embedding: InputArgsClearPlanningEmbedding;
     clear_recovery_logs: InputArgsClearRecoveryLogs;
     close_project: InputArgsCloseProject;
+    commit_coauthor_changeset: InputArgsCommitCoauthorChangeset;
     commit_manuscript_draft: InputArgsCommitManuscriptDraft;
     confirm_discussion_design: InputArgsConfirmDiscussionDesign;
     correct_coauthor_decision: InputArgsCorrectCoauthorDecision;
@@ -308,6 +315,7 @@ export type IpcRequests = {
     decide_extraction_item: InputArgsDecideExtractionItem;
     delete_model_secret: InputArgsDeleteModelSecret;
     detect_candidate_conflicts: InputArgsDetectCandidateConflicts;
+    discard_coauthor_changeset: InputArgsDiscardCoauthorChangeset;
     discard_manuscript_draft: InputArgsDiscardManuscriptDraft;
     dismiss_discussion_candidate: InputArgsDismissDiscussionCandidate;
     enqueue_chapter_summary_refresh: InputArgsEnqueueChapterSummaryRefresh;
@@ -330,6 +338,8 @@ export type IpcRequests = {
     get_ai_usage_summary: InputArgsGetAiUsageSummary;
     get_audit_flow_settings: InputArgsGetAuditFlowSettings;
     get_chapter_entity_references: InputArgsGetChapterEntityReferences;
+    get_coauthor_changes: InputArgsGetCoauthorChanges;
+    get_coauthor_changeset: InputArgsGetCoauthorChangeset;
     get_coauthor_state: InputArgsGetCoauthorState;
     get_consistency_review_trace: InputArgsGetConsistencyReviewTrace;
     get_discussion_source: InputArgsGetDiscussionSource;
@@ -381,6 +391,7 @@ export type IpcRequests = {
     merge_manuscript: InputArgsMergeManuscript;
     move_plan_node: InputArgsMovePlanNode;
     open_project: InputArgsOpenProject;
+    prepare_coauthor_changeset: InputArgsPrepareCoauthorChangeset;
     promote_discussion_candidate: InputArgsPromoteDiscussionCandidate;
     promote_discussion_candidate_to_foreshadowing_review: InputArgsPromoteDiscussionCandidateToForeshadowingReview;
     publish_coauthor_document: InputArgsPublishCoauthorDocument;
@@ -415,6 +426,7 @@ export type IpcRequests = {
     summarize_discussion_design: InputArgsSummarizeDiscussionDesign;
     test_model_profile: InputArgsTestModelProfile;
     update_belief: InputArgsUpdateBelief;
+    update_coauthor_impact: InputArgsUpdateCoauthorImpact;
     update_event: InputArgsUpdateEvent;
     update_extraction_item: InputArgsUpdateExtractionItem;
     update_foreshadowing: InputArgsUpdateForeshadowing;
@@ -516,6 +528,12 @@ export type InputArgsClearRecoveryLogs = {
     chapterId: string;
 };
 export type InputArgsCloseProject = {};
+export type InputArgsCommitCoauthorChangeset = {
+    expectedVersion: number;
+    id: string;
+    scope: InputCoauthorScope;
+    selectedIds: string[];
+};
 export type InputArgsCommitManuscriptDraft = {
     baseRevisionId?: string | null;
     chapterId: string;
@@ -703,6 +721,11 @@ export type InputArgsDeleteModelSecret = {
 export type InputArgsDetectCandidateConflicts = {
     chapterId: string;
 };
+export type InputArgsDiscardCoauthorChangeset = {
+    expectedVersion: number;
+    id: string;
+    scope: InputCoauthorScope;
+};
 export type InputArgsDiscardManuscriptDraft = {
     chapterId: string;
     expectedVersion: number;
@@ -830,6 +853,15 @@ export type InputArgsGetAuditFlowSettings = {};
 export type InputArgsGetChapterEntityReferences = {
     chapterId: string;
     projectId: string;
+};
+export type InputArgsGetCoauthorChanges = {
+    changesOffset: number;
+    impactsOffset: number;
+    scope: InputCoauthorScope;
+};
+export type InputArgsGetCoauthorChangeset = {
+    id: string;
+    scope: InputCoauthorScope;
 };
 export type InputArgsGetCoauthorState = {
     scope: InputCoauthorScope;
@@ -991,6 +1023,34 @@ export type InputArgsMovePlanNode = {
 };
 export type InputArgsOpenProject = {
     root: string;
+};
+export type InputArgsPrepareCoauthorChangeset = {
+    request: InputCoauthorChangeRequest;
+    scope: InputCoauthorScope;
+};
+export type InputCoauthorChangeRequest = {
+    coverage: string;
+    draftDependsOn: string[];
+    expectedDocumentVersion: number;
+    impacts: InputCoauthorImpactInput[];
+    items: InputCoauthorChangeItemInput[];
+    title: string;
+};
+export type InputCoauthorImpactInput = {
+    itemIds: string[];
+    key: string;
+    quote: string;
+    reason: string;
+    revision: string;
+};
+export type InputCoauthorChangeItemInput = {
+    content: string;
+    dependsOn: string[];
+    id: string;
+    kind: InputCoauthorDocumentKind;
+    targetKey?: string | null;
+    targetRevision?: string | null;
+    title: string;
 };
 export type InputArgsPromoteDiscussionCandidate = {
     expectedStatus: InputDiscussionCandidateStatus;
@@ -1205,6 +1265,13 @@ export type InputArgsUpdateBelief = {
     belief: InputBelief;
     expectedVersion: number;
 };
+export type InputArgsUpdateCoauthorImpact = {
+    expectedVersion: number;
+    id: string;
+    resolution: string;
+    scope: InputCoauthorScope;
+    status: string;
+};
 export type InputArgsUpdateEvent = {
     event: InputEvent;
     expectedVersion: number;
@@ -1296,6 +1363,7 @@ export type IpcResponses = {
     clear_planning_embedding: null;
     clear_recovery_logs: null;
     close_project: ProjectManifest | null;
+    commit_coauthor_changeset: CoauthorChangeSet;
     commit_manuscript_draft: ManuscriptDraftCommit;
     confirm_discussion_design: string[];
     correct_coauthor_decision: CoauthorDecision;
@@ -1317,6 +1385,7 @@ export type IpcResponses = {
     decide_extraction_item: ChapterExtractionItem;
     delete_model_secret: ModelProfile;
     detect_candidate_conflicts: KnowledgeConflict[];
+    discard_coauthor_changeset: CoauthorChangeSet;
     discard_manuscript_draft: ManuscriptDraft;
     dismiss_discussion_candidate: DiscussionCandidate;
     enqueue_chapter_summary_refresh: Job;
@@ -1339,6 +1408,8 @@ export type IpcResponses = {
     get_ai_usage_summary: AiUsageSummary;
     get_audit_flow_settings: AuditFlowSettings;
     get_chapter_entity_references: ChapterEntityReferences;
+    get_coauthor_changes: CoauthorChangesPage;
+    get_coauthor_changeset: CoauthorChangeSet;
     get_coauthor_state: CoauthorState;
     get_consistency_review_trace: ReviewTrace;
     get_discussion_source: DiscussionSource;
@@ -1390,6 +1461,7 @@ export type IpcResponses = {
     merge_manuscript: MergeResult;
     move_plan_node: PlanNode;
     open_project: ProjectManifest;
+    prepare_coauthor_changeset: CoauthorChangeSet;
     promote_discussion_candidate: DiscussionCandidate;
     promote_discussion_candidate_to_foreshadowing_review: DiscussionCandidate;
     publish_coauthor_document: string;
@@ -1424,6 +1496,7 @@ export type IpcResponses = {
     summarize_discussion_design: DiscussionDesignProposal;
     test_model_profile: ModelConnectionResponse;
     update_belief: Belief;
+    update_coauthor_impact: CoauthorImpact;
     update_event: Event;
     update_extraction_item: ChapterExtractionItem;
     update_foreshadowing: Foreshadowing;
@@ -1562,6 +1635,47 @@ export type ProjectManifest = {
     formatVersion: number;
     name: string;
     projectId: string;
+};
+export type CoauthorChangeSet = {
+    baseDocument: CoauthorDocument;
+    coverage: string;
+    id: string;
+    impacts: CoauthorImpactInput[];
+    items: CoauthorChangeItem[];
+    published: CoauthorPublishedItem[];
+    runId: string | null;
+    selectedIds: string[];
+    status: string;
+    title: string;
+    version: number;
+};
+export type CoauthorImpactInput = {
+    itemIds: string[];
+    key: string;
+    quote: string;
+    reason: string;
+    revision: string;
+};
+export type CoauthorChangeItem = {
+    before: CoauthorSource | null;
+    dependsOn: string[];
+    document: CoauthorDocument;
+    id: string;
+};
+export type CoauthorSource = {
+    content: string;
+    key: string;
+    kind: string;
+    offset: number;
+    revision: string;
+    sessionId: string | null;
+    title: string;
+    totalChars: number;
+};
+export type CoauthorPublishedItem = {
+    itemId: string;
+    revision: string;
+    sourceKey: string;
 };
 export type ManuscriptDraftCommit = {
     draft: ManuscriptDraft;
@@ -1945,6 +2059,29 @@ export type EntityRevision = {
     sourceVersion: string | null;
     tags: string[];
 };
+export type CoauthorChangesPage = {
+    changeSets: CoauthorChangeSummary[];
+    hasMoreChanges: boolean;
+    hasMoreImpacts: boolean;
+    impacts: CoauthorImpact[];
+};
+export type CoauthorChangeSummary = {
+    id: string;
+    itemCount: number;
+    status: string;
+    title: string;
+    version: number;
+};
+export type CoauthorImpact = {
+    changeSetId: string;
+    evidence: CoauthorImpactInput;
+    id: string;
+    resolution: string;
+    sourceChanged: boolean;
+    status: string;
+    title: string;
+    version: number;
+};
 export type CoauthorState = {
     decisions: CoauthorDecision[];
     document: CoauthorDocument;
@@ -2256,16 +2393,6 @@ export type MergeConflict = {
     blockId: string;
     current: string | null;
     draft: string | null;
-};
-export type CoauthorSource = {
-    content: string;
-    key: string;
-    kind: string;
-    offset: number;
-    revision: string;
-    sessionId: string | null;
-    title: string;
-    totalChars: number;
 };
 export type WorldState = {
     createdAt: string;

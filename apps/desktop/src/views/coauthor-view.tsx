@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Check, FileText, GitBranch, History, MessageSquareText, Plus, Save, Send, Square, X } from "lucide-react";
+import { BookOpen, Check, ClipboardList, FileText, GitBranch, History, MessageSquareText, Plus, Save, Send, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "../lib/ipc-transport";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
@@ -16,6 +16,7 @@ import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { useProjectTransition } from "../shell/project-actions-provider";
 import { sameDraft, useCoauthorDraft } from "./use-coauthor-draft";
 import { WorkspacePanel } from "./workspace-panel";
+import { CoauthorChangesPanel } from "./coauthor-changes-panel";
 import "./coauthor-workspace.css";
 
 const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
@@ -142,7 +143,7 @@ function CoauthorSession({ scope, initial, onFork }: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState("chat");
-  const [panel, setPanel] = useState<"sources" | "decisions" | "history" | "proposal" | "publish" | null>(null);
+  const [panel, setPanel] = useState<"sources" | "decisions" | "history" | "proposal" | "publish" | "changes" | null>(null);
   const [publication, setPublication] = useState<{ document: CoauthorDocument; before: string } | null>(null);
   const [runId, setRunId] = useState(initial.runs[0]?.id ?? "");
   const [history, setHistory] = useState<CoauthorDocument[]>([]);
@@ -366,6 +367,7 @@ function CoauthorSession({ scope, initial, onFork }: {
       <div className="coauthor-tools">
         <button onClick={() => setPanel("sources")}><BookOpen size={15} />依据</button>
         <button onClick={() => setPanel("decisions")}>决定 <span>{state.decisions.length}</span></button>
+        <button onClick={() => setPanel("changes")}><ClipboardList size={15} />关联变更</button>
         <button className="icon-command" title="工作稿版本" aria-label="工作稿版本" onClick={() => void showHistory()} disabled={busy}><History size={17} /></button>
         <button className="icon-command" title="另开分支" aria-label="另开分支" onClick={() => void fork()} disabled={busy || Boolean(active) || draft.conflict}><GitBranch size={17} /></button>
       </div>
@@ -453,8 +455,16 @@ function CoauthorSession({ scope, initial, onFork }: {
           {proposal && <button onClick={() => setPanel("proposal")}>查看改稿差异</button>}</footer>
       </section>
     </div>
-    <WorkspacePanel open={panel !== null} title={panel === "sources" ? "依据与运行记录" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : panel === "publish" ? "正式采用预览" : "改稿差异"}
+    <WorkspacePanel open={panel !== null} title={panel === "changes" ? "关联变更与影响" : panel === "sources" ? "依据与运行记录" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : panel === "publish" ? "正式采用预览" : "改稿差异"}
       onClose={() => { setPanel(null); setSource(null); }}>
+      {panel === "changes" && <CoauthorChangesPanel scope={scope} getDocument={() => draft.current.current}
+        saveDraft={draft.save} isGenerating={() => Boolean(activeRef.current)} onCommitted={async (snapshot, linkedDraft) => {
+          const updated = await refresh();
+          if (mounted.current && linkedDraft) draft.acceptSaved(updated.document, snapshot);
+          for (const queryKey of ["entities", "author-settings", "plan-nodes", "planning-sections", "chapters", "search", "manuscript"]) {
+            void client.invalidateQueries({ queryKey: [queryKey] });
+          }
+        }} />}
       {panel === "sources" && <>
         <select aria-label="查看运行" value={runId} onChange={(event) => { setRunId(event.target.value); setSource(null); }}>
           <option value="">选择运行</option>{state.runs.map((entry) => <option key={entry.id} value={entry.id}>{statuses[entry.status] ?? entry.status} · {entry.id.slice(0, 8)}</option>)}

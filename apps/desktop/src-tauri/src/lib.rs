@@ -34,6 +34,9 @@ use commands::coauthor::{
     get_coauthor_state,save_coauthor_document,list_coauthor_document_history,
     run_coauthor,cancel_coauthor_run,apply_coauthor_proposal,publish_coauthor_document,
     fork_coauthor_session,read_coauthor_source,correct_coauthor_decision,
+    prepare_coauthor_changeset,get_coauthor_changes,get_coauthor_changeset,
+    commit_coauthor_changeset,update_coauthor_impact,
+    discard_coauthor_changeset,
 };
 use commands::discussion::{
     ask_project_discussion, confirm_discussion_design, create_discussion_candidate,
@@ -247,6 +250,12 @@ pub fn run() {
             fork_coauthor_session,
             read_coauthor_source,
             correct_coauthor_decision,
+            prepare_coauthor_changeset,
+            get_coauthor_changes,
+            get_coauthor_changeset,
+            commit_coauthor_changeset,
+            discard_coauthor_changeset,
+            update_coauthor_impact,
             get_discussion_source,
             list_planning_discussion_sources,
             get_discussion_workspace,

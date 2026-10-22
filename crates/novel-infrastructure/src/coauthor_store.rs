@@ -2,11 +2,15 @@ use super::*;
 use serde_json::Value;
 
 mod publication;
+mod changes;
+pub use changes::*;
 mod schema;
 mod sources;
 pub use sources::{CoauthorSearchPage, CoauthorSource};
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod changes_tests;
 
 #[derive(Debug, Error)]
 pub enum CoauthorError {

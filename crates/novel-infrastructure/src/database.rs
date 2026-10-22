@@ -1205,6 +1205,9 @@ impl Database {
         if applied.unwrap_or(0) < 52 {
             self.migrate_coauthor()?;
         }
+        if applied.unwrap_or(0) < 53 {
+            self.migrate_coauthor_changes()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }
@@ -2126,6 +2129,16 @@ impl Database {
 mod tests {
     use super::*;
 
+    // These fixtures start from today's schema, then simulate older projects.
+    // Remove downstream tables as well as migration records before upgrading.
+    fn remove_v53_fixture_tables(db: &Database) {
+        db.connection.execute_batch(
+            "DROP TABLE coauthor_impact_revisions;
+             DROP TABLE coauthor_impacts;
+             DROP TABLE coauthor_changesets;",
+        ).unwrap();
+    }
+
     fn planning_section() -> PlanningSection {
         PlanningSection {
             id: "plan".into(),
@@ -2194,6 +2207,7 @@ mod tests {
     #[test]
     fn migration_51_preserves_extraction_payloads_statuses_evidence_and_final_ids() {
         let mut db = Database::in_memory().unwrap();
+        remove_v53_fixture_tables(&db);
         let project_id = Uuid::new_v4();
         let chapter = db
             .create_plan_node(None, PlanNodeKind::Chapter, "chapter".into())
@@ -2290,6 +2304,7 @@ mod tests {
     #[test]
     fn migration_51_failure_rolls_back_column_and_record_and_can_be_retried() {
         let db = Database::in_memory().unwrap();
+        remove_v53_fixture_tables(&db);
         db.connection
             .execute_batch(
                 "ALTER TABLE chapter_extraction_items DROP COLUMN version;
@@ -2320,6 +2335,7 @@ mod tests {
     #[test]
     fn migration_50_preserves_existing_project_data_without_backfilling_references() {
         let mut db = Database::in_memory().unwrap();
+        remove_v53_fixture_tables(&db);
         let chapter = db.create_plan_node(None, PlanNodeKind::Chapter, "chapter".into()).unwrap();
         let revision = db.save_manuscript_checked(chapter.id, None,
             r#"{"type":"doc","content":[]}"#.into(), "history".into()).unwrap();
@@ -2341,6 +2357,7 @@ mod tests {
     #[test]
     fn migration_50_failure_rolls_back_both_tables_and_can_be_retried() {
         let db = Database::in_memory().unwrap();
+        remove_v53_fixture_tables(&db);
         db.connection.execute_batch(
             "DROP TABLE chapter_entity_references; DROP TABLE chapter_entity_reference_sets;
              ALTER TABLE chapter_extraction_items DROP COLUMN version;
@@ -2363,6 +2380,7 @@ mod tests {
     #[test]
     fn migration_49_preserves_formal_history_planning_and_recovery() {
         let mut db = Database::in_memory().unwrap();
+        remove_v53_fixture_tables(&db);
         let chapter = db
             .create_plan_node(None, PlanNodeKind::Chapter, "chapter".into())
             .unwrap();
@@ -2400,6 +2418,7 @@ mod tests {
     #[test]
     fn migration_49_rolls_back_schema_changes_on_failure_and_can_be_retried() {
         let db = Database::in_memory().unwrap();
+        remove_v53_fixture_tables(&db);
         db.connection
             .execute_batch(
                 "DROP TABLE chapter_entity_references;
@@ -2476,6 +2495,7 @@ mod tests {
     #[test]
     fn migration_40_preserves_existing_discussion_sessions() {
         let database = Database::in_memory().expect("in-memory database");
+        remove_v53_fixture_tables(&database);
         let session_id = Uuid::new_v4();
         let message_id = Uuid::new_v4();
         database

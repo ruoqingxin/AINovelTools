@@ -5,6 +5,8 @@ use std::sync::{
 };
 
 use novel_infrastructure::{
+    CoauthorChangeRequest, CoauthorChangeSet, CoauthorChangesPage, CoauthorImpact,
+    CoauthorChangeItemInput, CoauthorImpactInput,
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
     ModelToolCall,
 };
@@ -35,6 +37,13 @@ new 只用于新建试写、换稿件类型或明确重写全文，不能用它�
 风格优先参考作者和当前稿件，保留措辞、节奏和留白，不默认扩写或增加形容词。
 正文写进 edit_draft 的 after，讨论回复解释必要变化，不把指导语塞进小说。不必在回复里再重复整篇稿件。
 link_source 仅在作者要以已读取的正式资料为修改目标时使用，必须使用真实 key 和 revision。
+作者要采用正文并更新设定时，使用 prepare_changeset 准备关联变更，当前已保存稿件的标识固定为 draft。
+先读取将被替换的设定原文，再提出完整的新设定稿；当前仅支持替换概念设定，已有富文本正文和大纲不可直接覆盖。
+稿件依赖某个新规则时，draftDependsOn 写入对应的变更标识；不要用空依赖绕开部分采用检查。
+影响待办必须有实际读过的正式原文及准确引文，说明为什么需要复查，不把词面相似冒充已确认矛盾。
+coverage 如实说明查过什么、未查什么；没有全范围查证不能声称查全或修复全书。
+同一轮正在改工作稿时先完成改稿，下一轮基于作者看到的保存版本准备采用，不得把尚未展示的全文自动带入正式变更。
+可用 get_changes 查找当前讨论的变更和待办；正式采用与待办关闭仍只能由作者在界面确认。
 所有正式采用都由界面展示差异后确认；你没有直接正式写入工具。部分采用不等于采用整份回复。";
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -147,6 +156,31 @@ fn tools() -> Vec<Value> {
             "关联已读取的正式来源作为工作稿的采用目标；不直接覆盖该来源。",
             json!({"key":{"type":"string"},"revision":{"type":"string"}}),
             &["key", "revision"],
+        ),
+        tool(
+            "prepare_changeset",
+            "为作者核对准备关联变更，不正式写入。当前已保存稿件固定为draft，其余标识自定；依赖需明确列出。影响必须有已读原文。禁止假称已采用。",
+            json!({
+                "title":{"type":"string"},
+                "draftDependsOn":{"type":"array","items":{"type":"string"}},
+                "items":{"type":"array","maxItems":7,"items":{"type":"object","additionalProperties":false,
+                    "properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["SETTING","OUTLINE","MANUSCRIPT"]},
+                        "title":{"type":"string"},"content":{"type":"string"},"targetKey":{"type":["string","null"]},
+                        "targetRevision":{"type":["string","null"]},"dependsOn":{"type":"array","items":{"type":"string"}}},
+                    "required":["id","kind","title","content","targetKey","targetRevision","dependsOn"]}},
+                "impacts":{"type":"array","maxItems":40,"items":{"type":"object","additionalProperties":false,
+                    "properties":{"itemIds":{"type":"array","items":{"type":"string"}},"key":{"type":"string"},
+                        "revision":{"type":"string"},"quote":{"type":"string"},"reason":{"type":"string"}},
+                    "required":["itemIds","key","revision","quote","reason"]}},
+                "coverage":{"type":"string"}
+            }),
+            &["title", "draftDependsOn", "items", "impacts", "coverage"],
+        ),
+        tool(
+            "get_changes",
+            "分页查看当前讨论的关联变更摘要和影响待办。不代表已检查全书，不提供正式写入权限。",
+            json!({"changesOffset":{"type":"integer","minimum":0},"impactsOffset":{"type":"integer","minimum":0}}),
+            &[],
         ),
     ]
 }
@@ -290,6 +324,73 @@ pub(crate) fn correct_coauthor_decision(
         .map_err(Into::into)
 }
 
+#[tauri::command]
+pub(crate) fn prepare_coauthor_changeset(
+    state: tauri::State<'_, ProjectState>,
+    scope: CoauthorScope,
+    request: CoauthorChangeRequest,
+) -> Result<CoauthorChangeSet, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .prepare_coauthor_changeset(&scope, request, None).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn get_coauthor_changes(
+    state: tauri::State<'_, ProjectState>,
+    scope: CoauthorScope,
+    changes_offset: u32,
+    impacts_offset: u32,
+) -> Result<CoauthorChangesPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .coauthor_changes(&scope, changes_offset, impacts_offset).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn get_coauthor_changeset(
+    state: tauri::State<'_, ProjectState>,
+    scope: CoauthorScope,
+    id: uuid::Uuid,
+) -> Result<CoauthorChangeSet, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .coauthor_changeset(&scope, id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn discard_coauthor_changeset(
+    state: tauri::State<'_, ProjectState>,
+    scope: CoauthorScope,
+    id: uuid::Uuid,
+    expected_version: i64,
+) -> Result<CoauthorChangeSet, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .discard_coauthor_changeset(&scope, id, expected_version).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn commit_coauthor_changeset(
+    state: tauri::State<'_, ProjectState>,
+    scope: CoauthorScope,
+    id: uuid::Uuid,
+    expected_version: i64,
+    selected_ids: Vec<String>,
+) -> Result<CoauthorChangeSet, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .commit_coauthor_changeset(&scope, id, expected_version, selected_ids).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn update_coauthor_impact(
+    state: tauri::State<'_, ProjectState>,
+    scope: CoauthorScope,
+    id: uuid::Uuid,
+    expected_version: i64,
+    status: String,
+    resolution: String,
+) -> Result<CoauthorImpact, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .update_coauthor_impact(&scope, id, expected_version, &status, &resolution).map_err(Into::into)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SearchArgs {
@@ -347,6 +448,51 @@ struct DecisionQuery {
     offset: usize,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChangeArgs {
+    title: String,
+    draft_depends_on: Vec<String>,
+    items: Vec<CoauthorChangeItemInput>,
+    impacts: Vec<CoauthorImpactInput>,
+    coverage: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChangesQuery {
+    #[serde(default)]
+    changes_offset: u32,
+    #[serde(default)]
+    impacts_offset: u32,
+}
+
+struct ReadEvidence {
+    revision: String,
+    fragments: Vec<String>,
+    sent_fragments: usize,
+}
+
+fn validate_change_reads(args: &ChangeArgs, seen: &HashMap<String, ReadEvidence>) -> Result<(), CoauthorError> {
+    for (key, revision) in args.items.iter()
+        .filter_map(|item| item.target_key.as_ref().map(|key| (key, item.target_revision.as_ref())))
+        .chain(args.impacts.iter().map(|impact| (&impact.key, Some(&impact.revision))))
+    {
+        if seen.get(key).is_none_or(|source|
+            Some(&source.revision) != revision || source.sent_fragments == 0) {
+            return Err(CoauthorError::Invalid("变更目标或影响待办必须先读取对应修订的真实原文。".into()));
+        }
+    }
+    for impact in &args.impacts {
+        if !seen.get(&impact.key).is_some_and(|evidence|
+            evidence.fragments.iter().take(evidence.sent_fragments).any(|fragment| fragment.contains(&impact.quote)))
+        {
+            return Err(CoauthorError::Invalid("影响引句不在本轮已读取的原文片段中，请先读取对应段落。".into()));
+        }
+    }
+    Ok(())
+}
+
 fn arguments<T: serde::de::DeserializeOwned>(call: &ModelToolCall) -> Result<T, CoauthorError> {
     serde_json::from_str(&call.function.arguments)
         .map_err(|_| CoauthorError::Invalid("工具参数格式无效，未执行。".into()))
@@ -392,7 +538,7 @@ fn execute_tool(
     input: &CoauthorInput,
     call: &ModelToolCall,
     document: &mut CoauthorDocument,
-    seen: &mut HashMap<String, String>,
+    seen: &mut HashMap<String, ReadEvidence>,
 ) -> Result<Value, CoauthorError> {
     let mut manager = state
         .manager
@@ -420,7 +566,15 @@ fn execute_tool(
                 args.offset,
                 args.limit,
             )?;
-            seen.insert(source.key.clone(), source.revision.clone());
+            let evidence = seen.entry(source.key.clone()).or_insert_with(|| ReadEvidence {
+                revision: source.revision.clone(), fragments: vec![], sent_fragments: 0,
+            });
+            if evidence.revision != source.revision {
+                evidence.revision.clone_from(&source.revision);
+                evidence.fragments.clear();
+                evidence.sent_fragments = 0;
+            }
+            evidence.fragments.push(source.content.clone());
             Ok(json!(source))
         }
         "read_draft" => {
@@ -499,7 +653,7 @@ fn execute_tool(
                 return Err(CoauthorError::Invalid("本轮禁止修改工作稿目标。".into()));
             }
             let args: SourceArgs = arguments(call)?;
-            if seen.get(&args.key) != Some(&args.revision) {
+            if seen.get(&args.key).map(|evidence| &evidence.revision) != Some(&args.revision) {
                 return Err(CoauthorError::Invalid(
                     "必须先读取真实来源，才能关联采用目标。".into(),
                 ));
@@ -517,6 +671,28 @@ fn execute_tool(
             document.target_key = Some(args.key);
             document.target_revision = Some(args.revision);
             Ok(json!({"linked":true,"formalCommit":false}))
+        }
+        "prepare_changeset" => {
+            if !input.allow_draft_edits {
+                return Err(CoauthorError::Invalid("作者本轮仅讨论，不能准备采用变更。".into()));
+            }
+            let args: ChangeArgs = arguments(call)?;
+            validate_change_reads(&args, seen)?;
+            if manager.coauthor_state(&input.scope)?.document != *document {
+                return Err(CoauthorError::Invalid("当前稿件正在变更，请先展示并保存改稿结果，再基于作者看到的版本准备关联采用。".into()));
+            }
+            let changes = manager.prepare_coauthor_changeset(&input.scope, CoauthorChangeRequest {
+                expected_document_version: document.version, title: args.title,
+                draft_depends_on: args.draft_depends_on, items: args.items,
+                impacts: args.impacts, coverage: args.coverage,
+            }, Some(input.run_id))?;
+            Ok(json!({"prepared":true,"formalCommit":false,"changeSetId":changes.id,
+                "title":changes.title,"itemCount":changes.items.len(),"impactCount":changes.impacts.len(),
+                "message":"已保留关联变更，作者可在「关联变更」面板核对差异、依赖与影响后一次确认。尚未正式采用。"}))
+        }
+        "get_changes" => {
+            let args: ChangesQuery = arguments(call)?;
+            Ok(json!(manager.coauthor_changes(&input.scope, args.changes_offset, args.impacts_offset)?))
         }
         _ => Err(CoauthorError::Invalid(
             "工具不存在，未执行任何修改。".into(),
@@ -628,7 +804,7 @@ pub(crate) async fn run_coauthor(
         registry.insert(input.run_id, Arc::clone(&cancelled));
     }
     let mut document = initial.document.clone();
-    let mut seen = HashMap::new();
+    let mut seen: HashMap<String, ReadEvidence> = HashMap::new();
     let mut audit = vec![json!({"kind":"initial_search","result":found})];
     let mut messages = vec![json!({"role":"system","content":PROMPT})];
     if let Some(style) = preference
@@ -704,7 +880,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v1",
+                    prompt_version: "coauthor-v2",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -725,8 +901,13 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v1","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v2","inputChars":prompt_size}),
         );
+        // Calls within the same model turn cannot depend on results that have
+        // not yet been sent back to the provider.
+        for evidence in seen.values_mut() {
+            evidence.sent_fragments = evidence.fragments.len();
+        }
         let result = state
             .gateway
             .generate_tool_turn(
@@ -910,5 +1091,55 @@ mod tests {
             function:novel_infrastructure::ModelToolFunction { name:"edit_draft".into(),
                 arguments:json!({"operation":"replace","before":"寿元","after":"记忆","projectId":"other"}).to_string() } };
         assert!(arguments::<EditArgs>(&call).is_err());
+    }
+
+    #[test]
+    fn changes_require_read_versions_for_targets_and_impact_evidence() {
+        let args = ChangeArgs {
+            title: "关联采用".into(), draft_depends_on: vec!["realm".into()],
+            items: vec![CoauthorChangeItemInput {
+                id: "realm".into(), kind: CoauthorDocumentKind::Setting,
+                title: "境界".into(), content: "消耗记忆".into(),
+                target_key: Some("ENTITY:realm".into()), target_revision: Some("r1".into()),
+                depends_on: vec![],
+            }],
+            impacts: vec![CoauthorImpactInput {
+                item_ids: vec!["realm".into()], key: "MANUSCRIPT:old".into(),
+                revision: "m1".into(), quote: "旧章原文".into(), reason: "复查代价".into(),
+            }],
+            coverage: "未检查全书".into(),
+        };
+        let mut seen = HashMap::new();
+        assert!(validate_change_reads(&args, &seen).is_err());
+        seen.insert("ENTITY:realm".into(), ReadEvidence { revision: "r1".into(), fragments: vec!["境界原文".into()], sent_fragments: 1 });
+        assert!(validate_change_reads(&args, &seen).is_err());
+        seen.insert("MANUSCRIPT:old".into(), ReadEvidence { revision: "outdated".into(), fragments: vec!["旧章原文".into()], sent_fragments: 1 });
+        assert!(validate_change_reads(&args, &seen).is_err());
+        seen.insert("MANUSCRIPT:old".into(), ReadEvidence { revision: "m1".into(), fragments: vec!["未包含所引句子的另一页".into()], sent_fragments: 1 });
+        assert!(validate_change_reads(&args, &seen).is_err());
+        seen.insert("MANUSCRIPT:old".into(), ReadEvidence { revision: "m1".into(), fragments: vec!["这里是旧章原文。".into()], sent_fragments: 0 });
+        assert!(validate_change_reads(&args, &seen).is_err());
+        seen.get_mut("MANUSCRIPT:old").unwrap().sent_fragments = 1;
+        assert!(validate_change_reads(&args, &seen).is_ok());
+    }
+
+    #[test]
+    fn model_has_preparation_but_no_formal_commit_or_impact_resolution_tool() {
+        let tools = tools();
+        let names = tools.iter().map(|tool| tool["function"]["name"].as_str().unwrap()).collect::<Vec<_>>();
+        assert!(names.contains(&"prepare_changeset"));
+        assert!(names.contains(&"get_changes"));
+        assert!(!names.contains(&"commit_coauthor_changeset"));
+        assert!(!names.contains(&"update_coauthor_impact"));
+        let call = ModelToolCall {
+            id: "forged".into(), call_type: "function".into(),
+            function: novel_infrastructure::ModelToolFunction {
+                name: "prepare_changeset".into(), arguments: json!({
+                    "title":"伪造", "draftDependsOn":[], "items":[], "impacts":[],
+                    "coverage":"未知", "authorized":true,
+                }).to_string(),
+            },
+        };
+        assert!(arguments::<ChangeArgs>(&call).is_err());
     }
 }

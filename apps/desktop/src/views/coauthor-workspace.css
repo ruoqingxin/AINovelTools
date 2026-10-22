@@ -69,6 +69,23 @@
 .coauthor-diff section { min-width: 0; }
 .coauthor-diff h4 { font-size: 12px; color: var(--muted); }
 .coauthor-diff pre, .coauthor-diff textarea { height: 280px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.8; font-family: inherit; }
+.coauthor-change-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.coauthor-change-actions h3, .coauthor-changes button { display: inline-flex; align-items: center; gap: 6px; }
+.coauthor-change-review, .coauthor-impact-list { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; min-width: 0; scroll-margin-top: 64px; }
+.coauthor-change-item { border-bottom: 1px solid var(--border); padding: 16px 0; }
+.coauthor-change-item .coauthor-diff pre { height: auto; min-height: 72px; max-height: 320px; margin: 8px 0; }
+.coauthor-change-check { display: flex; align-items: flex-start; gap: 8px; min-width: 0; font-size: 13px; }
+.coauthor-change-check strong { overflow-wrap: anywhere; }
+.coauthor-change-check input { width: 16px; height: 16px; flex: 0 0 16px; margin-top: 2px; }
+.coauthor-change-check span { color: var(--muted); flex-shrink: 0; }
+.coauthor-changes blockquote { border-left: 2px solid var(--line); margin: 12px 0; padding-left: 12px; font-size: 13px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.coauthor-changes small { overflow-wrap: anywhere; }
+.coauthor-change-create { margin: 24px 0; }
+.coauthor-changes form { display: grid; gap: 12px; padding-top: 12px; }
+.coauthor-changes form > label:not(.coauthor-change-check) { display: grid; gap: 6px; font-size: 13px; }
+.coauthor-changes form > button { justify-self: start; }
+.coauthor-changes form input:not([type="checkbox"]) { min-width: 0; width: 100%; }
+.coauthor-receipt { display: block; color: var(--accent-strong); padding: 8px 0; }
 @media (min-width: 981px) { .coauthor-tabs { display: none; } .coauthor-toolbar { justify-content: flex-end; } }
 @media (max-width: 980px) {
   .coauthor-workspace { height: calc(100dvh - 130px); }

@@ -207,6 +207,24 @@ export function readCoauthorSource(input: IpcRequests["read_coauthor_source"]) {
 export function correctCoauthorDecision(input: IpcRequests["correct_coauthor_decision"]) {
   return invoke("correct_coauthor_decision", input);
 }
+export function prepareCoauthorChangeset(input: IpcRequests["prepare_coauthor_changeset"]) {
+  return invoke("prepare_coauthor_changeset", input);
+}
+export function getCoauthorChanges(input: IpcRequests["get_coauthor_changes"]) {
+  return invoke("get_coauthor_changes", input);
+}
+export function getCoauthorChangeset(input: IpcRequests["get_coauthor_changeset"]) {
+  return invoke("get_coauthor_changeset", input);
+}
+export function commitCoauthorChangeset(input: IpcRequests["commit_coauthor_changeset"]) {
+  return invoke("commit_coauthor_changeset", input);
+}
+export function discardCoauthorChangeset(input: IpcRequests["discard_coauthor_changeset"]) {
+  return invoke("discard_coauthor_changeset", input);
+}
+export function updateCoauthorImpact(input: IpcRequests["update_coauthor_impact"]) {
+  return invoke("update_coauthor_impact", input);
+}
 
 export function getCurrentProject() {
   return invoke("current_project");

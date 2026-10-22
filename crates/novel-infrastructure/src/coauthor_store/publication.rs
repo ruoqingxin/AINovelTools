@@ -2,8 +2,7 @@ use super::*;
 use serde_json::json;
 
 impl ProjectManager {
-    /// Publishes exactly one reviewed document. Composite changes remain outside
-    /// this endpoint so a text proposal can never silently rewrite other objects.
+    /// Publishes exactly one reviewed document.
     pub fn publish_coauthor_document(
         &mut self,
         scope: &CoauthorScope,
@@ -15,6 +14,10 @@ impl ProjectManager {
             .as_ref()
             .ok_or(CoauthorError::WrongProject)?
             .database;
+        let tx = rusqlite::Transaction::new_unchecked(
+            &db.connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
         let document = db.coauthor_document(scope.session_id)?;
         let already:Option<String>=db.connection.query_row(
             "SELECT source_key FROM coauthor_publications WHERE session_id=?1 AND document_version=?2",
@@ -26,21 +29,73 @@ impl ProjectManager {
         if document.version != expected_version {
             return Err(CoauthorError::Conflict);
         }
-        if document.content.trim().is_empty() {
-            return Err(CoauthorError::Invalid("工作稿为空。".into()));
+        if db.coauthor_draft_has_pending_dependencies(&document)? {
+            return Err(CoauthorError::Invalid(
+                "当前稿件存在待核对的关联依赖，请在「关联变更」中确认完整组合，或重新准备独立稿件。".into(),
+            ));
+        }
+        let source_version = format!("coauthor:{}:v{}", scope.session_id, document.version);
+        let key = db.publish_coauthor_item(&tx, scope, &document, &source_version)?;
+        db.link_published_coauthor_document(&tx, scope, &document, &key)?;
+        tx.commit()?;
+        Ok(key)
+    }
+}
+
+impl Database {
+    pub(super) fn validate_coauthor_publication(
+        &self,
+        document: &CoauthorDocument,
+    ) -> Result<Option<CoauthorSource>, CoauthorError> {
+        if document.title.trim().is_empty()
+            || document.title.chars().count() > 200
+            || document.content.trim().is_empty()
+            || document.content.chars().count() > 500_000
+        {
+            return Err(CoauthorError::Invalid("采用稿件的标题或内容无效。".into()));
         }
         let source = match &document.target_key {
             Some(key) => {
-                let source = db.coauthor_source(key)?.ok_or(CoauthorError::NotFound)?;
+                let source = self.coauthor_source(key)?.ok_or(CoauthorError::NotFound)?;
                 if Some(&source.revision) != document.target_revision.as_ref() {
                     return Err(CoauthorError::Conflict);
                 }
                 Some(source)
             }
-            None => None,
+            None if document.target_revision.is_none() => None,
+            None => return Err(CoauthorError::Invalid("来源修订缺少目标。".into())),
         };
-        let tx = db.connection.unchecked_transaction()?;
-        let source_version = format!("coauthor:{}:v{}", scope.session_id, document.version);
+        if let Some(source) = &source {
+            if document.kind != CoauthorDocumentKind::Setting || source.kind != "ENTITY" {
+                return Err(CoauthorError::Invalid(
+                    "已有正文与大纲需要结构化编辑，不能由纯文本工作稿覆盖。".into(),
+                ));
+            }
+            let concept: bool = self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM entities WHERE id=?1 AND entity_type='CONCEPT'
+                 AND lifecycle_status='ACTIVE')",
+                [source
+                    .key
+                    .strip_prefix("ENTITY:")
+                    .ok_or(CoauthorError::NotFound)?],
+                |row| row.get(0),
+            )?;
+            if !concept {
+                return Err(CoauthorError::Invalid("当前仅支持替换概念设定卡。".into()));
+            }
+        }
+        Ok(source)
+    }
+
+    // The caller owns one write transaction for every item, receipt and impact.
+    pub(super) fn publish_coauthor_item(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        scope: &CoauthorScope,
+        document: &CoauthorDocument,
+        source_version: &str,
+    ) -> Result<String, CoauthorError> {
+        let source = self.validate_coauthor_publication(document)?;
         let key = match document.kind {
             CoauthorDocumentKind::Setting => {
                 if source.as_ref().is_some_and(|s| s.kind != "ENTITY") {
@@ -184,16 +239,26 @@ impl ProjectManager {
                     FROM manuscript_revisions WHERE chapter_id=?1",rusqlite::params![id,scope.project_id.to_string()])?;
             }
         }
+        Ok(key)
+    }
+
+    pub(super) fn link_published_coauthor_document(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        scope: &CoauthorScope,
+        document: &CoauthorDocument,
+        key: &str,
+    ) -> Result<(), CoauthorError> {
         tx.execute(
             "INSERT INTO coauthor_publications VALUES (?1,?2,?3)",
-            rusqlite::params![scope.session_id.to_string(), expected_version, key],
+            rusqlite::params![scope.session_id.to_string(), document.version, key],
         )?;
-        let source = db.coauthor_source(&key)?.ok_or(CoauthorError::NotFound)?;
+        let source = self.coauthor_source(key)?.ok_or(CoauthorError::NotFound)?;
         let linked = CoauthorDocument {
             version: document.version + 1,
-            target_key: Some(key.clone()),
+            target_key: Some(key.into()),
             target_revision: Some(source.revision),
-            ..document
+            ..document.clone()
         };
         let payload = encode(&linked)?;
         tx.execute(
@@ -208,7 +273,6 @@ impl ProjectManager {
             "INSERT INTO coauthor_publications VALUES (?1,?2,?3)",
             rusqlite::params![scope.session_id.to_string(), linked.version, key],
         )?;
-        tx.commit()?;
-        Ok(key)
+        Ok(())
     }
 }

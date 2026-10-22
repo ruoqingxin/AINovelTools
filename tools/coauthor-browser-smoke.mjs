@@ -36,13 +36,27 @@ try {
           {id:"m2",sessionId:"s1",role:"ASSISTANT",content:"《修炼体系》里已有炼气、筑基、金丹三个阶段，原本的突破代价是寿元。\\n\\n可以沿着已有体系扩展，在金丹后加一层“照魂境”。你已选择失忆代价，我会把它作为当前分支的方向，原设定暂不替换。"},
           {id:"m3",sessionId:"s1",role:"USER",content:"先拿主角突破写一段。他忘了母亲的声音，压抑一点。"}
         ];
+        let changes=null;
+        let impacts=[];
+        function preparedChanges(){
+          return {id:"change1",version:1,title:"采用突破正文并更新修炼体系",status:"PENDING",
+            baseDocument:structuredClone(state.document),runId:null,coverage:"已核对修炼体系与旧章片段；其余正文和伏笔尚未检查。",
+            selectedIds:[],published:[],
+            items:[{id:"draft",document:structuredClone(state.document),before:null,dependsOn:["realm"]},
+              {id:"realm",document:{...state.document,kind:"SETTING",title:"修炼体系",content:"炼气、筑基、金丹、照魂。突破照魂境需要失去一段记忆。",
+                targetKey:"ENTITY:realm",targetRevision:"r1"},
+                before:{key:"ENTITY:realm",kind:"ENTITY",title:"修炼体系",revision:"r1",content:"炼气、筑基、金丹。突破消耗寿元。",
+                  totalChars:20,offset:0,sessionId:null},dependsOn:[]}],
+            impacts:[{itemIds:["realm"],key:"MANUSCRIPT:old",revision:"old1",
+              quote:"他仍记得母亲唤他的声音。",reason:"旧章描写可能依赖原有突破代价，需要核对叙事位置。"}]};
+        }
         const listeners=new Set();
         export async function listen(event,handler){listeners.add(handler);return()=>listeners.delete(handler);}
         export async function waitForPendingCommands(){}
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:52};
+          if(command==="health_query")return {schemaVersion:53};
           if(command==="bootstrap_status")return {};
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
           if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
@@ -65,6 +79,27 @@ try {
           }
           if(command==="cancel_coauthor_run")return;
           if(command==="list_coauthor_document_history")return [doc];
+          if(command==="get_coauthor_changes"){
+            changes??=preparedChanges();
+            return {changeSets:[{id:changes.id,version:changes.version,title:changes.title,status:changes.status,itemCount:2}],
+              impacts:structuredClone(impacts),hasMoreChanges:false,hasMoreImpacts:false};
+          }
+          if(command==="get_coauthor_changeset")return structuredClone(changes);
+          if(command==="commit_coauthor_changeset"){
+            if(changes.status==="COMMITTED")return structuredClone(changes);
+            if(args.selectedIds.includes("draft")&&!args.selectedIds.includes("realm"))throw new Error("missing dependency");
+            changes={...changes,status:"COMMITTED",version:2,selectedIds:args.selectedIds,
+              published:args.selectedIds.map(id=>({itemId:id,sourceKey:id==="draft"?"MANUSCRIPT:new":"ENTITY:realm",revision:"v2"}))};
+            if(args.selectedIds.includes("draft"))state.document={...state.document,version:state.document.version+1,
+              targetKey:"MANUSCRIPT:new",targetRevision:"v2"};
+            impacts=[{id:"impact1",changeSetId:changes.id,version:1,title:"第九章 · 雨夜",evidence:changes.impacts[0],
+              status:"PENDING",resolution:"",sourceChanged:false}];
+            return structuredClone(changes);
+          }
+          if(command==="update_coauthor_impact"){
+            impacts=impacts.map(item=>item.id===args.id?{...item,version:item.version+1,status:args.status,resolution:args.resolution}:item);
+            return structuredClone(impacts.find(item=>item.id===args.id));
+          }
           if(command.startsWith("list_"))return [];
           throw new Error("Unimplemented browser fixture command: "+command);
         }`,
@@ -98,7 +133,32 @@ try {
       assert.ok(box.x >= 0 && box.right <= viewport.width + 1, `${box.selector} must fit ${viewport.width}px`);
       assert.ok(box.height > 0, `${box.selector} is not blank`);
     }
-    reports.push({ viewport, overflow, boxes, commands: await page.evaluate(() => window.__coauthorCalls) });
+    await page.getByRole("button", { name: "关联变更", exact: true }).click();
+    const changesPanel = page.getByRole("dialog", { name: "关联变更与影响" });
+    await changesPanel.getByRole("button", { name: "核对差异" }).click();
+    const setting = changesPanel.getByRole("checkbox", { name: "修炼体系 设定" });
+    await setting.uncheck();
+    await page.waitForTimeout(50);
+    assert.equal(await changesPanel.getByRole("button", { name: "确认采用所选变更" }).isDisabled(), true);
+    await setting.check();
+    await changesPanel.locator(".coauthor-change-review").evaluate((el) => el.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-changes.png`), fullPage: true });
+    const panelOverflow = await changesPanel.evaluate((el) => el.scrollWidth > el.clientWidth);
+    assert.equal(panelOverflow, false, `Changes panel overflow at ${viewport.width}px`);
+    await changesPanel.getByRole("button", { name: "确认采用所选变更" }).click();
+    const confirmation = page.getByRole("alertdialog", { name: "正式采用关联变更" });
+    await confirmation.waitFor({ state: "visible" });
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-confirmation.png`), fullPage: true });
+    await confirmation.getByRole("button", { name: "采用所选变更", exact: true }).click();
+    await changesPanel.getByText("已正式采用 2 项；其他内容未同步。", { exact: true }).waitFor();
+    await changesPanel.getByRole("button", { name: "处理待办" }).click();
+    await changesPanel.getByLabel("待办状态").selectOption("ACCEPTED_DIFFERENCE");
+    await changesPanel.getByLabel("待办处理依据").fill("保留为突破之前的回忆，不修改旧章。");
+    await changesPanel.getByRole("button", { name: "保存处理", exact: true }).click();
+    await changesPanel.getByText("处理依据：保留为突破之前的回忆，不修改旧章。", { exact: true }).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-impacts.png`), fullPage: true });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    reports.push({ viewport, overflow, panelOverflow, boxes, commands: await page.evaluate(() => window.__coauthorCalls) });
     await context.close();
   }
   assert.deepEqual(errors, [], "No browser application errors");
