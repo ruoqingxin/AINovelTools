@@ -373,7 +373,8 @@ fn migration_failure_rolls_back_and_retry_keeps_author_text() {
     let db = &f.manager.current.as_ref().unwrap().database;
     db.connection
         .execute_batch(
-            "DROP TABLE coauthor_check_notes; DELETE FROM schema_migrations WHERE version=56;
+            "DROP TABLE coauthor_decision_fts; DROP TABLE coauthor_decision_mentions; DROP TABLE coauthor_decision_evidence; DROP TABLE coauthor_decision_aliases;
+             DROP TABLE coauthor_check_notes; DELETE FROM schema_migrations WHERE version>=56;
          CREATE TRIGGER fail56 BEFORE INSERT ON schema_migrations WHEN NEW.version=56
          BEGIN SELECT RAISE(ABORT,'migration failure'); END;",
         )
@@ -393,6 +394,7 @@ fn migration_failure_rolls_back_and_retry_keeps_author_text() {
     );
     db.connection.execute_batch("DROP TRIGGER fail56").unwrap();
     db.migrate_coauthor_check_notes().unwrap();
+    db.migrate_coauthor_decision_memory().unwrap();
     assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         db.coauthor_source(&f.key).unwrap().unwrap().content,

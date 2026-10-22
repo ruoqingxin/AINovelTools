@@ -97,6 +97,12 @@
 .coauthor-receipt { display: block; color: var(--accent-strong); padding: 8px 0; }
 .coauthor-reversal { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 20px; min-width: 0; }
 .coauthor-checks { min-width: 0; font-size: 13px; }
+.coauthor-decision-history { margin-top: 10px; }
+.coauthor-decision-history small, .coauthor-memory-context small { display: block; color: var(--muted); overflow-wrap: anywhere; }
+.coauthor-decision-history p, .coauthor-memory-context p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.coauthor-decision-revision { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+.coauthor-decision-revision blockquote { margin: 12px 0; border-left: 2px solid var(--line); padding-left: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.coauthor-memory-context { border-left: 2px solid var(--line); padding-left: 12px; margin: 12px 0; }
 .coauthor-check-heading, .coauthor-check-pagination { display: flex; align-items: center; gap: 8px; }
 .coauthor-check-heading select { flex: 1; min-width: 0; max-width: 100%; }
 .coauthor-check-summary { padding: 12px 0; border-bottom: 1px solid var(--border); }

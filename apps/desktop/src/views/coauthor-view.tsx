@@ -18,6 +18,7 @@ import { sameDraft, useCoauthorDraft } from "./use-coauthor-draft";
 import { WorkspacePanel } from "./workspace-panel";
 import { CoauthorChangesPanel } from "./coauthor-changes-panel";
 import { CoauthorChecksPanel } from "./coauthor-checks-panel";
+import { CoauthorDecisionHistory, DecisionContext } from "./coauthor-decision-history";
 import "./coauthor-workspace.css";
 
 const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
@@ -500,10 +501,12 @@ function CoauthorSession({ scope, initial, onFork }: {
         })}>停止此运行</button>}
         {sourcesFor(run).map((hit) => <article className="coauthor-source" key={`${hit.key}:${hit.revision}`}>
           <strong>{hit.title}</strong><small>{hit.kind} · {hit.read ? "已读取原文片段" : "检索命中"} · {hit.sent ? "已随请求发送" : "尚未随请求发送"}</small><p>{hit.content}</p>
+          <DecisionContext context={hit.decisionContext} />
           <button onClick={() => void act(async () => { setSource(await readCoauthorSource({ scope, key: hit.key, revision: hit.revision, offset: 0 })); })}>查看原文</button>
         </article>)}
         {!run && <p>此记录不在最近的运行列表中，原始讨论仍保留。</p>}
         {source && <section className="coauthor-source-text"><h3>{source.title}</h3><small>修订 {source.revision}</small><pre>{source.content}</pre>
+          <DecisionContext context={source.decisionContext} />
           {source.offset + [...source.content].length < source.totalChars && <button disabled={busy} onClick={() => void act(async () => {
             const next = await readCoauthorSource({ scope, key: source.key, revision: source.revision, offset: source.offset + [...source.content].length });
             if (mounted.current) setSource(next);
@@ -520,6 +523,7 @@ function CoauthorSession({ scope, initial, onFork }: {
         {state.decisions.map((decision) => <article className="coauthor-source" key={decision.id}>
           <strong>{decision.topic}</strong><small>{statuses[decision.status]} · v{decision.version}</small><p>{decision.content}</p>
           <button onClick={() => setEditingDecision({ ...decision })}>纠正</button>
+          <CoauthorDecisionHistory key={`${decision.id}:${decision.version}`} scope={scope} decision={decision} />
         </article>)}
         {editingDecision && <form onSubmit={(event) => {
           event.preventDefault(); void act(async () => {

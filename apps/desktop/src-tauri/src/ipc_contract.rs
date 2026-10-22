@@ -17,6 +17,7 @@ use novel_infrastructure::{
     CoauthorReversal,
     CoauthorSourceCheckInput,CoauthorCheckPage,CoauthorChecksPage,
     CoauthorCheckNotesPage,
+    CoauthorDecisionHistory,
 };
 
 type SchemaProperties = serde_json::Map<String, serde_json::Value>;
@@ -96,7 +97,7 @@ mod tests {
         };
         assert_eq!(keys("requests"), keys("responses"));
         assert_eq!(keys("requests"), keys("errors"));
-        assert_eq!(keys("requests").len(), 164);
+        assert_eq!(keys("requests").len(), 165);
         assert_eq!(
             keys("events"),
             ["ai-task-attempt", "ai-task-chunk", "ai-task-started", "coauthor-progress"]

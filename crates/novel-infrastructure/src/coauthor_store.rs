@@ -16,6 +16,8 @@ mod sources;
 pub use sources::{CoauthorSearchPage, CoauthorSource};
 mod source_checks;
 pub use source_checks::*;
+mod decisions;
+pub use decisions::*;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -436,7 +438,7 @@ impl ProjectManager {
                 id: Uuid::new_v4(),
                 version: 1,
                 source_message_id: message.parse().map_err(|_| CoauthorError::NotFound)?,
-                ..decision
+                ..decision.clone()
             };
             tx.execute(
                 "INSERT INTO coauthor_decisions VALUES (?1,?2,?3,?4,?5,?6,?7)",
@@ -454,6 +456,7 @@ impl ProjectManager {
                 "INSERT INTO coauthor_decision_revisions VALUES (?1,1,?2)",
                 rusqlite::params![copied.id.to_string(), encode(&copied)?],
             )?;
+            db.fork_decision_memory(id,&decision,&copied,&inherited)?;
         }
         tx.commit()?;
         self.get_discussion_session(id).map_err(Into::into)
@@ -599,6 +602,7 @@ impl ProjectManager {
                     format!("coauthor:{run_id}"), format!("共创运行：{effective}；来源与操作记录见运行详情。")],
             )?;
         }
+        db.link_run_decisions(scope.session_id,run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -628,129 +632,6 @@ impl ProjectManager {
         Ok(())
     }
 
-    pub fn set_coauthor_decision(
-        &mut self,
-        scope: &CoauthorScope,
-        run_id: Uuid,
-        topic: &str,
-        content: &str,
-        status: &str,
-    ) -> Result<CoauthorDecision, CoauthorError> {
-        if !self.coauthor_run_active(scope, run_id)? {
-            return Err(CoauthorError::Conflict);
-        }
-        if topic.trim().is_empty()
-            || topic.chars().count() > 200
-            || content.chars().count() > 5_000
-            || !["CHOSEN", "REJECTED", "OPEN", "WITHDRAWN"].contains(&status)
-        {
-            return Err(CoauthorError::Invalid("决定格式或范围无效。".into()));
-        }
-        let db = &self
-            .current
-            .as_ref()
-            .ok_or(CoauthorError::WrongProject)?
-            .database;
-        let message: String = db.connection.query_row(
-            "SELECT user_message_id FROM coauthor_runs WHERE id=?1",
-            [run_id.to_string()],
-            |row| row.get(0),
-        )?;
-        let old: Option<(String,i64)> = db.connection.query_row(
-            "SELECT id,version FROM coauthor_decisions WHERE session_id=?1 AND topic=?2 ORDER BY rowid DESC LIMIT 1",
-            rusqlite::params![scope.session_id.to_string(),topic], |row| Ok((row.get(0)?,row.get(1)?)),
-        ).optional()?;
-        let (id, version) =
-            old.map_or_else(|| (Uuid::new_v4().to_string(), 1), |(id, v)| (id, v + 1));
-        let tx = db.connection.unchecked_transaction()?;
-        tx.execute(
-            "INSERT INTO coauthor_decisions(id,session_id,topic,content,status,source_message_id,version)
-             VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET
-             content=excluded.content,status=excluded.status,source_message_id=excluded.source_message_id,version=excluded.version",
-            rusqlite::params![id,scope.session_id.to_string(),topic,content,status,message,version],
-        )?;
-        let decision = CoauthorDecision {
-            id: id.parse().map_err(|_| CoauthorError::NotFound)?,
-            topic: topic.into(),
-            content: content.into(),
-            status: status.into(),
-            source_message_id: message.parse().map_err(|_| CoauthorError::NotFound)?,
-            version,
-        };
-        tx.execute(
-            "INSERT INTO coauthor_decision_revisions VALUES (?1,?2,?3)",
-            rusqlite::params![id, version, encode(&decision)?],
-        )?;
-        tx.commit()?;
-        Ok(decision)
-    }
-
-    pub fn correct_coauthor_decision(
-        &mut self,
-        scope: &CoauthorScope,
-        id: Uuid,
-        expected_version: i64,
-        content: &str,
-        status: &str,
-    ) -> Result<CoauthorDecision, CoauthorError> {
-        let state = self.coauthor_state(scope)?;
-        let previous = state
-            .decisions
-            .into_iter()
-            .find(|decision| decision.id == id)
-            .ok_or(CoauthorError::NotFound)?;
-        if previous.version != expected_version {
-            return Err(CoauthorError::Conflict);
-        }
-        if content.trim().is_empty()
-            || content.chars().count() > 5000
-            || !["CHOSEN", "REJECTED", "OPEN", "WITHDRAWN"].contains(&status)
-        {
-            return Err(CoauthorError::Invalid("决定内容或状态无效。".into()));
-        }
-        let message = Uuid::new_v4();
-        let updated = CoauthorDecision {
-            version: previous.version + 1,
-            content: content.into(),
-            status: status.into(),
-            source_message_id: message,
-            ..previous
-        };
-        let db = &self
-            .current
-            .as_ref()
-            .ok_or(CoauthorError::WrongProject)?
-            .database;
-        let tx = db.connection.unchecked_transaction()?;
-        tx.execute(
-            "INSERT INTO discussion_messages(id,session_id,role,content) VALUES (?1,?2,'USER',?3)",
-            rusqlite::params![
-                message.to_string(),
-                scope.session_id.to_string(),
-                format!(
-                    "作者纠正讨论决定「{}」：{} [{}]",
-                    updated.topic, content, status
-                )
-            ],
-        )?;
-        tx.execute(
-            "UPDATE coauthor_decisions SET version=?2,content=?3,status=?4,source_message_id=?5
-            WHERE id=?1",
-            rusqlite::params![
-                id.to_string(),
-                updated.version,
-                content,
-                status,
-                message.to_string()
-            ],
-        )?;
-        tx.execute(
-            "INSERT INTO coauthor_decision_revisions VALUES (?1,?2,?3)",
-            rusqlite::params![id.to_string(), updated.version, encode(&updated)?],
-        )?;
-        tx.commit()?;
-        Ok(updated)
-    }
 }
 
 impl Database {

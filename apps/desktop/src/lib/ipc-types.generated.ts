@@ -177,6 +177,7 @@ export type IpcErrors = {
     list_author_todos: ApiError;
     list_beliefs: ApiError;
     list_chapter_extractions: ApiError;
+    list_coauthor_decision_history: ApiError;
     list_coauthor_document_history: ApiError;
     list_coauthor_source_checks: ApiError;
     list_current_facts: ApiError;
@@ -372,6 +373,7 @@ export type IpcRequests = {
     list_author_todos: InputArgsListAuthorTodos;
     list_beliefs: InputArgsListBeliefs;
     list_chapter_extractions: InputArgsListChapterExtractions;
+    list_coauthor_decision_history: InputArgsListCoauthorDecisionHistory;
     list_coauthor_document_history: InputArgsListCoauthorDocumentHistory;
     list_coauthor_source_checks: InputArgsListCoauthorSourceChecks;
     list_current_facts: InputArgsListCurrentFacts;
@@ -987,6 +989,11 @@ export type InputArgsListBeliefs = {};
 export type InputArgsListChapterExtractions = {
     chapterId: string;
 };
+export type InputArgsListCoauthorDecisionHistory = {
+    beforeVersion?: number | null;
+    id: string;
+    scope: InputCoauthorScope;
+};
 export type InputArgsListCoauthorDocumentHistory = {
     beforeVersion?: number | null;
     scope: InputCoauthorScope;
@@ -1504,6 +1511,7 @@ export type IpcResponses = {
     list_author_todos: AuthorTodoQueue;
     list_beliefs: Belief[];
     list_chapter_extractions: ChapterExtractionProposal[];
+    list_coauthor_decision_history: CoauthorDecisionHistory;
     list_coauthor_document_history: CoauthorDocument[];
     list_coauthor_source_checks: CoauthorChecksPage;
     list_current_facts: Fact[];
@@ -1750,6 +1758,7 @@ export type CoauthorChangeItem = {
 };
 export type CoauthorSource = {
     content: string;
+    decisionContext?: CoauthorDecisionContext | null;
     key: string;
     kind: string;
     offset: number;
@@ -1757,6 +1766,23 @@ export type CoauthorSource = {
     sessionId: string | null;
     title: string;
     totalChars: number;
+};
+export type CoauthorDecisionContext = {
+    guards: CoauthorDecisionGuard[];
+    hasMore: boolean;
+};
+export type CoauthorDecisionGuard = {
+    current: CoauthorDecision;
+    referencedVersion: number;
+    superseded: boolean;
+};
+export type CoauthorDecision = {
+    content: string;
+    id: string;
+    sourceMessageId: string;
+    status: string;
+    topic: string;
+    version: number;
 };
 export type CoauthorManuscriptEdit = {
     after: string;
@@ -1829,14 +1855,6 @@ export type ManuscriptRevision = {
     documentSchemaVersion: number;
     id: string;
     parentRevisionId: string | null;
-};
-export type CoauthorDecision = {
-    content: string;
-    id: string;
-    sourceMessageId: string;
-    status: string;
-    topic: string;
-    version: number;
 };
 export type Belief = {
     beliefVersion: number;
@@ -2526,6 +2544,20 @@ export type AuthorTodo = {
     targetId: string;
     targetTitle: string;
     updatedAt: string;
+};
+export type CoauthorDecisionHistory = {
+    current: CoauthorDecisionMemory;
+    hasMore: boolean;
+    revisions: CoauthorDecisionRevision[];
+};
+export type CoauthorDecisionMemory = {
+    aliases: string[];
+    decision: CoauthorDecision;
+    quote: string | null;
+};
+export type CoauthorDecisionRevision = {
+    decision: CoauthorDecision;
+    quote: string | null;
 };
 export type CoauthorChecksPage = {
     checks: CoauthorSourceCheck[];

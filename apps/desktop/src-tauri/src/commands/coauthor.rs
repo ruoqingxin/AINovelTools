@@ -13,6 +13,7 @@ use novel_infrastructure::{
     CoauthorReversal,
     CoauthorSourceCheckInput, CoauthorCheckPage, CoauthorChecksPage, CoauthorCheckAssessment,
     CoauthorCheckNoteInput, CoauthorCheckNotesPage,
+    CoauthorDecisionInput, CoauthorDecisionHistory, CoauthorDecisionContext,
     ModelToolCall,
 };
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,9 @@ const PROMPT: &str = "\
 record_decision 只记录作者本轮明确选择、否定、待定或撤回的事项，quote 必须是本轮作者原话。
 如果、试写看看、角色台词和模糊赞许不是确定设定；不要把你的创意写成作者决定。
 同一主题后来的明确修改替代早期方向，被否定和撤回的方向不能复活。可用 get_decisions 回查。
+record_decision首次创建expectedVersion=0且不提供decisionId；修改、否定或撤回已有决定必须先查询并使用稳定decisionId及最新expectedVersion，不能换个主题名重新建一条。topic和aliases可记录同一主题的不同说法，不自动合并不同对象的决定。quote须与当前作者消息准确匹配。
+get_decisions支持用旧措辞和主题别名找回最新状态，不把旧版本作为有效方向返回；提供decisionId可分页查看修订与原话。CHOSEN是当前分支选择，REJECTED是明确否定，OPEN是未决，WITHDRAWN是不再沿用，均不等于正式设定已修改。
+历史消息和MESSAGE来源的decisionContext附带已关联决定的最新状态。superseded=true时，原发言中的关联旧选择已被替代，只能用于回顾，不能覆盖current。即使旧发言字面更贴近查询，也以最新状态为准；hasMore=true须get_decisions继续核对。未建立关联的旧建议也不能自行升级为作者决定。
 作者明确要求写或修改时才使用 edit_draft。只讨论、不改稿时不能调用它。稿件修改是可撤销的工作稿建议，不是正式提交。
 先读 read_draft 再局部修改，replace 必须给唯一的准确原文；保留未要求修改的部分。
 new 只用于新建试写、换稿件类型或明确重写全文，不能用它规避局部修改。
@@ -212,15 +216,18 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "record_decision",
-            "记录作者本轮明确决定；quote必须是本轮原话。试写、假设不等于采用。",
+            "记录作者本轮明确决定。新建expectedVersion=0；更新须提供稳定decisionId及最新expectedVersion。quote是本轮原话，换说法用aliases关联同一主题，不另建同名记忆。试写、假设不等于采用。",
             json!({"topic":{"type":"string"},"content":{"type":"string"},
+                "decisionId":{"type":"string"},"expectedVersion":{"type":"integer","minimum":0},
+                "aliases":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":200}},
                 "status":{"type":"string","enum":["CHOSEN","REJECTED","OPEN","WITHDRAWN"]},"quote":{"type":"string"}}),
-            &["topic", "content", "status", "quote"],
+            &["topic", "content", "status", "quote", "expectedVersion"],
         ),
         tool(
             "get_decisions",
-            "查询本次讨论的有效、否定、待定及撤回决定。不是所有内容都已正式入库。",
-            json!({"query":{"type":"string"},"offset":{"type":"integer","minimum":0}}),
+            "按旧措辞或别名查询当前分支决定的最新状态，每页16项。提供decisionId时查看修订历史，每页20项，继续用beforeVersion。旧版本仅作历史，决定不等于正式内容。",
+            json!({"query":{"type":"string"},"offset":{"type":"integer","minimum":0},
+                "decisionId":{"type":"string"},"beforeVersion":{"type":"integer","minimum":1}}),
             &[],
         ),
         tool(
@@ -438,6 +445,14 @@ pub(crate) fn correct_coauthor_decision(
 }
 
 #[tauri::command]
+pub(crate) fn list_coauthor_decision_history(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid, before_version: Option<i64>,
+) -> Result<CoauthorDecisionHistory, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_coauthor_decision_history(&scope,id,before_version).map_err(Into::into)
+}
+
+#[tauri::command]
 pub(crate) fn prepare_coauthor_changeset(
     state: tauri::State<'_, ProjectState>,
     scope: CoauthorScope,
@@ -570,20 +585,14 @@ struct EditArgs {
     document_kind: Option<CoauthorDocumentKind>,
 }
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DecisionArgs {
-    topic: String,
-    content: String,
-    status: String,
-    quote: String,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DecisionQuery {
     #[serde(default)]
     query: String,
     #[serde(default)]
-    offset: usize,
+    offset: u32,
+    decision_id: Option<uuid::Uuid>,
+    before_version: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -599,6 +608,19 @@ struct ChangeArgs {
 }
 
 fn include_draft_default() -> bool { true }
+
+fn history_content(text: &str, context: Option<&CoauthorDecisionContext>) -> String {
+    context.map_or_else(
+        || text.to_owned(),
+        |context| {
+            json!({
+                "historicalMessage": text, "decisionContext": context,
+                "notice": "原发言保留；关联选择以current中的最新版本和状态为准，superseded表示历史版本。"
+            })
+            .to_string()
+        },
+    )
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -859,48 +881,15 @@ fn execute_tool(
             )
         }
         "record_decision" => {
-            let args: DecisionArgs = arguments(call)?;
-            if args.quote.trim().is_empty() || !input.message.contains(&args.quote) {
-                return Err(CoauthorError::Invalid(
-                    "决定缺少本轮作者原话依据，未记录。".into(),
-                ));
-            }
-            Ok(json!(manager.set_coauthor_decision(
-                &input.scope,
-                input.run_id,
-                &args.topic,
-                &args.content,
-                &args.status
-            )?))
+            let args: CoauthorDecisionInput = arguments(call)?;
+            Ok(json!(manager.set_coauthor_decision(&input.scope,input.run_id,args)?))
         }
         "get_decisions" => {
             let args: DecisionQuery = arguments(call)?;
-            let all = manager.coauthor_state(&input.scope)?.decisions;
-            let query = novel_application::DiscussionRelevance::new(&args.query);
-            let mut ranked = all
-                .into_iter()
-                .rev()
-                .map(|decision| {
-                    (
-                        query.score(&format!("{}\n{}", decision.topic, decision.content)),
-                        decision,
-                    )
-                })
-                .filter(|(score, _)| args.query.is_empty() || *score > 0)
-                .collect::<Vec<_>>();
-            ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
-            let mut selected = ranked
-                .into_iter()
-                .skip(args.offset)
-                .take(41)
-                .map(|(_, decision)| decision)
-                .collect::<Vec<_>>();
-            let has_more = selected.len() > 40;
-            selected.truncate(40);
-            Ok(
-                json!({"decisions":selected,"scope":"当前讨论，未正式采用的选择不改变全书设定。","limit":40,
-                    "offset":args.offset,"hasMore":has_more}),
-            )
+            match args.decision_id {
+                Some(id)=>Ok(json!(manager.list_coauthor_decision_history(&input.scope,id,args.before_version)?)),
+                None=>Ok(json!(manager.search_coauthor_decisions(&input.scope,&args.query,args.offset)?)),
+            }
         }
         "link_source" => {
             if !input.allow_draft_edits {
@@ -996,7 +985,7 @@ pub(crate) async fn run_coauthor(
         &preference,
     ) as usize;
     let cancelled = Arc::new(AtomicBool::new(false));
-    let (initial, recent, found, scope_info) = {
+    let (initial, recent, found, scope_info, memories, memory_contexts) = {
         let mut manager = state
             .manager
             .lock()
@@ -1031,13 +1020,17 @@ pub(crate) async fn run_coauthor(
         };
         let query = query.chars().take(1800).collect::<String>();
         let found = manager.search_coauthor_sources(&input.scope, &query, false, 0)?;
+        let memories=manager.search_coauthor_decisions(&input.scope,&query,0)?;
+        let memory_contexts=recent.iter().map(|message|
+            Ok((message.id,manager.coauthor_message_decision_context(&input.scope,message.id)?)))
+            .collect::<Result<HashMap<_,_>,CoauthorError>>()?;
         manager.start_coauthor_run(
             &input.scope,
             input.run_id,
             &input.message,
             input.expected_document_version,
         )?;
-        (initial, recent, found, scope_info)
+        (initial, recent, found, scope_info, memories, memory_contexts)
     };
     let _guard = RunGuard {
         state: &state,
@@ -1072,18 +1065,14 @@ pub(crate) async fn run_coauthor(
             "作者的讨论与表达偏好（不替代上述执行权限与来源规则）：\n{style}")}));
     }
     let mut history=recent.into_iter().rev().scan(0usize,|used,message|{
-        *used+=message.content.chars().count();
+        let content=history_content(&message.content,memory_contexts.get(&message.id).and_then(Option::as_ref));
+        *used+=content.chars().count();
         if *used>budget/5 { return None; }
         Some(json!({"role":if message.role==novel_infrastructure::DiscussionMessageRole::User {"user"}else{"assistant"},
-            "content":message.content}))
+            "content":content}))
     }).collect::<Vec<_>>();
     history.reverse();
     messages.extend(history);
-    let relevance = novel_application::DiscussionRelevance::new(&input.message);
-    let mut decisions = initial.decisions.iter().rev().collect::<Vec<_>>();
-    decisions.sort_by_cached_key(|decision| {
-        std::cmp::Reverse(relevance.score(&format!("{}\n{}", decision.topic, decision.content)))
-    });
     messages.push(json!({"role":"user","content":json!({
         "scope":scope_info,
         "request":input.message,"allowDraftEdits":input.allow_draft_edits,"selection":input.selection,
@@ -1091,7 +1080,7 @@ pub(crate) async fn run_coauthor(
             "contentPreview":document.content.chars().take(1800).collect::<String>(),
             "totalChars":document.content.chars().count(),"narrativePosition":document.narrative_position,
             "targetKey":document.target_key},
-        "relevantDecisions":decisions.into_iter().take(16).collect::<Vec<_>>(),
+        "relevantDecisions":memories,
         "relevantSources":found
     }).to_string()}));
     let tool_definitions = tools();
@@ -1136,7 +1125,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v5",
+                    prompt_version: "coauthor-v6",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -1157,7 +1146,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v5","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v6","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -1316,6 +1305,35 @@ pub(crate) async fn run_coauthor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn decision_tools_require_stable_identity_version_and_retain_current_guards() {
+        let tool=tools().into_iter().find(|tool|tool["function"]["name"]=="record_decision").unwrap();
+        assert!(tool["function"]["parameters"]["required"].as_array().unwrap().contains(&json!("expectedVersion")));
+        assert!(serde_json::from_value::<CoauthorDecisionInput>(json!({
+            "topic":"代价","content":"记忆","status":"CHOSEN","quote":"确定失忆"
+        })).is_err());
+        assert!(serde_json::from_value::<DecisionQuery>(json!({"decisionId":uuid::Uuid::new_v4(),"beforeVersion":20})).is_ok());
+        assert!(PROMPT.contains("不能换个主题名重新建一条"));
+    }
+
+    #[test]
+    fn recent_history_keeps_original_expression_but_superseded_choice_is_not_current() {
+        let decision=novel_infrastructure::CoauthorDecision {
+            id:uuid::Uuid::new_v4(),topic:"突破代价".into(),content:"已撤回失忆方向".into(),
+            status:"WITHDRAWN".into(),source_message_id:uuid::Uuid::new_v4(),version:3,
+        };
+        let context=CoauthorDecisionContext {
+            guards:vec![novel_infrastructure::CoauthorDecisionGuard {current:decision.clone(),referenced_version:1,superseded:true}],
+            has_more:false,
+        };
+        let text=history_content("确定消耗寿元",Some(&context));
+        let value:Value=serde_json::from_str(&text).unwrap();
+        assert_eq!(value["historicalMessage"],"确定消耗寿元");
+        assert_eq!(value["decisionContext"]["guards"][0]["current"],json!(decision));
+        assert_eq!(value["decisionContext"]["guards"][0]["superseded"],true);
+        assert_eq!(history_content("无关联建议",None),"无关联建议");
+    }
+
     fn document() -> CoauthorDocument {
         CoauthorDocument {
             session_id: uuid::Uuid::new_v4(),

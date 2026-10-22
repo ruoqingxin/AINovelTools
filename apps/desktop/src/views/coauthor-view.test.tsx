@@ -87,6 +87,49 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it("corrects a decision by stable identity and expected version without rewriting the manuscript", async () => {
+    stored.decisions = [{ id: "decision", topic: "突破代价", content: "寿元", status: "CHOSEN", sourceMessageId: "old-author", version: 2 }];
+    const base = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => {
+      if (command === "correct_coauthor_decision") {
+        stored.decisions[0] = { ...stored.decisions[0], content: String(args.content), status: String(args.status), version: 3 };
+        return stored.decisions[0];
+      }
+      return base(command, args);
+    });
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    fireEvent.click(screen.getByRole("button", { name: /决定/ }));
+    fireEvent.click(screen.getByRole("button", { name: "纠正" }));
+    fireEvent.change(screen.getByLabelText("决定内容"), { target: { value: "撤回寿元，先不确定代价" } });
+    fireEvent.change(screen.getByLabelText("决定状态"), { target: { value: "WITHDRAWN" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存纠正" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("correct_coauthor_decision", {
+      scope: { projectId: "p1", sessionId: "s1" }, id: "decision", expectedVersion: 2,
+      content: "撤回寿元，先不确定代价", status: "WITHDRAWN",
+    }));
+    await waitFor(() => expect(screen.queryByLabelText("决定内容")).not.toBeInTheDocument());
+    expect(screen.getByText("已撤回 · v3")).toBeVisible();
+    expect(stored.document).toEqual(baseline);
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor" || name === "publish_coauthor_document")).toBe(false);
+  });
+
+  it("keeps an author correction after a version conflict and does not retry with a guessed version", async () => {
+    stored.decisions = [{ id: "decision", topic: "突破代价", content: "寿元", status: "CHOSEN", sourceMessageId: "old-author", version: 2 }];
+    const base = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => command === "correct_coauthor_decision"
+      ? Promise.reject(new Error("决定版本已变化，请重新核对")) : base(command, args));
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    fireEvent.click(screen.getByRole("button", { name: /决定/ }));
+    fireEvent.click(screen.getByRole("button", { name: "纠正" }));
+    fireEvent.change(screen.getByLabelText("决定内容"), { target: { value: "保留作者新输入" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存纠正" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("决定版本已变化");
+    expect(screen.getByLabelText("决定内容")).toHaveValue("保留作者新输入");
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === "correct_coauthor_decision")).toHaveLength(1);
+  });
+
   it("uses real run IPC and applies authorized working edits without formal publication", async () => {
     renderWorkspace();
     const request = await begin();

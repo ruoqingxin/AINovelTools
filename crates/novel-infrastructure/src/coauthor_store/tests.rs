@@ -191,8 +191,11 @@ fn run_supersession_cancellation_and_decision_revisions_are_durable() {
     let first = manager
         .start_coauthor_run(&scope, Uuid::new_v4(), "就选寿元代价", 0)
         .unwrap();
-    manager
-        .set_coauthor_decision(&scope, first.id, "突破代价", "消耗寿元", "CHOSEN")
+    let initial=manager
+        .set_coauthor_decision(&scope, first.id, CoauthorDecisionInput {
+            decision_id:None,expected_version:0,topic:"突破代价".into(),aliases:vec![],
+            content:"消耗寿元".into(),status:"CHOSEN".into(),quote:"就选寿元代价".into(),
+        })
         .unwrap();
     let next = manager
         .start_coauthor_run(&scope, Uuid::new_v4(), "改为记忆", 0)
@@ -200,11 +203,17 @@ fn run_supersession_cancellation_and_decision_revisions_are_durable() {
     assert!(!manager.coauthor_run_active(&scope, first.id).unwrap());
     assert!(
         manager
-            .set_coauthor_decision(&scope, first.id, "突破代价", "旧内容", "CHOSEN")
+            .set_coauthor_decision(&scope, first.id, CoauthorDecisionInput {
+                decision_id:Some(initial.id),expected_version:1,topic:"突破代价".into(),aliases:vec![],
+                content:"旧内容".into(),status:"CHOSEN".into(),quote:"就选寿元代价".into(),
+            })
             .is_err()
     );
     let chosen = manager
-        .set_coauthor_decision(&scope, next.id, "突破代价", "消耗记忆", "CHOSEN")
+        .set_coauthor_decision(&scope, next.id, CoauthorDecisionInput {
+            decision_id:Some(initial.id),expected_version:1,topic:"突破代价".into(),aliases:vec![],
+            content:"消耗记忆".into(),status:"CHOSEN".into(),quote:"改为记忆".into(),
+        })
         .unwrap();
     assert_eq!(chosen.version, 2);
     assert_eq!(manager.coauthor_state(&scope).unwrap().decisions.len(), 1);
@@ -463,9 +472,11 @@ fn migration_52_rolls_back_new_tables_on_failure_and_preserves_formal_text_on_re
     ).unwrap();
     db.migrate_coauthor_changes().unwrap();
     db.migrate_coauthor_reversals().unwrap();
-    db.connection.execute_batch("DROP TABLE coauthor_check_notes; DROP TABLE coauthor_check_reads; DROP TABLE coauthor_check_entries; DROP TABLE coauthor_source_checks;").unwrap();
+    db.connection.execute_batch("DROP TABLE coauthor_decision_fts; DROP TABLE coauthor_decision_mentions; DROP TABLE coauthor_decision_evidence; DROP TABLE coauthor_decision_aliases;
+        DROP TABLE coauthor_check_notes; DROP TABLE coauthor_check_reads; DROP TABLE coauthor_check_entries; DROP TABLE coauthor_source_checks;").unwrap();
     db.migrate_coauthor_source_checks().unwrap();
     db.migrate_coauthor_check_notes().unwrap();
+    db.migrate_coauthor_decision_memory().unwrap();
     assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         db.current_manuscript(chapter.id).unwrap().unwrap(),
@@ -480,7 +491,10 @@ fn fork_copies_history_and_decisions_atomically_but_future_edits_are_isolated() 
         .start_coauthor_run(&scope, Uuid::new_v4(), "采用失忆版", 0)
         .unwrap();
     manager
-        .set_coauthor_decision(&scope, run.id, "代价", "失忆", "CHOSEN")
+        .set_coauthor_decision(&scope, run.id, CoauthorDecisionInput {
+            decision_id:None,expected_version:0,topic:"代价".into(),aliases:vec![],
+            content:"失忆".into(),status:"CHOSEN".into(),quote:"采用失忆版".into(),
+        })
         .unwrap();
     manager
         .finish_coauthor_run(&scope, run.id, "COMPLETED", "第二个方案是魂灯。", &[])

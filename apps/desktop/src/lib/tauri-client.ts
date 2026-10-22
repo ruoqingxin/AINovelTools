@@ -219,6 +219,9 @@ export function readCoauthorSource(input: IpcRequests["read_coauthor_source"]) {
 export function correctCoauthorDecision(input: IpcRequests["correct_coauthor_decision"]) {
   return invoke("correct_coauthor_decision", input);
 }
+export function listCoauthorDecisionHistory(input: IpcRequests["list_coauthor_decision_history"]) {
+  return invoke("list_coauthor_decision_history", input);
+}
 export function prepareCoauthorChangeset(input: IpcRequests["prepare_coauthor_changeset"]) {
   return invoke("prepare_coauthor_changeset", input);
 }

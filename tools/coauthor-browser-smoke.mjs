@@ -30,7 +30,7 @@ try {
           content:"他将最后一缕灵气压进魂灯。\\n\\n母亲曾在雨夜唤过他的名字。他记得那扇门，却再也记不起门后的人声。",
           targetKey:null,targetRevision:null,narrativePosition:"金丹突破之夜 · 陆沉限知视角"};
         let state={document:doc,decisions:[{id:"d1",topic:"突破代价",content:"金丹之后的突破，以失去一段记忆为代价。",
-          status:"CHOSEN",sourceMessageId:"m1",version:1}],runs:[]};
+          status:"CHOSEN",sourceMessageId:"m1",version:2}],runs:[]};
         const messages=[
           {id:"m1",sessionId:"s1",role:"USER",content:"我想在金丹后面增加一个新境界，突破的代价改为失去记忆。"},
           {id:"m2",sessionId:"s1",role:"ASSISTANT",content:"《修炼体系》里已有炼气、筑基、金丹三个阶段，原本的突破代价是寿元。\\n\\n可以沿着已有体系扩展，在金丹后加一层“照魂境”。你已选择失忆代价，我会把它作为当前分支的方向，原设定暂不替换。"},
@@ -96,11 +96,16 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:56};
+          if(command==="health_query")return {schemaVersion:57};
           if(command==="bootstrap_status")return {};
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
           if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
           if(command==="get_coauthor_state")return structuredClone(state);
+          if(command==="list_coauthor_decision_history")return {
+            current:{decision:structuredClone(state.decisions[0]),aliases:["突破代价","境界代偿"],quote:"代价改为失去记忆"},
+            revisions:[{decision:structuredClone(state.decisions[0]),quote:"代价改为失去记忆"},
+              {decision:{...state.decisions[0],version:1,content:"突破消耗寿元。",sourceMessageId:"earlier-message"},
+                quote:null}],hasMore:false};
           if(command==="list_coauthor_source_checks")return {checks:structuredClone(sourceChecks),hasMore:false};
           if(command==="get_coauthor_source_check")return {check:structuredClone(sourceChecks.find(item=>item.id===args.id)),
             entries:structuredClone(checkEntries),offset:0,hasMore:false};
@@ -303,6 +308,15 @@ try {
     assert.ok((await page.getByLabel("讨论输入", { exact: true }).inputValue()).includes("继续查证清单 check2"));
     const runCount = await page.evaluate(() => window.__coauthorCalls.filter((name) => name === "run_coauthor").length);
     assert.equal(runCount, 1, "Viewing, creating and continuing a check must not auto-run a model");
+    await page.getByRole("button", { name: "决定", exact: false }).click();
+    const decisionsPanel = page.getByRole("dialog", { name: "讨论决定" });
+    await decisionsPanel.getByText("决定来源与修订", { exact: true }).click();
+    await decisionsPanel.getByText("v2 · 当前修订", { exact: true }).waitFor();
+    await decisionsPanel.getByText("v1 · 已替代（历史）", { exact: true }).waitFor();
+    await decisionsPanel.getByText("主题别名：突破代价、境界代偿", { exact: true }).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-decision-history.png`), fullPage: true });
+    assert.equal(await decisionsPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
+    await decisionsPanel.getByRole("button", { name: "关闭讨论决定", exact: true }).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     reports.push({ viewport, overflow, panelOverflow, boxes, commands: await page.evaluate(() => window.__coauthorCalls) });
     await context.close();

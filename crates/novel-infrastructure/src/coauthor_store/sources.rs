@@ -12,6 +12,8 @@ pub struct CoauthorSource {
     pub session_id: Option<Uuid>,
     pub offset: usize,
     pub total_chars: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_context: Option<CoauthorDecisionContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -113,6 +115,7 @@ impl ProjectManager {
         let mut hits = Vec::new();
         for key in keys.into_iter().take(12) {
             if let Some(mut source) = db.coauthor_source(&key)? {
+                db.attach_decision_context(&mut source)?;
                 source.content = relevance.excerpt(&source.content, 600);
                 hits.push(source);
             }
@@ -148,6 +151,7 @@ impl ProjectManager {
         if source.session_id.is_some_and(|id| id != scope.session_id) {
             return Err(CoauthorError::NotFound);
         }
+        db.attach_decision_context(&mut source)?;
         if offset > source.total_chars {
             return Err(CoauthorError::Invalid("来源读取位置超出原文。".into()));
         }
@@ -163,6 +167,16 @@ impl ProjectManager {
 }
 
 impl Database {
+    fn attach_decision_context(&self, source: &mut CoauthorSource) -> Result<(),CoauthorError> {
+        if source.kind=="MESSAGE" {
+            let session=source.session_id.ok_or(CoauthorError::NotFound)?;
+            let message=source.key.strip_prefix("MESSAGE:").ok_or(CoauthorError::NotFound)?
+                .parse().map_err(|_|CoauthorError::NotFound)?;
+            source.decision_context=self.message_decision_context(session,message)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn coauthor_pending_updates(&self) -> Result<usize, CoauthorError> {
         let count =
             self.connection
@@ -279,15 +293,17 @@ impl Database {
                 Sha256::digest(format!("{key}\n{title}\n{content}"))
             );
             let total_chars = content.chars().count();
+            let session_id:Option<Uuid>=session.and_then(|id|id.parse().ok());
             CoauthorSource {
                 key: key.into(),
                 kind: kind.into(),
                 title,
                 revision,
                 content,
-                session_id: session.and_then(|id| id.parse().ok()),
+                session_id,
                 offset: 0,
                 total_chars,
+                decision_context:None,
             }
         }))
     }
