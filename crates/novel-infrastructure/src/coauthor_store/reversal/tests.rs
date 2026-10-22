@@ -88,7 +88,7 @@ impl Fixture {
                         target_key: Some(source.key),
                         target_revision: Some(source.revision),
                         depends_on: vec![],
-                        manuscript_edits: vec![],
+                        manuscript_edits: vec![], outline_edits: vec![],
                     }],
                     impacts: vec![],
                     coverage: "未检查全书。".into(),
@@ -312,7 +312,7 @@ fn a_later_adoption_with_read_evidence_is_an_explicit_consumer_and_must_be_handl
                     target_key: None,
                     target_revision: None,
                     depends_on: vec![],
-                    manuscript_edits: vec![],
+                    manuscript_edits: vec![], outline_edits: vec![],
                 }],
                 impacts: vec![],
                 coverage: "只读体系".into(),
@@ -476,7 +476,7 @@ fn new_setting_request(version: i64) -> CoauthorChangeRequest {
             target_key: None,
             target_revision: None,
             depends_on: vec![],
-            manuscript_edits: vec![],
+            manuscript_edits: vec![], outline_edits: vec![],
         }],
         impacts: vec![],
         coverage: "仅查证已读来源。".into(),
@@ -611,7 +611,7 @@ fn rich_manuscript_reversal_restores_exact_json_as_a_new_revision() {
         target_key: Some(source.key),
         target_revision: Some(source.revision),
         depends_on: vec![],
-        manuscript_edits: vec![CoauthorManuscriptEdit {
+        outline_edits: vec![], manuscript_edits: vec![CoauthorManuscriptEdit {
             block_id: "p".into(),
             start: 4,
             end: 6,
@@ -670,7 +670,7 @@ fn partial_adoption_reversal_archives_only_adopted_new_entity_and_outline() {
         target_key: None,
         target_revision: None,
         depends_on: vec!["new".into()],
-        manuscript_edits: vec![],
+        manuscript_edits: vec![], outline_edits: vec![],
     });
     request.items.push(CoauthorChangeItemInput {
         id: "unused".into(),

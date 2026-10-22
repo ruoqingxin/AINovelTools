@@ -65,7 +65,15 @@ try {
                 before:{key:"MANUSCRIPT:opening",kind:"MANUSCRIPT",title:"第一章 · 入城前夜",revision:"opening1",
                   content:"甲😀失去寿元，母亲的声音仍在雨里。",totalChars:20,offset:0,sessionId:null},dependsOn:["realm"],
                 manuscriptEdits:[{blockId:"p",start:4,end:6,before:"寿元",after:"记忆"}],manuscriptDraftVersion:0,
-                manuscriptBeforeJson:richManuscript("寿元"),manuscriptAfterJson:richManuscript("记忆")}],
+                manuscriptBeforeJson:richManuscript("寿元"),manuscriptAfterJson:richManuscript("记忆")},
+              {id:"outline",document:{...state.document,kind:"OUTLINE",title:"突破大纲",content:"甲😀突破消耗记忆。结尾保留。",
+                targetKey:"PLAN:plan-node:outline",targetRevision:"outline1"},
+                before:{key:"PLAN:plan-node:outline",kind:"PLAN",title:"突破大纲",revision:"outline1",
+                  content:"甲😀突破消耗寿元。结尾保留。",totalChars:15,offset:0,sessionId:null},dependsOn:["realm"],
+                outlineEdits:[{start:6,end:8,before:"寿元",after:"记忆"}],outlineFingerprint:"outline-fingerprint",
+                outlineBefore:{id:"plan-node:outline",version:1,content:"甲😀突破消耗寿元。结尾保留。",
+                  pendingContent:"未采用候选：保留寿元代价",storyState:"CONFIRMED",rationale:"保留作者备注",
+                  consequence:"复查后续情节",references:["原始引用"],updatedAt:"now"}}],
             impacts:[{itemIds:["realm"],key:"MANUSCRIPT:old",revision:"old1",
               quote:"他仍记得母亲唤他的声音。",reason:"旧章描写可能依赖原有突破代价，需要核对叙事位置。"}]};
         }
@@ -108,7 +116,7 @@ try {
             if(changes.status==="COMMITTED")return structuredClone(changes);
             if(args.selectedIds.includes("draft")&&!args.selectedIds.includes("realm"))throw new Error("missing dependency");
             changes={...changes,status:"COMMITTED",version:2,selectedIds:args.selectedIds,
-              published:args.selectedIds.map(id=>({itemId:id,sourceKey:id==="draft"?"MANUSCRIPT:new":id==="opening"?"MANUSCRIPT:opening":"ENTITY:realm",revision:"v2"}))};
+              published:args.selectedIds.map(id=>({itemId:id,sourceKey:id==="draft"?"MANUSCRIPT:new":id==="opening"?"MANUSCRIPT:opening":id==="outline"?"PLAN:plan-node:outline":"ENTITY:realm",revision:"v2"}))};
             if(args.selectedIds.includes("draft"))state.document={...state.document,version:state.document.version+1,
               targetKey:"MANUSCRIPT:new",targetRevision:"v2"};
             impacts=[{id:"impact1",changeSetId:changes.id,version:1,title:"第九章 · 雨夜",evidence:changes.impacts[0],
@@ -190,6 +198,15 @@ try {
     assert.equal(await afterManuscript.locator("strong").innerText(), "甲😀失去记忆");
     assert.equal(await afterManuscript.locator("em").innerText(), "，母亲的声音仍在雨里。");
     assert.equal(await afterManuscript.getAttribute("contenteditable"), "false");
+    const outlineRanges = changesPanel.getByRole("region", { name: "大纲局部修改范围" });
+    await outlineRanges.waitFor();
+    assert.ok((await outlineRanges.innerText()).includes("字符 6 至 8"));
+    assert.equal(await changesPanel.getByLabel("局部修改前大纲").innerText(), "甲😀突破消耗寿元。结尾保留。");
+    assert.equal(await changesPanel.getByLabel("局部修改后大纲").innerText(), "甲😀突破消耗记忆。结尾保留。");
+    await outlineRanges.getByText("保留的大纲记录 · v1", { exact: true }).click();
+    await outlineRanges.getByText("未采用候选：保留寿元代价", { exact: true }).waitFor({ state: "visible" });
+    await outlineRanges.locator("..").evaluate((el) => el.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-outline.png`), fullPage: true });
     await changesPanel.getByRole("region", { name: "正文局部修改范围" }).evaluate((el) => el.scrollIntoView({ block: "start" }));
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-rich-manuscript.png`), fullPage: true });
     await changesPanel.locator(".coauthor-change-review").evaluate((el) => el.scrollIntoView({ block: "start" }));
@@ -201,7 +218,7 @@ try {
     await confirmation.waitFor({ state: "visible" });
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-confirmation.png`), fullPage: true });
     await confirmation.getByRole("button", { name: "采用所选变更", exact: true }).click();
-    await changesPanel.getByText("已正式采用 3 项；其他内容未同步。", { exact: true }).waitFor();
+    await changesPanel.getByText("已正式采用 4 项；其他内容未同步。", { exact: true }).waitFor();
     await changesPanel.getByRole("button", { name: "处理待办" }).click();
     await changesPanel.getByLabel("待办状态").selectOption("ACCEPTED_DIFFERENCE");
     await changesPanel.getByLabel("待办处理依据").fill("保留为突破之前的回忆，不修改旧章。");

@@ -1065,6 +1065,7 @@ export type InputCoauthorChangeItemInput = {
     id: string;
     kind: InputCoauthorDocumentKind;
     manuscriptEdits?: InputCoauthorManuscriptEdit[];
+    outlineEdits?: InputCoauthorOutlineEdit[];
     targetKey?: string | null;
     targetRevision?: string | null;
     title: string;
@@ -1073,6 +1074,12 @@ export type InputCoauthorManuscriptEdit = {
     after: string;
     before: string;
     blockId: string;
+    end: number;
+    start: number;
+};
+export type InputCoauthorOutlineEdit = {
+    after: string;
+    before: string;
     end: number;
     start: number;
 };
@@ -1701,6 +1708,9 @@ export type CoauthorChangeItem = {
     manuscriptBeforeJson: string | null;
     manuscriptDraftVersion: number | null;
     manuscriptEdits: CoauthorManuscriptEdit[];
+    outlineBefore: VersionedPlanningSection | null;
+    outlineEdits: CoauthorOutlineEdit[];
+    outlineFingerprint: string | null;
 };
 export type CoauthorSource = {
     content: string;
@@ -1716,6 +1726,12 @@ export type CoauthorManuscriptEdit = {
     after: string;
     before: string;
     blockId: string;
+    end: number;
+    start: number;
+};
+export type CoauthorOutlineEdit = {
+    after: string;
+    before: string;
     end: number;
     start: number;
 };

@@ -171,6 +171,21 @@ impl Database {
                 )?;
                 Self::invalidate_reversed_summaries(tx, id)?;
             }
+            ("PLAN", Some(before)) => {
+                let old = &before["section"][0];
+                let section_id = field(old, "id")?;
+                let version: i64 = tx.query_row("SELECT version FROM planning_sections WHERE id=?1",
+                    [section_id], |row| row.get(0))?;
+                let section = PlanningSection {
+                    id: section_id.into(), content: field(old,"content")?.into(),
+                    pending_content: field(old,"pending_content")?.into(),
+                    story_state: PlanningStoryState::parse(field(old,"story_state")?),
+                    rationale: field(old,"rationale")?.into(), consequence: field(old,"consequence")?.into(),
+                    references: decode(field(old,"references_json")?.into())?,
+                    updated_at: field(old,"updated_at")?.into(),
+                };
+                Self::save_coauthor_outline_in_tx(tx,section,version)?;
+            }
             ("PLAN" | "MANUSCRIPT", None) => {
                 let node_id = if kind == "PLAN" {
                     id.strip_prefix("plan-node:")

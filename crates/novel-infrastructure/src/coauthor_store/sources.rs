@@ -238,7 +238,8 @@ impl Database {
                 "SELECT COALESCE(n.title,p.id),
                  '规划状态：' || p.story_state || char(10) || '当前记录：' || p.content ||
                  char(10) || '尚未确认的候选：' || p.pending_content ||
-                 char(10) || '备注：' || p.rationale || char(10) || p.consequence, NULL, CAST(p.version AS TEXT)
+                 char(10) || '备注：' || p.rationale || char(10) || p.consequence, NULL,
+                 CAST(p.version AS TEXT) || ':' || COALESCE(CAST(n.revision AS TEXT),'none')
                  FROM planning_sections p LEFT JOIN plan_nodes n ON p.id='plan-node:' || n.id
                  WHERE p.id=?1 AND p.story_state<>'RETIRED' AND (n.id IS NULL OR n.archived=0)",
                 [id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),

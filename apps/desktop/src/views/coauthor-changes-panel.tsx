@@ -193,8 +193,8 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
           <strong>{item.document.title}</strong><span>{kinds[item.document.kind]}</span>
         </label>
         <p className="coauthor-notice">{item.document.targetKey
-          ? `${item.manuscriptEdits?.length ? "局部修改" : "替换"}：${item.document.targetKey}` : "新建正式条目"}</p>
-        {Boolean(item.manuscriptEdits?.length) && <small>原文修订：{item.document.targetRevision}</small>}
+          ? `${item.manuscriptEdits?.length || item.outlineEdits?.length ? "局部修改" : "替换"}：${item.document.targetKey}` : "新建正式条目"}</p>
+        {Boolean(item.manuscriptEdits?.length || item.outlineEdits?.length) && <small>原文修订：{item.document.targetRevision}</small>}
         {item.dependsOn.length > 0 && <p className="coauthor-notice">依赖：{item.dependsOn.map((id) =>
           changes.items.find((entry) => entry.id === id)?.document.title ?? id).join("、")}</p>}
         {item.before && item.document.kind === "SETTING" && <p className="coauthor-notice">完整替换会重置结构属性为全书设定，旧修订作者规则不继承；别名、标签和旧修订保留。</p>}
@@ -204,13 +204,27 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
             <div className="coauthor-diff"><pre>{edit.before}</pre><pre>{edit.after || "（删除）"}</pre></div>
           </div>)}
         </section>}
+        {Boolean(item.outlineEdits?.length) && <section aria-label="大纲局部修改范围">
+          {item.outlineEdits.map((edit, index) => <div key={index}>
+            <small>正式内容 · 字符 {edit.start} 至 {edit.end}（不含末位）</small>
+            <div className="coauthor-diff"><pre>{edit.before}</pre><pre>{edit.after || "（删除）"}</pre></div>
+          </div>)}
+          <p className="coauthor-notice">仅修改正式内容；标题、层级、候选稿、备注、原有影响说明与引用不变。</p>
+          {item.outlineBefore && <details><summary>保留的大纲记录 · v{item.outlineBefore.version}</summary>
+            <dl className="coauthor-outline-record"><dt>候选稿</dt><dd><pre>{item.outlineBefore.pendingContent || "无"}</pre></dd>
+              <dt>备注</dt><dd><pre>{item.outlineBefore.rationale || "无"}</pre></dd>
+              <dt>后续影响</dt><dd><pre>{item.outlineBefore.consequence || "无"}</pre></dd>
+              <dt>引用</dt><dd><pre>{item.outlineBefore.references.join("\n") || "无"}</pre></dd></dl>
+          </details>}
+        </section>}
         <div className="coauthor-diff">
           <section><h4>正式原文{item.before ? ` · ${item.before.title}` : ""}</h4>
             {item.manuscriptBeforeJson ? <ManuscriptReader documentJson={item.manuscriptBeforeJson} ariaLabel="局部修改前正文" />
-              : <pre>{item.before?.content ?? "无，新建条目"}</pre>}</section>
+              : <pre aria-label={item.outlineBefore ? "局部修改前大纲" : undefined}>
+                {item.outlineBefore?.content ?? item.before?.content ?? "无，新建条目"}</pre>}</section>
           <section><h4>采用后 · {item.document.title}</h4>
             {item.manuscriptAfterJson ? <ManuscriptReader documentJson={item.manuscriptAfterJson} ariaLabel="局部修改后正文" />
-              : <pre>{item.document.content}</pre>}</section>
+              : <pre aria-label={item.outlineBefore ? "局部修改后大纲" : undefined}>{item.document.content}</pre>}</section>
         </div>
         {changes.published.find((entry) => entry.itemId === item.id) && <small className="coauthor-receipt">
           已采用：{changes.published.find((entry) => entry.itemId === item.id)?.sourceKey}

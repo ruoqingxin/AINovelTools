@@ -72,9 +72,14 @@
 .coauthor-change-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .coauthor-change-actions h3, .coauthor-changes button { display: inline-flex; align-items: center; gap: 6px; }
 .coauthor-change-review, .coauthor-impact-list { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; min-width: 0; scroll-margin-top: 64px; }
-.coauthor-change-item { border-bottom: 1px solid var(--border); padding: 16px 0; }
+.coauthor-change-item { border-bottom: 1px solid var(--border); padding: 16px 0; scroll-margin-top: 64px; }
 .coauthor-change-item .coauthor-diff pre { height: auto; min-height: 72px; max-height: 320px; margin: 8px 0; }
-.coauthor-change-item > section[aria-label="正文局部修改范围"] .coauthor-diff pre { min-height: 0; }
+.coauthor-change-item > section[aria-label="正文局部修改范围"] .coauthor-diff pre,
+.coauthor-change-item > section[aria-label="大纲局部修改范围"] .coauthor-diff pre { min-height: 0; }
+.coauthor-outline-record { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 8px 12px; font-size: 13px; }
+.coauthor-outline-record dt { color: var(--muted); }
+.coauthor-outline-record dd { min-width: 0; margin: 0; }
+.coauthor-outline-record pre { margin: 0; max-height: 180px; overflow-y: auto; font: inherit; line-height: 1.7; }
 .coauthor-change-item .manuscript-reader-content { min-width: 0; max-height: 320px; overflow-y: auto; overflow-wrap: anywhere; }
 .coauthor-change-item .manuscript-reader-body { padding: 8px 0; min-height: 72px; font-size: 14px; line-height: 1.8; }
 .coauthor-change-item .manuscript-reader-body h2 { font-size: 16px; }

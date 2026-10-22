@@ -34,7 +34,9 @@ function proposalFor(run?: CoauthorRun): Proposal | null {
 function sourcesFor(run?: CoauthorRun): Array<CoauthorSource & { read: boolean; sent: boolean }> {
   const found = new Map<string, CoauthorSource & { read: boolean; sent: boolean }>();
   for (const raw of run?.audit ?? []) {
-    const item = raw as { kind?: string; name?: string; result?: { hits?: CoauthorSource[] } & Partial<CoauthorSource> };
+    const item = raw as { kind?: string; name?: string; result?: {
+      hits?: CoauthorSource[]; blocks?: Array<{ text: string }>;
+    } & Partial<CoauthorSource> };
     if (item.kind === "model_request") for (const entry of found.values()) entry.sent = true;
     for (const hit of item.result?.hits ?? []) {
       const key = `${hit.key}:${hit.revision}`;
@@ -44,6 +46,16 @@ function sourcesFor(run?: CoauthorRun): Array<CoauthorSource & { read: boolean; 
       const source = item.result as CoauthorSource;
       const key = `${source.key}:${source.revision}`;
       found.set(key, { ...source, read: true, sent: false });
+    }
+    if (item.kind === "tool" && (item.name === "read_outline_content" || item.name === "read_manuscript_blocks")
+      && item.result?.key && item.result.revision) {
+      const result = item.result;
+      const key = `${result.key}:${result.revision}`;
+      const previous = found.get(key);
+      const content = result.content ?? result.blocks?.map((block) => block.text).join("\n") ?? "";
+      found.set(key, { key: result.key!, revision: result.revision!, kind: item.name === "read_outline_content" ? "PLAN" : "MANUSCRIPT",
+        title: result.title ?? previous?.title ?? result.key!, content, offset: result.offset ?? 0,
+        totalChars: result.totalChars ?? previous?.totalChars ?? [...content].length, sessionId: null, read: true, sent: false });
     }
   }
   return [...found.values()];

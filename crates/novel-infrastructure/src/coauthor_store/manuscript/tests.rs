@@ -73,7 +73,7 @@ impl Fixture {
                 target_key: Some(self.source.key.clone()),
                 target_revision: Some(self.source.revision.clone()),
                 depends_on: vec![],
-                manuscript_edits: vec![edit()],
+                manuscript_edits: vec![edit()], outline_edits: vec![],
             }],
             impacts: vec![],
             coverage: "只修改旧章寿元一词；未检查全书。".into(),
@@ -344,7 +344,7 @@ fn late_manuscript_failure_rolls_back_earlier_objects_and_leaves_proposal_pendin
             target_key: None,
             target_revision: None,
             depends_on: vec![],
-            manuscript_edits: vec![],
+            manuscript_edits: vec![], outline_edits: vec![],
         },
     );
     input.items[1].depends_on.push("setting".into());

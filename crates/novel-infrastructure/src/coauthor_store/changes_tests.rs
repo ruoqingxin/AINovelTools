@@ -31,7 +31,7 @@ fn request(manager: &mut ProjectManager, scope: &CoauthorScope) -> CoauthorChang
         title: "采用失忆版并更新体系".into(),
         draft_depends_on: vec!["realm".into()],
         items: vec![CoauthorChangeItemInput {
-            manuscript_edits: vec![],
+            manuscript_edits: vec![], outline_edits: vec![],
             id: "realm".into(),
             kind: CoauthorDocumentKind::Setting,
             title: "修炼体系".into(),
@@ -168,7 +168,7 @@ fn partial_adoption_checks_dependencies_and_only_commits_the_selected_subset() {
     };
     let ignored = entity(&mut manager, "未采用的新设定", "原设定");
     independent.items.push(CoauthorChangeItemInput {
-        manuscript_edits: vec![],
+        manuscript_edits: vec![], outline_edits: vec![],
         id: "unselected".into(), kind: CoauthorDocumentKind::Setting,
         title: "未采用的新设定".into(), content: "未采用的变化".into(),
         target_key: None, target_revision: None, depends_on: vec![],

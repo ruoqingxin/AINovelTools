@@ -43,12 +43,14 @@ beforeEach(() => {
     id: "c1", version: 1, title: "采用失忆版本", status: "PENDING", baseDocument: structuredClone(document),
     items: [
       { id: "draft", document: structuredClone(document), before: null, dependsOn: ["realm"],
-        manuscriptEdits: [], manuscriptDraftVersion: null, manuscriptBeforeJson: null, manuscriptAfterJson: null },
+        manuscriptEdits: [], manuscriptDraftVersion: null, manuscriptBeforeJson: null, manuscriptAfterJson: null,
+        outlineEdits: [], outlineBefore: null, outlineFingerprint: null },
       { id: "realm", document: { ...document, kind: "SETTING", title: "修炼体系", content: "突破消耗记忆。",
         targetKey: "ENTITY:realm", targetRevision: "r1" }, before: {
         key: "ENTITY:realm", kind: "ENTITY", title: "旧修炼体系", revision: "r1",
         content: "突破消耗寿元。", sessionId: null, offset: 0, totalChars: 8,
-      }, dependsOn: [], manuscriptEdits: [], manuscriptDraftVersion: null, manuscriptBeforeJson: null, manuscriptAfterJson: null },
+      }, dependsOn: [], manuscriptEdits: [], manuscriptDraftVersion: null, manuscriptBeforeJson: null, manuscriptAfterJson: null,
+      outlineEdits: [], outlineBefore: null, outlineFingerprint: null },
     ],
     impacts: [{ itemIds: ["realm"], key: "MANUSCRIPT:old", revision: "m1", quote: "他还记得声音", reason: "复查突破后描写" }],
     coverage: "仅查了体系与旧章，未检查全书", selectedIds: [], published: [], runId: "run1",
@@ -73,6 +75,38 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("linked coauthor changes", () => {
+  it("compares exact formal outline ranges, preserves candidate metadata and adopts no unrelated draft", async () => {
+    changes.items = [{
+      id: "outline", document: { ...document, kind: "OUTLINE", title: "突破大纲", content: "甲😀突破消耗记忆。\n结尾不变。",
+        targetKey: "PLAN:plan-node:outline", targetRevision: "o1" },
+      before: { key: "PLAN:plan-node:outline", kind: "PLAN", title: "突破大纲", revision: "o1",
+        content: "规划状态：CONFIRMED\n当前记录：甲😀突破消耗寿元。\n候选稿：不要采用", offset: 0, totalChars: 44, sessionId: null },
+      dependsOn: [], manuscriptEdits: [], manuscriptBeforeJson: null, manuscriptAfterJson: null, manuscriptDraftVersion: null,
+      outlineEdits: [{ start: 6, end: 8, before: "寿元", after: "记忆" }], outlineFingerprint: "fingerprint",
+      outlineBefore: { id: "plan-node:outline", version: 3, content: "甲😀突破消耗寿元。\n结尾不变。",
+        pendingContent: "尚未采用的候选", storyState: "CONFIRMED", rationale: "作者原备注", consequence: "等待复查",
+        references: ["原始引用"], updatedAt: "now" },
+    }];
+    changes.impacts = [];
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, args: unknown) => command === "commit_coauthor_changeset"
+      ? { ...changes, status: "COMMITTED", version: 2, selectedIds: ["outline"],
+        published: [{ itemId: "outline", sourceKey: "PLAN:plan-node:outline", revision: "o2" }] }
+      : original(command, args));
+    renderPanel(); await openReview();
+    expect(screen.getByLabelText("局部修改前大纲")).toHaveTextContent("甲😀突破消耗寿元。");
+    expect(screen.getByLabelText("局部修改前大纲")).not.toHaveTextContent("候选稿");
+    expect(screen.getByLabelText("局部修改后大纲")).toHaveTextContent("甲😀突破消耗记忆。");
+    expect(screen.getByRole("region", { name: "大纲局部修改范围" })).toHaveTextContent("字符 6 至 8");
+    fireEvent.click(screen.getByText("保留的大纲记录 · v3"));
+    expect(screen.getByText("尚未采用的候选")).toBeVisible();
+    expect(screen.getByText("作者原备注")).toBeVisible();
+    expect(screen.getByText("原始引用")).toBeVisible();
+    await confirmSelected();
+    await waitFor(() => expect(committed).toHaveBeenCalledWith(document, false));
+    expect(mocks.invoke).toHaveBeenCalledWith("commit_coauthor_changeset", { scope, id: "c1", expectedVersion: 1, selectedIds: ["outline"] });
+  });
+
   it("compares local manuscript ranges and rich formatting without adding the unrelated working draft", async () => {
     const rich = (text: string) => JSON.stringify({ type: "doc", content: [
       { type: "paragraph", attrs: { blockId: "p" }, content: [
@@ -87,6 +121,7 @@ describe("linked coauthor changes", () => {
         content: "甲😀失去寿元，保留斜体。", offset: 0, totalChars: 13, sessionId: null },
       dependsOn: [], manuscriptEdits: [{ blockId: "p", start: 4, end: 6, before: "寿元", after: "记忆" }],
       manuscriptDraftVersion: 0, manuscriptBeforeJson: rich("甲😀失去寿元"), manuscriptAfterJson: rich("甲😀失去记忆"),
+      outlineEdits: [], outlineBefore: null, outlineFingerprint: null,
     }];
     changes.impacts = [];
     mocks.invoke.mockImplementation(async (command: string) => {

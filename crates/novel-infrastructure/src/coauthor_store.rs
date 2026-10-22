@@ -6,6 +6,8 @@ mod changes;
 pub use changes::*;
 mod manuscript;
 pub use manuscript::*;
+mod outline;
+pub use outline::*;
 mod reversal;
 pub use reversal::*;
 mod reversal_targets;

@@ -13,6 +13,8 @@ pub struct CoauthorChangeItemInput {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub manuscript_edits: Vec<CoauthorManuscriptEdit>,
+    #[serde(default)]
+    pub outline_edits: Vec<CoauthorOutlineEdit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -55,6 +57,12 @@ pub struct CoauthorChangeItem {
     pub manuscript_before_json: Option<String>,
     #[serde(default)]
     pub manuscript_after_json: Option<String>,
+    #[serde(default)]
+    pub outline_edits: Vec<CoauthorOutlineEdit>,
+    #[serde(default)]
+    pub outline_before: Option<VersionedPlanningSection>,
+    #[serde(default)]
+    pub outline_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -210,6 +218,7 @@ impl ProjectManager {
                 depends_on: request.draft_depends_on,
                 manuscript_edits: vec![], manuscript_draft_version: None,
                 manuscript_before_json: None, manuscript_after_json: None,
+                outline_edits: vec![], outline_before: None, outline_fingerprint: None,
             });
         }
         for item in request.items {
@@ -233,8 +242,14 @@ impl ProjectManager {
                 depends_on: item.depends_on,
                 manuscript_edits: item.manuscript_edits, manuscript_draft_version: None,
                 manuscript_before_json: None, manuscript_after_json: None,
+                outline_edits: item.outline_edits, outline_before: None, outline_fingerprint: None,
             };
-            if change.manuscript_edits.is_empty() {
+            if !change.outline_edits.is_empty() {
+                if !change.document.content.is_empty() {
+                    return Err(CoauthorError::Invalid("大纲局部修改的 content 必须为空，由准确原文范围生成预览。".into()));
+                }
+                db.prepare_outline_item(&mut change)?;
+            } else if change.manuscript_edits.is_empty() {
                 change.before = db.validate_coauthor_publication(&change.document)?;
             } else {
                 if !change.document.content.is_empty() {
@@ -261,6 +276,9 @@ impl ProjectManager {
                     + item.before.as_ref().map_or(0, |source| source.total_chars)
                     + item.manuscript_before_json.as_ref().map_or(0, |json| json.chars().count())
                     + item.manuscript_after_json.as_ref().map_or(0, |json| json.chars().count())
+                    + item.outline_before.as_ref().map_or(0, |before| before.section.pending_content.chars().count()
+                        + before.section.rationale.chars().count() + before.section.consequence.chars().count()
+                        + before.section.references.iter().map(String::len).sum::<usize>())
             })
             .sum::<usize>()
             > 1_000_000
@@ -485,7 +503,8 @@ impl ProjectManager {
                     item.document.title,
                 )));
             }
-            if item.manuscript_edits.is_empty() { db.validate_coauthor_publication(&item.document)?; }
+            if !item.outline_edits.is_empty() { db.validate_outline_item(item)?; }
+            else if item.manuscript_edits.is_empty() { db.validate_coauthor_publication(&item.document)?; }
             else { db.validate_manuscript_item(item)?; }
         }
         db.validate_coauthor_dependencies(&changes.read_dependencies)?;
@@ -508,7 +527,8 @@ impl ProjectManager {
                 Some(db.coauthor_native_snapshot(key)?)
             } else { None };
             let reason = format!("coauthor-change:{}:{}", changes.id, item.id);
-            let key = if item.manuscript_edits.is_empty() { db.publish_coauthor_item(
+            let key = if !item.outline_edits.is_empty() { db.publish_outline_item(&tx, item)? }
+            else if item.manuscript_edits.is_empty() { db.publish_coauthor_item(
                 &tx,
                 scope,
                 &item.document,

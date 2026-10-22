@@ -197,4 +197,23 @@ describe("coauthor workspace", () => {
     await finish(request);
     expect(mocks.invoke.mock.calls.some(([name]) => name === "apply_coauthor_proposal")).toBe(false);
   });
+
+  it("shows structured outline and manuscript reads with their actual delivery status", async () => {
+    stored.runs = [{
+      id: "reads", sessionId: "s1", userMessageId: "u1", documentVersion: 1, status: "COMPLETED", output: "", audit: [
+        { kind: "tool", name: "read_outline_content", result: {
+          key: "PLAN:plan-node:o", revision: "o1", title: "正式大纲", offset: 3, totalChars: 20, content: "突破消耗寿元" } },
+        { kind: "model_request" },
+        { kind: "tool", name: "read_manuscript_blocks", result: {
+          key: "MANUSCRIPT:chapter", revision: "m1", blocks: [{ text: "未发送的正文片段" }] } },
+      ],
+    }];
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    fireEvent.click(screen.getByRole("button", { name: "依据" }));
+    expect(await screen.findByText("PLAN · 已读取原文片段 · 已随请求发送")).toBeVisible();
+    expect(screen.getByText("突破消耗寿元")).toBeVisible();
+    expect(screen.getByText("MANUSCRIPT · 已读取原文片段 · 尚未随请求发送")).toBeVisible();
+    expect(screen.getByText("未发送的正文片段")).toBeVisible();
+  });
 });
