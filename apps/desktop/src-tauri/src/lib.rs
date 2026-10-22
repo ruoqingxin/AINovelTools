@@ -39,6 +39,7 @@ use commands::coauthor::{
     discard_coauthor_changeset,
     prepare_coauthor_reversal,get_coauthor_reversal,commit_coauthor_reversal,
     create_coauthor_source_check,list_coauthor_source_checks,get_coauthor_source_check,
+    get_coauthor_check_notes,
 };
 use commands::discussion::{
     ask_project_discussion, confirm_discussion_design, create_discussion_candidate,
@@ -246,6 +247,7 @@ pub fn run() {
             create_coauthor_source_check,
             list_coauthor_source_checks,
             get_coauthor_source_check,
+            get_coauthor_check_notes,
             save_coauthor_document,
             list_coauthor_document_history,
             run_coauthor,

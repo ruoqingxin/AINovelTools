@@ -2,7 +2,7 @@ use super::*;
 use crate::coauthor_store::tests::{entity, project};
 use serde_json::json;
 
-fn input(kinds: &[&str]) -> CoauthorSourceCheckInput {
+pub(super) fn input(kinds: &[&str]) -> CoauthorSourceCheckInput {
     CoauthorSourceCheckInput {
         title: "查全部突破影响".into(),
         query: "突破代价与母亲记忆".into(),
@@ -10,7 +10,7 @@ fn input(kinds: &[&str]) -> CoauthorSourceCheckInput {
     }
 }
 
-fn chapter(manager: &mut ProjectManager, text: &str) -> String {
+pub(super) fn chapter(manager: &mut ProjectManager, text: &str) -> String {
     let node = manager
         .create_plan_node(None, PlanNodeKind::Chapter, "旧章".into())
         .unwrap();
@@ -487,8 +487,8 @@ fn migration_and_manifest_creation_failures_roll_back_without_touching_author_te
     let key = chapter(&mut manager, "作者原稿");
     let db = &manager.current.as_ref().unwrap().database;
     db.connection.execute_batch(
-        "DROP TABLE coauthor_check_reads; DROP TABLE coauthor_check_entries; DROP TABLE coauthor_source_checks;
-         DELETE FROM schema_migrations WHERE version=55;
+        "DROP TABLE coauthor_check_notes; DROP TABLE coauthor_check_reads; DROP TABLE coauthor_check_entries; DROP TABLE coauthor_source_checks;
+         DELETE FROM schema_migrations WHERE version>=55;
          CREATE TRIGGER fail55 BEFORE INSERT ON schema_migrations WHEN NEW.version=55
          BEGIN SELECT RAISE(ABORT,'migration failure'); END;"
     ).unwrap();
@@ -507,6 +507,7 @@ fn migration_and_manifest_creation_failures_roll_back_without_touching_author_te
     );
     db.connection.execute_batch("DROP TRIGGER fail55").unwrap();
     db.migrate_coauthor_source_checks().unwrap();
+    db.migrate_coauthor_check_notes().unwrap();
     db.connection.execute_batch(
         "CREATE TRIGGER fail_check_entry BEFORE INSERT ON coauthor_check_entries BEGIN SELECT RAISE(ABORT,'entry failure'); END;"
     ).unwrap();
@@ -533,7 +534,7 @@ fn migration_and_manifest_creation_failures_roll_back_without_touching_author_te
     manager
         .create_coauthor_source_check(&scope, input(&["MANUSCRIPT"]))
         .unwrap();
-    assert_eq!(db_health(&manager), 55);
+    assert_eq!(db_health(&manager), CURRENT_SCHEMA_VERSION);
     drop(manager);
     let _ = std::fs::remove_dir_all(root);
 }

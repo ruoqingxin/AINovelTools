@@ -189,6 +189,9 @@ export function listCoauthorSourceChecks(input: IpcRequests["list_coauthor_sourc
 export function getCoauthorSourceCheck(input: IpcRequests["get_coauthor_source_check"]) {
   return invoke("get_coauthor_source_check", input);
 }
+export function getCoauthorCheckNotes(input: IpcRequests["get_coauthor_check_notes"]) {
+  return invoke("get_coauthor_check_notes", input);
+}
 export function saveCoauthorDocument(input: IpcRequests["save_coauthor_document"]) {
   return invoke("save_coauthor_document", input);
 }

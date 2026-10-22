@@ -2,12 +2,50 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, ListChecks, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
-  createCoauthorSourceCheck, errorMessage, getCoauthorSourceCheck, listCoauthorSourceChecks,
+  createCoauthorSourceCheck, errorMessage, getCoauthorSourceCheck, getCoauthorCheckNotes, listCoauthorSourceChecks,
   type CoauthorScope, type CoauthorSourceCheck,
 } from "../lib/tauri-client";
 
 const kinds = { MANUSCRIPT: "正式正文", PLAN: "规划记录", ENTITY: "有效设定卡" };
 const assessments: Record<string, string> = { RELEVANT: "相关", IRRELEVANT: "不相关", UNCERTAIN: "待核对" };
+
+function CheckNotes({ scope, id, sourceKey, stale, unverified }: {
+  scope: CoauthorScope; id: string; sourceKey: string; stale: boolean; unverified: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const notes = useQuery({
+    queryKey: ["coauthor-checks", scope.projectId, scope.sessionId, "notes", id, sourceKey, offset],
+    queryFn: () => getCoauthorCheckNotes({ scope, id, key: sourceKey, offset }),
+    enabled: open, retry: false,
+  });
+  return <details className="coauthor-check-notes" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>分段分析笔记</summary>
+    {open && <>
+      {notes.isPending && <p role="status">正在读取分析笔记…</p>}
+      {notes.error && <p role="alert" className="project-error">分析笔记无法核实：{errorMessage(notes.error)}</p>}
+      {notes.data && <>
+        <p role="status">{notes.isError || unverified ? "以下为上次笔记，当前有效性未核实。"
+          : stale || notes.data.stale ? "原依据失效，以下分析仅作历史记录。" : "阶段分析，未经作者确认为正式事实。"}</p>
+        <p>{notes.data.totalNotes} 段笔记 · 分析覆盖 {notes.data.notedChars} 字</p>
+        {!notes.data.notes.length && <p>暂无分段分析笔记。</p>}
+        {notes.data.notes.map((note) => <section key={note.id} className="coauthor-check-note">
+          <h4>字符 {note.start} 至 {note.end} · v{note.version}</h4>
+          <p>{note.analysis}</p>
+          {note.quote && <blockquote>{note.quote}</blockquote>}
+          {note.questions && <p className="coauthor-note-questions">未决问题：{note.questions}</p>}
+        </section>)}
+        {(offset > 0 || notes.data.hasMore) && <nav className="coauthor-check-pagination" aria-label="笔记分页">
+          <button type="button" className="icon-command" title="上一页笔记" aria-label="上一页笔记"
+            disabled={offset === 0 || notes.isFetching} onClick={() => setOffset(Math.max(0, offset - 5))}><ArrowLeft size={16} /></button>
+          <span>{notes.data.totalNotes ? offset + 1 : 0} 至 {offset + notes.data.notes.length} / {notes.data.totalNotes}</span>
+          <button type="button" className="icon-command" title="下一页笔记" aria-label="下一页笔记"
+            disabled={!notes.data.hasMore || notes.isFetching} onClick={() => setOffset(offset + 5)}><ArrowRight size={16} /></button>
+        </nav>}
+      </>}
+    </>}
+  </details>;
+}
 
 export function CoauthorChecksPanel({ scope, isGenerating, onContinue }: {
   scope: CoauthorScope;
@@ -112,6 +150,8 @@ export function CoauthorChecksPanel({ scope, isGenerating, onContinue }: {
           {entry.quote && <blockquote>{entry.quote}</blockquote>}
           {entry.lastError && <p role="alert" className="project-error">{entry.lastError}</p>}
           <details><summary>来源修订</summary><small>{entry.revision}</small></details>
+          <CheckNotes key={`${scope.projectId}:${scope.sessionId}:${id}:${entry.key}`} scope={scope} id={id}
+            sourceKey={entry.key} stale={entry.stale} unverified={detail.isError || detail.isFetching} />
         </article>)}
       </div>
       <nav className="coauthor-check-pagination" aria-label="条目分页">

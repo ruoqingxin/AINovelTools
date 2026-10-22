@@ -154,6 +154,7 @@ export type IpcErrors = {
     get_chapter_entity_references: ApiError;
     get_coauthor_changes: ApiError;
     get_coauthor_changeset: ApiError;
+    get_coauthor_check_notes: ApiError;
     get_coauthor_reversal: ApiError;
     get_coauthor_source_check: ApiError;
     get_coauthor_state: ApiError;
@@ -348,6 +349,7 @@ export type IpcRequests = {
     get_chapter_entity_references: InputArgsGetChapterEntityReferences;
     get_coauthor_changes: InputArgsGetCoauthorChanges;
     get_coauthor_changeset: InputArgsGetCoauthorChangeset;
+    get_coauthor_check_notes: InputArgsGetCoauthorCheckNotes;
     get_coauthor_reversal: InputArgsGetCoauthorReversal;
     get_coauthor_source_check: InputArgsGetCoauthorSourceCheck;
     get_coauthor_state: InputArgsGetCoauthorState;
@@ -887,6 +889,12 @@ export type InputArgsGetCoauthorChanges = {
 };
 export type InputArgsGetCoauthorChangeset = {
     id: string;
+    scope: InputCoauthorScope;
+};
+export type InputArgsGetCoauthorCheckNotes = {
+    id: string;
+    key: string;
+    offset: number;
     scope: InputCoauthorScope;
 };
 export type InputArgsGetCoauthorReversal = {
@@ -1473,6 +1481,7 @@ export type IpcResponses = {
     get_chapter_entity_references: ChapterEntityReferences;
     get_coauthor_changes: CoauthorChangesPage;
     get_coauthor_changeset: CoauthorChangeSet;
+    get_coauthor_check_notes: CoauthorCheckNotesPage;
     get_coauthor_reversal: CoauthorReversal | null;
     get_coauthor_source_check: CoauthorCheckPage;
     get_coauthor_state: CoauthorState;
@@ -2240,6 +2249,27 @@ export type CoauthorImpact = {
     sourceChanged: boolean;
     status: string;
     title: string;
+    version: number;
+};
+export type CoauthorCheckNotesPage = {
+    checkId: string;
+    hasMore: boolean;
+    key: string;
+    notedChars: number;
+    notes: CoauthorCheckNote[];
+    offset: number;
+    revision: string;
+    stale: boolean;
+    totalNotes: number;
+};
+export type CoauthorCheckNote = {
+    analysis: string;
+    end: number;
+    id: string;
+    questions: string;
+    quote: string;
+    runId: string;
+    start: number;
     version: number;
 };
 export type CoauthorState = {

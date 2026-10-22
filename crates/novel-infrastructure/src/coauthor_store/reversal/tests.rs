@@ -448,7 +448,7 @@ fn previews_are_versioned_and_cannot_be_reused_across_sessions_projects_or_pendi
 fn migration_54_is_atomic_retryable_and_preserves_prior_author_data() {
     let f = Fixture::new();
     let before = f.manager.coauthor_state(&f.scope).unwrap().document;
-    f.db().connection.execute_batch("DROP TABLE coauthor_check_reads; DROP TABLE coauthor_check_entries; DROP TABLE coauthor_source_checks;
+    f.db().connection.execute_batch("DROP TABLE coauthor_check_notes; DROP TABLE coauthor_check_reads; DROP TABLE coauthor_check_entries; DROP TABLE coauthor_source_checks;
         DROP TABLE coauthor_reversals; DELETE FROM schema_migrations WHERE version>=54;
         CREATE TRIGGER fail54 BEFORE INSERT ON schema_migrations WHEN NEW.version=54 BEGIN SELECT RAISE(ABORT,'test'); END;").unwrap();
     assert!(f.db().migrate_coauthor_reversals().is_err());

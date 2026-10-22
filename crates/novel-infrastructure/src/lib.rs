@@ -240,7 +240,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 55;
+pub const CURRENT_SCHEMA_VERSION: i64 = 56;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

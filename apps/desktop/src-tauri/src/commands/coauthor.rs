@@ -12,6 +12,7 @@ use novel_infrastructure::{
     CoauthorOutlinePage,
     CoauthorReversal,
     CoauthorSourceCheckInput, CoauthorCheckPage, CoauthorChecksPage, CoauthorCheckAssessment,
+    CoauthorCheckNoteInput, CoauthorCheckNotesPage,
     ModelToolCall,
 };
 use serde::{Deserialize, Serialize};
@@ -52,6 +53,8 @@ link_source 仅在作者要以已读取的正式资料为修改目标时使用�
 coverage 如实说明查过什么、未查什么；没有全范围查证不能声称查全或修复全书。
 作者明确要求查全部相关章节或全范围影响时，用 start_source_check 建立指定类别的完整版本清单，不用关键词命中代替范围。普通讨论无需创建清单。
 用 get_source_checks 找回清单及进度，read_check_source 按 nextOffset 续读；完整接收一项所有原文后才能 record_check_result 标记 RELEVANT、IRRELEVANT 或 UNCERTAIN。相关项须引用准确原文，无法判断用 UNCERTAIN。
+长资料每读一段，在后续请求确实收到原文后用 save_check_note 保存该段分析、未决问题和准确引句。范围按Unicode标量计数，笔记不超过12000字原文；不同分段不重叠。首次expectedVersion=0，修订先get_check_notes查看最新版本并重新读取该段原文，保留旧版本。
+跨轮继续查证时先get_source_checks，再按资料用get_check_notes分页恢复已分析内容，hasMore表示还未取完；不要只沿nextOffset继续就假装记得先前分析。笔记是模型的阶段分析而非正式事实或作者决定，失效笔记只作历史，不可作为当前依据；含糊、矛盾或不足时重读原文。保存笔记不等于完成判断，不替代read_source等原文读取作为正式修改依据。
 资料变化、新增、未送达、未判断、待核对或索引未完成时不能声称查全；complete 仅表示这个清单范围内的读取与逐项判断流程完成，不证明判断正确，也不代表全书已经修复。每次继续前重新查看清单。不要为凑完成而猜测不相关。
 同一轮正在改工作稿时先完成改稿，下一轮基于作者看到的保存版本准备采用，不得把尚未展示的全文自动带入正式变更。
 可用 get_changes 查找当前讨论的变更和待办；正式采用与待办关闭仍只能由作者在界面确认。
@@ -154,6 +157,22 @@ fn tools() -> Vec<Value> {
             json!({"checkId":{"type":"string"},"key":{"type":"string"},
                 "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}}),
             &["checkId","key"],
+        ),
+        tool(
+            "get_check_notes",
+            "按资料分页恢复查证分段分析与未决问题，每页5段，仅返回各段最新笔记版本。stale=true时只能当历史；笔记不是正式事实、作者决定或新的原文读取。",
+            json!({"checkId":{"type":"string"},"key":{"type":"string"},"offset":{"type":"integer","minimum":0}}),
+            &["checkId","key"],
+        ),
+        tool(
+            "save_check_note",
+            "基于本轮已送达原文保存分段分析，不改正式资料。首次expectedVersion=0；同范围修订使用最新版本，禁止其他范围重叠。analysis/questions/quote上限1000/600/500字，非空原文必须有范围内准确引句。",
+            json!({"checkId":{"type":"string"},"key":{"type":"string"},"revision":{"type":"string"},
+                "start":{"type":"integer","minimum":0},"end":{"type":"integer","minimum":0},
+                "expectedVersion":{"type":"integer","minimum":0},
+                "analysis":{"type":"string","maxLength":1000},"questions":{"type":"string","maxLength":600},
+                "quote":{"type":"string","maxLength":500}}),
+            &["checkId","key","revision","start","end","expectedVersion","analysis","questions","quote"],
         ),
         tool(
             "record_check_result",
@@ -282,6 +301,14 @@ pub(crate) fn get_coauthor_source_check(
 ) -> Result<CoauthorCheckPage, ApiError> {
     state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
         .get_coauthor_source_check(&scope,id,offset).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn get_coauthor_check_notes(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid, key: String, offset: u32,
+) -> Result<CoauthorCheckNotesPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .get_coauthor_check_notes(&scope,id,&key,offset).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -592,6 +619,15 @@ struct CheckQuery {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CheckNotesQuery {
+    check_id: uuid::Uuid,
+    key: String,
+    #[serde(default)]
+    offset: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CheckReadArgs {
     check_id: uuid::Uuid,
     key: String,
@@ -717,6 +753,15 @@ fn execute_tool(
                 Some(id) => Ok(json!(manager.get_coauthor_source_check(&input.scope,id,args.offset)?)),
                 None => Ok(json!(manager.list_coauthor_source_checks(&input.scope,args.offset)?)),
             }
+        }
+        "get_check_notes" => {
+            let args: CheckNotesQuery = arguments(call)?;
+            Ok(json!(manager.get_coauthor_check_notes(&input.scope,args.check_id,&args.key,args.offset)?))
+        }
+        "save_check_note" => {
+            let args: CoauthorCheckNoteInput = arguments(call)?;
+            let note = manager.save_coauthor_check_note(&input.scope,input.run_id,args)?;
+            Ok(json!({"note":note,"recorded":true,"formalCommit":false,"derivedAnalysis":true}))
         }
         "record_check_result" => {
             let args: CoauthorCheckAssessment = arguments(call)?;
@@ -1091,7 +1136,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v4",
+                    prompt_version: "coauthor-v5",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -1112,7 +1157,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v4","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v5","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -1358,7 +1403,7 @@ mod tests {
         assert!(names.contains(&"get_changes"));
         assert!(names.contains(&"read_manuscript_blocks"));
         assert!(names.contains(&"read_outline_content"));
-        for name in ["start_source_check","get_source_checks","read_check_source","record_check_result"] {
+        for name in ["start_source_check","get_source_checks","read_check_source","record_check_result","get_check_notes","save_check_note"] {
             assert!(names.contains(&name));
         }
         assert!(!names.contains(&"acknowledge_coauthor_check_reads"));
@@ -1376,6 +1421,34 @@ mod tests {
             },
         };
         assert!(arguments::<ChangeArgs>(&call).is_err());
+    }
+
+    #[test]
+    fn check_note_protocol_does_not_forge_delivery_or_original_source_evidence() {
+        let tool = tools().into_iter().find(|tool| tool["function"]["name"]=="save_check_note").unwrap();
+        assert_eq!(tool["function"]["parameters"]["additionalProperties"],false);
+        let call=ModelToolCall {
+            id:"note".into(),call_type:"function".into(),
+            function:novel_infrastructure::ModelToolFunction {
+                name:"save_check_note".into(),arguments:json!({
+                    "checkId":uuid::Uuid::new_v4(),"key":"MANUSCRIPT:chapter","revision":"r1",
+                    "start":0,"end":10,"expectedVersion":0,"analysis":"仅分析","questions":"未决","quote":"原文",
+                    "sent":true,
+                }).to_string(),
+            },
+        };
+        assert!(arguments::<CoauthorCheckNoteInput>(&call).is_err());
+        assert!(PROMPT.contains("笔记是模型的阶段分析而非正式事实或作者决定"));
+        assert!(PROMPT.contains("不要只沿nextOffset继续就假装记得先前分析"));
+        let seen=HashMap::new();
+        let args=ChangeArgs {
+            include_draft:false,title:"无原文不能准备".into(),draft_depends_on:vec![],items:vec![],
+            impacts:vec![CoauthorImpactInput {
+                key:"MANUSCRIPT:chapter".into(),revision:"r1".into(),
+                quote:"笔记里的引句".into(),reason:"分析不是新的原文读取".into(),item_ids:vec![],
+            }],coverage:"仅笔记".into(),
+        };
+        assert!(validate_change_reads(&args,&seen).is_err());
     }
 
     #[test]

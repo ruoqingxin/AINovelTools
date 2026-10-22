@@ -3,12 +3,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CoauthorChecksPanel } from "./coauthor-checks-panel";
-import type { CoauthorCheckPage } from "../lib/tauri-client";
+import type { CoauthorCheckPage, CoauthorCheckNotesPage } from "../lib/tauri-client";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("../lib/ipc-transport", () => mocks);
 const scope = { projectId: "project", sessionId: "session" };
 let page: CoauthorCheckPage;
+let notesPage: CoauthorCheckNotesPage;
 
 function mount(props: Partial<Parameters<typeof CoauthorChecksPanel>[0]> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -28,9 +29,16 @@ beforeEach(() => {
       assessment: null, reason: "", quote: "", lastError: null }],
     offset: 0, hasMore: false,
   };
+  notesPage = {
+    checkId: "check", key: "MANUSCRIPT:chapter", revision: "r1", stale: false,
+    totalNotes: 1, notedChars: 1000, offset: 0, hasMore: false,
+    notes: [{ id: "note", runId: "previous-run", start: 0, end: 1000, version: 2,
+      analysis: "这里只能确认回忆，不代表突破后的状态。", questions: "需要核对后文的叙事时间。", quote: "母亲的声音" }],
+  };
   mocks.invoke.mockImplementation(async (command: string) => {
     if (command === "list_coauthor_source_checks") return { checks: [structuredClone(page.check)], hasMore: false };
     if (command === "get_coauthor_source_check" || command === "create_coauthor_source_check") return structuredClone(page);
+    if (command === "get_coauthor_check_notes") return structuredClone(notesPage);
     throw new Error(command);
   });
 });
@@ -127,4 +135,90 @@ it("does not continue after a failed progress refresh", async () => {
   expect(screen.getByRole("button", { name: "继续查证" })).toBeDisabled();
   expect(screen.getByText("当前进度无法核实，以下为上次记录。")).toBeVisible();
   expect(onContinue).not.toHaveBeenCalled();
+});
+
+it("loads segmented analysis only when opened and keeps it distinct from formal facts", async () => {
+  mount();
+  await screen.findByText("雨夜");
+  expect(mocks.invoke.mock.calls.some(([name]) => name === "get_coauthor_check_notes")).toBe(false);
+  fireEvent.click(screen.getByText("分段分析笔记"));
+  expect(await screen.findByText("这里只能确认回忆，不代表突破后的状态。")).toBeVisible();
+  expect(screen.getByText("阶段分析，未经作者确认为正式事实。")).toBeVisible();
+  expect(screen.getByText("字符 0 至 1000 · v2")).toBeVisible();
+  expect(screen.getByText("未决问题：需要核对后文的叙事时间。")).toBeVisible();
+  expect(screen.getByText("1 段笔记 · 分析覆盖 1000 字")).toBeVisible();
+  expect(mocks.invoke).toHaveBeenCalledWith("get_coauthor_check_notes", { scope, id: "check", key: "MANUSCRIPT:chapter", offset: 0 });
+  expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor")).toBe(false);
+  expect(screen.getByText("范围查证尚未完成。")).toBeVisible();
+});
+
+it("marks old source notes as historical even when the notes response is older", async () => {
+  page.entries[0].stale = true;
+  mount();
+  await screen.findByText("雨夜");
+  fireEvent.click(screen.getByText("分段分析笔记"));
+  expect(await screen.findByText("原依据失效，以下分析仅作历史记录。")).toBeVisible();
+  expect(screen.getByText("母亲的声音")).toBeVisible();
+  expect(screen.queryByText("阶段分析，未经作者确认为正式事实。")).not.toBeInTheDocument();
+});
+
+it("paginates current note versions with exact check identity", async () => {
+  notesPage.totalNotes = 6; notesPage.hasMore = true;
+  const base = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command: string, args: { offset?: number }) => command === "get_coauthor_check_notes" && args.offset === 5
+    ? Promise.resolve({ ...notesPage, offset: 5, hasMore: false, notes: [{ ...notesPage.notes[0], id: "last", analysis: "后段尚有疑问。" }] })
+    : base(command, args));
+  mount();
+  await screen.findByText("雨夜");
+  fireEvent.click(screen.getByText("分段分析笔记"));
+  await screen.findByText("这里只能确认回忆，不代表突破后的状态。");
+  fireEvent.click(screen.getByRole("button", { name: "下一页笔记" }));
+  expect(await screen.findByText("后段尚有疑问。")).toBeVisible();
+  expect(screen.queryByText("这里只能确认回忆，不代表突破后的状态。")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "下一页笔记" })).toBeDisabled();
+  expect(mocks.invoke).toHaveBeenCalledWith("get_coauthor_check_notes", { scope, id: "check", key: "MANUSCRIPT:chapter", offset: 5 });
+  fireEvent.click(screen.getByRole("button", { name: "上一页笔记" }));
+  expect(await screen.findByText("这里只能确认回忆，不代表突破后的状态。")).toBeVisible();
+});
+
+it("keeps cached notes explicitly unverified when refreshing their status fails", async () => {
+  const base = mocks.invoke.getMockImplementation()!;
+  let fail = false;
+  mocks.invoke.mockImplementation((command: string, args: unknown) => command === "get_coauthor_check_notes" && fail
+    ? Promise.reject(new Error("笔记读取失败")) : base(command, args));
+  mount();
+  await screen.findByText("雨夜");
+  fireEvent.click(screen.getByText("分段分析笔记"));
+  await screen.findByText("这里只能确认回忆，不代表突破后的状态。");
+  fail = true;
+  fireEvent.click(screen.getByRole("button", { name: "刷新查证进度" }));
+  expect(await screen.findByText("分析笔记无法核实：笔记读取失败")).toBeVisible();
+  expect(screen.getByText("以下为上次笔记，当前有效性未核实。")).toBeVisible();
+});
+
+it("does not mix notes between different inventories or automatically load closed entries", async () => {
+  const base = mocks.invoke.getMockImplementation()!;
+  const second = { ...page.check, id: "second", title: "另一份查证" };
+  mocks.invoke.mockImplementation((command: string, args: { id?: string }) => {
+    if (command === "list_coauthor_source_checks") return Promise.resolve({ checks: [page.check, second], hasMore: false });
+    if (command === "get_coauthor_source_check" && args.id === "second") return Promise.resolve({ ...page, check: second });
+    return base(command, args);
+  });
+  mount();
+  await screen.findByText("雨夜");
+  fireEvent.click(screen.getByText("分段分析笔记"));
+  await screen.findByText("这里只能确认回忆，不代表突破后的状态。");
+  fireEvent.change(screen.getByLabelText("查证清单"), { target: { value: "second" } });
+  await screen.findByRole("heading", { name: "另一份查证" });
+  expect(screen.queryByText("这里只能确认回忆，不代表突破后的状态。")).not.toBeInTheDocument();
+  expect(mocks.invoke.mock.calls.filter(([name]) => name === "get_coauthor_check_notes")).toHaveLength(1);
+});
+
+it("distinguishes a source with no notes from missing original text", async () => {
+  notesPage.totalNotes = 0; notesPage.notedChars = 0; notesPage.notes = [];
+  mount();
+  await screen.findByText("雨夜");
+  fireEvent.click(screen.getByText("分段分析笔记"));
+  expect(await screen.findByText("暂无分段分析笔记。")).toBeVisible();
+  expect(screen.getByText("读取 6000 / 6000 字 · 送达 2000 字 · 续查位置 1000")).toBeVisible();
 });

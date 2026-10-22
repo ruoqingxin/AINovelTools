@@ -96,7 +96,7 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:55};
+          if(command==="health_query")return {schemaVersion:56};
           if(command==="bootstrap_status")return {};
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
           if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
@@ -104,6 +104,15 @@ try {
           if(command==="list_coauthor_source_checks")return {checks:structuredClone(sourceChecks),hasMore:false};
           if(command==="get_coauthor_source_check")return {check:structuredClone(sourceChecks.find(item=>item.id===args.id)),
             entries:structuredClone(checkEntries),offset:0,hasMore:false};
+          if(command==="get_coauthor_check_notes")return {checkId:args.id,key:args.key,
+            revision:args.key==="MANUSCRIPT:old"?"old1":"rain1",stale:args.key==="MANUSCRIPT:old",
+            totalNotes:6,notedChars:6000,offset:args.offset,hasMore:args.offset===0,
+            notes:Array.from({length:args.offset===0?5:1},(_,index)=>({
+              id:"note-"+args.key+"-"+args.offset+"-"+index,runId:"earlier-run",start:(args.offset+index)*1000,
+              end:(args.offset+index+1)*1000,version:2,analysis:args.offset===0?
+                "这段只确认主角仍记得声音，是否矛盾取决于叙事时间。":"后段仍未明确突破前后的时间。",
+              questions:"需核对与突破之夜的先后关系，不能只凭已读游标下结论。",
+              quote:"他仍记得母亲唤他的声音。"}))};
           if(command==="create_coauthor_source_check"){
             const check={...sourceChecks[0],id:"check2",...args.input};
             sourceChecks.unshift(check);
@@ -271,6 +280,18 @@ try {
     await checksPanel.getByText("范围查证尚未完成。", { exact: true }).waitFor();
     await checksPanel.getByText("1 项原依据失效 · 1 项新增资料 · 0 项索引待更新", { exact: true }).waitFor();
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-checks.png`), fullPage: true });
+    assert.equal(await checksPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
+    await checksPanel.getByText("分段分析笔记", { exact: true }).first().click();
+    await checksPanel.getByText("阶段分析，未经作者确认为正式事实。", { exact: true }).waitFor();
+    await checksPanel.getByText("字符 0 至 1000 · v2", { exact: true }).waitFor();
+    await checksPanel.getByText("字符 0 至 1000 · v2", { exact: true }).evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-check-notes.png`), fullPage: true });
+    await checksPanel.getByRole("button", { name: "下一页笔记", exact: true }).click();
+    await checksPanel.getByText("后段仍未明确突破前后的时间。", { exact: true }).waitFor();
+    await checksPanel.getByText("分段分析笔记", { exact: true }).last().click();
+    await checksPanel.getByText("原依据失效，以下分析仅作历史记录。", { exact: true }).waitFor();
+    await checksPanel.getByText("原依据失效，以下分析仅作历史记录。", { exact: true }).evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-check-notes-stale.png`), fullPage: true });
     assert.equal(await checksPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
     await checksPanel.getByText("新建查证清单", { exact: true }).click();
     await checksPanel.getByLabel("清单标题").fill("核对新范围");

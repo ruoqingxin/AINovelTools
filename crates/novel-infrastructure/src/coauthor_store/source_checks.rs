@@ -1,5 +1,8 @@
 use super::*;
 
+mod notes;
+pub use notes::*;
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CoauthorSourceCheckInput {

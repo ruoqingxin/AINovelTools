@@ -111,6 +111,11 @@
 .coauthor-check-entry blockquote { margin: 12px 0; padding-left: 12px; border-left: 2px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
 .coauthor-check-pagination { margin: 12px 0; font-variant-numeric: tabular-nums; }
 .coauthor-checks button { display: inline-flex; align-items: center; gap: 6px; }
+.coauthor-check-notes { margin-top: 10px; }
+.coauthor-check-note { border-top: 1px solid var(--border); padding: 10px 0; }
+.coauthor-check-note h4 { margin: 0; font-size: 13px; }
+.coauthor-check-note p, .coauthor-check-note blockquote { white-space: pre-wrap; overflow-wrap: anywhere; }
+.coauthor-note-questions { color: var(--muted); }
 .coauthor-check-create { margin-top: 24px; }
 .coauthor-check-create form { display: grid; gap: 12px; padding-top: 12px; }
 .coauthor-check-create form > label { display: grid; gap: 6px; }
