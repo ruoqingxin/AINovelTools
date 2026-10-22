@@ -98,6 +98,9 @@
 .coauthor-reversal { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 20px; min-width: 0; }
 .coauthor-checks { min-width: 0; font-size: 13px; }
 .coauthor-decision-history { margin-top: 10px; }
+.coauthor-format-mapping { margin: 10px 0; }
+.coauthor-format-mapping dl { margin: 10px 0; }
+.coauthor-format-mapping dd { margin: 4px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .coauthor-decision-history small, .coauthor-memory-context small { display: block; color: var(--muted); overflow-wrap: anywhere; }
 .coauthor-decision-history p, .coauthor-memory-context p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .coauthor-decision-revision { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }

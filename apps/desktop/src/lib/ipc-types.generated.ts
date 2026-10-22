@@ -1111,10 +1111,15 @@ export type InputCoauthorChangeItemInput = {
 };
 export type InputCoauthorManuscriptEdit = {
     after: string;
+    afterRuns?: InputCoauthorReplacementRun[];
     before: string;
     blockId: string;
     end: number;
     start: number;
+};
+export type InputCoauthorReplacementRun = {
+    marksFrom: number;
+    text: string;
 };
 export type InputCoauthorOutlineEdit = {
     after: string;
@@ -1786,10 +1791,15 @@ export type CoauthorDecision = {
 };
 export type CoauthorManuscriptEdit = {
     after: string;
+    afterRuns?: CoauthorReplacementRun[];
     before: string;
     blockId: string;
     end: number;
     start: number;
+};
+export type CoauthorReplacementRun = {
+    marksFrom: number;
+    text: string;
 };
 export type CoauthorOutlineEdit = {
     after: string;

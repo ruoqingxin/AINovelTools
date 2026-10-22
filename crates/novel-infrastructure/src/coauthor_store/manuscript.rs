@@ -8,6 +8,15 @@ pub struct CoauthorManuscriptEdit {
     pub end: usize,
     pub before: String,
     pub after: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after_runs: Vec<CoauthorReplacementRun>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CoauthorReplacementRun {
+    pub text: String,
+    pub marks_from: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -40,7 +49,7 @@ pub struct CoauthorManuscriptPage {
 
 fn invalid_anchor() -> CoauthorError {
     CoauthorError::Invalid(
-        "正文修改无法唯一定位，或跨越格式边界；请重新读取并拆分为同一文字片段内的修改。".into(),
+        "正文修改无法准确定位或格式映射无效；请重新读取同一块的准确范围，跨格式替换须明确每个片段的格式来源，不能跨段或硬换行。".into(),
     )
 }
 
@@ -108,6 +117,150 @@ fn block_text(block: &Value) -> String {
         .collect()
 }
 
+fn validate_edit(block: &Value, edit: &CoauthorManuscriptEdit) -> Result<(), CoauthorError> {
+    let spans = runs(block)?;
+    let covered = spans
+        .iter()
+        .filter(|run| run.start < edit.end && run.end > edit.start)
+        .collect::<Vec<_>>();
+    if edit.start >= edit.end
+        || edit.before == edit.after
+        || edit.after.contains(['\n', '\r'])
+        || edit.after.chars().count() > 12_000
+        || edit.after_runs.len() > 64
+        || covered
+            .iter()
+            .map(|run| run.end.min(edit.end) - run.start.max(edit.start))
+            .sum::<usize>()
+            != edit.end - edit.start
+        || block_text(block)
+            .chars()
+            .skip(edit.start)
+            .take(edit.end - edit.start)
+            .collect::<String>()
+            != edit.before
+    {
+        return Err(invalid_anchor());
+    }
+    if edit.after_runs.is_empty() {
+        if !edit.after.is_empty() && covered.len() != 1 {
+            return Err(invalid_anchor());
+        }
+    } else {
+        let mut chars = 0;
+        for replacement in &edit.after_runs {
+            chars += replacement.text.chars().count();
+            if replacement.text.is_empty()
+                || chars > 12_000
+                || replacement.marks_from < edit.start
+                || replacement.marks_from >= edit.end
+                || !covered.iter().any(|run| {
+                    run.start <= replacement.marks_from && run.end > replacement.marks_from
+                })
+            {
+                return Err(invalid_anchor());
+            }
+        }
+        if edit
+            .after_runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<String>()
+            != edit.after
+        {
+            return Err(invalid_anchor());
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_inline(
+    children: &mut Vec<Value>,
+    edit: &CoauthorManuscriptEdit,
+) -> Result<(), CoauthorError> {
+    let mut position = 0;
+    let mut spans = Vec::new();
+    for child in children.iter() {
+        let length = match child["type"].as_str() {
+            Some("text") => child["text"]
+                .as_str()
+                .ok_or_else(invalid_anchor)?
+                .chars()
+                .count(),
+            Some("hardBreak") => 1,
+            _ => return Err(invalid_anchor()),
+        };
+        spans.push((position, position + length, child));
+        position += length;
+    }
+    // Keep single-run edits byte-for-byte consistent with already prepared snapshots.
+    if edit.after_runs.is_empty()
+        && let Some((index, (start, _, child))) =
+            spans.iter().enumerate().find(|(_, (start, end, child))| {
+                child["type"] == "text" && *start <= edit.start && *end >= edit.end
+            })
+    {
+        let text = child["text"].as_str().ok_or_else(invalid_anchor)?;
+        let updated = format!(
+            "{}{}{}",
+            text.chars().take(edit.start - start).collect::<String>(),
+            edit.after,
+            text.chars().skip(edit.end - start).collect::<String>()
+        );
+        if updated.is_empty() {
+            children.remove(index);
+        } else {
+            children[index]["text"] = Value::String(updated);
+        }
+        return Ok(());
+    }
+    let replacements = edit
+        .after_runs
+        .iter()
+        .map(|replacement| {
+            let (_, _, original) = spans
+                .iter()
+                .find(|(start, end, child)| {
+                    child["type"] == "text"
+                        && *start <= replacement.marks_from
+                        && *end > replacement.marks_from
+                })
+                .ok_or_else(invalid_anchor)?;
+            let mut node = (*original).clone();
+            node["text"] = Value::String(replacement.text.clone());
+            Ok(node)
+        })
+        .collect::<Result<Vec<_>, CoauthorError>>()?;
+    let mut result = Vec::new();
+    let mut inserted = false;
+    for (start, end, child) in spans {
+        if start >= edit.end || end <= edit.start {
+            result.push(child.clone());
+            continue;
+        }
+        let text = child["text"].as_str().ok_or_else(invalid_anchor)?;
+        if start < edit.start {
+            let mut prefix = child.clone();
+            prefix["text"] = Value::String(text.chars().take(edit.start - start).collect());
+            result.push(prefix);
+        }
+        if !inserted {
+            result.extend(replacements.iter().cloned());
+            inserted = true;
+        }
+        if end > edit.end {
+            let mut suffix = child.clone();
+            suffix["text"] = Value::String(text.chars().skip(edit.end - start).collect());
+            result.push(suffix);
+        }
+    }
+    if !inserted {
+        return Err(invalid_anchor());
+    }
+    *children = result;
+    Ok(())
+}
+
 // Offsets always address Unicode scalar values in the immutable original, never UTF-16.
 fn apply_edits(json: &str, edits: &[CoauthorManuscriptEdit]) -> Result<String, CoauthorError> {
     if edits.is_empty() || edits.len() > 80 {
@@ -132,27 +285,10 @@ fn apply_edits(json: &str, edits: &[CoauthorManuscriptEdit]) -> Result<String, C
             .iter()
             .filter(|block| block["attrs"]["blockId"].as_str() == Some(&edit.block_id))
             .collect::<Vec<_>>();
-        if matches.len() != 1
-            || edit.start >= edit.end
-            || edit.before == edit.after
-            || edit.after.contains(['\n', '\r'])
-            || edit.after.chars().count() > 12_000
-        {
+        if matches.len() != 1 {
             return Err(invalid_anchor());
         }
-        let span = runs(matches[0])?
-            .into_iter()
-            .find(|run| run.start <= edit.start && run.end >= edit.end)
-            .ok_or_else(invalid_anchor)?;
-        let before = span
-            .text
-            .chars()
-            .skip(edit.start - span.start)
-            .take(edit.end - edit.start)
-            .collect::<String>();
-        if before != edit.before {
-            return Err(invalid_anchor());
-        }
+        validate_edit(matches[0], edit)?;
     }
     drop(blocks);
     fn edit_block(node: &mut Value, edit: &CoauthorManuscriptEdit) -> Result<(), CoauthorError> {
@@ -166,31 +302,7 @@ fn apply_edits(json: &str, edits: &[CoauthorManuscriptEdit]) -> Result<String, C
                 .get_mut("content")
                 .and_then(Value::as_array_mut)
                 .ok_or_else(invalid_anchor)?;
-            let mut offset = 0;
-            for index in 0..children.len() {
-                let text = if children[index]["type"] == "hardBreak" {
-                    "\n"
-                } else {
-                    children[index]["text"].as_str().unwrap_or("")
-                };
-                let end = offset + text.chars().count();
-                if children[index]["type"] == "text" && offset <= edit.start && end >= edit.end {
-                    let text = format!(
-                        "{}{}{}",
-                        text.chars().take(edit.start - offset).collect::<String>(),
-                        edit.after,
-                        text.chars().skip(edit.end - offset).collect::<String>()
-                    );
-                    if text.is_empty() {
-                        children.remove(index);
-                    } else {
-                        children[index]["text"] = Value::String(text);
-                    }
-                    return Ok(());
-                }
-                offset = end;
-            }
-            return Err(invalid_anchor());
+            return rewrite_inline(children, edit);
         }
         if let Some(children) = node.get_mut("content").and_then(Value::as_array_mut) {
             for child in children {

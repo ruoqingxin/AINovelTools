@@ -50,7 +50,7 @@ link_source 仅在作者要以已读取的正式资料为修改目标时使用�
 先读取将被替换的设定原文，再提出完整的新设定稿；当前仅支持替换概念设定，大纲不可直接全文覆盖。
 修改已有大纲时先用 read_outline_content 读取正式内容的准确字符范围，再在 prepare_changeset 的 outlineEdits 中给出 start、end、before、after，content 必须为空。可分多处修改或在替换范围内添加段落；候选稿、备注、引用、状态、标题和层级保留。仅支持已确认且未锁定的 OUTLINE 节点。
 修改已有正文时先用 read_manuscript_blocks 分页读取真实块与格式片段，再在 prepare_changeset 的 manuscriptEdits 中给出 blockId、start、end、before、after。
-正文字符范围按 Unicode 字符计数（不是 UTF-16），相对该块原文从0开始，包含start、不包含end；一处修改不能跨越文字格式片段或段落，复杂修改应拆分。准确保留非目标部分、原格式和章节标题。
+正文字符范围按 Unicode 标量计数（不是 UTF-16），相对该块原文从0开始，包含start、不包含end；同一块内可跨文字格式片段，不能跨段落或硬换行。单片段默认继承原格式；跨格式非空替换必须提供afterRuns，每项text与marksFrom指定替换文字及其在被替换原文范围内的格式来源字符位置，拼接须准确等于after，不猜测或新建格式。删除用空after。准确保留非目标部分、块属性和章节标题。
 局部正文项的 content 必须为空，程序生成真实的富文本前后预览；这不是纯文本覆盖。仅修改已有正式资料时 includeDraft=false，不夹带无关工作稿。
 稿件依赖某个新规则时，draftDependsOn 写入对应的变更标识；不要用空依赖绕开部分采用检查。
 影响待办必须有实际读过的正式原文及准确引文，说明为什么需要复查，不把词面相似冒充已确认矛盾。
@@ -124,6 +124,13 @@ impl Drop for RunGuard<'_> {
 }
 
 fn tools() -> Vec<Value> {
+    let manuscript_edit = json!({"type":"object","additionalProperties":false,
+        "properties":{"blockId":{"type":"string"},"start":{"type":"integer","minimum":0},
+            "end":{"type":"integer","minimum":1},"before":{"type":"string"},"after":{"type":"string"},
+            "afterRuns":{"type":"array","maxItems":64,"items":{"type":"object","additionalProperties":false,
+                "properties":{"text":{"type":"string","minLength":1},"marksFrom":{"type":"integer","minimum":0}},
+                "required":["text","marksFrom"]}}},
+        "required":["blockId","start","end","before","after"]});
     let tool = |name: &str, description: &str, properties: Value, required: &[&str]| {
         json!({"type":"function","function":{"name":name,"description":description,
             "parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})
@@ -247,10 +254,7 @@ fn tools() -> Vec<Value> {
                     "properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["SETTING","OUTLINE","MANUSCRIPT"]},
                         "title":{"type":"string"},"content":{"type":"string"},"targetKey":{"type":["string","null"]},
                         "targetRevision":{"type":["string","null"]},"dependsOn":{"type":"array","items":{"type":"string"}},
-                        "manuscriptEdits":{"type":"array","maxItems":80,"items":{"type":"object","additionalProperties":false,
-                            "properties":{"blockId":{"type":"string"},"start":{"type":"integer","minimum":0},
-                                "end":{"type":"integer","minimum":1},"before":{"type":"string"},"after":{"type":"string"}},
-                            "required":["blockId","start","end","before","after"]}},
+                        "manuscriptEdits":{"type":"array","maxItems":80,"items":manuscript_edit},
                         "outlineEdits":{"type":"array","maxItems":80,"items":{"type":"object","additionalProperties":false,
                             "properties":{"start":{"type":"integer","minimum":0},"end":{"type":"integer","minimum":1},
                                 "before":{"type":"string"},"after":{"type":"string"}},
@@ -699,9 +703,14 @@ fn validate_change_reads(args: &ChangeArgs, seen: &HashMap<String, ReadEvidence>
             let evidence = item.target_key.as_ref().and_then(|key| seen.get(key));
             if !evidence.is_some_and(|evidence| evidence.anchors.iter().any(|(index, block)| {
                 *index < evidence.sent_fragments && block.block_id == edit.block_id
-                    && block.runs.iter().any(|run| run.start <= edit.start && run.end >= edit.end
-                        && edit.start < edit.end && run.text.chars().skip(edit.start-run.start)
-                            .take(edit.end-edit.start).collect::<String>() == edit.before)
+                    && edit.start >= block.offset && edit.start < edit.end
+                    && edit.end <= block.offset + block.text.chars().count()
+                    && block.text.chars().skip(edit.start-block.offset).take(edit.end-edit.start).collect::<String>() == edit.before
+                    && block.runs.iter().filter(|run| run.start < edit.end && run.end > edit.start)
+                        .map(|run| run.end.min(edit.end)-run.start.max(edit.start)).sum::<usize>() == edit.end-edit.start
+                    && edit.after_runs.iter().all(|replacement| replacement.marks_from >= edit.start
+                        && replacement.marks_from < edit.end && block.runs.iter().any(|run|
+                            run.start <= replacement.marks_from && run.end > replacement.marks_from))
             })) {
                 return Err(CoauthorError::Invalid("正文修改必须先读取并接收对应块及准确字符范围的原文，不能猜测块标识或跨页修改。".into()));
             }
@@ -1125,7 +1134,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v6",
+                    prompt_version: "coauthor-v7",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -1146,7 +1155,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v6","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v7","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -1479,6 +1488,7 @@ mod tests {
                 target_key: Some("MANUSCRIPT:old".into()), target_revision: Some("r1".into()),
                 depends_on: vec![], outline_edits: vec![], manuscript_edits: vec![novel_infrastructure::CoauthorManuscriptEdit {
                     block_id: "p".into(), start: 1, end: 3, before: "寿元".into(), after: "记忆".into(),
+                    after_runs: vec![],
                 }],
             }], impacts: vec![], coverage: "未检查全书".into(),
         };
@@ -1501,6 +1511,55 @@ mod tests {
         assert!(validate_change_reads(&args, &seen).is_err());
         args.items[0].manuscript_edits[0].block_id = "p".into();
         args.items[0].manuscript_edits[0].end = 4;
+        assert!(validate_change_reads(&args, &seen).is_err());
+    }
+
+    #[test]
+    fn cross_format_tool_protocol_exposes_explicit_mapping_but_rejects_invented_marks() {
+        let tool = tools().into_iter().find(|tool| tool["function"]["name"] == "prepare_changeset").unwrap();
+        let mapping = &tool["function"]["parameters"]["properties"]["items"]["items"]["properties"]
+            ["manuscriptEdits"]["items"]["properties"]["afterRuns"];
+        assert_eq!(mapping["maxItems"], 64);
+        assert_eq!(mapping["items"]["additionalProperties"], false);
+        assert_eq!(mapping["items"]["required"], json!(["text", "marksFrom"]));
+        assert!(serde_json::from_value::<novel_infrastructure::CoauthorManuscriptEdit>(json!({
+            "blockId":"p","start":1,"end":5,"before":"寿元，声","after":"记忆",
+            "afterRuns":[{"text":"记忆","marksFrom":1,"marks":[{"type":"bold"}]}]
+        })).is_err());
+        assert!(PROMPT.contains("不能跨段落或硬换行"));
+        assert!(PROMPT.contains("不猜测或新建格式"));
+    }
+
+    #[test]
+    fn cross_format_changes_require_one_sent_page_covering_all_text_and_format_origins() {
+        let mut args: ChangeArgs = serde_json::from_value(json!({
+            "title":"跨格式改稿","includeDraft":false,"draftDependsOn":[],"impacts":[],"coverage":"只查本段",
+            "items":[{"id":"patch","kind":"MANUSCRIPT","title":"旧章","content":"",
+                "targetKey":"MANUSCRIPT:old","targetRevision":"r1","dependsOn":[],
+                "manuscriptEdits":[{"blockId":"p","start":1,"end":5,"before":"寿元，声","after":"记忆，喑",
+                    "afterRuns":[{"text":"记忆","marksFrom":1},{"text":"，喑","marksFrom":3}]}]}]
+        })).unwrap();
+        let mut seen = HashMap::from([("MANUSCRIPT:old".into(), ReadEvidence {
+            revision: "r1".into(), fragments: vec!["普通来源".into(), "原文块".into()],
+            sent_fragments: 1, outline_pages: vec![],
+            anchors: vec![(1, CoauthorManuscriptBlock {
+                block_id: "p".into(), offset: 0, total_chars: 6, text: "😀寿元，声音".into(),
+                runs: vec![
+                    novel_infrastructure::CoauthorTextRun { start: 0, end: 3, text: "😀寿元".into(), marks: vec![json!({"type":"bold"})] },
+                    novel_infrastructure::CoauthorTextRun { start: 3, end: 6, text: "，声音".into(), marks: vec![json!({"type":"italic"})] },
+                ],
+            })],
+        })]);
+        assert!(validate_change_reads(&args, &seen).is_err());
+        seen.get_mut("MANUSCRIPT:old").unwrap().sent_fragments = 2;
+        assert!(validate_change_reads(&args, &seen).is_ok());
+        args.items[0].manuscript_edits[0].after_runs[0].marks_from = 0;
+        assert!(validate_change_reads(&args, &seen).is_err());
+        args.items[0].manuscript_edits[0].after_runs[0].marks_from = 1;
+        args.items[0].manuscript_edits[0].before = "猜测原文".into();
+        assert!(validate_change_reads(&args, &seen).is_err());
+        args.items[0].manuscript_edits[0].before = "寿元，声".into();
+        seen.get_mut("MANUSCRIPT:old").unwrap().anchors[0].1.runs.remove(1);
         assert!(validate_change_reads(&args, &seen).is_err());
     }
 

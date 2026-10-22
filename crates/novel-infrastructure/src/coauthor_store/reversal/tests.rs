@@ -619,6 +619,7 @@ fn rich_manuscript_reversal_restores_exact_json_as_a_new_revision() {
             end: 6,
             before: "寿元".into(),
             after: "记忆".into(),
+            after_runs: vec![],
         }],
     }];
     let changes = f

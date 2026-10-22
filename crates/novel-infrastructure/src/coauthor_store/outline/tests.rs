@@ -309,6 +309,7 @@ fn protection_states_non_outline_plain_overwrite_and_mixed_edit_kinds_cannot_byp
             end: 1,
             before: "甲".into(),
             after: "乙".into(),
+            after_runs: vec![],
         });
     assert!(
         f.manager

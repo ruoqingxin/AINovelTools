@@ -202,6 +202,12 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
           {item.manuscriptEdits?.map((edit, index) => <div key={index}>
             <small>块 {edit.blockId} · 字符 {edit.start} 至 {edit.end}（不含末位）</small>
             <div className="coauthor-diff"><pre>{edit.before}</pre><pre>{edit.after || "（删除）"}</pre></div>
+            {Boolean(edit.afterRuns?.length) && <details className="coauthor-format-mapping">
+              <summary>替换文字格式来源</summary>
+              <dl>{edit.afterRuns?.map((run, runIndex) => <div key={runIndex}>
+                <dt>原文字符 {run.marksFrom}</dt><dd>{run.text}</dd>
+              </div>)}</dl>
+            </details>}
           </div>)}
         </section>}
         {Boolean(item.outlineEdits?.length) && <section aria-label="大纲局部修改范围">

@@ -163,6 +163,53 @@ describe("linked coauthor changes", () => {
     expect(screen.queryByRole("button", { name: "确认采用所选变更" })).not.toBeInTheDocument();
   });
 
+  it("shows explicit cross-format origins and the actual inherited rich formatting before confirmation", async () => {
+    const rich = (after: boolean) => JSON.stringify({ type: "doc", content: [
+      { type: "paragraph", attrs: { blockId: "p" }, content: after ? [
+        { type: "text", text: "甲😀", marks: [{ type: "bold" }] },
+        { type: "text", text: "失去记忆", marks: [{ type: "italic" }] },
+        { type: "text", text: "。结尾保留。" },
+      ] : [
+        { type: "text", text: "甲😀失去", marks: [{ type: "bold" }] },
+        { type: "text", text: "寿元", marks: [{ type: "italic" }] },
+        { type: "text", text: "。结尾保留。" },
+      ] },
+    ] });
+    changes.items = [{
+      ...changes.items[0], id: "patch", dependsOn: [],
+      document: { ...document, title: "旧章", content: "甲😀失去记忆。结尾保留。",
+        targetKey: "MANUSCRIPT:old", targetRevision: "r1" },
+      manuscriptEdits: [{ blockId: "p", start: 2, end: 6, before: "失去寿元", after: "失去记忆",
+        afterRuns: [{ text: "失去记忆", marksFrom: 4 }] }],
+      manuscriptBeforeJson: rich(false), manuscriptAfterJson: rich(true), manuscriptDraftVersion: 0,
+    }];
+    changes.impacts = [];
+    renderPanel(); await openReview();
+    const after = screen.getByLabelText("局部修改后正文");
+    expect(after.querySelector("strong")).toHaveTextContent("甲😀");
+    expect(after.querySelector("em")).toHaveTextContent("失去记忆");
+    expect(after).toHaveTextContent("。结尾保留。");
+    expect(screen.getByLabelText("局部修改前正文").querySelector("strong")).toHaveTextContent("甲😀失去");
+    fireEvent.click(screen.getByText("替换文字格式来源"));
+    const mapping = screen.getByText("替换文字格式来源").closest("details")!;
+    expect(within(mapping).getByText("原文字符 4")).toBeVisible();
+    expect(within(mapping).getByText("失去记忆")).toBeVisible();
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "commit_coauthor_changeset")).toBe(false);
+  });
+
+  it("shows cross-format deletion as a deletion without inventing replacement formatting", async () => {
+    changes.items = [{
+      ...changes.items[0], id: "patch", dependsOn: [],
+      manuscriptEdits: [{ blockId: "p", start: 2, end: 6, before: "失去寿元", after: "" }],
+    }];
+    changes.impacts = [];
+    renderPanel(); await openReview();
+    const range = screen.getByRole("region", { name: "正文局部修改范围" });
+    expect(within(range).getByText("（删除）")).toBeVisible();
+    expect(screen.queryByText("替换文字格式来源")).not.toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "commit_coauthor_changeset")).toBe(false);
+  });
+
   it("blocks a subset missing dependencies and permits adopting just its independent setting", async () => {
     renderPanel(); await openReview();
     fireEvent.click(screen.getByRole("checkbox", { name: "修炼体系 设定" }));
