@@ -229,6 +229,7 @@ impl Database {
                     "INSERT INTO coauthor_fts(source_key,terms) VALUES (?1,?2)",
                     rusqlite::params![key, terms],
                 )?;
+                self.index_coauthor_semantic_chunks(&source)?;
             }
             tx.execute(
                 "DELETE FROM coauthor_source_queue WHERE kind=?1 AND source_id=?2",

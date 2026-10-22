@@ -561,7 +561,7 @@ fn migration_is_atomic_retryable_and_preserves_author_content() {
     f.db()
         .connection
         .execute_batch(
-            "DELETE FROM schema_migrations WHERE version=58;
+            "DELETE FROM schema_migrations WHERE version>=58;
          DROP TRIGGER coauthor_dirty_fact_insert;
          CREATE TRIGGER fail58 BEFORE INSERT ON schema_migrations WHEN NEW.version=58
          BEGIN SELECT RAISE(ABORT,'late migration failure'); END;",

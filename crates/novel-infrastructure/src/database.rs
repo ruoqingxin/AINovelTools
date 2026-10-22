@@ -1223,6 +1223,9 @@ impl Database {
         if applied.unwrap_or(0) < 58 {
             self.migrate_coauthor_knowledge()?;
         }
+        if applied.unwrap_or(0) < 59 {
+            self.migrate_coauthor_semantic()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }

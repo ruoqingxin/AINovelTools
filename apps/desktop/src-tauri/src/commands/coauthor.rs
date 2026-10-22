@@ -21,6 +21,8 @@ use novel_infrastructure::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tauri::Emitter;
+mod semantic;
+pub(crate) use semantic::*;
 
 use crate::errors::ApiError;
 use crate::state::{CoauthorProgress, ProjectState};
@@ -29,6 +31,7 @@ const PROMPT: &str = "\
 你是与作者边聊边写的小说共创伙伴。当前工作稿可以是设定、大纲或正文。
 先回应作者的实际意图，不固定列方案或追问，不要求填完整资料。允许大胆创作、反对薄弱方案和跨题材借鉴。
 本轮已自动检索相关资料，但并未读完整本书。需要时真实调用 search_sources 和 read_source，允许换关键词继续查。
+作者显式授权后，初始上下文还可包含语义相似候选；search_semantic_sources可用不同表达继续召回。语义相似不是事实成立，不替代read_source或正文证据精读；服务失败、未授权、索引不完整或未命中均不能说本书没有相关内容。没有索引建立、修改授权或切换服务的模型工具。
 提出新境界、人物或规则时，先了解已存在的同类资料；有相关设定就简述其依据，必要时询问沿用扩展、局部修改或另起版本。
 兼容的新增不必反复确认。作者已经决定改方向后继续推进，不反复警告。
 已有依据、历史建议、推测、新创意、作者决定和正式内容必须分开。未检索到不等于不存在。
@@ -184,6 +187,12 @@ fn tools() -> Vec<Value> {
             json!({"key":{"type":"string"},"revision":{"type":"string"},
                 "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}}),
             &["key", "revision"],
+        ),
+        tool(
+            "search_semantic_sources",
+            "在作者授权的项目资料及已建立的向量索引中做语义召回，仅发送查询文本；不是全书查证。返回每份来源最相似分块，须精读上下文。",
+            json!({"query":{"type":"string"},"offset":{"type":"integer","minimum":0}}),
+            &["query"],
         ),
         tool(
             "get_related_knowledge",
@@ -1073,7 +1082,7 @@ pub(crate) async fn run_coauthor(
         &preference,
     ) as usize;
     let cancelled = Arc::new(AtomicBool::new(false));
-    let (initial, recent, found, scope_info, memories, memory_contexts, old_running) = {
+    let (initial, recent, found, scope_info, memories, memory_contexts, old_running, query) = {
         let mut manager = state
             .manager
             .lock()
@@ -1119,7 +1128,7 @@ pub(crate) async fn run_coauthor(
             &input.message,
             input.expected_document_version,
         )?;
-        (initial, recent, found, scope_info, memories, memory_contexts, old_running)
+        (initial, recent, found, scope_info, memories, memory_contexts, old_running, query)
     };
     let _guard = RunGuard {
         state: &state,
@@ -1141,7 +1150,12 @@ pub(crate) async fn run_coauthor(
     }
     let mut document = initial.clone();
     let mut seen: HashMap<String, ReadEvidence> = HashMap::new();
-    let mut audit = vec![json!({"kind":"initial_search","result":found})];
+    let semantic=semantic::semantic_search(&state,&input.scope,&query,0,input.run_id).await
+        .unwrap_or_else(|error|json!({"error":error.message,"executed":false,
+            "coverage":"语义服务失败或授权已变化，仅保留关键词检索；不代表不存在相关资料。"}));
+    let semantic=semantic::limit_semantic_hits(semantic,budget/6);
+    let mut audit = vec![json!({"kind":"initial_search","result":found}),
+        json!({"kind":"initial_semantic_search","result":semantic})];
     let mut messages = vec![json!({"role":"system","content":PROMPT})];
     if let Some(style) = preference
         .prompt
@@ -1169,7 +1183,7 @@ pub(crate) async fn run_coauthor(
             "totalChars":document.content.chars().count(),"narrativePosition":document.narrative_position,
             "targetKey":document.target_key},
         "relevantDecisions":memories,
-        "relevantSources":found
+        "relevantSources":found,"semanticSources":semantic
     }).to_string()}));
     let tool_definitions = tools();
     let mut output = String::new();
@@ -1213,7 +1227,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v8",
+                    prompt_version: "coauthor-v9",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -1234,7 +1248,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v8","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v9","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -1318,10 +1332,17 @@ pub(crate) async fn run_coauthor(
                             content: call.function.name.clone(),
                         },
                     );
-                    let result = execute_tool(&state, &input, &call, &mut document, &mut seen);
-                    let value = match result {
-                        Ok(value) => value,
-                        Err(error) => json!({"error":error.to_string(),"executed":false}),
+                    let value = if call.function.name=="search_semantic_sources" {
+                        match arguments::<semantic::SemanticSearchArgs>(&call) {
+                            Ok(args) => semantic::semantic_search(&state,&input.scope,&args.query,args.offset,input.run_id).await
+                                .unwrap_or_else(|error|json!({"error":error.message,"executed":false})),
+                            Err(error) => json!({"error":error.to_string(),"executed":false}),
+                        }
+                    } else {
+                        match execute_tool(&state, &input, &call, &mut document, &mut seen) {
+                            Ok(value) => value,
+                            Err(error) => json!({"error":error.to_string(),"executed":false}),
+                        }
                     };
                     if call.function.name == "read_check_source"
                         && let Some(id) = value["readId"].as_str().and_then(|id| id.parse().ok())

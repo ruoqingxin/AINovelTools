@@ -31,6 +31,8 @@ try {
           targetKey:null,targetRevision:null,narrativePosition:"金丹突破之夜 · 陆沉限知视角"};
         let state={document:doc,decisions:[{id:"d1",topic:"突破代价",content:"金丹之后的突破，以失去一段记忆为代价。",
           status:"CHOSEN",sourceMessageId:"m1",version:2}],runs:[]};
+        let semanticStatus={settings:{version:0,profileId:null,fingerprint:"",kinds:[]},
+          totalChunks:0,indexedChunks:0,pendingSourceUpdates:4};
         const messages=[
           {id:"m1",sessionId:"s1",role:"USER",content:"我想在金丹后面增加一个新境界，突破的代价改为失去记忆。"},
           {id:"m2",sessionId:"s1",role:"ASSISTANT",content:"《修炼体系》里已有炼气、筑基、金丹三个阶段，原本的突破代价是寿元。\\n\\n可以沿着已有体系扩展，在金丹后加一层“照魂境”。你已选择失忆代价，我会把它作为当前分支的方向，原设定暂不替换。"},
@@ -123,7 +125,23 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:58};
+          if(command==="health_query")return {schemaVersion:59};
+          if(command==="get_coauthor_semantic_status")return structuredClone(semanticStatus);
+          if(command==="save_coauthor_semantic_settings"){
+            if(args.expectedVersion!==semanticStatus.settings.version)throw new Error("Semantic permission conflict");
+            if(args.selection&&(args.selection.baseUrl!=="http://127.0.0.1:9/v1"||args.selection.modelId!=="embedding-test"))
+              throw new Error("Unexpected embedding endpoint");
+            semanticStatus={...semanticStatus,settings:{version:semanticStatus.settings.version+1,
+              profileId:args.selection?.profileId??null,fingerprint:args.selection?"semantic-space":"",
+              kinds:args.kinds}};
+            return structuredClone(semanticStatus);
+          }
+          if(command==="build_coauthor_semantic_batch"){
+            if(!semanticStatus.settings.profileId)throw new Error("Semantic permission required");
+            if(args.expectedVersion!==semanticStatus.settings.version)throw new Error("Semantic permission changed");
+            semanticStatus={...semanticStatus,totalChunks:17,indexedChunks:8,pendingSourceUpdates:0};
+            return {status:structuredClone(semanticStatus),sentChars:9600,sentChunks:8};
+          }
           if(command==="bootstrap_status")return {};
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
           if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
@@ -178,7 +196,9 @@ try {
             sourceChecks.unshift(check);
             return {check:structuredClone(check),entries:structuredClone(checkEntries),offset:0,hasMore:false};
           }
-          if(command==="list_model_profiles")return [{id:"model",name:"本地验收模型",capability:"CHAT",hasSecret:true}];
+          if(command==="list_model_profiles")return [{id:"model",name:"本地验收模型",capability:"CHAT",hasSecret:true},
+            {id:"embedding",name:"本地向量验收模型",capability:"EMBEDDING",hasSecret:true,privacyLevel:"ALLOW_CLOUD",
+              provider:"SILICON_FLOW",baseUrl:"http://127.0.0.1:9/v1",modelId:"embedding-test"}];
           if(command==="get_ai_task_preferences")return {};
           if(command==="get_project_ai_task_overrides")return {};
           if(command==="list_discussion_messages")return structuredClone(messages);
@@ -300,6 +320,31 @@ try {
     await oldProposal.getByRole("button", { name: "关闭改稿差异", exact: true }).click();
     assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("run_coauthor")), false,
       "Historical comparison must not start a model");
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("get_coauthor_semantic_status")), false,
+      "Closed semantic panel must not fetch configuration");
+    await page.getByRole("button", { name: "语义索引", exact: true }).click();
+    const semanticPanel = page.getByRole("dialog", { name: "语义索引与外发授权" });
+    await semanticPanel.getByText("项目语义检索未启用", { exact: true }).waitFor();
+    await semanticPanel.getByLabel("向量模型", { exact: true }).selectOption("embedding");
+    await semanticPanel.getByRole("checkbox", { name: "正文", exact: true }).check();
+    await semanticPanel.getByRole("button", { name: "保存授权", exact: true }).click();
+    const permission = page.getByRole("alertdialog", { name: "授权项目语义检索" });
+    await permission.waitFor();
+    assert.ok((await permission.innerText()).includes("http://127.0.0.1:9/v1"));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-semantic-permission.png`), fullPage: true });
+    await permission.getByRole("button", { name: "确认授权", exact: true }).click();
+    await semanticPanel.getByText("项目语义检索已授权", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("build_coauthor_semantic_batch")), false);
+    await semanticPanel.getByRole("button", { name: "建立下一批", exact: true }).click();
+    await page.getByRole("alertdialog", { name: "建立一批语义索引" }).getByRole("button", { name: "建立本批" }).click();
+    await semanticPanel.getByText("本批发送 8 块、9600 字。", { exact: true }).waitFor();
+    await semanticPanel.getByText("向量分块 8 / 17 · 资料索引待更新 0 项", { exact: true }).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-semantic-index.png`), fullPage: true });
+    assert.equal(await semanticPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "build_coauthor_semantic_batch").length), 1);
+    await semanticPanel.getByRole("button", { name: "撤销授权", exact: true }).click();
+    await semanticPanel.getByText("项目语义检索未启用", { exact: true }).waitFor();
+    await semanticPanel.getByRole("button", { name: "关闭语义索引与外发授权", exact: true }).click();
     await page.getByLabel("讨论输入", { exact: true }).fill("前半段保留，最后一句再克制一点。");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await page.getByText("我保留前半段，只推敲最后一句。", { exact: true }).first().waitFor();

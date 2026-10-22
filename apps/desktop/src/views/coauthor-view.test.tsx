@@ -96,6 +96,25 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it("distinguishes semantic candidates and exposes coverage failures without treating them as read evidence", async () => {
+    stored.runs = [{ id: "latest", sessionId: "s1", userMessageId: "m", documentVersion: 1, status: "COMPLETED", output: "",
+      audit: [{ kind: "initial_semantic_search", result: {
+        hits: [{ key: "ENTITY:memory", kind: "ENTITY", title: "回忆代偿", revision: "r1", content: "牺牲过去换取力量。",
+          totalChars: 11, offset: 0, sessionId: null }],
+        coverage: "索引只覆盖 8/17 个分块；不是全书查证。", sentChars: 8,
+      } }, { kind: "tool", name: "search_semantic_sources", result: { error: "向量服务暂不可用", coverage: "不能据此断言没有设定。" } }],
+    }];
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: "依据" }));
+    const panel = await screen.findByRole("dialog", { name: "依据与运行记录" });
+    expect(await within(panel).findByText("ENTITY · 语义相似候选 · 检索命中 · 尚未随请求发送")).toBeVisible();
+    fireEvent.click(within(panel).getByText("语义检索覆盖 · 1"));
+    expect(within(panel).getByText("索引只覆盖 8/17 个分块；不是全书查证。")).toBeVisible();
+    fireEvent.click(within(panel).getByText("语义检索覆盖 · 2"));
+    expect(within(panel).getByRole("alert")).toHaveTextContent("向量服务暂不可用");
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor" || name === "build_coauthor_semantic_batch")).toBe(false);
+  });
+
   it("preserves fact provenance from historical audits and lazily reads original manuscript evidence", async () => {
     const fact: CoauthorSource = {
       key: "FACT:one", kind: "FACT", title: "陆沉 · 掌握 · 魂灯", revision: "fact1",

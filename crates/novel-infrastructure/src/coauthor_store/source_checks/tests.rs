@@ -511,6 +511,7 @@ fn migration_and_manifest_creation_failures_roll_back_without_touching_author_te
     db.migrate_coauthor_check_notes().unwrap();
     db.migrate_coauthor_decision_memory().unwrap();
     db.migrate_coauthor_knowledge().unwrap();
+    db.migrate_coauthor_semantic().unwrap();
     db.connection.execute_batch(
         "CREATE TRIGGER fail_check_entry BEFORE INSERT ON coauthor_check_entries BEGIN SELECT RAISE(ABORT,'entry failure'); END;"
     ).unwrap();

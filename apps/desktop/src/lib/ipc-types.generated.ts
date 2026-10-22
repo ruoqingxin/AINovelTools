@@ -25,11 +25,11 @@ export type InputReviewPurpose = "ADMISSION" | "MANUSCRIPT";
 export type InputCoauthorDocumentKind = "SETTING" | "OUTLINE" | "MANUSCRIPT";
 export type InputAiProposalFeedbackRating = "HELPFUL" | "NOT_HELPFUL";
 export type InputAiTaskPreference = string | InputAiTaskPreferenceDetails | null;
+export type InputPrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
+export type InputModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
 export type InputWritingReviewPolicy = "ADVISORY" | "BALANCED" | "REQUIRED";
 export type InputDiscussionDesignTarget = "AUTO" | "CHARACTER_CARD" | "PROJECT_SETTING";
 export type InputModelCapability = "CHAT" | "EMBEDDING";
-export type InputPrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
-export type InputModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
 export type InputSummaryKind = "CHAPTER" | "CHARACTER" | "SETTING";
 export type InputSummaryPrecision = "L0" | "L1" | "L2" | "L3" | "L4" | "L5";
 export type ExtractionItemKind = "ENTITY" | "FACT" | "RELATION" | "EVENT" | "FORESHADOWING";
@@ -98,10 +98,12 @@ export type IpcErrors = {
     ask_project_discussion: ApiError;
     assemble_context_with_project_knowledge: ApiError;
     bootstrap_status: null;
+    build_coauthor_semantic_batch: ApiError;
     cancel_ai_task: ApiError;
     cancel_coauthor_run: ApiError;
     cancel_job: ApiError;
     claim_next_job: ApiError;
+    clear_coauthor_semantic_cache: ApiError;
     clear_planning_embedding: ApiError;
     clear_recovery_logs: ApiError;
     close_project: null;
@@ -157,6 +159,7 @@ export type IpcErrors = {
     get_coauthor_check_notes: ApiError;
     get_coauthor_reversal: ApiError;
     get_coauthor_run: ApiError;
+    get_coauthor_semantic_status: ApiError;
     get_coauthor_source_check: ApiError;
     get_coauthor_state: ApiError;
     get_consistency_review_trace: ApiError;
@@ -234,6 +237,7 @@ export type IpcErrors = {
     save_audit_flow_settings: ApiError;
     save_chapter_entity_references: ApiError;
     save_coauthor_document: ApiError;
+    save_coauthor_semantic_settings: ApiError;
     save_discussion_workspace: ApiError;
     save_manuscript_draft: ApiError;
     save_model_secret: ApiError;
@@ -298,10 +302,12 @@ export type IpcRequests = {
     ask_project_discussion: InputArgsAskProjectDiscussion;
     assemble_context_with_project_knowledge: InputArgsAssembleContextWithProjectKnowledge;
     bootstrap_status: InputArgsBootstrapStatus;
+    build_coauthor_semantic_batch: InputArgsBuildCoauthorSemanticBatch;
     cancel_ai_task: InputArgsCancelAiTask;
     cancel_coauthor_run: InputArgsCancelCoauthorRun;
     cancel_job: InputArgsCancelJob;
     claim_next_job: InputArgsClaimNextJob;
+    clear_coauthor_semantic_cache: InputArgsClearCoauthorSemanticCache;
     clear_planning_embedding: InputArgsClearPlanningEmbedding;
     clear_recovery_logs: InputArgsClearRecoveryLogs;
     close_project: InputArgsCloseProject;
@@ -357,6 +363,7 @@ export type IpcRequests = {
     get_coauthor_check_notes: InputArgsGetCoauthorCheckNotes;
     get_coauthor_reversal: InputArgsGetCoauthorReversal;
     get_coauthor_run: InputArgsGetCoauthorRun;
+    get_coauthor_semantic_status: InputArgsGetCoauthorSemanticStatus;
     get_coauthor_source_check: InputArgsGetCoauthorSourceCheck;
     get_coauthor_state: InputArgsGetCoauthorState;
     get_consistency_review_trace: InputArgsGetConsistencyReviewTrace;
@@ -434,6 +441,7 @@ export type IpcRequests = {
     save_audit_flow_settings: InputArgsSaveAuditFlowSettings;
     save_chapter_entity_references: InputArgsSaveChapterEntityReferences;
     save_coauthor_document: InputArgsSaveCoauthorDocument;
+    save_coauthor_semantic_settings: InputArgsSaveCoauthorSemanticSettings;
     save_discussion_workspace: InputArgsSaveDiscussionWorkspace;
     save_manuscript_draft: InputArgsSaveManuscriptDraft;
     save_model_secret: InputArgsSaveModelSecret;
@@ -534,6 +542,10 @@ export type InputAssembleContextInput = {
     volumePlan: string;
 };
 export type InputArgsBootstrapStatus = {};
+export type InputArgsBuildCoauthorSemanticBatch = {
+    expectedVersion: number;
+    scope: InputCoauthorScope;
+};
 export type InputArgsCancelAiTask = {
     taskId: string;
 };
@@ -545,6 +557,10 @@ export type InputArgsCancelJob = {
     id: string;
 };
 export type InputArgsClaimNextJob = {};
+export type InputArgsClearCoauthorSemanticCache = {
+    expectedVersion: number;
+    scope: InputCoauthorScope;
+};
 export type InputArgsClearPlanningEmbedding = {
     sectionId: string;
 };
@@ -913,6 +929,9 @@ export type InputArgsGetCoauthorReversal = {
 };
 export type InputArgsGetCoauthorRun = {
     id: string;
+    scope: InputCoauthorScope;
+};
+export type InputArgsGetCoauthorSemanticStatus = {
     scope: InputCoauthorScope;
 };
 export type InputArgsGetCoauthorSourceCheck = {
@@ -1295,6 +1314,19 @@ export type InputCoauthorDocument = {
     title: string;
     version: number;
 };
+export type InputArgsSaveCoauthorSemanticSettings = {
+    expectedVersion: number;
+    kinds: string[];
+    scope: InputCoauthorScope;
+    selection?: InputCoauthorEmbeddingSelection | null;
+};
+export type InputCoauthorEmbeddingSelection = {
+    baseUrl: string;
+    modelId: string;
+    privacyLevel: InputPrivacyLevel;
+    profileId: string;
+    provider: InputModelProvider;
+};
 export type InputArgsSaveDiscussionWorkspace = {
     workspace: InputDiscussionWorkspace;
 };
@@ -1467,10 +1499,12 @@ export type IpcResponses = {
     ask_project_discussion: DiscussionExchange;
     assemble_context_with_project_knowledge: ContextPackage;
     bootstrap_status: BootstrapStatus;
+    build_coauthor_semantic_batch: CoauthorSemanticBuildResult;
     cancel_ai_task: null;
     cancel_coauthor_run: null;
     cancel_job: Job;
     claim_next_job: Job | null;
+    clear_coauthor_semantic_cache: CoauthorSemanticStatus;
     clear_planning_embedding: null;
     clear_recovery_logs: null;
     close_project: ProjectManifest | null;
@@ -1526,6 +1560,7 @@ export type IpcResponses = {
     get_coauthor_check_notes: CoauthorCheckNotesPage;
     get_coauthor_reversal: CoauthorReversal | null;
     get_coauthor_run: CoauthorRun;
+    get_coauthor_semantic_status: CoauthorSemanticStatus;
     get_coauthor_source_check: CoauthorCheckPage;
     get_coauthor_state: CoauthorState;
     get_consistency_review_trace: ReviewTrace;
@@ -1603,6 +1638,7 @@ export type IpcResponses = {
     save_audit_flow_settings: AuditFlowSettings;
     save_chapter_entity_references: ChapterEntityReferences;
     save_coauthor_document: CoauthorDocument;
+    save_coauthor_semantic_settings: CoauthorSemanticStatus;
     save_discussion_workspace: DiscussionWorkspace;
     save_manuscript_draft: ManuscriptDraft;
     save_model_secret: ModelProfile;
@@ -1739,6 +1775,23 @@ export type BootstrapStatus = {
         string,
         string
     ];
+};
+export type CoauthorSemanticBuildResult = {
+    sentChars: number;
+    sentChunks: number;
+    status: CoauthorSemanticStatus;
+};
+export type CoauthorSemanticStatus = {
+    indexedChunks: number;
+    pendingSourceUpdates: number;
+    settings: CoauthorSemanticSettings;
+    totalChunks: number;
+};
+export type CoauthorSemanticSettings = {
+    fingerprint: string;
+    kinds: string[];
+    profileId: string | null;
+    version: number;
 };
 export type Job = {
     acknowledgedAt: string | null;

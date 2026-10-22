@@ -192,6 +192,18 @@ export function listCoauthorRelatedKnowledge(input: IpcRequests["list_coauthor_r
 export function readCoauthorKnowledgeEvidence(input: IpcRequests["read_coauthor_knowledge_evidence"]) {
   return invoke("read_coauthor_knowledge_evidence", input);
 }
+export function getCoauthorSemanticStatus(input: IpcRequests["get_coauthor_semantic_status"]) {
+  return invoke("get_coauthor_semantic_status", input);
+}
+export function saveCoauthorSemanticSettings(input: IpcRequests["save_coauthor_semantic_settings"]) {
+  return invoke("save_coauthor_semantic_settings", input);
+}
+export function buildCoauthorSemanticBatch(input: IpcRequests["build_coauthor_semantic_batch"]) {
+  return invoke("build_coauthor_semantic_batch", input);
+}
+export function clearCoauthorSemanticCache(input: IpcRequests["clear_coauthor_semantic_cache"]) {
+  return invoke("clear_coauthor_semantic_cache", input);
+}
 export function createCoauthorSourceCheck(input: IpcRequests["create_coauthor_source_check"]) {
   return invoke("create_coauthor_source_check", input);
 }

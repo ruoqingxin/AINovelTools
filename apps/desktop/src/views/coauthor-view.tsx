@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Check, ClipboardList, FileText, GitBranch, History, ListChecks, MessageSquareText, Plus, RefreshCw, Save, Send, Square, X } from "lucide-react";
+import { BookOpen, Check, ClipboardList, DatabaseZap, FileText, GitBranch, History, ListChecks, MessageSquareText, Plus, RefreshCw, Save, Send, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "../lib/ipc-transport";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
@@ -21,6 +21,7 @@ import { CoauthorChecksPanel } from "./coauthor-checks-panel";
 import { CoauthorDecisionHistory, DecisionContext } from "./coauthor-decision-history";
 import { CoauthorRunDirectory } from "./coauthor-run-directory";
 import { CoauthorKnowledge } from "./coauthor-knowledge";
+import { CoauthorSemanticPanel } from "./coauthor-semantic-panel";
 import "./coauthor-workspace.css";
 
 const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
@@ -35,8 +36,8 @@ function proposalFor(run?: CoauthorRun): Proposal | null {
     value !== null && typeof value === "object" && !Array.isArray(value) && "kind" in value && value.kind === "draft_proposal");
   return item ? item as unknown as Proposal : null;
 }
-function sourcesFor(run?: CoauthorRun): Array<CoauthorSource & { read: boolean; sent: boolean }> {
-  const found = new Map<string, CoauthorSource & { read: boolean; sent: boolean; checkReadId?: string }>();
+function sourcesFor(run?: CoauthorRun): Array<CoauthorSource & { read: boolean; sent: boolean; semantic?: boolean }> {
+  const found = new Map<string, CoauthorSource & { read: boolean; sent: boolean; semantic?: boolean; checkReadId?: string }>();
   for (const raw of run?.audit ?? []) {
     const item = raw as { kind?: string; name?: string; readIds?: string[]; result?: {
       hits?: CoauthorSource[]; blocks?: Array<{ text: string }>; readId?: string;
@@ -47,12 +48,14 @@ function sourcesFor(run?: CoauthorRun): Array<CoauthorSource & { read: boolean; 
     }
     for (const hit of item.result?.hits ?? []) {
       const key = `${hit.key}:${hit.revision}`;
-      if (!found.has(key)) found.set(key, { ...hit, read: false, sent: false });
+      const semantic = item.kind === "initial_semantic_search" || item.name === "search_semantic_sources";
+      if (!found.has(key)) found.set(key, { ...hit, read: false, sent: false, semantic });
+      else if (semantic) found.get(key)!.semantic = true;
     }
     if (item.kind === "tool" && (item.name === "read_source" || item.name === "read_check_source") && item.result?.key) {
       const source = item.result as CoauthorSource;
       const key = `${source.key}:${source.revision}`;
-      found.set(key, { ...source, read: true, sent: false,
+      found.set(key, { ...source, read: true, sent: false, semantic: found.get(key)?.semantic,
         checkReadId: item.name === "read_check_source" ? item.result?.readId : undefined });
     }
     if (item.kind === "tool" && (item.name === "read_outline_content" || item.name === "read_manuscript_blocks")
@@ -163,7 +166,7 @@ function CoauthorSession({ scope, initial, onFork }: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState("chat");
-  const [panel, setPanel] = useState<"sources" | "checks" | "decisions" | "history" | "proposal" | "publish" | "changes" | null>(null);
+  const [panel, setPanel] = useState<"sources" | "semantic" | "checks" | "decisions" | "history" | "proposal" | "publish" | "changes" | null>(null);
   const [publication, setPublication] = useState<{ document: CoauthorDocument; before: string } | null>(null);
   const [runId, setRunId] = useState(initial.runs[0]?.id ?? "");
   const [history, setHistory] = useState<CoauthorDocument[]>([]);
@@ -398,6 +401,7 @@ function CoauthorSession({ scope, initial, onFork }: {
       </div>
       <div className="coauthor-tools">
         <button onClick={() => setPanel("sources")}><BookOpen size={15} />依据</button>
+        <button onClick={() => setPanel("semantic")}><DatabaseZap size={15} />语义索引</button>
         <button className="icon-command" title="查证范围" aria-label="查证范围" onClick={() => setPanel("checks")}><ListChecks size={17} /></button>
         <button onClick={() => setPanel("decisions")}>决定 <span>{state.decisions.length}</span></button>
         <button onClick={() => setPanel("changes")}><ClipboardList size={15} />关联变更</button>
@@ -489,8 +493,9 @@ function CoauthorSession({ scope, initial, onFork }: {
           {runId && <button onClick={() => setPanel("proposal")}>{proposal ? "查看改稿差异" : "查看运行结果"}</button>}</footer>
       </section>
     </div>
-    <WorkspacePanel open={panel !== null} title={panel === "checks" ? "查证范围与进度" : panel === "changes" ? "关联变更与影响" : panel === "sources" ? "依据与运行记录" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : panel === "publish" ? "正式采用预览" : "改稿差异"}
+    <WorkspacePanel open={panel !== null} title={panel === "semantic" ? "语义索引与外发授权" : panel === "checks" ? "查证范围与进度" : panel === "changes" ? "关联变更与影响" : panel === "sources" ? "依据与运行记录" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : panel === "publish" ? "正式采用预览" : "改稿差异"}
       onClose={() => { setPanel(null); setSource(null); }}>
+      {panel === "semantic" && <CoauthorSemanticPanel key={`${scope.projectId}:${scope.sessionId}`} scope={scope} />}
       {panel === "checks" && <CoauthorChecksPanel key={`${scope.projectId}:${scope.sessionId}`} scope={scope}
         isGenerating={Boolean(active)} onContinue={(check) => {
           const continuation = `继续查证清单 ${check.id}：${check.query}。先读取清单的当前进度和范围变化，沿未送达的原文范围继续核对；如版本或范围已变化，说明差异并准备新的完整清单。`;
@@ -513,12 +518,25 @@ function CoauthorSession({ scope, initial, onFork }: {
         {run?.status === "RUNNING" && <button disabled={busy || !runVerified} onClick={() => void act(async () => {
           await cancelCoauthorRun({ scope, runId: run.id }); await refresh();
         })}>停止此运行</button>}
+        {run?.audit.map((raw, index) => {
+          const step = raw as { kind?: string; name?: string; result?: { coverage?: string; error?: string; sentChars?: number } };
+          if (step.kind !== "initial_semantic_search" && step.name !== "search_semantic_sources") return null;
+          return <details key={`semantic:${index}`}><summary>语义检索覆盖 · {index + 1}</summary>
+            <p>{step.result?.coverage}</p>
+            {step.result?.error && <p role="alert">语义检索无法核实：{step.result.error}</p>}
+            {step.result?.sentChars !== undefined && <small>查询外发 {step.result.sentChars} 字符</small>}
+          </details>;
+        })}
         {sourcesFor(run).map((hit) => <article className="coauthor-source" key={`${hit.key}:${hit.revision}`}>
-          <strong>{hit.title}</strong><small>{hit.kind} · {hit.read ? (hit.knowledgeContext ? "已读取记录" : "已读取原文片段") : "检索命中"} · {hit.sent ? "已随请求发送" : "尚未随请求发送"}</small><p>{hit.content}</p>
+          <strong>{hit.title}</strong><small>{hit.kind} · {hit.semantic ? "语义相似候选 · " : ""}{hit.read ? (hit.knowledgeContext ? "已读取记录" : "已读取原文片段") : "检索命中"} · {hit.sent ? "已随请求发送" : "尚未随请求发送"}</small><p>{hit.content}</p>
+          {hit.semantic && <small>来源文本字符 {hit.offset} 至 {hit.offset + [...hit.content].length}，不等于正文块内范围。</small>}
           <DecisionContext context={hit.decisionContext} />
           <CoauthorKnowledge key={`${scope.projectId}:${scope.sessionId}:${hit.key}:${hit.revision}`} scope={scope} source={hit}
             onRead={(key, revision) => void act(async () => { setSource(await readCoauthorSource({ scope, key, revision, offset: 0 })); })} />
           <button onClick={() => void act(async () => { setSource(await readCoauthorSource({ scope, key: hit.key, revision: hit.revision, offset: 0 })); })}>{hit.knowledgeContext ? "查看记录" : "查看原文"}</button>
+          {hit.semantic && hit.offset > 0 && <button onClick={() => void act(async () => {
+            setSource(await readCoauthorSource({ scope, key: hit.key, revision: hit.revision, offset: hit.offset }));
+          })}>查看匹配段</button>}
         </article>)}
         {!runId && <p>选择一份运行记录。</p>}
         {proposal && <button disabled={!runVerified} onClick={() => setPanel("proposal")}>查看改稿差异</button>}
@@ -533,7 +551,7 @@ function CoauthorSession({ scope, initial, onFork }: {
         {run && <details><summary>运行步骤</summary><ol>{run.audit.map((raw, index) => {
           const step = raw as { kind?: string; name?: string; round?: number; inputChars?: number; message?: string };
           return <li key={index}>{step.kind === "model_request" ? `模型请求 ${step.round} · 输入估算 ${step.inputChars} 字符`
-            : step.kind === "tool" ? `工具：${step.name}` : step.kind === "initial_search" ? "自动检索候选"
+            : step.kind === "tool" ? `工具：${step.name}` : step.kind === "initial_search" ? "自动检索候选" : step.kind === "initial_semantic_search" ? "语义召回（以当次授权与索引覆盖为准）"
               : step.kind === "draft_proposal" ? "准备工作稿修改，未正式提交" : step.message ?? step.kind}</li>;
         })}</ol></details>}
       </>}

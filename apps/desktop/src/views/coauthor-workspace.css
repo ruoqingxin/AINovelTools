@@ -131,6 +131,15 @@
 .coauthor-check-note h4 { margin: 0; font-size: 13px; }
 .coauthor-check-note p, .coauthor-check-note blockquote { white-space: pre-wrap; overflow-wrap: anywhere; }
 .coauthor-note-questions { color: var(--muted); }
+.coauthor-semantic { display: grid; gap: 12px; }
+.coauthor-semantic > label { display: grid; gap: 6px; }
+.coauthor-semantic select { width: 100%; min-width: 0; }
+.coauthor-semantic fieldset { display: flex; flex-wrap: wrap; gap: 12px; min-width: 0; border: 1px solid var(--border); }
+.coauthor-semantic fieldset label { display: inline-flex; align-items: center; gap: 6px; }
+.coauthor-semantic fieldset input { width: 16px; height: 16px; }
+.coauthor-semantic-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.coauthor-semantic-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.coauthor-semantic-endpoint { overflow-wrap: anywhere; }
 .coauthor-check-create { margin-top: 24px; }
 .coauthor-check-create form { display: grid; gap: 12px; padding-top: 12px; }
 .coauthor-check-create form > label { display: grid; gap: 6px; }

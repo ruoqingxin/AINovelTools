@@ -16,6 +16,8 @@ mod sources;
 pub use sources::{CoauthorSearchPage, CoauthorSource};
 mod knowledge;
 pub use knowledge::*;
+mod semantic;
+pub use semantic::*;
 mod source_checks;
 pub use source_checks::*;
 mod decisions;
