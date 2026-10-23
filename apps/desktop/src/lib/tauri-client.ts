@@ -195,6 +195,9 @@ export function readCoauthorKnowledgeEvidence(input: IpcRequests["read_coauthor_
 export function listCoauthorKnowledgeAnchors(input: IpcRequests["list_coauthor_knowledge_anchors"]) {
   return invoke("list_coauthor_knowledge_anchors", input);
 }
+export function getCoauthorEvidenceProgress(input: IpcRequests["get_coauthor_evidence_progress"]) {
+  return invoke("get_coauthor_evidence_progress", input);
+}
 export function getCoauthorSemanticStatus(input: IpcRequests["get_coauthor_semantic_status"]) {
   return invoke("get_coauthor_semantic_status", input);
 }

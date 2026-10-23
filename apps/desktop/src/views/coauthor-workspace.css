@@ -105,6 +105,10 @@
 .coauthor-knowledge { margin-block: 12px; padding-inline-start: 12px; border-inline-start: 2px solid var(--border-color, #d7dce2); overflow-wrap: anywhere; min-width: 0; }
 .coauthor-knowledge > button { display: block; max-width: 100%; white-space: normal; text-align: start; margin-block: 6px; }
 .coauthor-knowledge details { margin-block: 8px; }
+.coauthor-evidence-progress dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-block: 12px; }
+.coauthor-evidence-progress dt { color: var(--muted); font-size: 12px; }
+.coauthor-evidence-progress dd { margin: 5px 0 0; font-size: 16px; font-variant-numeric: tabular-nums; }
+.coauthor-evidence-progress section { border-bottom: 1px solid var(--border); padding-block: 8px; }
 .coauthor-format-mapping dl { margin: 10px 0; }
 .coauthor-format-mapping dd { margin: 4px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .coauthor-decision-history small, .coauthor-memory-context small { display: block; color: var(--muted); overflow-wrap: anywhere; }

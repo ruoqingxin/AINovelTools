@@ -138,7 +138,7 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:61};
+          if(command==="health_query")return {schemaVersion:62};
           if(command==="get_coauthor_semantic_status")return structuredClone(semanticStatus);
           if(command==="save_coauthor_semantic_settings"){
             if(args.expectedVersion!==semanticStatus.settings.version)throw new Error("Semantic permission conflict");
@@ -187,6 +187,20 @@ try {
             return {knowledgeKey:fact.key,knowledgeRevision:fact.revision,offset:args.offset,totalAnchors:17,
               nextOffset:args.offset===0?16:17,anchors:args.offset===0?structuredClone(fact.knowledgeContext.anchors):
                 [{id:"anchor17",chapterId:"chapter1",revisionId:"original1",blockId:"p17",status:"CURRENT_REVISION"}]};
+          }
+          if(command==="get_coauthor_evidence_progress"){
+            assertSource(args,fact);
+            if(![0,16].includes(args.offset))throw new Error("Unexpected evidence progress cursor");
+            const anchors=[...fact.knowledgeContext.anchors,
+              {id:"anchor17",chapterId:"chapter1",revisionId:"original1",blockId:"p17",status:"CURRENT_REVISION"}];
+            return {id:"evidence-check1",knowledgeKey:fact.key,knowledgeRevision:fact.revision,title:fact.title,
+              listedAnchors:17,totalAnchors:17,validatedAnchors:2,readAnchors:1,sentAnchors:0,
+              stale:false,needsReview:false,allEvidenceSent:false,offset:args.offset,nextOffset:Math.min(17,args.offset+16),
+              entries:anchors.slice(args.offset,args.offset+16).map(anchor=>({
+                anchor,totalChars:["anchor1","anchor2"].includes(anchor.id)?8:null,
+                readChars:anchor.id==="anchor1"?8:anchor.id==="anchor2"?3:0,
+                sentChars:anchor.id==="anchor1"?2:0,nextOffset:anchor.id==="anchor1"?2:0,
+                readComplete:anchor.id==="anchor1",sentComplete:false}))};
           }
           if(command==="read_coauthor_source"){
             const source=[fact,relation,secondFact].find(source=>source.key===args.key);
@@ -307,7 +321,7 @@ try {
     await sourcesPanel.getByText("已审核事实记录 · v1", { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__coauthorCalls.some(name =>
       name === "read_coauthor_knowledge_evidence" || name === "list_coauthor_related_knowledge"
-        || name === "list_coauthor_knowledge_anchors")), false,
+        || name === "list_coauthor_knowledge_anchors" || name === "get_coauthor_evidence_progress")), false,
     "Knowledge metadata must not eagerly load manuscript evidence or relationships");
     await sourcesPanel.getByText("正文证据 · p1", { exact: true }).click();
     await sourcesPanel.getByText("陆沉😀掌握魂灯。", { exact: true }).waitFor({ state: "visible" });
@@ -327,6 +341,33 @@ try {
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-knowledge-anchors.png`), fullPage: true });
     await sourcesPanel.getByRole("button", { name: "上一页证据", exact: true }).click();
     await sourcesPanel.getByText("证据目录 · 1 至 16 / 17 条", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("get_coauthor_evidence_progress")), false,
+      "Author evidence reading must not automatically query or advance model progress");
+    const progressPanel = sourcesPanel.locator("details.coauthor-evidence-progress");
+    await progressPanel.locator(":scope > summary").click();
+    await progressPanel.getByText("独立证据 17 条", { exact: true }).waitFor();
+    await progressPanel.getByText("执行读取 8 / 8 字符 · 模型送达 2 / 8 字符 · 连续送达至 2", { exact: true }).waitFor();
+    assert.equal(await progressPanel.locator("dd").allTextContents().then(values => values.join(",")), "2,1,0");
+    const firstProgressEvidence = progressPanel.getByText("正文证据 · p1", { exact: true });
+    await firstProgressEvidence.click();
+    await progressPanel.getByText("陆沉😀掌握魂灯。", { exact: true }).waitFor();
+    await progressPanel.getByRole("button", { name: "刷新证据进度", exact: true }).click();
+    await progressPanel.getByText("执行读取 8 / 8 字符 · 模型送达 2 / 8 字符 · 连续送达至 2", { exact: true }).waitFor();
+    assert.equal(await progressPanel.locator("dd").allTextContents().then(values => values.join(",")), "2,1,0",
+      "Author quote inspection must not count as execution reading or successful model delivery");
+    assert.equal(await progressPanel.getByText("本版本全部独立证据引句已送达过模型，语义及适用条件仍待核对。", { exact: true }).count(), 0);
+    assert.equal(await progressPanel.evaluate(el => el.scrollWidth > el.clientWidth), false);
+    await progressPanel.evaluate(el => el.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-evidence-progress.png`), fullPage: true });
+    await progressPanel.getByRole("button", { name: "下一页证据进度", exact: true }).click();
+    await progressPanel.getByRole("navigation", { name: "模型证据进度分页" }).getByText("第 2 页", { exact: true }).waitFor();
+    await progressPanel.getByText("正文证据 · p17", { exact: true }).waitFor();
+    assert.equal(await progressPanel.getByRole("button", { name: "下一页证据进度", exact: true }).isDisabled(), true);
+    assert.equal(await progressPanel.getByText("正文证据 · p1", { exact: true }).count(), 0);
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-evidence-progress-last.png`), fullPage: true });
+    await progressPanel.getByRole("button", { name: "上一页证据进度", exact: true }).click();
+    await progressPanel.getByText("正文证据 · p1", { exact: true }).waitFor();
+    await progressPanel.locator(":scope > summary").click();
     await sourcesPanel.getByText("直接关联关系", { exact: true }).click();
     await sourcesPanel.getByRole("button", { name: "查看关系记录", exact: true }).waitFor();
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-knowledge.png`), fullPage: true });

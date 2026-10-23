@@ -157,6 +157,7 @@ export type IpcErrors = {
     get_coauthor_changes: ApiError;
     get_coauthor_changeset: ApiError;
     get_coauthor_check_notes: ApiError;
+    get_coauthor_evidence_progress: ApiError;
     get_coauthor_reversal: ApiError;
     get_coauthor_run: ApiError;
     get_coauthor_semantic_status: ApiError;
@@ -362,6 +363,7 @@ export type IpcRequests = {
     get_coauthor_changes: InputArgsGetCoauthorChanges;
     get_coauthor_changeset: InputArgsGetCoauthorChangeset;
     get_coauthor_check_notes: InputArgsGetCoauthorCheckNotes;
+    get_coauthor_evidence_progress: InputArgsGetCoauthorEvidenceProgress;
     get_coauthor_reversal: InputArgsGetCoauthorReversal;
     get_coauthor_run: InputArgsGetCoauthorRun;
     get_coauthor_semantic_status: InputArgsGetCoauthorSemanticStatus;
@@ -923,6 +925,12 @@ export type InputArgsGetCoauthorCheckNotes = {
     id: string;
     key: string;
     offset: number;
+    scope: InputCoauthorScope;
+};
+export type InputArgsGetCoauthorEvidenceProgress = {
+    key: string;
+    offset: number;
+    revision: string;
     scope: InputCoauthorScope;
 };
 export type InputArgsGetCoauthorReversal = {
@@ -1566,6 +1574,7 @@ export type IpcResponses = {
     get_coauthor_changes: CoauthorChangesPage;
     get_coauthor_changeset: CoauthorChangeSet;
     get_coauthor_check_notes: CoauthorCheckNotesPage;
+    get_coauthor_evidence_progress: CoauthorEvidenceProgress;
     get_coauthor_reversal: CoauthorReversal | null;
     get_coauthor_run: CoauthorRun;
     get_coauthor_semantic_status: CoauthorSemanticStatus;
@@ -2419,6 +2428,32 @@ export type CoauthorCheckNote = {
     runId: string;
     start: number;
     version: number;
+};
+export type CoauthorEvidenceProgress = {
+    allEvidenceSent: boolean;
+    entries: CoauthorEvidenceProgressEntry[];
+    id: string | null;
+    knowledgeKey: string;
+    knowledgeRevision: string;
+    listedAnchors: number;
+    needsReview: boolean;
+    nextOffset: number;
+    offset: number;
+    readAnchors: number;
+    sentAnchors: number;
+    stale: boolean;
+    title: string;
+    totalAnchors: number;
+    validatedAnchors: number;
+};
+export type CoauthorEvidenceProgressEntry = {
+    anchor: CoauthorKnowledgeAnchor;
+    nextOffset: number;
+    readChars: number;
+    readComplete: boolean;
+    sentChars: number;
+    sentComplete: boolean;
+    totalChars: number | null;
 };
 export type CoauthorRun = {
     audit: unknown[];

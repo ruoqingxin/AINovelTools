@@ -1,9 +1,9 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CoauthorKnowledge } from "./coauthor-knowledge";
-import type { CoauthorKnowledgeEvidence, CoauthorScope, CoauthorSource } from "../lib/tauri-client";
+import type { CoauthorEvidenceProgress, CoauthorKnowledgeEvidence, CoauthorScope, CoauthorSource } from "../lib/tauri-client";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("../lib/ipc-transport", () => mocks);
@@ -31,6 +31,13 @@ const evidence: CoauthorKnowledgeEvidence = {
   revisionId: "m1", blockId: "p1", start: 2, end: 10, content: "陆沉😀掌握魂灯。",
   offset: 0, nextOffset: 8, totalChars: 8, isCurrentRevision: true,
 };
+const evidenceProgress: CoauthorEvidenceProgress = {
+  id: "progress1", knowledgeKey: fact.key, knowledgeRevision: fact.revision, title: fact.title,
+  listedAnchors: 1, totalAnchors: 1, validatedAnchors: 1, readAnchors: 1, sentAnchors: 0,
+  stale: false, needsReview: false, allEvidenceSent: false, offset: 0, nextOffset: 1,
+  entries: [{ anchor: fact.knowledgeContext!.anchors[0], totalChars: 8, readChars: 8, sentChars: 3,
+    nextOffset: 3, readComplete: true, sentComplete: false }],
+};
 function tree(source = fact, selectedScope = scope) {
   return <CoauthorKnowledge key={`${selectedScope.projectId}:${selectedScope.sessionId}:${source.key}:${source.revision}`}
     scope={selectedScope} source={source} onRead={onRead} />;
@@ -43,7 +50,8 @@ function mount(source = fact) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.invoke.mockImplementation(async (command: string) => command === "read_coauthor_knowledge_evidence"
-    ? structuredClone(evidence) : { hits: [structuredClone(relation)], hasMore: false, pendingIndexUpdates: 0, coverage: "" });
+    ? structuredClone(evidence) : command === "get_coauthor_evidence_progress" ? structuredClone(evidenceProgress)
+      : { hits: [structuredClone(relation)], hasMore: false, pendingIndexUpdates: 0, coverage: "" });
 });
 afterEach(cleanup);
 
@@ -231,4 +239,113 @@ it("isolates late directory pages after source revision or branch changes", asyn
   expect(screen.getByText("证据目录 · 1 至 16 / 17 条")).toBeVisible();
   expect(screen.queryByText("正文证据 · p16")).not.toBeInTheDocument();
   expect(mocks.invoke).toHaveBeenCalledTimes(1);
+});
+
+function progressPanel() {
+  return within(screen.getByText("模型证据进度", { exact: true }).closest("details")!);
+}
+
+it("restores model evidence progress only on expansion and does not equate author reading with delivery", async () => {
+  mount();
+  expect(mocks.invoke).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText("模型证据进度"));
+  expect(await progressPanel().findByText("独立证据 1 条")).toBeVisible();
+  expect(progressPanel().getByText("执行读取 8 / 8 字符 · 模型送达 3 / 8 字符 · 连续送达至 3")).toBeVisible();
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  expect(mocks.invoke).toHaveBeenCalledWith("get_coauthor_evidence_progress", {
+    scope, key: fact.key, revision: fact.revision, offset: 0,
+  });
+  fireEvent.click(progressPanel().getByText("正文证据 · p1"));
+  expect(await progressPanel().findByText(evidence.content)).toBeVisible();
+  expect(progressPanel().getByText("执行读取 8 / 8 字符 · 模型送达 3 / 8 字符 · 连续送达至 3")).toBeVisible();
+  expect(mocks.invoke.mock.calls.map(([command]) => command)).toEqual([
+    "get_coauthor_evidence_progress", "read_coauthor_knowledge_evidence",
+  ]);
+});
+
+it("distinguishes a never-started evidence record from one with confirmed model receipts", async () => {
+  mocks.invoke.mockResolvedValue({
+    ...evidenceProgress, id: null, validatedAnchors: 0, readAnchors: 0, sentAnchors: 0,
+    entries: [{ ...evidenceProgress.entries[0], totalChars: null, readChars: 0, sentChars: 0, nextOffset: 0 }],
+  });
+  mount();
+  fireEvent.click(screen.getByText("模型证据进度"));
+  expect(await progressPanel().findByText("尚无模型证据读取回执。")).toBeVisible();
+  expect(progressPanel().getByText("原文尚未校验")).toBeVisible();
+  expect(progressPanel().queryByText(/全部独立证据引句已送达过模型/)).not.toBeInTheDocument();
+});
+
+it("pages independent anchor coverage without automatically reading the next page of original quotes", async () => {
+  mocks.invoke.mockImplementation(async (_command, args) => ({
+    ...evidenceProgress, listedAnchors: 18, totalAnchors: 17, offset: args.offset,
+    nextOffset: args.offset ? 17 : 16, entries: Array.from({ length: args.offset ? 1 : 16 }, (_, index) => ({
+      ...evidenceProgress.entries[0], anchor: { ...fact.knowledgeContext!.anchors[0],
+        id: `progress-${args.offset + index}`, blockId: `progress-block-${args.offset + index}` },
+    })),
+  }));
+  mount();
+  fireEvent.click(screen.getByText("模型证据进度"));
+  await progressPanel().findByText("正文证据 · progress-block-0");
+  fireEvent.click(progressPanel().getByRole("button", { name: "下一页证据进度" }));
+  expect(await progressPanel().findByText("正文证据 · progress-block-16")).toBeVisible();
+  expect(progressPanel().queryByText("正文证据 · progress-block-0")).not.toBeInTheDocument();
+  expect(progressPanel().getByRole("button", { name: "下一页证据进度" })).toBeDisabled();
+  expect(mocks.invoke).toHaveBeenLastCalledWith("get_coauthor_evidence_progress", expect.objectContaining({
+    key: fact.key, revision: fact.revision, offset: 16,
+  }));
+  expect(mocks.invoke.mock.calls.every(([command]) => command === "get_coauthor_evidence_progress")).toBe(true);
+});
+
+it("keeps superseded coverage as history and never requests a substituted source revision", async () => {
+  mocks.invoke.mockResolvedValue({ ...evidenceProgress, stale: true, sentAnchors: 1, allEvidenceSent: true });
+  mount();
+  fireEvent.click(screen.getByText("模型证据进度"));
+  expect(await progressPanel().findByText("原依据已变化，以下是历史进度，不计入当前版本。")).toBeVisible();
+  expect(progressPanel().queryByText(/全部独立证据引句已送达过模型/)).not.toBeInTheDocument();
+  fireEvent.click(progressPanel().getByText("正文证据 · p1"));
+  expect(await progressPanel().findByText("目录版本尚未核实，已有证据仅供历史对照。")).toBeVisible();
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  expect(mocks.invoke).toHaveBeenLastCalledWith("get_coauthor_evidence_progress", expect.objectContaining({ revision: "fact1" }));
+});
+
+it("withdraws a cached complete-delivery status when refresh fails without clearing historical counts", async () => {
+  mocks.invoke.mockResolvedValue({ ...evidenceProgress, sentAnchors: 1, allEvidenceSent: true });
+  mount();
+  fireEvent.click(screen.getByText("模型证据进度"));
+  expect(await progressPanel().findByText("本版本全部独立证据引句已送达过模型，语义及适用条件仍待核对。")).toBeVisible();
+  mocks.invoke.mockRejectedValue(new Error("进度存储暂不可读"));
+  fireEvent.click(progressPanel().getByRole("button", { name: "刷新证据进度" }));
+  expect(await progressPanel().findByRole("alert")).toHaveTextContent("进度存储暂不可读");
+  expect(progressPanel().getByText("以下为缓存进度，当前状态尚未核实。")).toBeVisible();
+  expect(progressPanel().queryByText(/全部独立证据引句已送达过模型/)).not.toBeInTheDocument();
+  expect(progressPanel().getByText("执行读取 8 / 8 字符 · 模型送达 3 / 8 字符 · 连续送达至 3")).toBeVisible();
+});
+
+it("isolates delayed model progress after switching branches and source revisions", async () => {
+  let resolve: (value: CoauthorEvidenceProgress) => void = () => {};
+  mocks.invoke.mockImplementation((_command, args) => args.scope.sessionId === "s"
+    ? new Promise<CoauthorEvidenceProgress>((done) => { resolve = done; })
+    : Promise.resolve({ ...evidenceProgress, totalAnchors: 2, sentAnchors: 0 }));
+  const { client, view } = mount();
+  fireEvent.click(screen.getByText("模型证据进度"));
+  await waitFor(() => expect(mocks.invoke).toHaveBeenCalledTimes(1));
+  view.rerender(<QueryClientProvider client={client}>
+    {tree({ ...fact, revision: "fact2" }, { ...scope, sessionId: "other" })}
+  </QueryClientProvider>);
+  fireEvent.click(screen.getByText("模型证据进度"));
+  await progressPanel().findByText("独立证据 2 条 · 目录引用 1 次");
+  await act(async () => resolve({ ...evidenceProgress, allEvidenceSent: true }));
+  expect(progressPanel().queryByText(/全部独立证据引句已送达过模型/)).not.toBeInTheDocument();
+  expect(mocks.invoke).toHaveBeenLastCalledWith("get_coauthor_evidence_progress", expect.objectContaining({
+    scope: { ...scope, sessionId: "other" }, revision: "fact2",
+  }));
+});
+
+it("reports missing progress storage as an error rather than claiming no evidence or no prior reading", async () => {
+  mocks.invoke.mockRejectedValue(new Error("读取进度失败"));
+  mount();
+  fireEvent.click(screen.getByText("模型证据进度"));
+  expect(await progressPanel().findByRole("alert")).toHaveTextContent("读取进度失败");
+  expect(progressPanel().queryByText("尚无模型证据读取回执。")).not.toBeInTheDocument();
+  expect(progressPanel().queryByText(/独立证据 0 条/)).not.toBeInTheDocument();
 });

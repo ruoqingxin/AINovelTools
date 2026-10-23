@@ -3,6 +3,7 @@ use crate::coauthor_store::tests::project;
 
 mod checks;
 mod pages;
+mod progress;
 
 struct Fixture {
     manager: ProjectManager,

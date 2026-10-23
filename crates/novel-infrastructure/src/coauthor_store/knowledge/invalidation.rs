@@ -80,6 +80,7 @@ impl Database {
 
     #[cfg(test)]
     pub(crate) fn drop_coauthor_knowledge_checks_fixture(&self) {
+        self.drop_coauthor_evidence_progress_fixture();
         let triggers = self.connection.prepare(
             "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'coauthor_knowledge_%'",
         ).unwrap().query_map([], |row| row.get::<_, String>(0)).unwrap()

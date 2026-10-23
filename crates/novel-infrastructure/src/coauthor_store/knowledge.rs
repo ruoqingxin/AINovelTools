@@ -1,6 +1,8 @@
 use super::*;
 
 mod invalidation;
+mod progress;
+pub use progress::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -407,6 +409,14 @@ impl ProjectManager {
     ) -> Result<CoauthorKnowledgeEvidence, CoauthorError> {
         let db = &self.current.as_ref().ok_or(CoauthorError::WrongProject)?.database;
         let _snapshot = db.connection.unchecked_transaction()?;
+        self.load_coauthor_knowledge_evidence(scope, key, revision, anchor_id, offset, limit)
+    }
+
+    fn load_coauthor_knowledge_evidence(
+        &self, scope: &CoauthorScope, key: &str, revision: &str, anchor_id: Uuid,
+        offset: usize, limit: usize,
+    ) -> Result<CoauthorKnowledgeEvidence, CoauthorError> {
+        let db = &self.current.as_ref().ok_or(CoauthorError::WrongProject)?.database;
         self.read_coauthor_source(scope, key, revision, 0, 1)?;
         if !db.coauthor_knowledge_anchor_ids(scope.project_id, key)?.contains(&anchor_id) {
             return Err(CoauthorError::Invalid(

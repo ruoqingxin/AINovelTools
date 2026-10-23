@@ -1,7 +1,7 @@
 use super::*;
 
 impl Fixture {
-    fn many_anchors(&mut self, count: usize) -> Vec<Uuid> {
+    pub(super) fn many_anchors(&mut self, count: usize) -> Vec<Uuid> {
         let original = self.manager.list_evidence_anchors().unwrap().into_iter()
             .find(|anchor| anchor.id == self.facts[0].evidence_anchor_ids[0]).unwrap();
         let mut ids = vec![original.id];
@@ -211,7 +211,7 @@ fn unseen_evidence_lifecycle_change_blocks_a_prepared_formal_adoption_based_on_a
 fn version_61_requeues_old_derived_indexes_atomically_and_preserves_author_content() {
     let f = Fixture::new();
     f.db().connection.execute_batch(
-        "DELETE FROM coauthor_source_queue; DELETE FROM schema_migrations WHERE version=61;
+        "DELETE FROM coauthor_source_queue; DELETE FROM schema_migrations WHERE version>=61;
          CREATE TRIGGER fail61 BEFORE INSERT ON schema_migrations WHEN NEW.version=61
          BEGIN SELECT RAISE(ABORT,'late migration failure'); END;",
     ).unwrap();
@@ -221,7 +221,7 @@ fn version_61_requeues_old_derived_indexes_atomically_and_preserves_author_conte
     assert_eq!(f.db().coauthor_pending_updates().unwrap(), 0);
     f.db().connection.execute_batch("DROP TRIGGER fail61").unwrap();
     f.db().migrate_coauthor_knowledge_anchor_pages().unwrap();
-    assert_eq!(f.db().health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(f.db().health().unwrap().schema_version, 61);
     assert_eq!(f.db().coauthor_pending_updates().unwrap(), 3);
     assert_eq!(f.manager.current_manuscript(f.chapter).unwrap().unwrap(), f.revision);
     assert_eq!(f.manager.list_current_facts().unwrap().len(), 2);

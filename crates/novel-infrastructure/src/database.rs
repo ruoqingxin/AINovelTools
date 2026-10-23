@@ -1232,6 +1232,9 @@ impl Database {
         if applied.unwrap_or(0) < 61 {
             self.migrate_coauthor_knowledge_anchor_pages()?;
         }
+        if applied.unwrap_or(0) < 62 {
+            self.migrate_coauthor_evidence_progress()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }

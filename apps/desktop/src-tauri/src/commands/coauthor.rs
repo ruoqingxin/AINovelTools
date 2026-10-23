@@ -9,7 +9,7 @@ use novel_infrastructure::{
     CoauthorChangeItemInput, CoauthorImpactInput,
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
     CoauthorRun, CoauthorRunsPage,
-    CoauthorSearchPage, CoauthorKnowledgeEvidence, CoauthorKnowledgeAnchorsPage,
+    CoauthorSearchPage, CoauthorKnowledgeEvidence, CoauthorKnowledgeAnchorsPage, CoauthorEvidenceProgress,
     CoauthorManuscriptBlock,
     CoauthorOutlinePage,
     CoauthorReversal,
@@ -41,6 +41,7 @@ FACT是已审核事实记录，RELATION是关系记录，不是正文原句。kn
 可用get_related_knowledge按准确FACT身份分页找直接关系，再用read_source读取关联事实。没有关系不等于没有隐含影响，未审核候选、角色信念、事件与伏笔尚不在此关系查询范围。
 引用事实或关系的正文证据时，用read_knowledge_evidence按它实际返回的证据身份精读；校验失败如实说明，不凭记录文字冒充原文。isCurrentRevision=false只作历史，不把仅读取旧证据算成已查当前正文。证据引句不是完整章节，不替代read_manuscript_blocks准备正式正文改稿。
 knowledgeContext只附首批16条证据元数据，totalAnchors是本记录的证据总数。hasMoreAnchors=true时用get_knowledge_anchors按nextOffset继续分页。目录覆盖不等于原文核验；read_knowledge_evidence只校验所选锚点，offset/nextOffset/totalChars标明实际返回的引句范围。不能用一个锚点或最后一页代替全部证据，不能把全部证据读完等同语义推论已证实。
+跨轮继续证据精读时用get_knowledge_evidence_progress恢复本讨论的持久化进度；不提供key和revision时分页查找已开始的记录，提供两者时分页找每个独立锚点的缺口。目录stale表示版本已变或索引待核对，须查看详情；旧版本进度仅作历史，不转移到新修订。validatedAnchors只表示原文身份及范围校验成功；readAnchors表示执行层已取回全部引句；sentAnchors表示相应片段已在成功的模型请求中送达。nextOffset是从头连续已送达的末尾，不是最远读过的位置。allEvidenceSent不证明推论成立、模型理解正确或当前轮仍记得原文，引用和正式改稿仍须按需重读。界面阅读不计模型进度，不能自行伪造送达或完成。
 写早期章节时按叙事位置、视角和角色当时的知识使用资料，后期能力和作者秘密不能自动提前出现。
 record_decision 只记录作者本轮明确选择、否定、待定或撤回的事项，quote 必须是本轮作者原话。
 如果、试写看看、角色台词和模糊赞许不是确定设定；不要把你的创意写成作者决定。
@@ -172,6 +173,14 @@ pub(crate) fn list_coauthor_knowledge_anchors(
         .coauthor_knowledge_anchors(&scope,&key,&revision,offset).map_err(Into::into)
 }
 
+#[tauri::command]
+pub(crate) fn get_coauthor_evidence_progress(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, key: String, revision: String, offset: usize,
+) -> Result<CoauthorEvidenceProgress, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .coauthor_knowledge_evidence_progress(&scope,&key,&revision,offset).map_err(Into::into)
+}
+
 fn tools() -> Vec<Value> {
     let manuscript_edit = json!({"type":"object","additionalProperties":false,
         "properties":{"blockId":{"type":"string"},"start":{"type":"integer","minimum":0},
@@ -215,6 +224,12 @@ fn tools() -> Vec<Value> {
             "按准确事实或关系版本分页列出全部证据目录，每页16条；用nextOffset继续。只返回元数据，不读取正文，目录列完不等于原文已核验或推论成立。",
             json!({"key":{"type":"string"},"revision":{"type":"string"},"offset":{"type":"integer","minimum":0}}),
             &["key","revision"],
+        ),
+        tool(
+            "get_knowledge_evidence_progress",
+            "恢复本讨论跨轮证据进度。无key/revision时每页10份已开始的记录；两者齐全时每页16个独立锚点，按nextOffset续页。只读元数据和真实送达范围，不读正文，不证明语义已核验。旧版本stale只作历史。",
+            json!({"key":{"type":"string"},"revision":{"type":"string"},"offset":{"type":"integer","minimum":0}}),
+            &[],
         ),
         tool(
             "read_knowledge_evidence",
@@ -767,6 +782,22 @@ struct KnowledgeAnchorsArgs {
     offset: usize,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EvidenceProgressQuery {
+    key: Option<String>,
+    revision: Option<String>,
+    #[serde(default)]
+    offset: usize,
+}
+
+fn evidence_read_receipt(name: &str, value: &Value) -> Option<uuid::Uuid> {
+    if name != "read_knowledge_evidence" || value["executed"] == false {
+        return None;
+    }
+    value["readId"].as_str().and_then(|id|id.parse().ok())
+}
+
 struct ReadEvidence {
     revision: String,
     fragments: Vec<String>,
@@ -878,6 +909,15 @@ fn execute_tool(
         return Err(CoauthorError::Conflict);
     }
     match call.function.name.as_str() {
+        "get_knowledge_evidence_progress" => {
+            let args: EvidenceProgressQuery=arguments(call)?;
+            match (args.key,args.revision) {
+                (Some(key),Some(revision)) => Ok(json!(manager.coauthor_knowledge_evidence_progress(
+                    &input.scope,&key,&revision,args.offset)?)),
+                (None,None) => Ok(json!(manager.list_coauthor_evidence_checks(&input.scope,args.offset)?)),
+                _ => Err(CoauthorError::Invalid("证据进度需要同时提供准确身份和修订，或都不提供以查找历史记录。".into())),
+            }
+        }
         "get_knowledge_anchors" => {
             let args: KnowledgeAnchorsArgs=arguments(call)?;
             Ok(json!(manager.coauthor_knowledge_anchors(&input.scope,&args.key,&args.revision,args.offset)?))
@@ -888,7 +928,7 @@ fn execute_tool(
         }
         "read_knowledge_evidence" => {
             let args: KnowledgeEvidenceArgs=arguments(call)?;
-            Ok(json!(manager.read_coauthor_knowledge_evidence(&input.scope,&args.key,&args.revision,
+            Ok(json!(manager.read_coauthor_knowledge_evidence_for_run(&input.scope,input.run_id,&args.key,&args.revision,
                 args.anchor_id,args.offset,args.limit)?))
         }
         "start_source_check" => {
@@ -1220,6 +1260,7 @@ pub(crate) async fn run_coauthor(
     let mut failure = None;
     let mut last_checkpoint = std::time::Instant::now();
     let mut pending_check_reads = Vec::new();
+    let mut pending_evidence_reads = Vec::new();
     for round in 0..10 {
         if cancelled.load(Ordering::Relaxed) {
             status = "CANCELLED";
@@ -1256,7 +1297,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v11",
+                    prompt_version: "coauthor-v12",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -1277,7 +1318,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v11","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v12","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -1338,10 +1379,15 @@ pub(crate) async fn run_coauthor(
                         break;
                     }
                     manager.acknowledge_coauthor_check_reads(&input.scope,input.run_id,&pending_check_reads)?;
+                    manager.acknowledge_coauthor_evidence_reads(&input.scope,input.run_id,&pending_evidence_reads)?;
                     if !pending_check_reads.is_empty() {
                         audit.push(json!({"kind":"check_delivery","readIds":pending_check_reads}));
                     }
                     pending_check_reads.clear();
+                    if !pending_evidence_reads.is_empty() {
+                        audit.push(json!({"kind":"knowledge_evidence_delivery","readIds":pending_evidence_reads}));
+                    }
+                    pending_evidence_reads.clear();
                 }
                 messages.push(turn.message());
                 if turn.calls.is_empty() {
@@ -1377,6 +1423,9 @@ pub(crate) async fn run_coauthor(
                         && let Some(id) = value["readId"].as_str().and_then(|id| id.parse().ok())
                     {
                         pending_check_reads.push(id);
+                    }
+                    if let Some(id) = evidence_read_receipt(&call.function.name, &value) {
+                        pending_evidence_reads.push(id);
                     }
                     audit.push(json!({"kind":"tool","name":call.function.name,"arguments":call.function.arguments,
                         "result":value}));
@@ -1444,6 +1493,30 @@ pub(crate) async fn run_coauthor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn evidence_progress_tools_are_read_only_and_cannot_forge_delivery_or_semantic_verification() {
+        let names=tools().into_iter().map(|tool|tool["function"]["name"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+        assert!(names.contains(&"get_knowledge_evidence_progress".into()));
+        assert!(!names.iter().any(|name|name.contains("acknowledge") || name.contains("complete_evidence")));
+        assert!(serde_json::from_value::<EvidenceProgressQuery>(json!({})).is_ok());
+        assert!(serde_json::from_value::<EvidenceProgressQuery>(json!({"offset":-1})).is_err());
+        assert!(serde_json::from_value::<EvidenceProgressQuery>(json!({
+            "key":"FACT:x","revision":"r","sentAnchors":10,"allEvidenceSent":true,
+        })).is_err());
+        assert!(PROMPT.contains("allEvidenceSent不证明推论成立"));
+        assert!(PROMPT.contains("界面阅读不计模型进度"));
+    }
+
+    #[test]
+    fn only_successful_native_evidence_results_are_eligible_for_later_delivery_acknowledgment() {
+        let id=uuid::Uuid::new_v4();
+        assert_eq!(evidence_read_receipt("read_knowledge_evidence",&json!({"readId":id})),Some(id));
+        assert!(evidence_read_receipt("get_knowledge_evidence_progress",&json!({"readId":id})).is_none());
+        assert!(evidence_read_receipt("read_knowledge_evidence",&json!({"readId":id,"executed":false})).is_none());
+        assert!(evidence_read_receipt("read_knowledge_evidence",&json!({"error":"未执行"})).is_none());
+        assert!(evidence_read_receipt("read_knowledge_evidence",&json!({"readId":"invalid"})).is_none());
+    }
+
     #[test]
     fn knowledge_queries_require_exact_identity_and_do_not_accept_forged_evidence_permissions() {
         let names=tools().into_iter().map(|tool|tool["function"]["name"].as_str().unwrap().to_owned()).collect::<Vec<_>>();

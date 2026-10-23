@@ -86,7 +86,7 @@ pub struct CoauthorCheckAssessment {
     pub quote: String,
 }
 
-fn ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+pub(super) fn ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     ranges.sort_unstable();
     let mut merged: Vec<(usize, usize)> = vec![];
     for (start, end) in ranges {
@@ -99,17 +99,17 @@ fn ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     merged
 }
 
-fn count(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<usize> {
+pub(super) fn count(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<usize> {
     usize::try_from(row.get::<_, i64>(index)?).map_err(|_| rusqlite::Error::InvalidQuery)
 }
 
-fn optional_count(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Option<usize>> {
+pub(super) fn optional_count(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Option<usize>> {
     row.get::<_, Option<i64>>(index)?
         .map(|value| usize::try_from(value).map_err(|_| rusqlite::Error::InvalidQuery))
         .transpose()
 }
 
-fn sql_count(value: usize) -> Result<i64, CoauthorError> {
+pub(super) fn sql_count(value: usize) -> Result<i64, CoauthorError> {
     i64::try_from(value)
         .map_err(|_| CoauthorError::Invalid("读取范围超出数据库支持的长度。".into()))
 }

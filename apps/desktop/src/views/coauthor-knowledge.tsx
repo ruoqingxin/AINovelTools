@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { manuscriptSourceHref } from "../lib/manuscript-source";
 import {
-  errorMessage, listCoauthorKnowledgeAnchors, listCoauthorRelatedKnowledge, readCoauthorKnowledgeEvidence,
+  errorMessage, getCoauthorEvidenceProgress, listCoauthorKnowledgeAnchors, listCoauthorRelatedKnowledge, readCoauthorKnowledgeEvidence,
   type CoauthorKnowledgeAnchor, type CoauthorScope, type CoauthorSource,
 } from "../lib/tauri-client";
 
@@ -100,6 +100,58 @@ function KnowledgeAnchors({ scope, source }: { scope: CoauthorScope; source: Coa
   </section>;
 }
 
+function KnowledgeEvidenceProgress({ scope, source }: { scope: CoauthorScope; source: CoauthorSource }) {
+  const [open, setOpen] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const progress = useQuery({
+    queryKey: ["coauthor-evidence-progress", scope.projectId, scope.sessionId, source.key, source.revision, offset],
+    queryFn: () => getCoauthorEvidenceProgress({ scope, key: source.key, revision: source.revision, offset }),
+    enabled: open, retry: false,
+  });
+  const verified = !progress.isFetching && !progress.isError;
+  return <details className="coauthor-evidence-progress" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>模型证据进度</summary>
+    {open && <>
+      {progress.isPending && <p role="status">正在恢复证据进度…</p>}
+      {progress.error && <p role="alert" className="project-error">证据进度无法核实：{errorMessage(progress.error)}</p>}
+      {progress.data && <>
+        {!verified && <p role="status">以下为缓存进度，当前状态尚未核实。</p>}
+        {progress.data.stale && <p role="status">原依据已变化，以下是历史进度，不计入当前版本。</p>}
+        {!progress.data.stale && progress.data.needsReview && <p role="status">记录依据待核对，送达进度不能证明当前结论有效。</p>}
+        <p>独立证据 {progress.data.totalAnchors} 条
+          {progress.data.listedAnchors !== progress.data.totalAnchors && ` · 目录引用 ${progress.data.listedAnchors} 次`}</p>
+        <dl>
+          <div><dt>身份范围已校验</dt><dd>{progress.data.validatedAnchors}</dd></div>
+          <div><dt>执行层已读完整</dt><dd>{progress.data.readAnchors}</dd></div>
+          <div><dt>模型已收完整</dt><dd>{progress.data.sentAnchors}</dd></div>
+        </dl>
+        {!progress.data.id && <p>尚无模型证据读取回执。</p>}
+        {verified && !progress.data.stale && progress.data.allEvidenceSent &&
+          <p role="status">本版本全部独立证据引句已送达过模型，语义及适用条件仍待核对。</p>}
+        <div aria-label="逐条证据进度">
+          {progress.data.entries.map((entry) => <section key={entry.anchor.id}>
+            <p>{entry.totalChars === null ? "原文尚未校验"
+              : `执行读取 ${entry.readChars} / ${entry.totalChars} 字符 · 模型送达 ${entry.sentChars} / ${entry.totalChars} 字符 · 连续送达至 ${entry.nextOffset}`}</p>
+            <KnowledgeEvidence scope={scope} source={source} anchor={entry.anchor}
+              directoryUnavailable={!verified || progress.data.stale} />
+          </section>)}
+        </div>
+        {(offset > 0 || progress.data.nextOffset < progress.data.totalAnchors) &&
+          <nav className="coauthor-check-pagination" aria-label="模型证据进度分页">
+            <button type="button" className="icon-command" aria-label="上一页证据进度" title="上一页证据进度"
+              disabled={offset === 0 || progress.isFetching} onClick={() => setOffset(Math.max(0, offset - 16))}><ArrowLeft size={16} /></button>
+            <span>第 {Math.floor(offset / 16) + 1} 页</span>
+            <button type="button" className="icon-command" aria-label="下一页证据进度" title="下一页证据进度"
+              disabled={!verified || progress.data.nextOffset >= progress.data.totalAnchors}
+              onClick={() => setOffset(progress.data!.nextOffset)}><ArrowRight size={16} /></button>
+          </nav>}
+      </>}
+      <button type="button" className="icon-command" aria-label="刷新证据进度" title="刷新证据进度"
+        disabled={progress.isFetching} onClick={() => void progress.refetch()}><RefreshCw size={16} /></button>
+    </>}
+  </details>;
+}
+
 export function CoauthorKnowledge({ scope, source, onRead }: {
   scope: CoauthorScope; source: CoauthorSource; onRead: (key: string, revision: string) => void;
 }) {
@@ -119,6 +171,8 @@ export function CoauthorKnowledge({ scope, source, onRead }: {
     {context.facts.map((fact, index) => <button type="button" key={`${fact.key}:${index}`}
       onClick={() => onRead(fact.key, fact.revision)}>{index === 0 ? "起点事实" : "终点事实"} · {fact.title}</button>)}
     <KnowledgeAnchors key={`${scope.projectId}:${scope.sessionId}:${source.key}:${source.revision}`}
+      scope={scope} source={source} />
+    <KnowledgeEvidenceProgress key={`progress:${scope.projectId}:${scope.sessionId}:${source.key}:${source.revision}`}
       scope={scope} source={source} />
     {source.kind === "FACT" && <details onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>直接关联关系</summary>
