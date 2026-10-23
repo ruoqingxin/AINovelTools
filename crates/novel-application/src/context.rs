@@ -1192,10 +1192,12 @@ fn non_empty_or(value: String, fallback: &str) -> String {
     }
 }
 
-/// Estimates prompt tokens conservatively without coupling the application
+/// Estimates prompt tokens without coupling the application
 /// crate to a provider-specific tokenizer. Non-ASCII characters count as one
 /// token; ASCII runs use the usual four-characters-per-token approximation.
-fn estimate_input_tokens(system_prompt: &str, user_prompt: &str) -> u32 {
+/// This is a heuristic, not an upper bound or provider-reported usage.
+#[must_use]
+pub fn estimate_input_tokens(system_prompt: &str, user_prompt: &str) -> u32 {
     let mut tokens = 0usize;
     let mut ascii_run = 0usize;
     for character in system_prompt.chars().chain(user_prompt.chars()) {

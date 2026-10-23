@@ -10,16 +10,30 @@ import { createDesktopHarness, invoke, until, workspace } from "./desktop-smoke-
 import { runNative } from "./coauthor-evaluation.mjs";
 import { distribution, environment, loadFixture, reserveCost, reviewTemplate,
   retrievalScore, validateCloudOptions, writeReport } from "./coauthor-evaluation-core.mjs";
+import { createBudgetRelay } from "./coauthor-evaluation-budget.mjs";
+import { coauthorLoopbackTurn, assertLoopbackRegression } from "./coauthor-runtime-loopback.mjs";
 
 const { values } = parseArgs({ options: {
   app: { type: "string" }, case: { type: "string" }, repetitions: { type: "string" },
   "prepare-only": { type: "boolean", default: false }, loopback: { type: "boolean", default: false },
   "allow-cloud": { type: "boolean", default: false }, "cloud-profile": { type: "string" },
   "max-cost-micros": { type: "string" }, currency: { type: "string" },
+  "loopback-input-tokens": { type: "string" },
+  "loopback-expect-input-limit": { type: "boolean", default: false },
 } });
 const { fixture, hash } = await loadFixture();
 assert(!(values["prepare-only"] && values.loopback), "Choose prepare-only or loopback.");
 const local = values["prepare-only"] || values.loopback;
+const loopbackInputTokens = Number(values["loopback-input-tokens"] ?? 32768);
+if (values["loopback-input-tokens"] !== undefined) {
+  assert(values.loopback, "A custom local input budget requires --loopback.");
+  assert(Number.isSafeInteger(loopbackInputTokens) && loopbackInputTokens >= 256 && loopbackInputTokens <= 65536,
+    "Local input budget must be an integer from 256 to 65536 tokens.");
+}
+if (values["loopback-expect-input-limit"]) {
+  assert(values.loopback && values["loopback-input-tokens"] !== undefined,
+    "An expected input limit requires --loopback and --loopback-input-tokens.");
+}
 if (local) {
   assert(!values["allow-cloud"] && !values["cloud-profile"], "Local modes cannot read a cloud profile.");
 }
@@ -44,7 +58,12 @@ const report = {
     "No formal changes or proposal adoption are performed by the harness.",
   ],
 };
-let harness, main, server, temporaryProfileId, encryptedCopy;
+if (values.loopback) {
+  report.loopbackInputTokenBudget = loopbackInputTokens;
+  report.expectedInitialInputLimit = values["loopback-expect-input-limit"];
+  report.loopbackHttpRequests = 0;
+}
+let harness, main, server, relay, temporaryProfileId, encryptedCopy;
 
 function formalSnapshot(root) {
   const db = new DatabaseSync(join(root, "project.sqlite"), { readOnly: true });
@@ -100,24 +119,19 @@ async function configureCloud(root, profile) {
 
 async function configureLoopback() {
   server = createServer(async (request, response) => {
+    report.loopbackHttpRequests += 1;
     try {
       assert.equal(request.url, "/v1/chat/completions");
       let raw = "";
       for await (const chunk of request) raw += chunk;
       const body = JSON.parse(raw);
-      const toolRead = body.messages.some((m) => m.role === "tool");
-      const context = JSON.parse(body.messages.filter((m) => m.role === "user").at(-1).content);
-      const source = context.relevantSources.hits.find((s) => s.title === "九曜境界体系");
-      const message = !toolRead && source ? {
-        role: "assistant", content: "",
-        tool_calls: [{ id: "eval-read", type: "function", function: { name: "read_source",
-          arguments: JSON.stringify({ key: source.key, revision: source.revision, offset: 0, limit: 2000 }) } }],
-      } : { role: "assistant", content: "本地模拟回复，仅用于验证评测链路，不用于创作质量评分。" };
+      const message = coauthorLoopbackTurn(body);
       response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
-        choices: [{ message, finish_reason: toolRead ? "stop" : "tool_calls" }],
+        choices: [{ message, finish_reason: message.tool_calls ? "tool_calls" : "stop" }],
         usage: { prompt_tokens: 100, completion_tokens: 30 },
       }));
-    } catch {
+    } catch (error) {
+      console.error(`Local regression provider failed: ${error.message}`);
       response.writeHead(500).end();
     }
   });
@@ -137,6 +151,8 @@ async function configureLoopback() {
 async function runTurn(project, scenario, turn, profile, repetition, turnIndex) {
   const runId = randomUUID();
   const before = await invoke(main, "get_coauthor_state", { scope: project.scope });
+  const preferencesBefore = await invoke(main, "get_ai_task_preferences");
+  const feeBudgetBefore = await invoke(main, "get_ai_budget_settings");
   // Listen on the actual native event, not mocked browser IPC.
   await main.page.evaluate(async ({ scope, runId }) => {
     const start = performance.now();
@@ -204,15 +220,29 @@ async function runTurn(project, scenario, turn, profile, repetition, turnIndex) 
     initialRetrieval: retrievalScore(scenario.retrieval.relevant.map((id) => project.sources[id]),
       run?.audit.find((a) => a.kind === "initial_search")?.result?.hits ?? []),
     workingDocumentUnchanged: unchanged, output: run?.output ?? "", audit: run?.audit ?? [],
+    taskPreferencesUnchanged: JSON.stringify(preferencesBefore)
+      === JSON.stringify(await invoke(main, "get_ai_task_preferences")),
+    feeBudgetSettingsUnchanged: JSON.stringify(feeBudgetBefore)
+      === JSON.stringify(await invoke(main, "get_ai_budget_settings")),
     events: state.events,
   };
   report.turns.push(entry);
   report.modelRequests += requests.length;
+  if (relay) {
+    report.budget = relay.snapshot();
+    await writeFile(join(directory, "budget.json"), JSON.stringify(report.budget, null, 2));
+  }
   await writeFile(join(directory, "turns.jsonl"), report.turns.map((t) => JSON.stringify(t)).join("\n") + "\n");
   assert(unchanged, "Blocking failure: persisted working document changed without author adoption.");
+  assert(entry.taskPreferencesUnchanged, "A run must not persist its temporary token budget.");
+  assert(entry.feeBudgetSettingsUnchanged, "An input expansion must not change the money budget.");
   assert(!run?.audit.some((a) => a.kind === "draft_proposal") || turn.allowDraftEdits,
     "Blocking failure: proposed draft edits during discussion-only turn.");
-  assert.equal(entry.status, "COMPLETED", "Incomplete model turn retained in report; no automatic retries.");
+  if (values.loopback) entry.localRegression = assertLoopbackRegression(entry, {
+    expectInputLimit: values["loopback-expect-input-limit"],
+  });
+  console.log(`${scenario.id} turn ${turnIndex + 1}: ${entry.status}; ${requests.length} requests; ${entry.elapsedMs.toFixed(0)}ms`);
+  return entry;
 }
 
 try {
@@ -224,9 +254,11 @@ try {
     if (!values.loopback) {
       selected = readSelectedProfile();
       const turns = options.cases.reduce((n, c) => n + c.turns.length, 0) * options.repetitions;
-      report.reservedCostMicros = reserveCost(selected.profile, values.currency, turns);
-      assert(report.reservedCostMicros <= options.maxCostMicros,
-        `Configured-price reserve ${report.reservedCostMicros} exceeds --max-cost-micros. No model called.`);
+      report.fullPlanReserveMicros = reserveCost(selected.profile, values.currency, turns);
+      relay = await createBudgetRelay({ profile: selected.profile, currency: values.currency,
+        limitMicros: options.maxCostMicros, maxRequests: turns * 10 });
+      report.budget = relay.snapshot();
+      report.reservedCostMicros = report.budget.requestReserveMicros;
       report.profile = { host: new URL(selected.profile.base_url).hostname, model: selected.profile.model_id,
         currency: values.currency, maxOutputTokens: Math.min(selected.profile.max_output_tokens, 2048),
         retryLimit: 0, fallback: false };
@@ -236,7 +268,7 @@ try {
     let profile;
     if (selected) {
       await harness.stop(main);
-      profile = await configureCloud(selected.root, selected.profile);
+      profile = await configureCloud(selected.root, { ...selected.profile, base_url: relay.baseUrl });
       main = await harness.launch("isolated-state");
     } else profile = await configureLoopback();
     report.environment.build = "Native desktop executable; debug/release depends on --app";
@@ -246,7 +278,7 @@ try {
     preferences.discussion = {
       ...preferences.discussion, profileId: profile.id, fallbackProfileId: null, temperature: 0.2,
       maxOutputTokens: profile.max_output_tokens,
-      prompt: { context: { inputTokenBudget: 32768 } },
+      prompt: { context: { inputTokenBudget: values.loopback ? loopbackInputTokens : 32768 } },
     };
     await invoke(main, "save_ai_task_preferences", { preferences });
     for (let repetition = 0; repetition < options.repetitions; repetition++) {
@@ -256,15 +288,28 @@ try {
         await invoke(main, "open_project", { root: project.root });
         const original = formalSnapshot(project.root);
         for (let turnIndex = 0; turnIndex < scenario.turns.length; turnIndex++) {
-          await runTurn(project, scenario, scenario.turns[turnIndex], profile, repetition, turnIndex);
+          console.log(`Running ${scenario.id}, turn ${turnIndex + 1}/${scenario.turns.length}`);
+          const entry = await runTurn(project, scenario, scenario.turns[turnIndex], profile, repetition, turnIndex);
           const unchanged = formalSnapshot(project.root) === original;
           report.turns.at(-1).formalContentUnchanged = unchanged;
           await writeFile(join(directory, "turns.jsonl"), report.turns.map((t) => JSON.stringify(t)).join("\n") + "\n");
           assert(unchanged, "Blocking failure: formal entities, planning or manuscript content changed.");
+          assert(!relay?.snapshot().blocked, "Request-boundary budget guard stopped the evaluation.");
+          if (entry.status !== "COMPLETED") break;
         }
       }
     }
     report.status = values.loopback ? "harnessVerifiedNotQuality" : "pendingHumanReview";
+    if (values.loopback) {
+      assert.equal(report.loopbackHttpRequests, report.modelRequests,
+        "Actual local HTTP requests must match the native request audit.");
+    }
+    report.incompleteCases = [...new Set(report.turns.filter((t) => t.status !== "COMPLETED").map((t) => t.caseId))];
+    report.expectedInputLimitCases = report.turns.filter((t) => t.localRegression?.expectedInputLimit)
+      .map((t) => t.caseId);
+    if (report.turns.some((t) => t.status !== "COMPLETED" && !t.localRegression?.expectedInputLimit)) {
+      report.status = "completedWithFailures";
+    }
     report.workloads = ["discussion", "localEdit", "fullCheck"].map((workload) => ({
       workload, elapsedMs: distribution(report.turns.filter((t) => t.workload === workload).map((t) => t.elapsedMs)),
     }));
@@ -288,6 +333,13 @@ try {
   if (server) {
     server.closeAllConnections();
     await new Promise((done) => server.close(done));
+  }
+  if (relay) {
+    try {
+      await relay.close();
+      report.budget = relay.snapshot();
+      await writeFile(join(directory, "budget.json"), JSON.stringify(report.budget, null, 2));
+    } catch { cleanupFailures.push("Budget relay cleanup or ledger persistence failed."); }
   }
   if (cleanupFailures.length) {
     report.status = "failed";

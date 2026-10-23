@@ -148,26 +148,33 @@ pub(crate) fn load_ai_task_preference(
     Ok(preference)
 }
 
-pub(crate) fn effective_task_input_budget(
+pub(crate) fn model_input_token_capacity(
     profile: &novel_infrastructure::ModelProfile,
     max_output_tokens: u32,
-    preference: &novel_infrastructure::AiTaskPreference,
 ) -> u32 {
     // Keep every provider request inside a predictable envelope. Provider
     // tokenizers, system messages and protocol wrappers consume space that
     // cannot be inferred from the user prompt alone.
     const SAFETY_MARGIN_TOKENS: u32 = 1_024;
-    const MAX_SAFE_INPUT_TOKENS: u32 = 32_768;
-    let model_budget = profile
+    profile
         .context_window
         .saturating_sub(max_output_tokens)
-        .saturating_sub(SAFETY_MARGIN_TOKENS);
+        .saturating_sub(SAFETY_MARGIN_TOKENS)
+}
+
+pub(crate) fn effective_task_input_budget(
+    profile: &novel_infrastructure::ModelProfile,
+    max_output_tokens: u32,
+    preference: &novel_infrastructure::AiTaskPreference,
+) -> u32 {
+    const MAX_SAFE_INPUT_TOKENS: u32 = 32_768;
+    let model_budget = model_input_token_capacity(profile, max_output_tokens);
     preference
         .prompt
         .context
         .input_token_budget
         .map_or(model_budget, |budget| model_budget.min(budget))
-        .clamp(256, MAX_SAFE_INPUT_TOKENS)
+        .min(MAX_SAFE_INPUT_TOKENS)
 }
 
 fn context_option(value: Option<bool>, default: bool) -> bool {
@@ -448,6 +455,34 @@ fn truncate_text_to_char_budget(value: &str, char_budget: usize, marker: &str) -
 
 #[cfg(test)]
 mod task_generation_options_tests {
+    #[test]
+    fn input_budget_reserves_output_and_never_increases_small_model_capacity() {
+        use novel_infrastructure::{
+            AiTaskKind, AiTaskPreferences, ModelCapability, ModelProfile, ModelProvider, PrivacyLevel,
+        };
+        let mut profile = ModelProfile {
+            id: uuid::Uuid::new_v4(), name: "Budget fixture".into(),
+            provider: ModelProvider::OpenAiCompatible, capability: ModelCapability::Chat,
+            base_url: "http://127.0.0.1/v1".into(), model_id: "fixture".into(),
+            context_window: 4096, max_output_tokens: 2048, privacy_level: PrivacyLevel::AllowCloud,
+            timeout_seconds: 5, retry_limit: 0, input_price_micros_per_million: 0,
+            output_price_micros_per_million: 0, price_currency: "USD".into(), secret_ref: None,
+            has_secret: false, created_at: String::new(), updated_at: String::new(),
+        };
+        let mut preference = AiTaskPreferences::default().get(AiTaskKind::Discussion).clone();
+        preference.prompt.context.input_token_budget = Some(32_768);
+        assert_eq!(super::effective_task_input_budget(&profile, 2048, &preference), 1024);
+        profile.context_window = 3200;
+        assert_eq!(super::effective_task_input_budget(&profile, 2048, &preference), 128);
+        profile.context_window = 3000;
+        assert_eq!(super::effective_task_input_budget(&profile, 2048, &preference), 0);
+        profile.context_window = 131_072;
+        preference.prompt.context.input_token_budget = Some(16_384);
+        assert_eq!(super::effective_task_input_budget(&profile, 2048, &preference), 16_384);
+        preference.prompt.context.input_token_budget = None;
+        assert_eq!(super::effective_task_input_budget(&profile, 2048, &preference), 32_768);
+    }
+
     #[test]
     fn fallback_policy_does_not_turn_cancellation_or_authentication_into_another_request() {
         use novel_infrastructure::AiError;

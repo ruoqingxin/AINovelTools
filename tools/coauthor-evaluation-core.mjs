@@ -194,8 +194,23 @@ export async function writeReport(directory, report) {
       lines.push("", `${r.scale.name} incomplete recall: ${failures.map((c) => `${c.caseId}=${c.recallAt12.toFixed(3)}`).join(", ") || "none"}`);
     }
   } else {
-    lines.push(`Status: ${report.status}`, `Completed turns: ${report.turns.length}`,
+    lines.push(`Status: ${report.status}`, `Recorded turns: ${report.turns.length}`,
+      `Completed turns: ${report.turns.filter((t) => t.status === "COMPLETED").length}`,
+      `Model requests: ${report.modelRequests}`,
       "Real-model semantic acceptance remains pending until the human review is completed.");
+    if (report.failure) lines.push("", `Failure: ${report.failure}`);
+    if (report.budget) {
+      lines.push("", `Configured-price conservative charge: ${report.budget.conservativeSpentMicros / 1_000_000} ${report.budget.currency}`,
+        `Authorized budget: ${report.budget.limitMicros / 1_000_000} ${report.budget.currency}`,
+        `Budget blocked: ${report.budget.blocked}. Not the provider invoice; see budget.json.`);
+    }
+    if (report.turns.length) {
+      lines.push("", "| Case | Turn | Status | Elapsed ms | Requests | Tool errors |",
+        "| --- | ---: | --- | ---: | ---: | ---: |");
+      for (const t of report.turns) {
+        lines.push(`| ${t.caseId} | ${t.turnIndex + 1} | ${t.status} | ${t.elapsedMs.toFixed(2)} | ${t.modelRequests} | ${t.toolErrors} |`);
+      }
+    }
   }
   lines.push("", ...(report.limitations ?? []).map((s) => `- ${s}`));
   await writeFile(join(directory, "report.md"), lines.join("\n") + "\n");

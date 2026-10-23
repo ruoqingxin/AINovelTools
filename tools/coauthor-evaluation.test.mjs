@@ -2,9 +2,132 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { join } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { assessReview, distribution, loadFixture, nativeRows, percentile, reserveCost,
-  retrievalScore, reviewTemplate, summarizeBaseline, validateCloudOptions } from "./coauthor-evaluation-core.mjs";
+  retrievalScore, reviewTemplate, summarizeBaseline, validateCloudOptions, writeReport } from "./coauthor-evaluation-core.mjs";
 import { workspace } from "./desktop-smoke-runtime.mjs";
+import { createBudgetLedger, createBudgetRelay, responseUsage } from "./coauthor-evaluation-budget.mjs";
+import { loopbackContext, coauthorLoopbackTurn, assertLoopbackRegression } from "./coauthor-runtime-loopback.mjs";
+
+const cloudProfile = { capability: "CHAT", privacy_level: "ALLOW_CLOUD", secret_ref: "synthetic",
+  base_url: "https://example.invalid/v1", model_id: "synthetic-test", price_currency: "CNY",
+  context_window: 1_000_000, max_output_tokens: 384_000,
+  input_price_micros_per_million: 2_000_000, output_price_micros_per_million: 8_000_000 };
+
+test("request budget settles actual conservative usage instead of reserving all 150 requests", () => {
+  const ledger = createBudgetLedger(cloudProfile, "CNY", 10_000_000, 150);
+  assert.equal(ledger.snapshot().requestReserveMicros, 2_016_384);
+  for (let i = 0; i < 150; i++) {
+    ledger.settle(ledger.reserve(), { prompt_tokens: 1000, completion_tokens: 500 }, 200);
+  }
+  assert.equal(ledger.snapshot().conservativeSpentMicros, 900_000);
+  assert.throws(() => ledger.reserve(), /exhausted/);
+  assert.throws(() => ledger.settle(1, {}, 200), /repeated/);
+});
+
+test("unknown usage, failures and concurrent reservations never release reserved funds", () => {
+  const ledger = createBudgetLedger(cloudProfile, "CNY", 4_032_768, 10);
+  ledger.settle(ledger.reserve(), null, 200);
+  const second = ledger.reserve();
+  assert.equal(ledger.snapshot().conservativeSpentMicros, 4_032_768);
+  ledger.settle(second, { prompt_tokens: 1, completion_tokens: 1 }, 500);
+  assert.throws(() => ledger.reserve());
+  assert.equal(ledger.snapshot().conservativeSpentMicros, 4_032_768);
+  assert(ledger.snapshot().records.every((r) => r.state === "unknownUsageReserveHeld"));
+  const excessive = createBudgetLedger(cloudProfile, "CNY", 10_000_000, 10);
+  assert.throws(() => excessive.settle(excessive.reserve(),
+    { prompt_tokens: 1_000_001, completion_tokens: 0 }, 200), /envelope/);
+  assert(excessive.snapshot().blocked);
+  assert.throws(() => excessive.reserve());
+});
+
+test("usage parser handles JSON, CRLF SSE, multibyte text and truncated frames conservatively", () => {
+  const usage = { prompt_tokens: 100, completion_tokens: 30 };
+  assert.deepEqual(responseUsage(JSON.stringify({ usage }), "application/json"), usage);
+  assert.deepEqual(responseUsage(`data: {"text":"中文"}\r\n\r\ndata: ${JSON.stringify({ usage })}\r\n\r\ndata: [DONE]\r\n\r\n`,
+    "text/event-stream"), usage);
+  assert.equal(responseUsage(`data: ${JSON.stringify({ usage })}`, "text/event-stream"), null);
+  assert.equal(responseUsage("data: broken\n\n", "text/event-stream"), null);
+  assert.equal(responseUsage("{}", "application/json"), null);
+});
+
+test("HTTP relay pins the upstream, prevents model/tool switching and enforces budget before fetch", async () => {
+  let calls = 0;
+  const relay = await createBudgetRelay({ profile: cloudProfile, currency: "CNY",
+    limitMicros: 2_016_384, maxRequests: 10, fetchImpl: async (url, options) => {
+      calls++;
+      assert.equal(url, "https://example.invalid/v1/chat/completions");
+      assert.equal(options.redirect, "error");
+      assert.equal(options.headers.Authorization, "Bearer synthetic-test-only");
+      return new Response(JSON.stringify({ choices: [], usage: null }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } });
+  const send = (extra) => fetch(`${relay.baseUrl}/chat/completions`, { method: "POST",
+    headers: { Authorization: "Bearer synthetic-test-only", "Content-Type": "application/json" },
+    body: JSON.stringify({ model: cloudProfile.model_id, max_tokens: 2048, ...extra }) });
+  try {
+    for (const extra of [{ model: "other" }, { max_tokens: 2049 }, { tools: [{ type: "web_search" }] },
+      { max_completion_tokens: 4096 }]) {
+      const response = await send(extra);
+      assert.equal(response.status, 502);
+      await response.text();
+    }
+    assert.equal(calls, 0);
+    assert.equal((await send({})).status, 200);
+    const denied = await send({});
+    assert.equal(denied.status, 402);
+    const message = await denied.text();
+    assert(!message.includes("synthetic-test-only"));
+    assert.equal(calls, 1);
+    assert.equal(relay.snapshot().conservativeSpentMicros, 2_016_384);
+  } finally { await relay.close(); }
+});
+
+test("SSE client disconnect retains complete final usage without double settlement", async () => {
+  const encoder = new TextEncoder();
+  const relay = await createBudgetRelay({ profile: cloudProfile, currency: "CNY",
+    limitMicros: 10_000_000, maxRequests: 10, fetchImpl: async (_url, { signal }) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"usage":{"prompt_tokens":100,"completion_tokens":30}}\n\ndata: [DONE]\n\n'));
+          signal.addEventListener("abort", () => controller.error(new Error("aborted")), { once: true });
+        },
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    } });
+  try {
+    const response = await fetch(`${relay.baseUrl}/chat/completions`, { method: "POST",
+      headers: { Authorization: "Bearer synthetic-test-only", "Content-Type": "application/json" },
+      body: JSON.stringify({ model: cloudProfile.model_id, max_tokens: 2048 }) });
+    const reader = response.body.getReader();
+    await reader.read();
+    await reader.cancel();
+    for (let n = 0; n < 100 && relay.snapshot().records[0]?.state === "reserved"; n++) {
+      await new Promise((done) => setTimeout(done, 10));
+    }
+    assert.equal(relay.snapshot().records[0].state, "settledConservativeUsage");
+    assert.equal(relay.snapshot().conservativeSpentMicros, 440);
+  } finally { await relay.close(); }
+});
+
+test("model report distinguishes recorded turns, completed turns and budget from quality acceptance", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "coauthor-report-test-"));
+  try {
+    await writeReport(directory, { mode: "realModel", environment: {}, status: "completedWithFailures",
+      modelRequests: 2, budget: { conservativeSpentMicros: 100, limitMicros: 1000, currency: "CNY", blocked: false },
+      turns: [{ caseId: "synthetic", turnIndex: 0, status: "LIMIT_REACHED", elapsedMs: 1,
+        modelRequests: 2, toolErrors: 1 }] });
+    const markdown = await readFile(join(directory, "report.md"), "utf8");
+    assert.match(markdown, /Recorded turns: 1/);
+    assert.match(markdown, /Completed turns: 0/);
+    assert.match(markdown, /0.0001 CNY/);
+    assert.match(markdown, /Not the provider invoice/);
+    assert.match(markdown, /LIMIT_REACHED/);
+    assert.match(markdown, /pending until the human review/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test("fixed scenes cover all goals, workload types and valid relevance identities", async () => {
   const { fixture, hash } = await loadFixture();
@@ -53,6 +176,34 @@ test("CLI without permission fails before reading profiles or launching native a
   assert.equal(result.status, 1);
   assert.match(result.stderr, /allow-cloud/);
   assert.doesNotMatch(result.stdout, /Desktop launched/);
+});
+
+test("local token-budget overrides cannot alter cloud runs or launch with invalid values", () => {
+  for (const args of [
+    ["--loopback-input-tokens", "16384"],
+    ["--loopback", "--loopback-input-tokens", "NaN"],
+    ["--loopback", "--loopback-input-tokens", "255"],
+    ["--loopback", "--loopback-input-tokens", "65537"],
+  ]) {
+    const result = spawnSync(process.execPath, [join(workspace, "tools/coauthor-model-evaluation.mjs"), ...args],
+      { encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /requires --loopback|integer from 256 to 65536/);
+    assert.doesNotMatch(result.stdout, /Desktop launched/);
+  }
+});
+
+test("expected-limit regression mode cannot bypass cloud authorization", () => {
+  for (const args of [
+    ["--loopback-expect-input-limit"],
+    ["--loopback", "--loopback-expect-input-limit"],
+  ]) {
+    const result = spawnSync(process.execPath, [join(workspace, "tools/coauthor-model-evaluation.mjs"), ...args],
+      { encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /requires --loopback and --loopback-input-tokens/);
+    assert.doesNotMatch(result.stdout, /Desktop launched/);
+  }
 });
 
 test("cost reserve includes ten requests per turn and rejects unknown or unsafe profiles", () => {
@@ -105,4 +256,108 @@ test("baseline retains low recall and per-case latency failures even when pooled
   assert.equal(report.results[0].gates.recall, false);
   assert.equal(report.results[0].gates.falseEmpty, false);
   assert.equal(report.gatesPassed, false);
+});
+
+test("loopback regression requires a separate current request and reference-only history", () => {
+  const context = { contextOnly: true, historicalMessages: [{ historicalMessage: "旧茶铺话题" }],
+    relevantSources: { hits: [] }, relevantDecisions: { memories: [] } };
+  const messages = [{ role: "system", content: "rules" },
+    { role: "user", content: JSON.stringify(context) }, { role: "user", content: "本轮只讨论突破代价" }];
+  assert.equal(loopbackContext(messages).request, "本轮只讨论突破代价");
+  assert.throws(() => loopbackContext([{ role: "user", content: JSON.stringify({ ...context, request: "buried" }) }]));
+  assert.throws(() => loopbackContext([{ role: "user", content: "旧茶铺话题" }, ...messages]));
+  assert.match(coauthorLoopbackTurn({ messages }).content, /不用于创作质量评分/);
+});
+
+test("scripted full check deliberately rejects a typo then follows the native recovery instruction", () => {
+  const context = { contextOnly: true, relevantSources: { hits: [] } };
+  const messages = [{ role: "user", content: JSON.stringify(context) },
+    { role: "user", content: "完整查证全部设定卡" }];
+  function deliver(message, values) {
+    messages.push(message);
+    message.tool_calls.forEach((c, i) => messages.push({
+      role: "tool", tool_call_id: c.id, content: JSON.stringify(values[i]),
+    }));
+  }
+  const start = coauthorLoopbackTurn({ messages });
+  assert.equal(start.tool_calls[0].function.name, "start_source_check");
+  const entries = Array.from({ length: 6 }, (_, i) => ({ key: `ENTITY:${i}`, revision: `r${i}`,
+    title: ["九曜境界体系", "突破代价规则", "北港宗门旧抄本", "禁书残页", "林澈前期知情边界", "南港集市"][i] }));
+  deliver(start, [{ check: { id: "check" }, entries }]);
+  const reads = coauthorLoopbackTurn({ messages });
+  assert.equal(reads.tool_calls.length, 6);
+  deliver(reads, entries.map((entry) => ({ ...entry, content: "突破规则，尚未确定真伪" })));
+  const judgments = coauthorLoopbackTurn({ messages });
+  const args = judgments.tool_calls.map((c) => JSON.parse(c.function.arguments));
+  assert(args[0].revision.endsWith("-intentional-typo"));
+  assert.deepEqual(args.map((a) => a.assessment), ["RELEVANT", "RELEVANT", "UNCERTAIN", "IRRELEVANT", "IRRELEVANT", "IRRELEVANT"]);
+  const recovery = { tool: "get_source_checks", arguments: { checkId: "check", offset: 0 } };
+  deliver(judgments, args.map((arg, i) => i ? { recorded: true, entry: arg }
+    : { executed: false, recorded: false, recovery }));
+  const retry = coauthorLoopbackTurn({ messages });
+  assert.equal(retry.tool_calls[0].function.name, "get_source_checks");
+  assert.deepEqual(JSON.parse(retry.tool_calls[0].function.arguments), recovery.arguments);
+  deliver(retry, [{ check: { id: "check" }, entries }]);
+  const corrected = coauthorLoopbackTurn({ messages });
+  assert.equal(corrected.tool_calls.length, 1);
+  assert.equal(JSON.parse(corrected.tool_calls[0].function.arguments).revision, "r0");
+});
+
+test("local regression cannot call an incomplete or fabricated draft receipt a pass", () => {
+  const entry = { caseId: "extend-confirmed", turnIndex: 1, status: "COMPLETED",
+    output: "归灯境之后为归灯境。第一句已改好，采用后会自动同步设定卡。" };
+  assert.throws(() => assertLoopbackRegression(entry));
+  const passed = assertLoopbackRegression({ ...entry,
+    output: "尚未采用或正式提交。结曜之后为归灯境。守灯人例外仍然有效。" });
+  assert.equal(passed.scriptedNativeRegression, true);
+  assert.equal(passed.qualityVerified, false);
+  assert.throws(() => assertLoopbackRegression({ ...entry, status: "LIMIT_REACHED" }));
+});
+
+test("native regression uses estimated tokens including overhead, not serialized characters", () => {
+  const entry = { status: "COMPLETED", audit: [{
+    kind: "model_request", inputChars: 50_000, estimatedInputTokens: 15_800, inputTokenBudget: 16_384,
+  }] };
+  assert.equal(assertLoopbackRegression(entry).scriptedNativeRegression, true);
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [{
+    ...entry.audit[0], estimatedInputTokens: 16_385,
+  }] }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [{
+    kind: "model_request", inputChars: 10_000,
+  }] }));
+});
+
+test("native input expansion allows one bounded increase without restarting or saving settings", () => {
+  const setup = { kind: "input_budget", initialInputTokenBudget: 32768, maxInputTokenBudget: 65536 };
+  const expansion = { kind: "input_budget_expansion", previousInputTokenBudget: 32768,
+    inputTokenBudget: 65536, configurationPersisted: false, taskRestarted: false };
+  const request = { kind: "model_request", inputTokenBudget: 65536, initialInputTokenBudget: 32768,
+    inputBudgetExpanded: true, estimatedInputTokens: 40000 };
+  const entry = { status: "COMPLETED", audit: [setup, expansion, request] };
+  assert(assertLoopbackRegression(entry).scriptedNativeRegression);
+  for (const audit of [
+    [setup, expansion, expansion, request],
+    [setup, { ...expansion, taskRestarted: true }, request],
+    [setup, { ...expansion, configurationPersisted: true }, request],
+    [setup, { ...expansion, inputTokenBudget: 131072 }, request],
+    [setup, request],
+  ]) {
+    assert.throws(() => assertLoopbackRegression({ ...entry, audit }));
+  }
+});
+
+test("expected initial overflow still requires zero provider calls and an honest stop notice", () => {
+  const entry = { status: "LIMIT_REACHED", modelRequests: 0,
+    output: "尚未发送模型请求，仍然不足，不再自动扩容。",
+    audit: [
+      { kind: "input_budget", initialInputTokenBudget: 4096, maxInputTokenBudget: 8192 },
+      { kind: "input_budget_expansion", previousInputTokenBudget: 4096, inputTokenBudget: 8192,
+        configurationPersisted: false, taskRestarted: false },
+      { kind: "budget_limit", reason: "INPUT_TOKEN_BUDGET", inputTokenBudget: 8192,
+        estimatedInputTokens: 12000, modelRequestsSent: 0 },
+    ] };
+  assert(assertLoopbackRegression(entry, { expectInputLimit: true }).expectedInputLimit);
+  assert.throws(() => assertLoopbackRegression(entry), /must finish/);
+  assert.throws(() => assertLoopbackRegression({ ...entry, modelRequests: 1 }, { expectInputLimit: true }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, output: "已完成" }, { expectInputLimit: true }));
 });

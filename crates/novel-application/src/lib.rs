@@ -20,6 +20,14 @@ pub fn linked_layers() -> [&'static str; 2] {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn token_estimate_distinguishes_ascii_runs_and_unicode_scalars() {
+        assert_eq!(super::estimate_input_tokens("", ""), 0);
+        assert_eq!(super::estimate_input_tokens("abcd", "efghi"), 3);
+        assert_eq!(super::estimate_input_tokens("中abc", "文d"), 4);
+        assert_eq!(super::estimate_input_tokens("😀𠮷", ""), 2);
+    }
+
+    #[test]
     fn application_depends_on_domain() {
         assert_eq!(super::linked_layers(), ["domain", "application"]);
     }
