@@ -209,6 +209,7 @@ impl Database {
             let source = self.coauthor_source(&key)?;
             tx.execute("DELETE FROM coauthor_fts WHERE source_key=?1", [&key])?;
             tx.execute("DELETE FROM coauthor_sources WHERE source_key=?1", [&key])?;
+            tx.execute("DELETE FROM coauthor_knowledge_index_status WHERE source_key=?1", [&key])?;
             if let Some(source) = source {
                 let terms = coauthor_terms(&format!("{}\n{}", source.title, source.content))
                     .into_iter()
@@ -229,6 +230,12 @@ impl Database {
                     "INSERT INTO coauthor_fts(source_key,terms) VALUES (?1,?2)",
                     rusqlite::params![key, terms],
                 )?;
+                if let Some(context) = &source.knowledge_context {
+                    tx.execute(
+                        "INSERT INTO coauthor_knowledge_index_status(source_key,status) VALUES (?1,?2)",
+                        rusqlite::params![key, context.status],
+                    )?;
+                }
                 self.index_coauthor_semantic_chunks(&source)?;
             }
             tx.execute(

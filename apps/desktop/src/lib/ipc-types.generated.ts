@@ -183,6 +183,7 @@ export type IpcErrors = {
     list_chapter_extractions: ApiError;
     list_coauthor_decision_history: ApiError;
     list_coauthor_document_history: ApiError;
+    list_coauthor_knowledge_anchors: ApiError;
     list_coauthor_related_knowledge: ApiError;
     list_coauthor_runs: ApiError;
     list_coauthor_source_checks: ApiError;
@@ -387,6 +388,7 @@ export type IpcRequests = {
     list_chapter_extractions: InputArgsListChapterExtractions;
     list_coauthor_decision_history: InputArgsListCoauthorDecisionHistory;
     list_coauthor_document_history: InputArgsListCoauthorDocumentHistory;
+    list_coauthor_knowledge_anchors: InputArgsListCoauthorKnowledgeAnchors;
     list_coauthor_related_knowledge: InputArgsListCoauthorRelatedKnowledge;
     list_coauthor_runs: InputArgsListCoauthorRuns;
     list_coauthor_source_checks: InputArgsListCoauthorSourceChecks;
@@ -1029,6 +1031,12 @@ export type InputArgsListCoauthorDocumentHistory = {
     beforeVersion?: number | null;
     scope: InputCoauthorScope;
 };
+export type InputArgsListCoauthorKnowledgeAnchors = {
+    key: string;
+    offset: number;
+    revision: string;
+    scope: InputCoauthorScope;
+};
 export type InputArgsListCoauthorRelatedKnowledge = {
     key: string;
     offset: number;
@@ -1584,6 +1592,7 @@ export type IpcResponses = {
     list_chapter_extractions: ChapterExtractionProposal[];
     list_coauthor_decision_history: CoauthorDecisionHistory;
     list_coauthor_document_history: CoauthorDocument[];
+    list_coauthor_knowledge_anchors: CoauthorKnowledgeAnchorsPage;
     list_coauthor_related_knowledge: CoauthorSearchPage;
     list_coauthor_runs: CoauthorRunsPage;
     list_coauthor_source_checks: CoauthorChecksPage;
@@ -1883,6 +1892,7 @@ export type CoauthorKnowledgeContext = {
     hasMoreAnchors: boolean;
     projectId: string;
     status: string;
+    totalAnchors: number;
     version: number;
 };
 export type CoauthorKnowledgeAnchor = {
@@ -1997,6 +2007,7 @@ export type CoauthorSourceCheck = {
     complete: boolean;
     id: string;
     kinds: string[];
+    needsReview: number;
     pendingIndexUpdates: number;
     query: string;
     read: number;
@@ -2011,6 +2022,7 @@ export type CoauthorSourceCheck = {
 export type CoauthorCheckEntry = {
     assessment: string | null;
     key: string;
+    knowledgeStatus: string | null;
     lastError: string | null;
     nextOffset: number;
     quote: string;
@@ -2683,6 +2695,14 @@ export type CoauthorDecisionMemory = {
 export type CoauthorDecisionRevision = {
     decision: CoauthorDecision;
     quote: string | null;
+};
+export type CoauthorKnowledgeAnchorsPage = {
+    anchors: CoauthorKnowledgeAnchor[];
+    knowledgeKey: string;
+    knowledgeRevision: string;
+    nextOffset: number;
+    offset: number;
+    totalAnchors: number;
 };
 export type CoauthorSearchPage = {
     coverage: string;

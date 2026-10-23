@@ -13,7 +13,7 @@ const fact: CoauthorSource = {
   key: "FACT:one", kind: "FACT", title: "陆沉 · 掌握 · 魂灯", revision: "fact1", content: "审核记录",
   offset: 0, totalChars: 4, sessionId: null,
   knowledgeContext: {
-    projectId: "p", version: 1, status: "CURRENT", facts: [], hasMoreAnchors: false,
+    projectId: "p", version: 1, status: "CURRENT", facts: [], hasMoreAnchors: false, totalAnchors: 1,
     anchors: [{ id: "a", chapterId: "chapter", revisionId: "m1", blockId: "p1", status: "CURRENT_REVISION" }],
   },
 };
@@ -142,4 +142,93 @@ it("isolates a late evidence response when the author switches branches", async 
   await screen.findByText("另一分支证据");
   await act(async () => resolve(evidence));
   expect(screen.queryByText("陆沉😀掌握魂灯。")).not.toBeInTheDocument();
+});
+
+const manyAnchors = {
+  ...fact, knowledgeContext: {
+    ...fact.knowledgeContext!, totalAnchors: 17, hasMoreAnchors: true,
+    anchors: Array.from({ length: 16 }, (_, index) => ({
+      ...fact.knowledgeContext!.anchors[0], id: `a${index}`, blockId: `p${index}`,
+    })),
+  },
+};
+const lastPage = {
+  knowledgeKey: fact.key, knowledgeRevision: fact.revision, offset: 16, totalAnchors: 17, nextOffset: 17,
+  anchors: [{ ...fact.knowledgeContext!.anchors[0], id: "a16", blockId: "p16" }],
+};
+
+it("pages the full evidence directory on demand without reading any manuscript automatically", async () => {
+  mocks.invoke.mockImplementation(async (command, args) => {
+    if (command === "list_coauthor_knowledge_anchors") return args.offset ? lastPage : {
+      ...lastPage, offset: 0, nextOffset: 16, anchors: manyAnchors.knowledgeContext.anchors,
+    };
+    return { ...evidence, anchorId: "a16", content: "后续页原文" };
+  });
+  mount(manyAnchors);
+  expect(mocks.invoke).not.toHaveBeenCalled();
+  expect(screen.getByText("证据目录 · 1 至 16 / 17 条")).toBeVisible();
+  expect(screen.getByText("还有证据未展示，目录状态不代表原文已核验。")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "下一页证据" }));
+  expect(await screen.findByText("正文证据 · p16")).toBeVisible();
+  expect(screen.getByText("证据目录 · 17 至 17 / 17 条")).toBeVisible();
+  expect(screen.queryByText("正文证据 · p0")).not.toBeInTheDocument();
+  expect(screen.queryByText(/原文身份与范围已核验/)).not.toBeInTheDocument();
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  expect(mocks.invoke).toHaveBeenLastCalledWith("list_coauthor_knowledge_anchors", {
+    scope, key: fact.key, revision: fact.revision, offset: 16,
+  });
+  expect(screen.getByRole("button", { name: "下一页证据" })).toBeDisabled();
+  fireEvent.click(screen.getByText("正文证据 · p16"));
+  expect(await screen.findByText("后续页原文")).toBeVisible();
+  expect(mocks.invoke).toHaveBeenLastCalledWith("read_coauthor_knowledge_evidence", expect.objectContaining({
+    key: fact.key, revision: fact.revision, anchorId: "a16",
+  }));
+  expect(screen.getByText("原文身份与范围已核验 · 本段 0 至 8 / 8 字符")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "上一页证据" }));
+  expect(await screen.findByText("正文证据 · p0")).toBeVisible();
+  expect(mocks.invoke).toHaveBeenLastCalledWith("list_coauthor_knowledge_anchors", expect.objectContaining({ offset: 0 }));
+});
+
+it("fails closed when an unseen anchor changes version, then can return to the earlier directory page", async () => {
+  mocks.invoke.mockRejectedValue(new Error("证据版本已变化"));
+  mount(manyAnchors);
+  fireEvent.click(screen.getByRole("button", { name: "下一页证据" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("证据目录无法核实：证据版本已变化");
+  expect(screen.getByRole("button", { name: "下一页证据" })).toBeDisabled();
+  expect(screen.queryByText("正文证据 · p0")).not.toBeInTheDocument();
+  mocks.invoke.mockResolvedValue({ ...lastPage, offset: 0, nextOffset: 16, anchors: manyAnchors.knowledgeContext.anchors });
+  fireEvent.click(screen.getByRole("button", { name: "上一页证据" }));
+  expect(await screen.findByText("正文证据 · p0")).toBeVisible();
+  expect(mocks.invoke).toHaveBeenLastCalledWith("list_coauthor_knowledge_anchors", expect.objectContaining({
+    revision: "fact1", offset: 0,
+  }));
+});
+
+it("keeps a failed directory refresh visibly unverified and does not claim cached evidence is freshly checked", async () => {
+  mocks.invoke.mockImplementation(async (command) => command === "list_coauthor_knowledge_anchors" ? lastPage : evidence);
+  mount(manyAnchors);
+  fireEvent.click(screen.getByRole("button", { name: "下一页证据" }));
+  await screen.findByText("正文证据 · p16");
+  fireEvent.click(screen.getByText("正文证据 · p16"));
+  expect(await screen.findByText("原文身份与范围已核验 · 本段 0 至 8 / 8 字符")).toBeVisible();
+  mocks.invoke.mockRejectedValue(new Error("来源已变化"));
+  fireEvent.click(screen.getByRole("button", { name: "刷新证据目录" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("来源已变化");
+  expect(screen.getByText("以下为缓存目录，当前状态尚未核实。")).toBeVisible();
+  expect(screen.getByText("正文证据 · p16")).toBeVisible();
+  expect(screen.queryByText(/原文身份与范围已核验/)).not.toBeInTheDocument();
+});
+
+it("isolates late directory pages after source revision or branch changes", async () => {
+  let resolve: (value: typeof lastPage) => void = () => {};
+  mocks.invoke.mockImplementation(() => new Promise<typeof lastPage>((done) => { resolve = done; }));
+  const { client, view } = mount(manyAnchors);
+  fireEvent.click(screen.getByRole("button", { name: "下一页证据" }));
+  await waitFor(() => expect(mocks.invoke).toHaveBeenCalledTimes(1));
+  const changed = { ...manyAnchors, revision: "fact2" };
+  view.rerender(<QueryClientProvider client={client}>{tree(changed, { ...scope, sessionId: "other" })}</QueryClientProvider>);
+  await act(async () => resolve(lastPage));
+  expect(screen.getByText("证据目录 · 1 至 16 / 17 条")).toBeVisible();
+  expect(screen.queryByText("正文证据 · p16")).not.toBeInTheDocument();
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
 });

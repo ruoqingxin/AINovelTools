@@ -119,7 +119,7 @@ describe("coauthor workspace", () => {
     const fact: CoauthorSource = {
       key: "FACT:one", kind: "FACT", title: "陆沉 · 掌握 · 魂灯", revision: "fact1",
       content: "已审核事实记录，不是正文原句。", totalChars: 17, offset: 0, sessionId: null,
-      knowledgeContext: { projectId: "p1", version: 1, status: "CURRENT", facts: [], hasMoreAnchors: false,
+      knowledgeContext: { projectId: "p1", version: 1, status: "CURRENT", facts: [], hasMoreAnchors: false, totalAnchors: 1,
         anchors: [{ id: "a", chapterId: "chapter", revisionId: "r1", blockId: "p1", status: "CURRENT_REVISION" }] },
     };
     stored.runs = [{ id: "latest", sessionId: "s1", userMessageId: "m", documentVersion: 1,

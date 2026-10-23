@@ -1,6 +1,9 @@
 use super::*;
 use crate::coauthor_store::tests::project;
 
+mod checks;
+mod pages;
+
 struct Fixture {
     manager: ProjectManager,
     root: PathBuf,

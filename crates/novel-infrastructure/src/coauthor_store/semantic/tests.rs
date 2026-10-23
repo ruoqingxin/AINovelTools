@@ -384,7 +384,7 @@ fn migration_failure_and_late_cache_write_fault_leave_no_partial_data_or_author_
     let db = &manager.current.as_ref().unwrap().database;
     db.connection.execute_batch(
         "DROP TABLE coauthor_semantic_vectors; DROP TABLE coauthor_semantic_chunks; DROP TABLE coauthor_semantic_settings;
-         DELETE FROM schema_migrations WHERE version=59;
+         DELETE FROM schema_migrations WHERE version>=59;
          CREATE TRIGGER fail59 BEFORE INSERT ON schema_migrations WHEN NEW.version=59
          BEGIN SELECT RAISE(ABORT,'late fault'); END;").unwrap();
     assert!(db.migrate_coauthor_semantic().is_err());

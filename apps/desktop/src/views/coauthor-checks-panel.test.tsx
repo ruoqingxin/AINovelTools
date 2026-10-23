@@ -23,10 +23,10 @@ beforeEach(() => {
   page = {
     check: { id: "check", title: "核对全部旧章", query: "失忆代价是否影响旧章", kinds: ["MANUSCRIPT"],
       total: 2, read: 1, sent: 0, reviewed: 0, relevant: 0, uncertain: 0, stale: 0, added: 0,
-      pendingIndexUpdates: 0, complete: false },
+      pendingIndexUpdates: 0, needsReview: 0, complete: false },
     entries: [{ key: "MANUSCRIPT:chapter", title: "雨夜", revision: "r1", totalChars: 6000, readChars: 6000,
       sentChars: 2000, sentComplete: false, nextOffset: 1000, stale: false,
-      assessment: null, reason: "", quote: "", lastError: null }],
+      assessment: null, reason: "", quote: "", lastError: null, knowledgeStatus: null }],
     offset: 0, hasMore: false,
   };
   notesPage = {
@@ -221,4 +221,151 @@ it("distinguishes a source with no notes from missing original text", async () =
   fireEvent.click(screen.getByText("分段分析笔记"));
   expect(await screen.findByText("暂无分段分析笔记。")).toBeVisible();
   expect(screen.getByText("读取 6000 / 6000 字 · 送达 2000 字 · 续查位置 1000")).toBeVisible();
+});
+
+function knowledgeFixture() {
+  page.check = { ...page.check, kinds: ["FACT", "RELATION"], total: 1 };
+  page.entries = [{ ...page.entries[0], key: "FACT:one", title: "陆沉 · 掌握 · 魂灯",
+    revision: "fact-1", totalChars: 50, readChars: 50, sentChars: 50, nextOffset: 50,
+    sentComplete: true, knowledgeStatus: "CURRENT" }];
+  const fact = { key: "FACT:one", kind: "FACT", title: "陆沉 · 掌握 · 魂灯", revision: "fact-1",
+    content: "已审核事实记录，不是正文原句。", offset: 0, totalChars: 50, sessionId: null,
+    knowledgeContext: { projectId: "project", version: 1, status: "CURRENT", hasMoreAnchors: false, totalAnchors: 1,
+      facts: [], anchors: [{ id: "anchor", chapterId: "chapter", revisionId: "original", blockId: "p1", status: "CURRENT_REVISION" }] } };
+  const base = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command: string, args: unknown) => {
+    if (command === "read_coauthor_source") return Promise.resolve(structuredClone(fact));
+    if (command === "read_coauthor_knowledge_evidence") return Promise.resolve({
+      knowledgeKey: fact.key, knowledgeRevision: fact.revision, anchorId: "anchor",
+      chapterId: "chapter", revisionId: "original", blockId: "p1", start: 0, end: 8,
+      content: "陆沉😀掌握魂灯。", offset: 0, nextOffset: 8, totalChars: 8, isCurrentRevision: true,
+    });
+    return base(command, args);
+  });
+  return fact;
+}
+
+it("supports explicitly selecting facts and relations without auto-running a model", async () => {
+  mount();
+  await screen.findByText("雨夜");
+  fireEvent.click(screen.getByText("新建查证清单"));
+  fireEvent.change(screen.getByLabelText("查证问题"), { target: { value: "核对全部知识记录" } });
+  fireEvent.click(screen.getByLabelText("已审核事实"));
+  fireEvent.click(screen.getByLabelText("关系记录"));
+  fireEvent.click(screen.getByRole("button", { name: "创建清单" }));
+  await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("create_coauthor_source_check", {
+    scope, input: { title: "全范围查证", query: "核对全部知识记录", kinds: ["MANUSCRIPT", "FACT", "RELATION"] },
+  }));
+  expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor")).toBe(false);
+});
+
+it("reads exact record and original evidence only when each is opened", async () => {
+  knowledgeFixture();
+  mount();
+  await screen.findByText("记录文本读取 50 / 50 字 · 送达 50 字 · 续查位置 50");
+  expect(mocks.invoke.mock.calls.some(([name]) => name === "read_coauthor_source")).toBe(false);
+  fireEvent.click(screen.getByText("记录与正文证据"));
+  expect(await screen.findByText("已审核事实记录，不是正文原句。")).toBeVisible();
+  expect(mocks.invoke).toHaveBeenCalledWith("read_coauthor_source", {
+    scope, key: "FACT:one", revision: "fact-1", offset: 0,
+  });
+  expect(mocks.invoke.mock.calls.some(([name]) => name === "read_coauthor_knowledge_evidence")).toBe(false);
+  fireEvent.click(screen.getByText("正文证据 · p1"));
+  expect(await screen.findByText("陆沉😀掌握魂灯。")).toBeVisible();
+  expect(mocks.invoke).toHaveBeenCalledWith("read_coauthor_knowledge_evidence", {
+    scope, key: "FACT:one", revision: "fact-1", anchorId: "anchor", offset: 0, limit: 2000,
+  });
+  expect(screen.getByRole("link", { name: "定位原修订" })).toHaveAttribute("href", expect.stringContaining("original"));
+  expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor")).toBe(false);
+});
+
+it("shows unresolved knowledge evidence separately from the model assessment", async () => {
+  knowledgeFixture();
+  page.check = { ...page.check, needsReview: 1, read: 1, sent: 1, reviewed: 1, uncertain: 0 };
+  page.entries[0] = { ...page.entries[0], assessment: "IRRELEVANT", knowledgeStatus: "NEEDS_REVIEW" };
+  mount();
+  expect(await screen.findByText("1 项事实或关系的依据待核对，不计为范围查证完成。")).toBeVisible();
+  expect(screen.getByText("记录依据待核对")).toBeVisible();
+  expect(screen.getByText("不相关")).toBeVisible();
+  expect(screen.getByText("范围查证尚未完成。")).toBeVisible();
+});
+
+it("does not label a completed record workflow as verified manuscript evidence", async () => {
+  knowledgeFixture();
+  page.check = { ...page.check, complete: true, read: 1, sent: 1, reviewed: 1 };
+  mount();
+  expect(await screen.findByText("范围内记录逐项查证流程已完成，正文证据与适用条件仍需核对。")).toBeVisible();
+  expect(screen.getByText("原证据修订仍在用，记录文本已读不代表正文证据已核实。")).toBeVisible();
+});
+
+it("keeps stale record lookup failure explicit and does not switch to the latest version", async () => {
+  knowledgeFixture();
+  page.entries[0].stale = true;
+  const base = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command: string, args: unknown) => command === "read_coauthor_source"
+    ? Promise.reject(new Error("记录版本已经变化")) : base(command, args));
+  mount();
+  await screen.findByText("记录与正文证据");
+  fireEvent.click(screen.getByText("记录与正文证据"));
+  expect(await screen.findByText("记录无法核实：记录版本已经变化")).toBeVisible();
+  expect(screen.getByText("清单原版本已失效，不将此处读取算作当前查证完成。")).toBeVisible();
+  expect(mocks.invoke.mock.calls.filter(([name]) => name === "read_coauthor_source")).toHaveLength(1);
+  expect(mocks.invoke.mock.calls.some(([name]) => name === "read_coauthor_knowledge_evidence")).toBe(false);
+});
+
+it("retains record cache as unverified after refresh failure without affecting author input", async () => {
+  knowledgeFixture();
+  const base = mocks.invoke.getMockImplementation()!;
+  let fail = false;
+  mocks.invoke.mockImplementation((command: string, args: unknown) => command === "read_coauthor_source" && fail
+    ? Promise.reject(new Error("记录刷新失败")) : base(command, args));
+  mount();
+  await screen.findByText("记录与正文证据");
+  fireEvent.click(screen.getByText("记录与正文证据"));
+  await screen.findByText("已审核事实记录，不是正文原句。");
+  fail = true;
+  fireEvent.click(screen.getByRole("button", { name: "刷新查证记录" }));
+  expect(await screen.findByText("记录无法核实：记录刷新失败")).toBeVisible();
+  expect(screen.getByText("以下为缓存记录，当前有效性尚未核实。")).toBeVisible();
+  expect(screen.getByText("已审核事实记录，不是正文原句。")).toBeVisible();
+  expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor")).toBe(false);
+});
+
+it("paginates record text using the exact Unicode offset and retains its revision", async () => {
+  const fact = knowledgeFixture();
+  const base = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command: string, args: { offset?: number }) => command === "read_coauthor_source"
+    ? Promise.resolve({ ...fact, content: args.offset ? "丙丁戊" : "甲😀乙", offset: args.offset, totalChars: 6 })
+    : base(command, args));
+  mount();
+  await screen.findByText("记录与正文证据");
+  fireEvent.click(screen.getByText("记录与正文证据"));
+  await screen.findByText("甲😀乙");
+  fireEvent.click(screen.getByRole("button", { name: "下一段记录" }));
+  expect(await screen.findByText("丙丁戊")).toBeVisible();
+  expect(mocks.invoke).toHaveBeenCalledWith("read_coauthor_source", { scope, key: "FACT:one", revision: "fact-1", offset: 3 });
+  expect(screen.getByRole("button", { name: "下一段记录" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "上一段记录" }));
+  expect(await screen.findByText("甲😀乙")).toBeVisible();
+});
+
+it("follows relation endpoint identities and returns to the exact checklist record", async () => {
+  const fact = knowledgeFixture();
+  page.entries[0] = { ...page.entries[0], key: "RELATION:one", revision: "relation-1", title: "守护关系" };
+  const relation = { ...fact, key: "RELATION:one", revision: "relation-1", kind: "RELATION", title: "守护关系",
+    content: "关系记录", knowledgeContext: { ...fact.knowledgeContext,
+      facts: [{ key: fact.key, revision: fact.revision, title: fact.title }] } };
+  const base = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command: string, args: { key?: string }) => command === "read_coauthor_source"
+    ? Promise.resolve(args.key === fact.key ? fact : relation) : base(command, args));
+  mount();
+  await screen.findByText("记录与正文证据");
+  fireEvent.click(screen.getByText("记录与正文证据"));
+  fireEvent.click(await screen.findByRole("button", { name: "起点事实 · 陆沉 · 掌握 · 魂灯" }));
+  expect(await screen.findByText(fact.content)).toBeVisible();
+  expect(mocks.invoke).toHaveBeenCalledWith("read_coauthor_source", { scope, key: fact.key, revision: fact.revision, offset: 0 });
+  fireEvent.click(screen.getByRole("button", { name: "返回清单记录" }));
+  expect(await screen.findByText("关系记录", { selector: "p", exact: true })).toBeVisible();
+  expect(mocks.invoke).toHaveBeenCalledWith("read_coauthor_source", { scope, key: relation.key, revision: relation.revision, offset: 0 });
+  expect(screen.queryByRole("button", { name: "返回清单记录" })).not.toBeInTheDocument();
 });

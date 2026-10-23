@@ -486,6 +486,7 @@ fn migration_and_manifest_creation_failures_roll_back_without_touching_author_te
     let (mut manager, root, scope) = project();
     let key = chapter(&mut manager, "作者原稿");
     let db = &manager.current.as_ref().unwrap().database;
+    db.drop_coauthor_knowledge_checks_fixture();
     db.connection.execute_batch(
         "DROP TABLE coauthor_decision_fts; DROP TABLE coauthor_decision_mentions; DROP TABLE coauthor_decision_evidence; DROP TABLE coauthor_decision_aliases;
          DROP TABLE coauthor_check_notes; DROP TABLE coauthor_check_reads; DROP TABLE coauthor_check_entries; DROP TABLE coauthor_source_checks;
@@ -512,6 +513,8 @@ fn migration_and_manifest_creation_failures_roll_back_without_touching_author_te
     db.migrate_coauthor_decision_memory().unwrap();
     db.migrate_coauthor_knowledge().unwrap();
     db.migrate_coauthor_semantic().unwrap();
+    db.migrate_coauthor_knowledge_checks().unwrap();
+    db.migrate_coauthor_knowledge_anchor_pages().unwrap();
     db.connection.execute_batch(
         "CREATE TRIGGER fail_check_entry BEFORE INSERT ON coauthor_check_entries BEGIN SELECT RAISE(ABORT,'entry failure'); END;"
     ).unwrap();

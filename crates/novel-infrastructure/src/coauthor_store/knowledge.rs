@@ -1,5 +1,7 @@
 use super::*;
 
+mod invalidation;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CoauthorKnowledgeAnchor {
@@ -26,7 +28,20 @@ pub struct CoauthorKnowledgeContext {
     pub status: String,
     pub anchors: Vec<CoauthorKnowledgeAnchor>,
     pub has_more_anchors: bool,
+    #[serde(default)]
+    pub total_anchors: usize,
     pub facts: Vec<CoauthorKnowledgeLink>,
+}
+
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CoauthorKnowledgeAnchorsPage {
+    pub knowledge_key: String,
+    pub knowledge_revision: String,
+    pub anchors: Vec<CoauthorKnowledgeAnchor>,
+    pub offset: usize,
+    pub total_anchors: usize,
+    pub next_offset: usize,
 }
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
@@ -50,6 +65,17 @@ pub struct CoauthorKnowledgeEvidence {
 const KNOWLEDGE_WARNING: &str = "事实与关系记录，不是正文原句；故事时间、角色知情和叙事真假仍须核对。证据元数据未替代原文范围校验。";
 
 impl Database {
+    pub(crate) fn migrate_coauthor_knowledge_anchor_pages(&self) -> Result<(), DatabaseError> {
+        let tx = self.connection.unchecked_transaction()?;
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO coauthor_source_queue SELECT 'FACT',knowledge_id FROM fact_current_versions;
+             INSERT OR IGNORE INTO coauthor_source_queue SELECT 'RELATION',id FROM relations;
+             INSERT INTO schema_migrations(version,name) VALUES(61,'coauthor_knowledge_anchor_pages');",
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub(crate) fn migrate_coauthor_knowledge(&self) -> Result<(), DatabaseError> {
         let tx = self.connection.unchecked_transaction()?;
         tx.execute_batch(
@@ -87,33 +113,73 @@ impl Database {
         &self,
         project: Uuid,
         ids: &[Uuid],
-    ) -> Result<Vec<CoauthorKnowledgeAnchor>, CoauthorError> {
-        // Metadata only: a search never parses every evidence chapter.
-        ids.iter().take(16).map(|id| {
-            let anchor = self.connection.query_row(
-                "SELECT a.chapter_id,a.source_revision_id,a.block_id,
-                    CASE WHEN a.lifecycle_status<>'ACTIVE' OR n.archived<>0 THEN 'ARCHIVED'
+    ) -> Result<(Vec<CoauthorKnowledgeAnchor>, String), CoauthorError> {
+        // Hash all metadata, but never load chapter bodies for a directory/search.
+        let mut stmt = self.connection.prepare(
+                "SELECT j.value,a.chapter_id,a.source_revision_id,a.block_id,
+                    CASE WHEN a.lifecycle_status='ARCHIVED' OR n.archived<>0 THEN 'ARCHIVED'
+                         WHEN a.lifecycle_status<>'ACTIVE' THEN 'NEEDS_REVIEW'
                          WHEN m.id IS NULL OR a.source_hash<>m.content_hash OR a.start_offset>=a.end_offset
                            OR (a.source_version<>m.id AND a.source_version<>'manuscript:' || m.id)
                            OR m.chapter_id<>a.chapter_id OR n.id IS NULL THEN 'INVALID'
                          WHEN m.id<>(SELECT latest.id FROM manuscript_revisions latest
                             WHERE latest.chapter_id=m.chapter_id ORDER BY latest.created_at DESC,latest.rowid DESC LIMIT 1)
                             THEN 'STALE'
-                         ELSE 'CURRENT_REVISION' END
-                 FROM evidence_anchors a LEFT JOIN manuscript_revisions m ON m.id=a.source_revision_id
+                         ELSE 'CURRENT_REVISION' END,
+                    a.start_offset,a.end_offset,a.source_version,a.source_hash,a.lifecycle_status,
+                    m.content_hash,m.chapter_id,n.archived,
+                    (SELECT latest.id FROM manuscript_revisions latest WHERE latest.chapter_id=a.chapter_id
+                        ORDER BY latest.created_at DESC,latest.rowid DESC LIMIT 1)
+                 FROM json_each(?1) j LEFT JOIN evidence_anchors a ON a.id=j.value AND a.project_id=?2
+                 LEFT JOIN manuscript_revisions m ON m.id=a.source_revision_id
                  LEFT JOIN plan_nodes n ON n.id=a.chapter_id
-                 WHERE a.id=?1 AND a.project_id=?2",
-                rusqlite::params![id.to_string(),project.to_string()],
-                |row| Ok(CoauthorKnowledgeAnchor {
-                    id:*id, chapter_id:Some(super::super::manuscript_source_store::row_uuid(row,0)?),
-                    revision_id:Some(super::super::manuscript_source_store::row_uuid(row,1)?),
-                    block_id:Some(row.get(2)?), status:row.get(3)?,
-                }),
-            ).optional()?;
-            Ok(anchor.unwrap_or(CoauthorKnowledgeAnchor {
-                id:*id, chapter_id:None, revision_id:None, block_id:None, status:"MISSING".into(),
-            }))
-        }).collect()
+                 ORDER BY CAST(j.key AS INTEGER)",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![encode(&ids)?,project.to_string()], |row| {
+            let present = row.get::<_, Option<String>>(1)?.is_some();
+            let anchor = CoauthorKnowledgeAnchor {
+                id: super::super::manuscript_source_store::row_uuid(row, 0)?,
+                chapter_id: if present { Some(super::super::manuscript_source_store::row_uuid(row, 1)?) } else { None },
+                revision_id: if present { Some(super::super::manuscript_source_store::row_uuid(row, 2)?) } else { None },
+                block_id: row.get(3)?,
+                status: if present { row.get(4)? } else { "MISSING".into() },
+            };
+            let metadata = serde_json::json!([
+                anchor, row.get::<_,Option<i64>>(5)?, row.get::<_,Option<i64>>(6)?,
+                row.get::<_,Option<String>>(7)?, row.get::<_,Option<String>>(8)?,
+                row.get::<_,Option<String>>(9)?, row.get::<_,Option<String>>(10)?,
+                row.get::<_,Option<String>>(11)?, row.get::<_,Option<bool>>(12)?,
+                row.get::<_,Option<String>>(13)?,
+            ]);
+            Ok((anchor, metadata.to_string()))
+        })?;
+        let mut anchors = Vec::with_capacity(ids.len());
+        let mut fingerprint = Sha256::new();
+        for row in rows {
+            let (anchor, metadata) = row?;
+            fingerprint.update(metadata.as_bytes());
+            fingerprint.update(b"\n");
+            anchors.push(anchor);
+        }
+        Ok((anchors, format!("{:x}", fingerprint.finalize())))
+    }
+
+    fn coauthor_knowledge_anchor_ids(
+        &self, project: Uuid, key: &str,
+    ) -> Result<Vec<Uuid>, CoauthorError> {
+        let (kind, id) = key.split_once(':').ok_or(CoauthorError::NotFound)?;
+        let sql = match kind {
+            "FACT" => "SELECT f.evidence_anchor_ids_json FROM facts f JOIN fact_current_versions c
+                ON c.knowledge_id=f.knowledge_id AND c.knowledge_version=f.knowledge_version
+                WHERE f.knowledge_id=?1 AND f.project_id=?2 AND f.lifecycle_status='ACTIVE'",
+            "RELATION" => "SELECT r.evidence_anchor_ids_json FROM relations r WHERE r.id=?1
+                AND r.project_id=?2 AND r.lifecycle_status='ACTIVE'
+                AND r.relation_version=(SELECT MAX(v.relation_version) FROM relations v WHERE v.id=r.id)",
+            _ => return Err(CoauthorError::Invalid("不是可读取的事实或关系来源。".into())),
+        };
+        let json = self.connection.query_row(sql, rusqlite::params![id,project.to_string()],
+            |row| row.get(0)).optional()?.ok_or(CoauthorError::NotFound)?;
+        decode(json)
     }
 
     pub(super) fn coauthor_knowledge_source(
@@ -223,9 +289,8 @@ impl Database {
         };
         let project_id = project.parse().map_err(|_| CoauthorError::NotFound)?;
         let ids: Vec<Uuid> = decode(anchor_json)?;
-        let anchors = self.knowledge_anchors(project_id, &ids)?;
+        let (anchors, fingerprint) = self.knowledge_anchors(project_id, &ids)?;
         let current = !ids.is_empty()
-            && ids.len() <= 16
             && anchors.iter().all(|anchor| {
                 anchor.status == "CURRENT_REVISION"
                     && (kind != "FACT"
@@ -237,8 +302,9 @@ impl Database {
             project_id,
             version,
             status: if current { "CURRENT" } else { "NEEDS_REVIEW" }.into(),
-            anchors,
+            anchors: anchors.into_iter().take(16).collect(),
             has_more_anchors: ids.len() > 16,
+            total_anchors: ids.len(),
             facts,
         };
         let content = format!(
@@ -251,7 +317,7 @@ impl Database {
         );
         let revision = format!(
             "{version}:{:x}",
-            Sha256::digest(format!("{key}\n{content}\n{}", encode(&provenance)?))
+            Sha256::digest(format!("{key}\n{content}\n{}\n{fingerprint}", encode(&provenance)?))
         );
         Ok(Some(CoauthorSource {
             key: key.into(),
@@ -269,6 +335,25 @@ impl Database {
 }
 
 impl ProjectManager {
+    pub fn coauthor_knowledge_anchors(
+        &self, scope: &CoauthorScope, key: &str, revision: &str, offset: usize,
+    ) -> Result<CoauthorKnowledgeAnchorsPage, CoauthorError> {
+        let db = &self.current.as_ref().ok_or(CoauthorError::WrongProject)?.database;
+        // Keep version validation and the returned page in the same read snapshot.
+        let _snapshot = db.connection.unchecked_transaction()?;
+        self.read_coauthor_source(scope, key, revision, 0, 1)?;
+        let ids = db.coauthor_knowledge_anchor_ids(scope.project_id, key)?;
+        if offset > ids.len() {
+            return Err(CoauthorError::Invalid("证据目录位置超出范围。".into()));
+        }
+        let end = offset.saturating_add(16).min(ids.len());
+        let (anchors, _) = db.knowledge_anchors(scope.project_id, &ids[offset..end])?;
+        Ok(CoauthorKnowledgeAnchorsPage {
+            knowledge_key: key.into(), knowledge_revision: revision.into(),
+            anchors, offset, total_anchors: ids.len(), next_offset: end,
+        })
+    }
+
     pub fn coauthor_related_knowledge(
         &self,
         scope: &CoauthorScope,
@@ -320,11 +405,12 @@ impl ProjectManager {
         offset: usize,
         limit: usize,
     ) -> Result<CoauthorKnowledgeEvidence, CoauthorError> {
-        let source = self.read_coauthor_source(scope, key, revision, 0, 1)?;
-        let provenance = source.knowledge_context.ok_or(CoauthorError::NotFound)?;
-        if !provenance.anchors.iter().any(|anchor| anchor.id == anchor_id) {
+        let db = &self.current.as_ref().ok_or(CoauthorError::WrongProject)?.database;
+        let _snapshot = db.connection.unchecked_transaction()?;
+        self.read_coauthor_source(scope, key, revision, 0, 1)?;
+        if !db.coauthor_knowledge_anchor_ids(scope.project_id, key)?.contains(&anchor_id) {
             return Err(CoauthorError::Invalid(
-                "该证据不在此版本返回的事实或关系证据中。".into(),
+                "该证据不属于此版本的事实或关系记录。".into(),
             ));
         }
         let evidence = self

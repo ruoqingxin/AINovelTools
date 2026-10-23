@@ -3,11 +3,59 @@ import { ArrowLeft, ArrowRight, ListChecks, Plus, RefreshCw } from "lucide-react
 import { useEffect, useRef, useState } from "react";
 import {
   createCoauthorSourceCheck, errorMessage, getCoauthorSourceCheck, getCoauthorCheckNotes, listCoauthorSourceChecks,
-  type CoauthorScope, type CoauthorSourceCheck,
+  readCoauthorSource, type CoauthorScope, type CoauthorSourceCheck, type CoauthorCheckEntry,
 } from "../lib/tauri-client";
+import { CoauthorKnowledge } from "./coauthor-knowledge";
 
-const kinds = { MANUSCRIPT: "正式正文", PLAN: "规划记录", ENTITY: "有效设定卡" };
+const kinds = { MANUSCRIPT: "正式正文", PLAN: "规划记录", ENTITY: "有效设定卡", FACT: "已审核事实", RELATION: "关系记录" };
 const assessments: Record<string, string> = { RELEVANT: "相关", IRRELEVANT: "不相关", UNCERTAIN: "待核对" };
+
+function CheckKnowledge({ scope, entry, unverified }: {
+  scope: CoauthorScope; entry: CoauthorCheckEntry; unverified: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [target, setTarget] = useState({ key: entry.key, revision: entry.revision });
+  const [offsets, setOffsets] = useState([0]);
+  const offset = offsets[offsets.length - 1];
+  const record = useQuery({
+    queryKey: ["coauthor-check-knowledge", scope.projectId, scope.sessionId, target.key, target.revision, offset],
+    queryFn: () => readCoauthorSource({ scope, ...target, offset }),
+    enabled: open, retry: false,
+  });
+  const next = record.data ? record.data.offset + Array.from(record.data.content).length : offset;
+  function readTarget(key: string, revision: string) {
+    setTarget({ key, revision }); setOffsets([0]);
+  }
+  return <details className="coauthor-check-knowledge" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>记录与正文证据</summary>
+    {open && <>
+      {(entry.stale || unverified) && <p role="status">{entry.stale
+        ? "清单原版本已失效，不将此处读取算作当前查证完成。" : "清单当前进度尚未核实。"}</p>}
+      {target.key !== entry.key && <button type="button" className="icon-command" aria-label="返回清单记录" title="返回清单记录"
+        onClick={() => readTarget(entry.key, entry.revision)}><ArrowLeft size={16} /></button>}
+      {record.isPending && <p role="status">正在核对记录版本…</p>}
+      {record.error && <p role="alert" className="project-error">记录无法核实：{errorMessage(record.error)}</p>}
+      {record.data && <>
+        {(record.isFetching || record.isError) && <p role="status">以下为缓存记录，当前有效性尚未核实。</p>}
+        <h4>{record.data.title}</h4>
+        <p>{record.data.content}</p>
+        {(offsets.length > 1 || next < record.data.totalChars) && <nav className="coauthor-check-pagination" aria-label="记录文本分页">
+          <button type="button" className="icon-command" aria-label="上一段记录" title="上一段记录"
+            disabled={offsets.length === 1 || record.isFetching}
+            onClick={() => setOffsets((values) => values.slice(0, -1))}><ArrowLeft size={16} /></button>
+          <span>字符 {offset} 至 {next} / {record.data.totalChars}</span>
+          <button type="button" className="icon-command" aria-label="下一段记录" title="下一段记录"
+            disabled={record.isFetching || record.isError || next <= offset || next >= record.data.totalChars}
+            onClick={() => setOffsets((values) => [...values, next])}><ArrowRight size={16} /></button>
+        </nav>}
+        <CoauthorKnowledge key={`${record.data.key}:${record.data.revision}`} scope={scope} source={record.data}
+          onRead={readTarget} />
+      </>}
+      <button type="button" className="icon-command" aria-label="刷新查证记录" title="刷新查证记录"
+        disabled={record.isFetching} onClick={() => void record.refetch()}><RefreshCw size={16} /></button>
+    </>}
+  </details>;
+}
 
 function CheckNotes({ scope, id, sourceKey, stale, unverified }: {
   scope: CoauthorScope; id: string; sourceKey: string; stale: boolean; unverified: boolean;
@@ -124,18 +172,22 @@ export function CoauthorChecksPanel({ scope, isGenerating, onContinue }: {
         <small>{check.kinds.map((kind) => kinds[kind as keyof typeof kinds] ?? kind).join(" / ")} · 清单 {check.id}</small>
         <dl>
           <div><dt>范围</dt><dd>{check.total} 项</dd></div>
-          <div><dt>完整读取</dt><dd>{check.read} 项</dd></div>
-          <div><dt>完整送达</dt><dd>{check.sent} 项</dd></div>
+          <div><dt>文本完整读取</dt><dd>{check.read} 项</dd></div>
+          <div><dt>文本完整送达</dt><dd>{check.sent} 项</dd></div>
           <div><dt>已判断</dt><dd>{check.reviewed} 项</dd></div>
           <div><dt>相关</dt><dd>{check.relevant} 项</dd></div>
           <div><dt>待核对</dt><dd>{check.uncertain} 项</dd></div>
+          {check.needsReview > 0 && <div><dt>记录依据待核对</dt><dd>{check.needsReview} 项</dd></div>}
         </dl>
         <p role="status">{detail.isFetching ? "正在核对当前进度…" : detail.isError ? "当前进度无法核实，以下为上次记录。"
-          : check.complete ? "范围内逐项查证流程已完成，判断仍需作者核对。"
+          : check.complete ? check.kinds.some((kind) => kind === "FACT" || kind === "RELATION")
+            ? "范围内记录逐项查证流程已完成，正文证据与适用条件仍需核对。"
+            : "范围内逐项查证流程已完成，判断仍需作者核对。"
           : check.total === 0 ? "所选范围为空，未形成可查证的资料清单。" : "范围查证尚未完成。"}</p>
         {(check.stale > 0 || check.added > 0 || check.pendingIndexUpdates > 0) && <p role="alert" className="project-error">
           {check.stale} 项原依据失效 · {check.added} 项新增资料 · {check.pendingIndexUpdates} 项索引待更新
         </p>}
+        {check.needsReview > 0 && <p role="alert" className="project-error">{check.needsReview} 项事实或关系的依据待核对，不计为范围查证完成。</p>}
         <button type="button" disabled={isGenerating || check.total === 0 || detail.isFetching || detail.isError} onClick={() => onContinue(check)}>
           <ListChecks size={15} />{check.stale || check.added ? "核对范围变化" : "继续查证"}
         </button>
@@ -144,12 +196,17 @@ export function CoauthorChecksPanel({ scope, isGenerating, onContinue }: {
         {detail.data?.entries.map((entry) => <article className="coauthor-check-entry" key={entry.key}>
           <header><strong>{entry.title}</strong><span>{entry.stale ? "原依据失效" : entry.assessment ? assessments[entry.assessment] : entry.sentComplete ? "原文已送达，待判断" : "未完成"}</span></header>
           <small>{entry.key}</small>
-          <p>读取 {entry.readChars} / {entry.totalChars ?? "未知"} 字 · 送达 {entry.sentChars} 字 · 续查位置 {entry.nextOffset}</p>
+          <p>{entry.key.startsWith("FACT:") || entry.key.startsWith("RELATION:") ? "记录文本读取" : "读取"} {entry.readChars} / {entry.totalChars ?? "未知"} 字 · 送达 {entry.sentChars} 字 · 续查位置 {entry.nextOffset}</p>
+          {entry.knowledgeStatus && !entry.stale && <p>{entry.knowledgeStatus === "CURRENT"
+            ? "原证据修订仍在用，记录文本已读不代表正文证据已核实。" : "记录依据待核对，不能直接作为当前有效结论。"}</p>}
           {entry.stale && entry.assessment && <small>原判断：{assessments[entry.assessment]}，不计入当前完成进度。</small>}
           {entry.reason && <p>{entry.reason}</p>}
           {entry.quote && <blockquote>{entry.quote}</blockquote>}
           {entry.lastError && <p role="alert" className="project-error">{entry.lastError}</p>}
           <details><summary>来源修订</summary><small>{entry.revision}</small></details>
+          {(entry.key.startsWith("FACT:") || entry.key.startsWith("RELATION:")) && <CheckKnowledge
+            key={`${scope.projectId}:${scope.sessionId}:${id}:${entry.key}:${entry.revision}`} scope={scope}
+            entry={entry} unverified={detail.isError || detail.isFetching} />}
           <CheckNotes key={`${scope.projectId}:${scope.sessionId}:${id}:${entry.key}`} scope={scope} id={id}
             sourceKey={entry.key} stale={entry.stale} unverified={detail.isError || detail.isFetching} />
         </article>)}

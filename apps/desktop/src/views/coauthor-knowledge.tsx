@@ -3,17 +3,18 @@ import { ArrowLeft, ArrowRight, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { manuscriptSourceHref } from "../lib/manuscript-source";
 import {
-  errorMessage, listCoauthorRelatedKnowledge, readCoauthorKnowledgeEvidence,
+  errorMessage, listCoauthorKnowledgeAnchors, listCoauthorRelatedKnowledge, readCoauthorKnowledgeEvidence,
   type CoauthorKnowledgeAnchor, type CoauthorScope, type CoauthorSource,
 } from "../lib/tauri-client";
 
 const anchorStatuses: Record<string, string> = {
   CURRENT_REVISION: "原修订仍在用，原文范围尚未核验", STALE: "正文已有新修订，仅作历史",
   ARCHIVED: "证据或章节已归档", INVALID: "证据身份或版本不匹配", MISSING: "证据缺失或不属于本项目",
+  NEEDS_REVIEW: "证据状态待核对",
 };
 
-function KnowledgeEvidence({ scope, source, anchor }: {
-  scope: CoauthorScope; source: CoauthorSource; anchor: CoauthorKnowledgeAnchor;
+function KnowledgeEvidence({ scope, source, anchor, directoryUnavailable = false }: {
+  scope: CoauthorScope; source: CoauthorSource; anchor: CoauthorKnowledgeAnchor; directoryUnavailable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [offsets, setOffsets] = useState([0]);
@@ -22,16 +23,21 @@ function KnowledgeEvidence({ scope, source, anchor }: {
     queryKey: ["coauthor-knowledge-evidence", scope.projectId, scope.sessionId, source.key, source.revision, anchor.id, offset],
     queryFn: () => readCoauthorKnowledgeEvidence({
       scope, key: source.key, revision: source.revision, anchorId: anchor.id, offset, limit: 2000,
-    }), enabled: open, retry: false,
+    }), enabled: open && !directoryUnavailable, retry: false,
   });
+  const verified = Boolean(evidence.data && !evidence.isFetching && !evidence.isError && !directoryUnavailable);
   return <details onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary>正文证据 · {anchor.blockId ?? anchor.id}</summary>
     {open && <>
-      <small>{anchorStatuses[anchor.status] ?? anchor.status}</small>
-      {evidence.isPending && <p role="status">正在校验原文证据…</p>}
+      <small>{anchor.status === "CURRENT_REVISION" && verified ? "原修订仍在用" : anchorStatuses[anchor.status] ?? anchor.status}</small>
+      {directoryUnavailable && <p role="status">目录版本尚未核实，已有证据仅供历史对照。</p>}
+      {evidence.isPending && !directoryUnavailable && <p role="status">正在校验原文证据…</p>}
       {evidence.error && <p role="alert" className="project-error">证据无法核实：{errorMessage(evidence.error)}</p>}
       {evidence.data && <>
-        {(evidence.isFetching || evidence.isError) && <p role="status">以下为缓存证据，当前状态尚未核实。</p>}
+        {(evidence.isFetching || evidence.isError || directoryUnavailable) && <p role="status">以下为缓存证据，当前状态尚未核实。</p>}
+        {verified && <p role="status">
+          原文身份与范围已核验 · 本段 {evidence.data.offset} 至 {evidence.data.nextOffset} / {evidence.data.totalChars} 字符
+        </p>}
         {!evidence.data.isCurrentRevision && <p role="status">历史原文，不代表当前正文仍采用此版本。</p>}
         <small>块内字符 {evidence.data.start + evidence.data.offset} 至 {evidence.data.start + evidence.data.nextOffset}</small>
         <blockquote>{evidence.data.content}</blockquote>
@@ -46,14 +52,52 @@ function KnowledgeEvidence({ scope, source, anchor }: {
             disabled={offsets.length === 1 || evidence.isFetching} onClick={() => setOffsets((values) => values.slice(0, -1))}><ArrowLeft size={16} /></button>
           <span>第 {offsets.length} 段</span>
           <button type="button" className="icon-command" aria-label="下一段证据" title="下一段证据"
-            disabled={evidence.isFetching || evidence.isError || evidence.data.nextOffset >= evidence.data.totalChars}
+            disabled={directoryUnavailable || evidence.isFetching || evidence.isError || evidence.data.nextOffset >= evidence.data.totalChars}
             onClick={() => setOffsets((values) => [...values, evidence.data!.nextOffset])}><ArrowRight size={16} /></button>
         </nav>}
       </>}
       <button type="button" className="icon-command" aria-label="刷新原文证据" title="刷新原文证据"
-        disabled={evidence.isFetching} onClick={() => void evidence.refetch()}><RefreshCw size={16} /></button>
+        disabled={directoryUnavailable || evidence.isFetching} onClick={() => void evidence.refetch()}><RefreshCw size={16} /></button>
     </>}
   </details>;
+}
+
+function KnowledgeAnchors({ scope, source }: { scope: CoauthorScope; source: CoauthorSource }) {
+  const [offset, setOffset] = useState(0);
+  const [requested, setRequested] = useState(false);
+  const context = source.knowledgeContext!;
+  const page = useQuery({
+    queryKey: ["coauthor-knowledge-anchors", scope.projectId, scope.sessionId, source.key, source.revision, offset],
+    queryFn: () => listCoauthorKnowledgeAnchors({ scope, key: source.key, revision: source.revision, offset }),
+    enabled: requested, retry: false,
+  });
+  const anchors = requested ? page.data?.anchors : context.anchors;
+  const total = requested ? page.data?.totalAnchors : context.totalAnchors || context.anchors.length;
+  const next = requested ? page.data?.nextOffset : context.anchors.length;
+  const hasMore = requested ? next !== undefined && total !== undefined && next < total : context.hasMoreAnchors;
+  const navigate = (value: number) => { setRequested(true); setOffset(value); };
+  return <section aria-label="证据目录">
+    <p>{anchors ? `证据目录 · ${offset + (anchors.length ? 1 : 0)} 至 ${offset + anchors.length} / ${total} 条`
+      : `证据目录 · 第 ${Math.floor(offset / 16) + 1} 页`}</p>
+    {requested && page.isPending && <p role="status">正在核对证据目录…</p>}
+    {requested && page.error && <p role="alert" className="project-error">证据目录无法核实：{errorMessage(page.error)}</p>}
+    {requested && page.data && (page.isFetching || page.isError) && <p role="status">以下为缓存目录，当前状态尚未核实。</p>}
+    {anchors?.map((anchor, index) => <KnowledgeEvidence key={`${offset + index}:${anchor.id}`}
+      scope={scope} source={source} anchor={anchor} directoryUnavailable={requested && (page.isFetching || page.isError)} />)}
+    {hasMore && <p role="status">还有证据未展示，目录状态不代表原文已核验。</p>}
+    <nav className="coauthor-check-pagination" aria-label="证据目录分页">
+      <button type="button" className="icon-command" aria-label="上一页证据" title="上一页证据"
+        disabled={offset === 0 || (requested && page.isFetching)}
+        onClick={() => navigate(Math.max(0, offset - 16))}><ArrowLeft size={16} /></button>
+      <span>第 {Math.floor(offset / 16) + 1} 页</span>
+      <button type="button" className="icon-command" aria-label="下一页证据" title="下一页证据"
+        disabled={!hasMore || (requested && (page.isFetching || page.isError))}
+        onClick={() => navigate(next!)}><ArrowRight size={16} /></button>
+      <button type="button" className="icon-command" aria-label="刷新证据目录" title="刷新证据目录"
+        disabled={requested && page.isFetching}
+        onClick={() => { if (requested) void page.refetch(); else setRequested(true); }}><RefreshCw size={16} /></button>
+    </nav>
+  </section>;
 }
 
 export function CoauthorKnowledge({ scope, source, onRead }: {
@@ -74,9 +118,8 @@ export function CoauthorKnowledge({ scope, source, onRead }: {
       : "依据待核对，不能直接当作当前有效结论。"}</p>
     {context.facts.map((fact, index) => <button type="button" key={`${fact.key}:${index}`}
       onClick={() => onRead(fact.key, fact.revision)}>{index === 0 ? "起点事实" : "终点事实"} · {fact.title}</button>)}
-    {context.anchors.map((anchor) => <KnowledgeEvidence key={`${source.key}:${source.revision}:${anchor.id}`}
-      scope={scope} source={source} anchor={anchor} />)}
-    {context.hasMoreAnchors && <p role="status">证据超过本次展示范围，尚未核对全部证据。</p>}
+    <KnowledgeAnchors key={`${scope.projectId}:${scope.sessionId}:${source.key}:${source.revision}`}
+      scope={scope} source={source} />
     {source.kind === "FACT" && <details onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>直接关联关系</summary>
       {open && <>

@@ -24,6 +24,7 @@ pub struct CoauthorSourceCheck {
     pub reviewed: usize,
     pub relevant: usize,
     pub uncertain: usize,
+    pub needs_review: usize,
     pub stale: usize,
     pub added: usize,
     pub pending_index_updates: usize,
@@ -46,6 +47,7 @@ pub struct CoauthorCheckEntry {
     pub reason: String,
     pub quote: String,
     pub last_error: Option<String>,
+    pub knowledge_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -171,27 +173,38 @@ impl Database {
             reviewed: 0,
             relevant: 0,
             uncertain: 0,
+            needs_review: 0,
             stale: 0,
             added: 0,
             pending_index_updates: 0,
             complete: false,
         };
         // All progress queries use identities and compact ranges, never book text.
-        (check.total,check.read,check.sent,check.reviewed,check.relevant,check.uncertain,check.stale) =
+        (check.total,check.read,check.sent,check.reviewed,check.relevant,check.uncertain,check.stale,check.needs_review) =
             self.connection.query_row(
             "WITH entries AS (
-                SELECT e.*,s.revision IS NULL OR s.revision<>e.revision OR EXISTS(
+                SELECT e.*,s.kind,k.status AS knowledge_status,s.revision IS NULL OR s.revision<>e.revision OR EXISTS(
                     SELECT 1 FROM coauthor_source_queue q WHERE q.kind=substr(e.source_key,1,instr(e.source_key,':')-1)
                     AND q.source_id=substr(e.source_key,instr(e.source_key,':')+1)) AS stale
-                FROM coauthor_check_entries e LEFT JOIN coauthor_sources s ON s.source_key=e.source_key WHERE e.check_id=?1)
+                FROM coauthor_check_entries e LEFT JOIN coauthor_sources s ON s.source_key=e.source_key
+                LEFT JOIN coauthor_knowledge_index_status k ON k.source_key=e.source_key WHERE e.check_id=?1)
              SELECT COUNT(*),COALESCE(SUM(read_complete AND NOT stale),0),COALESCE(SUM(sent_complete AND NOT stale),0),
                 COALESCE(SUM(assessment IS NOT NULL AND NOT stale),0),COALESCE(SUM(assessment='RELEVANT' AND NOT stale),0),
-                COALESCE(SUM(assessment='UNCERTAIN' AND NOT stale),0),COALESCE(SUM(stale),0) FROM entries",
-            [id.to_string()], |row| Ok((count(row,0)?,count(row,1)?,count(row,2)?,count(row,3)?,count(row,4)?,count(row,5)?,count(row,6)?)))?;
+                COALESCE(SUM(assessment='UNCERTAIN' AND NOT stale),0),COALESCE(SUM(stale),0),
+                COALESCE(SUM(kind IN ('FACT','RELATION') AND COALESCE(knowledge_status,'NEEDS_REVIEW')<>'CURRENT' AND NOT stale),0)
+                FROM entries",
+            [id.to_string()], |row| Ok((count(row,0)?,count(row,1)?,count(row,2)?,count(row,3)?,count(row,4)?,count(row,5)?,count(row,6)?,count(row,7)?)))?;
         check.added = self.connection.query_row(
             "SELECT COUNT(*) FROM coauthor_sources s WHERE s.kind IN (SELECT value FROM json_each(?2))
+             AND (s.kind NOT IN ('FACT','RELATION')
+                OR (s.kind='FACT' AND EXISTS(SELECT 1 FROM facts f JOIN fact_current_versions c
+                    ON c.knowledge_id=f.knowledge_id AND c.knowledge_version=f.knowledge_version
+                    WHERE f.knowledge_id=substr(s.source_key,6) AND f.project_id=?3))
+                OR (s.kind='RELATION' AND EXISTS(SELECT 1 FROM relations r
+                    WHERE r.id=substr(s.source_key,10) AND r.project_id=?3
+                    AND r.relation_version=(SELECT MAX(v.relation_version) FROM relations v WHERE v.id=r.id))))
              AND NOT EXISTS(SELECT 1 FROM coauthor_check_entries e WHERE e.check_id=?1 AND e.source_key=s.source_key)",
-            rusqlite::params![id.to_string(), kinds], |row| count(row,0),
+            rusqlite::params![id.to_string(), kinds, scope.project_id.to_string()], |row| count(row,0),
         )?;
         check.pending_index_updates = self.connection.query_row(
             "SELECT COUNT(*) FROM coauthor_source_queue WHERE kind IN (SELECT value FROM json_each(?1))",
@@ -201,6 +214,7 @@ impl Database {
             && check.reviewed == check.total
             && check.sent == check.total
             && check.uncertain == 0
+            && check.needs_review == 0
             && check.stale == 0
             && check.added == 0
             && check.pending_index_updates == 0;
@@ -276,10 +290,10 @@ impl ProjectManager {
             || kinds.is_empty()
             || kinds
                 .iter()
-                .any(|kind| !matches!(kind.as_str(), "ENTITY" | "PLAN" | "MANUSCRIPT"))
+                .any(|kind| !matches!(kind.as_str(), "ENTITY" | "PLAN" | "MANUSCRIPT" | "FACT" | "RELATION"))
         {
             return Err(CoauthorError::Invalid(
-                "查证须有明确问题、标题和正文/规划/设定范围。".into(),
+                "查证须有明确问题、标题和正文/规划/设定/已审核事实/关系范围。".into(),
             ));
         }
         let db = &self
@@ -306,8 +320,15 @@ impl ProjectManager {
         tx.execute("INSERT INTO coauthor_source_checks(id,session_id,title,query,kinds) VALUES (?1,?2,?3,?4,?5)",
             rusqlite::params![id.to_string(),scope.session_id.to_string(),input.title,input.query,kinds])?;
         tx.execute("INSERT INTO coauthor_check_entries(check_id,source_key,revision,title)
-            SELECT ?1,source_key,revision,title FROM coauthor_sources WHERE kind IN (SELECT value FROM json_each(?2))",
-            rusqlite::params![id.to_string(),kinds])?;
+            SELECT ?1,s.source_key,s.revision,s.title FROM coauthor_sources s WHERE s.kind IN (SELECT value FROM json_each(?2))
+            AND (s.kind NOT IN ('FACT','RELATION')
+                OR (s.kind='FACT' AND EXISTS(SELECT 1 FROM facts f JOIN fact_current_versions c
+                    ON c.knowledge_id=f.knowledge_id AND c.knowledge_version=f.knowledge_version
+                    WHERE f.knowledge_id=substr(s.source_key,6) AND f.project_id=?3))
+                OR (s.kind='RELATION' AND EXISTS(SELECT 1 FROM relations r
+                    WHERE r.id=substr(s.source_key,10) AND r.project_id=?3
+                    AND r.relation_version=(SELECT MAX(v.relation_version) FROM relations v WHERE v.id=r.id))))",
+            rusqlite::params![id.to_string(),kinds,scope.project_id.to_string()])?;
         tx.commit()?;
         self.get_coauthor_source_check(scope, id, 0)
     }
@@ -361,8 +382,10 @@ impl ProjectManager {
                 s.revision IS NULL OR s.revision<>e.revision OR EXISTS(
                     SELECT 1 FROM coauthor_source_queue q WHERE q.kind=substr(e.source_key,1,instr(e.source_key,':')-1)
                     AND q.source_id=substr(e.source_key,instr(e.source_key,':')+1)),
-                e.read_chars,e.sent_chars,e.next_offset,e.sent_complete
+                e.read_chars,e.sent_chars,e.next_offset,e.sent_complete,
+                CASE WHEN s.kind IN ('FACT','RELATION') THEN COALESCE(k.status,'NEEDS_REVIEW') END
              FROM coauthor_check_entries e LEFT JOIN coauthor_sources s ON s.source_key=e.source_key
+             LEFT JOIN coauthor_knowledge_index_status k ON k.source_key=e.source_key
              WHERE e.check_id=?1 ORDER BY e.source_key LIMIT 21 OFFSET ?2",
         )?;
         let mut entries = stmt
@@ -381,6 +404,7 @@ impl ProjectManager {
                     sent_chars: count(row, 10)?,
                     next_offset: count(row, 11)?,
                     sent_complete: row.get(12)?,
+                    knowledge_status: row.get(13)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

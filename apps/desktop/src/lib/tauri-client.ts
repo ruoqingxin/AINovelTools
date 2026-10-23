@@ -192,6 +192,9 @@ export function listCoauthorRelatedKnowledge(input: IpcRequests["list_coauthor_r
 export function readCoauthorKnowledgeEvidence(input: IpcRequests["read_coauthor_knowledge_evidence"]) {
   return invoke("read_coauthor_knowledge_evidence", input);
 }
+export function listCoauthorKnowledgeAnchors(input: IpcRequests["list_coauthor_knowledge_anchors"]) {
+  return invoke("list_coauthor_knowledge_anchors", input);
+}
 export function getCoauthorSemanticStatus(input: IpcRequests["get_coauthor_semantic_status"]) {
   return invoke("get_coauthor_semantic_status", input);
 }

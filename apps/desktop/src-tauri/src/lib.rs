@@ -33,7 +33,7 @@ use commands::core::{bootstrap_status, feature_catalog, health_query};
 use commands::coauthor::{
     get_coauthor_state,save_coauthor_document,list_coauthor_document_history,
     list_coauthor_runs,get_coauthor_run,
-    list_coauthor_related_knowledge,read_coauthor_knowledge_evidence,
+    list_coauthor_related_knowledge,read_coauthor_knowledge_evidence,list_coauthor_knowledge_anchors,
     get_coauthor_semantic_status,save_coauthor_semantic_settings,build_coauthor_semantic_batch,
     clear_coauthor_semantic_cache,
     run_coauthor,cancel_coauthor_run,apply_coauthor_proposal,publish_coauthor_document,
@@ -252,6 +252,7 @@ pub fn run() {
             list_coauthor_runs,
             get_coauthor_run,
             list_coauthor_related_knowledge,
+            list_coauthor_knowledge_anchors,
             read_coauthor_knowledge_evidence,
             get_coauthor_semantic_status,
             save_coauthor_semantic_settings,

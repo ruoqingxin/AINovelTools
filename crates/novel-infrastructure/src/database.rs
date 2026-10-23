@@ -1226,6 +1226,12 @@ impl Database {
         if applied.unwrap_or(0) < 59 {
             self.migrate_coauthor_semantic()?;
         }
+        if applied.unwrap_or(0) < 60 {
+            self.migrate_coauthor_knowledge_checks()?;
+        }
+        if applied.unwrap_or(0) < 61 {
+            self.migrate_coauthor_knowledge_anchor_pages()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }
@@ -2150,6 +2156,7 @@ mod tests {
     // These fixtures start from today's schema, then simulate older projects.
     // Remove downstream tables as well as migration records before upgrading.
     fn remove_v53_fixture_tables(db: &Database) {
+        db.drop_coauthor_knowledge_checks_fixture();
         db.connection.execute_batch("DROP TABLE coauthor_decision_fts; DROP TABLE coauthor_decision_mentions; DROP TABLE coauthor_decision_evidence; DROP TABLE coauthor_decision_aliases;").unwrap();
         db.connection.execute_batch("DROP TABLE coauthor_check_notes; DROP TABLE coauthor_check_reads; DROP TABLE coauthor_check_entries; DROP TABLE coauthor_source_checks;").unwrap();
         db.connection.execute_batch("DROP TABLE coauthor_reversals;").unwrap();

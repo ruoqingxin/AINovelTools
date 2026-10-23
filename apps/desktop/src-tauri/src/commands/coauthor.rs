@@ -9,7 +9,7 @@ use novel_infrastructure::{
     CoauthorChangeItemInput, CoauthorImpactInput,
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
     CoauthorRun, CoauthorRunsPage,
-    CoauthorSearchPage, CoauthorKnowledgeEvidence,
+    CoauthorSearchPage, CoauthorKnowledgeEvidence, CoauthorKnowledgeAnchorsPage,
     CoauthorManuscriptBlock,
     CoauthorOutlinePage,
     CoauthorReversal,
@@ -40,6 +40,7 @@ const PROMPT: &str = "\
 FACT是已审核事实记录，RELATION是关系记录，不是正文原句。knowledgeContext绑定确切版本、证据和关联事实；NEEDS_REVIEW不能当作当前有效结论。CURRENT只表示原证据修订仍在用，不保证原文范围、语义推论、故事时间或角色知情正确。
 可用get_related_knowledge按准确FACT身份分页找直接关系，再用read_source读取关联事实。没有关系不等于没有隐含影响，未审核候选、角色信念、事件与伏笔尚不在此关系查询范围。
 引用事实或关系的正文证据时，用read_knowledge_evidence按它实际返回的证据身份精读；校验失败如实说明，不凭记录文字冒充原文。isCurrentRevision=false只作历史，不把仅读取旧证据算成已查当前正文。证据引句不是完整章节，不替代read_manuscript_blocks准备正式正文改稿。
+knowledgeContext只附首批16条证据元数据，totalAnchors是本记录的证据总数。hasMoreAnchors=true时用get_knowledge_anchors按nextOffset继续分页。目录覆盖不等于原文核验；read_knowledge_evidence只校验所选锚点，offset/nextOffset/totalChars标明实际返回的引句范围。不能用一个锚点或最后一页代替全部证据，不能把全部证据读完等同语义推论已证实。
 写早期章节时按叙事位置、视角和角色当时的知识使用资料，后期能力和作者秘密不能自动提前出现。
 record_decision 只记录作者本轮明确选择、否定、待定或撤回的事项，quote 必须是本轮作者原话。
 如果、试写看看、角色台词和模糊赞许不是确定设定；不要把你的创意写成作者决定。
@@ -64,6 +65,7 @@ link_source 仅在作者要以已读取的正式资料为修改目标时使用�
 影响待办必须有实际读过的正式原文及准确引文，说明为什么需要复查，不把词面相似冒充已确认矛盾。
 coverage 如实说明查过什么、未查什么；没有全范围查证不能声称查全或修复全书。
 作者明确要求查全部相关章节或全范围影响时，用 start_source_check 建立指定类别的完整版本清单，不用关键词命中代替范围。普通讨论无需创建清单。
+查证范围可包含MANUSCRIPT、PLAN、ENTITY、FACT和RELATION；类别彼此独立，只查正文不等于查过事实与关系。FACT/RELATION的完整读取与送达仅指记录文本，不代表正文证据已读或推论成立，须按实际问题用read_knowledge_evidence和read_source继续核对。needsReview表示记录依据待核对，不能声称范围查证完成；knowledgeStatus是索引状态，stale时不作原版本的当前有效性证明。
 用 get_source_checks 找回清单及进度，read_check_source 按 nextOffset 续读；完整接收一项所有原文后才能 record_check_result 标记 RELEVANT、IRRELEVANT 或 UNCERTAIN。相关项须引用准确原文，无法判断用 UNCERTAIN。
 长资料每读一段，在后续请求确实收到原文后用 save_check_note 保存该段分析、未决问题和准确引句。范围按Unicode标量计数，笔记不超过12000字原文；不同分段不重叠。首次expectedVersion=0，修订先get_check_notes查看最新版本并重新读取该段原文，保留旧版本。
 跨轮继续查证时先get_source_checks，再按资料用get_check_notes分页恢复已分析内容，hasMore表示还未取完；不要只沿nextOffset继续就假装记得先前分析。笔记是模型的阶段分析而非正式事实或作者决定，失效笔记只作历史，不可作为当前依据；含糊、矛盾或不足时重读原文。保存笔记不等于完成判断，不替代read_source等原文读取作为正式修改依据。
@@ -162,6 +164,14 @@ pub(crate) fn read_coauthor_knowledge_evidence(
         .read_coauthor_knowledge_evidence(&scope,&key,&revision,anchor_id,offset,limit).map_err(Into::into)
 }
 
+#[tauri::command]
+pub(crate) fn list_coauthor_knowledge_anchors(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, key: String, revision: String, offset: usize,
+) -> Result<CoauthorKnowledgeAnchorsPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .coauthor_knowledge_anchors(&scope,&key,&revision,offset).map_err(Into::into)
+}
+
 fn tools() -> Vec<Value> {
     let manuscript_edit = json!({"type":"object","additionalProperties":false,
         "properties":{"blockId":{"type":"string"},"start":{"type":"integer","minimum":0},
@@ -201,6 +211,12 @@ fn tools() -> Vec<Value> {
             &["key","revision"],
         ),
         tool(
+            "get_knowledge_anchors",
+            "按准确事实或关系版本分页列出全部证据目录，每页16条；用nextOffset继续。只返回元数据，不读取正文，目录列完不等于原文已核验或推论成立。",
+            json!({"key":{"type":"string"},"revision":{"type":"string"},"offset":{"type":"integer","minimum":0}}),
+            &["key","revision"],
+        ),
+        tool(
             "read_knowledge_evidence",
             "按事实或关系返回的证据身份校验正文原修订、块、哈希和Unicode范围，再分页读取准确引句。过期证据只作历史，不替代正式正文编辑所需的已送达块页。",
             json!({"key":{"type":"string"},"revision":{"type":"string"},"anchorId":{"type":"string"},
@@ -209,9 +225,9 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "start_source_check",
-            "仅在作者要求全范围查证时建立完整资料版本清单，不按关键词筛掉候选；不改正式内容。",
+            "仅在作者要求全范围查证时建立指定类别的完整版本清单，包括已审核事实和关系。不按关键词筛掉候选，不改正式内容；读完记录不等于核验正文证据。",
             json!({"title":{"type":"string"},"query":{"type":"string"},
-                "kinds":{"type":"array","minItems":1,"maxItems":3,"items":{"type":"string","enum":["MANUSCRIPT","PLAN","ENTITY"]}}}),
+                "kinds":{"type":"array","minItems":1,"maxItems":5,"items":{"type":"string","enum":["MANUSCRIPT","PLAN","ENTITY","FACT","RELATION"]}}}),
             &["title","query","kinds"],
         ),
         tool(
@@ -742,6 +758,15 @@ struct KnowledgeEvidenceArgs {
     limit: usize,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct KnowledgeAnchorsArgs {
+    key: String,
+    revision: String,
+    #[serde(default)]
+    offset: usize,
+}
+
 struct ReadEvidence {
     revision: String,
     fragments: Vec<String>,
@@ -853,6 +878,10 @@ fn execute_tool(
         return Err(CoauthorError::Conflict);
     }
     match call.function.name.as_str() {
+        "get_knowledge_anchors" => {
+            let args: KnowledgeAnchorsArgs=arguments(call)?;
+            Ok(json!(manager.coauthor_knowledge_anchors(&input.scope,&args.key,&args.revision,args.offset)?))
+        }
         "get_related_knowledge" => {
             let args: RelatedKnowledgeArgs=arguments(call)?;
             Ok(json!(manager.coauthor_related_knowledge(&input.scope,&args.key,&args.revision,args.offset)?))
@@ -1227,7 +1256,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v9",
+                    prompt_version: "coauthor-v11",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -1248,7 +1277,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v9","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v11","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -1419,6 +1448,7 @@ mod tests {
     fn knowledge_queries_require_exact_identity_and_do_not_accept_forged_evidence_permissions() {
         let names=tools().into_iter().map(|tool|tool["function"]["name"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
         assert!(names.contains(&"get_related_knowledge".into()));
+        assert!(names.contains(&"get_knowledge_anchors".into()));
         assert!(names.contains(&"read_knowledge_evidence".into()));
         assert!(!names.contains(&"finalize_knowledge_candidates".into()));
         assert!(!names.contains(&"create_relation".into()));
@@ -1428,6 +1458,10 @@ mod tests {
         })).is_err());
         assert!(PROMPT.contains("CURRENT只表示原证据修订仍在用"));
         assert!(PROMPT.contains("不把仅读取旧证据算成已查当前正文"));
+        assert!(serde_json::from_value::<KnowledgeAnchorsArgs>(json!({"key":"FACT:x"})).is_err());
+        assert!(serde_json::from_value::<KnowledgeAnchorsArgs>(json!({"key":"FACT:x","revision":"r","offset":-1})).is_err());
+        assert!(serde_json::from_value::<KnowledgeAnchorsArgs>(json!({"key":"FACT:x","revision":"r","verified":true})).is_err());
+        assert!(PROMPT.contains("目录覆盖不等于原文核验"));
     }
 
     #[test]
@@ -1611,6 +1645,26 @@ mod tests {
             }],coverage:"仅笔记".into(),
         };
         assert!(validate_change_reads(&args,&seen).is_err());
+    }
+
+    #[test]
+    fn knowledge_check_scope_is_explicit_and_record_coverage_is_not_evidence_verification() {
+        let tool = tools().into_iter().find(|tool| tool["function"]["name"] == "start_source_check").unwrap();
+        let kinds = &tool["function"]["parameters"]["properties"]["kinds"];
+        assert_eq!(kinds["maxItems"], 5);
+        assert_eq!(kinds["items"]["enum"], json!(["MANUSCRIPT","PLAN","ENTITY","FACT","RELATION"]));
+        let call = ModelToolCall {
+            id: "check".into(), call_type: "function".into(),
+            function: novel_infrastructure::ModelToolFunction {
+                name: "start_source_check".into(), arguments: json!({
+                    "title":"查知识记录", "query":"突破影响", "kinds":["FACT","RELATION"],
+                    "needsReview":0, "complete":true,
+                }).to_string(),
+            },
+        };
+        assert!(arguments::<CoauthorSourceCheckInput>(&call).is_err());
+        assert!(PROMPT.contains("FACT/RELATION的完整读取与送达仅指记录文本"));
+        assert!(PROMPT.contains("needsReview表示记录依据待核对"));
     }
 
     #[test]

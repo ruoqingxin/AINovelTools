@@ -449,6 +449,7 @@ fn migration_52_rolls_back_new_tables_on_failure_and_preserves_formal_text_on_re
     let revision = db.save_manuscript_checked(chapter.id, None,
         r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"原始正文"}]}]}"#.into(),
         "原修订".into()).unwrap();
+    db.drop_coauthor_knowledge_checks_fixture();
     db.connection.execute_batch("DELETE FROM schema_migrations WHERE version>=52;
         DROP TABLE coauthor_documents;
         CREATE TRIGGER fail_coauthor_migration BEFORE INSERT ON schema_migrations WHEN NEW.version=52
@@ -479,6 +480,8 @@ fn migration_52_rolls_back_new_tables_on_failure_and_preserves_formal_text_on_re
     db.migrate_coauthor_decision_memory().unwrap();
     db.migrate_coauthor_knowledge().unwrap();
     db.migrate_coauthor_semantic().unwrap();
+    db.migrate_coauthor_knowledge_checks().unwrap();
+    db.migrate_coauthor_knowledge_anchor_pages().unwrap();
     assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         db.current_manuscript(chapter.id).unwrap().unwrap(),

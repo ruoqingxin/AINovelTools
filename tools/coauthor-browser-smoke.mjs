@@ -40,15 +40,17 @@ try {
           {id:"m3",sessionId:"s1",role:"USER",content:"先拿主角突破写一段。他忘了母亲的声音，压抑一点。"}
         ];
         const fact={key:"FACT:one",kind:"FACT",title:"陆沉 · 掌握 · 魂灯",revision:"fact1",
-          content:"已审核事实记录，不是正文原句。",offset:0,totalChars:17,sessionId:null,
-          knowledgeContext:{projectId:"p1",version:1,status:"CURRENT",facts:[],hasMoreAnchors:false,
-            anchors:[{id:"anchor1",chapterId:"chapter1",revisionId:"original1",blockId:"p1",status:"CURRENT_REVISION"}]}};
+          content:"已审核事实记录，不是正文原句。",offset:0,totalChars:15,sessionId:null,
+          knowledgeContext:{projectId:"p1",version:1,status:"CURRENT",facts:[],hasMoreAnchors:true,totalAnchors:17,
+            anchors:Array.from({length:16},(_,index)=>({id:"anchor"+(index+1),chapterId:"chapter1",
+              revisionId:"original1",blockId:"p"+(index+1),status:"CURRENT_REVISION"}))}};
         const relation={...fact,key:"RELATION:one",kind:"RELATION",title:"守护",revision:"relation1",
           content:"关系记录：守护。",totalChars:8,knowledgeContext:{...fact.knowledgeContext,facts:[
             {key:fact.key,revision:fact.revision,title:fact.title},
             {key:"FACT:two",revision:"fact2",title:"苏瑶 · 守在 · 门外"}]}};
         const secondFact={...fact,key:"FACT:two",title:"苏瑶 · 守在 · 门外",revision:"fact2",
-          content:"已审核事实记录：苏瑶守在门外。"};
+          content:"已审核事实记录：苏瑶守在门外。",knowledgeContext:{...fact.knowledgeContext,
+            hasMoreAnchors:false,totalAnchors:1,anchors:fact.knowledgeContext.anchors.slice(0,1)}};
         state.runs=Array.from({length:25},(_,index)=>({
           id:"historical-run-"+String(24-index).padStart(2,"0"),sessionId:"s1",userMessageId:"old-message-"+index,
           status:"COMPLETED",documentVersion:1,output:"历史试写 "+index,
@@ -64,7 +66,7 @@ try {
         let impacts=[];
         let sourceChecks=[{id:"check1",title:"突破代价 · 全部旧章",query:"失忆代价是否影响旧章",
           kinds:["MANUSCRIPT"],total:3,read:2,sent:1,reviewed:1,relevant:1,uncertain:0,
-          stale:1,added:1,pendingIndexUpdates:0,complete:false}];
+          stale:1,added:1,pendingIndexUpdates:0,needsReview:0,complete:false}];
         const checkEntries=[
           {key:"MANUSCRIPT:rain",revision:"rain1",title:"第九章 · 雨夜",totalChars:8000,readChars:8000,
             sentChars:8000,sentComplete:true,nextOffset:8000,stale:false,assessment:"RELEVANT",
@@ -75,6 +77,17 @@ try {
             sentChars:5000,sentComplete:true,nextOffset:5000,stale:true,assessment:"IRRELEVANT",
             reason:"原判断基于旧稿，作者随后改写了突破经过。",quote:"",lastError:"原依据已变化，请重新建立范围清单。"}
         ];
+        const knowledgeEntries=[
+          {key:fact.key,revision:fact.revision,title:fact.title,totalChars:15,readChars:15,
+            sentChars:15,sentComplete:true,nextOffset:15,stale:false,assessment:"RELEVANT",
+            reason:"记录有关，仍须核对原文与适用时间。",quote:"已审核事实记录",lastError:null,knowledgeStatus:"CURRENT"},
+          {key:relation.key,revision:relation.revision,title:relation.title,totalChars:8,readChars:8,
+            sentChars:8,sentComplete:true,nextOffset:8,stale:false,assessment:"IRRELEVANT",
+            reason:"原判断不能消除依据待核对状态。",quote:"",lastError:null,knowledgeStatus:"NEEDS_REVIEW"}
+        ];
+        function entriesFor(check){
+          return [...checkEntries,...knowledgeEntries.filter(entry=>check.kinds.includes(entry.key.split(":")[0]))];
+        }
         function richManuscript(cost){
           return JSON.stringify({type:"doc",content:[
             {type:"heading",attrs:{blockId:"h",level:2},content:[{type:"text",text:"入城前夜"}]},
@@ -125,7 +138,7 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:59};
+          if(command==="health_query")return {schemaVersion:61};
           if(command==="get_coauthor_semantic_status")return structuredClone(semanticStatus);
           if(command==="save_coauthor_semantic_settings"){
             if(args.expectedVersion!==semanticStatus.settings.version)throw new Error("Semantic permission conflict");
@@ -163,10 +176,17 @@ try {
           }
           if(command==="read_coauthor_knowledge_evidence"){
             assertSource(args,fact);
-            if(args.anchorId!=="anchor1")throw new Error("Unknown evidence anchor");
-            return {knowledgeKey:fact.key,knowledgeRevision:fact.revision,anchorId:"anchor1",chapterId:"chapter1",
-              revisionId:"original1",blockId:"p1",start:0,end:8,content:"陆沉😀掌握魂灯。",
+            if(!["anchor1","anchor17"].includes(args.anchorId))throw new Error("Unknown evidence anchor");
+            return {knowledgeKey:fact.key,knowledgeRevision:fact.revision,anchorId:args.anchorId,chapterId:"chapter1",
+              revisionId:"original1",blockId:args.anchorId==="anchor1"?"p1":"p17",start:0,end:8,content:"陆沉😀掌握魂灯。",
               offset:0,nextOffset:8,totalChars:8,isCurrentRevision:true};
+          }
+          if(command==="list_coauthor_knowledge_anchors"){
+            assertSource(args,fact);
+            if(![0,16].includes(args.offset))throw new Error("Unexpected anchor cursor");
+            return {knowledgeKey:fact.key,knowledgeRevision:fact.revision,offset:args.offset,totalAnchors:17,
+              nextOffset:args.offset===0?16:17,anchors:args.offset===0?structuredClone(fact.knowledgeContext.anchors):
+                [{id:"anchor17",chapterId:"chapter1",revisionId:"original1",blockId:"p17",status:"CURRENT_REVISION"}]};
           }
           if(command==="read_coauthor_source"){
             const source=[fact,relation,secondFact].find(source=>source.key===args.key);
@@ -180,8 +200,10 @@ try {
               {decision:{...state.decisions[0],version:1,content:"突破消耗寿元。",sourceMessageId:"earlier-message"},
                 quote:null}],hasMore:false};
           if(command==="list_coauthor_source_checks")return {checks:structuredClone(sourceChecks),hasMore:false};
-          if(command==="get_coauthor_source_check")return {check:structuredClone(sourceChecks.find(item=>item.id===args.id)),
-            entries:structuredClone(checkEntries),offset:0,hasMore:false};
+          if(command==="get_coauthor_source_check"){
+            const check=sourceChecks.find(item=>item.id===args.id);
+            return {check:structuredClone(check),entries:structuredClone(entriesFor(check)),offset:0,hasMore:false};
+          }
           if(command==="get_coauthor_check_notes")return {checkId:args.id,key:args.key,
             revision:args.key==="MANUSCRIPT:old"?"old1":"rain1",stale:args.key==="MANUSCRIPT:old",
             totalNotes:6,notedChars:6000,offset:args.offset,hasMore:args.offset===0,
@@ -193,8 +215,10 @@ try {
               quote:"他仍记得母亲唤他的声音。"}))};
           if(command==="create_coauthor_source_check"){
             const check={...sourceChecks[0],id:"check2",...args.input};
+            check.total=entriesFor(check).length;
+            check.needsReview=check.kinds.includes("RELATION")?1:0;
             sourceChecks.unshift(check);
-            return {check:structuredClone(check),entries:structuredClone(checkEntries),offset:0,hasMore:false};
+            return {check:structuredClone(check),entries:structuredClone(entriesFor(check)),offset:0,hasMore:false};
           }
           if(command==="list_model_profiles")return [{id:"model",name:"本地验收模型",capability:"CHAT",hasSecret:true},
             {id:"embedding",name:"本地向量验收模型",capability:"EMBEDDING",hasSecret:true,privacyLevel:"ALLOW_CLOUD",
@@ -282,7 +306,8 @@ try {
     await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).waitFor();
     await sourcesPanel.getByText("已审核事实记录 · v1", { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__coauthorCalls.some(name =>
-      name === "read_coauthor_knowledge_evidence" || name === "list_coauthor_related_knowledge")), false,
+      name === "read_coauthor_knowledge_evidence" || name === "list_coauthor_related_knowledge"
+        || name === "list_coauthor_knowledge_anchors")), false,
     "Knowledge metadata must not eagerly load manuscript evidence or relationships");
     await sourcesPanel.getByText("正文证据 · p1", { exact: true }).click();
     await sourcesPanel.getByText("陆沉😀掌握魂灯。", { exact: true }).waitFor({ state: "visible" });
@@ -290,6 +315,18 @@ try {
     assert.equal(evidenceUrl.searchParams.get("sourceEvidence"), "anchor1");
     assert.equal(evidenceUrl.searchParams.get("sourceRevision"), "original1");
     assert.equal(evidenceUrl.searchParams.get("sourceBlock"), "p1");
+    await sourcesPanel.getByRole("button", { name: "下一页证据", exact: true }).click();
+    await sourcesPanel.getByText("证据目录 · 17 至 17 / 17 条", { exact: true }).waitFor();
+    assert.equal(await sourcesPanel.getByText("正文证据 · p1", { exact: true }).count(), 0);
+    assert.equal(await sourcesPanel.getByRole("button", { name: "下一页证据", exact: true }).isDisabled(), true);
+    await sourcesPanel.getByText("正文证据 · p17", { exact: true }).click();
+    await sourcesPanel.getByText("原文身份与范围已核验 · 本段 0 至 8 / 8 字符", { exact: true }).waitFor();
+    const lastEvidenceUrl = new URL(await sourcesPanel.getByRole("link", { name: "定位原修订" }).getAttribute("href"), values.url);
+    assert.equal(lastEvidenceUrl.searchParams.get("sourceEvidence"), "anchor17");
+    assert.equal(await sourcesPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-knowledge-anchors.png`), fullPage: true });
+    await sourcesPanel.getByRole("button", { name: "上一页证据", exact: true }).click();
+    await sourcesPanel.getByText("证据目录 · 1 至 16 / 17 条", { exact: true }).waitFor();
     await sourcesPanel.getByText("直接关联关系", { exact: true }).click();
     await sourcesPanel.getByRole("button", { name: "查看关系记录", exact: true }).waitFor();
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-knowledge.png`), fullPage: true });
@@ -301,7 +338,7 @@ try {
     await sourcesPanel.getByText("保留的回复", { exact: true }).click();
     await sourcesPanel.getByText("历史试写 24", { exact: true }).waitFor({ state: "visible" });
     await sourcesPanel.getByRole("button", { name: "更早运行", exact: true }).click();
-    await sourcesPanel.getByText("第 2 页", { exact: true }).waitFor();
+    await sourcesPanel.getByRole("navigation", { name: "运行目录分页" }).getByText("第 2 页", { exact: true }).waitFor();
     await sourcesPanel.getByLabel("查看运行", { exact: true }).selectOption("historical-run-01");
     await sourcesPanel.getByText("基础稿件", { exact: false }).waitFor();
     await sourcesPanel.getByLabel("查看运行", { exact: true }).selectOption("historical-run-00");
@@ -309,7 +346,7 @@ try {
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-run-directory.png`), fullPage: true });
     assert.equal(await sourcesPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
     await sourcesPanel.getByRole("button", { name: "较新运行", exact: true }).click();
-    await sourcesPanel.getByText("第 1 页", { exact: true }).waitFor();
+    await sourcesPanel.getByRole("navigation", { name: "运行目录分页" }).getByText("第 1 页", { exact: true }).waitFor();
     await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).click();
     const oldProposal = page.getByRole("dialog", { name: "改稿差异", exact: true });
     await oldProposal.getByLabel("AI 建议稿", { exact: true }).waitFor();
@@ -458,8 +495,19 @@ try {
     await checksPanel.getByLabel("清单标题").fill("核对新范围");
     await checksPanel.getByLabel("查证问题").fill("核对全部突破情节和相关设定");
     await checksPanel.getByLabel("有效设定卡").check();
+    await checksPanel.getByLabel("已审核事实", { exact: true }).check();
+    await checksPanel.getByLabel("关系记录", { exact: true }).check();
     await checksPanel.getByRole("button", { name: "创建清单", exact: true }).click();
     await checksPanel.getByRole("heading", { name: "核对新范围", exact: true }).waitFor();
+    await checksPanel.getByText("1 项事实或关系的依据待核对，不计为范围查证完成。", { exact: true }).waitFor();
+    const factEntry = checksPanel.getByRole("article").filter({ hasText: "陆沉 · 掌握 · 魂灯" });
+    await factEntry.getByText("记录与正文证据", { exact: true }).click();
+    await factEntry.getByText("已审核事实记录，不是正文原句。", { exact: true }).waitFor();
+    await factEntry.getByText("正文证据 · p1", { exact: true }).click();
+    await factEntry.getByText("陆沉😀掌握魂灯。", { exact: true }).waitFor();
+    await factEntry.getByRole("link", { name: "定位原修订" }).evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-knowledge-checks.png`), fullPage: true });
+    assert.equal(await checksPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
     await checksPanel.getByRole("button", { name: "核对范围变化", exact: true }).click();
     assert.ok((await page.getByLabel("讨论输入", { exact: true }).inputValue()).includes("继续查证清单 check2"));
     const runCount = await page.evaluate(() => window.__coauthorCalls.filter((name) => name === "run_coauthor").length);
