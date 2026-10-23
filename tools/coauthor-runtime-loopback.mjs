@@ -48,7 +48,9 @@ function fullCheck(prior) {
   const reads = prior.filter((r) => r.name === "read_check_source");
   const recorded = new Set(prior.filter((r) => r.name === "record_check_result" && r.value.recorded)
     .map((r) => r.value.entry.key));
-  if (recorded.size === page.entries.length) return text();
+  if (recorded.size === page.entries.length) {
+    return text("故意错误的查证收尾：无未完成项，全部疑点已解决，已修复全书；语义和查证索引待更新均为999。");
+  }
   if (!reads.length) return tools(page.entries.filter((entry) => !recorded.has(entry.key)).map((entry, i) =>
     call("read_check_source", { checkId, key: entry.key, offset: 0, limit: 4000 }, i)));
   const failureIndex = prior.findIndex((r) => r.name === "record_check_result" && r.value.executed === false);
@@ -77,9 +79,28 @@ function fullCheck(prior) {
 
 export function coauthorLoopbackTurn(body) {
   const { context, request } = loopbackContext(body.messages);
+  if (body.tools) {
+    assert.equal(context.relevantDecisions?.decisionScope?.origin, "CURRENT_BRANCH_DISCUSSION");
+    assert.equal(context.relevantDecisions.decisionScope.updatesFormalSources, false);
+    assert.equal(context.relevantDecisions.decisionScope.impliesFormalSyncRequired, false);
+  }
+  for (const hit of [...(context.relevantSources?.hits ?? []), ...(context.semanticSources?.hits ?? [])]) {
+    if (body.tools || hit.provenance) {
+      assert.equal(hit.provenance.origin, hit.kind === "MESSAGE" ? "CURRENT_BRANCH_HISTORY" : "PROJECT_SHARED");
+      assert.equal(hit.provenance.isDiscussionDecision, false);
+      assert.equal(hit.provenance.truthDeterminedByLocation, false);
+    }
+  }
   const prior = [...(context.checkAssessments ?? []).map((value) => ({ name: "record_check_result", value })),
     ...results(body.messages)];
   if (request.includes("完整查证全部设定卡")) return fullCheck(prior);
+  if (request.includes("有没有设定过星砂契约")) {
+    if (!prior.some((r) => r.name === "search_sources")) {
+      return tools([call("search_sources", { query: "星砂契约" }, 0),
+        call("search_sources", { query: "契约 交易 代价 术法" }, 1)]);
+    }
+    return text();
+  }
   if (request.includes("继续按之前定的突破代价")) {
     assert(context.relevantDecisions.memories.some((memory) => memory.decision.version === 2
       && memory.decision.status === "CHOSEN" && memory.decision.content.includes("承诺")));
@@ -102,10 +123,17 @@ export function coauthorLoopbackTurn(body) {
 }
 
 export function assertLoopbackRegression(entry, { expectInputLimit = false } = {}) {
+  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v19"));
   const setup = entry.audit?.find((a) => a.kind === "input_budget");
   let currentBudget = setup?.initialInputTokenBudget;
   let expanded = false;
   const expansions = entry.audit?.filter((a) => a.kind === "input_budget_expansion") ?? [];
+  for (const event of entry.audit ?? []) {
+    if (event.kind === "context_compaction" && event.stage === "assessed_sources") {
+      assert(event.afterEstimatedInputTokens <= event.beforeEstimatedInputTokens,
+        "Replacing an assessed source must not increase serialized input tokens.");
+    }
+  }
   assert(expansions.length <= 1, "A run may expand its input budget only once.");
   for (const request of entry.audit ?? []) {
     if (request.kind === "input_budget_expansion") {
@@ -165,6 +193,23 @@ export function assertLoopbackRegression(entry, { expectInputLimit = false } = {
     assert.equal(entry.toolErrors, 1, "One intentional revision typo must be rejected.");
     assert(entry.audit.some((a) => a.kind === "context_compaction" && a.stage === "assessed_sources"));
     for (const label of ["相关：", "无关：", "不确定：", "未判断 0"]) assert(entry.output.includes(label));
+    assert(entry.output.includes("各项均已完成读取、送达与判断；仍有 1 项不确定"));
+    assert(entry.output.includes("范围仅限 ENTITY"));
+    assert(!entry.output.includes("无未完成项"));
+    assert(!entry.output.includes("已修复全书；"));
+    assert(entry.audit.some((a) => a.kind === "model_check_analysis"
+      && a.content.includes("故意错误的查证收尾") && a.displayedAsReceipt === false),
+    "Incorrect model wording must stay auditable, not become the check receipt.");
+    assert(entry.audit.some((a) => a.kind === "retrieval_summary"));
+  }
+  if (entry.caseId === "absent-not-absolute") {
+    const receipt = entry.audit.find((a) => a.kind === "retrieval_summary");
+    assert(receipt, "Native search operations must have a deterministic receipt.");
+    const specific = receipt.receipts.find((r) => r.query === "星砂契约" && r.method === "KEYWORD"
+      && r.returned === 0);
+    const broad = receipt.receipts.find((r) => r.query === "契约 交易 代价 术法" && r.method === "KEYWORD");
+    assert(specific && broad?.returned === 4, "The two searches must not be merged into zero hits.");
+    assert(entry.output.includes("关键词 \"契约 交易 代价 术法\"（项目资料，offset=0）：实际返回 4 条"));
   }
   return { scriptedNativeRegression: true, qualityVerified: false };
 }

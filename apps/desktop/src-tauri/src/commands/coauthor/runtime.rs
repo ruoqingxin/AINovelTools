@@ -8,7 +8,136 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
-pub(super) const PROMPT_VERSION: &str = "coauthor-v18";
+pub(super) const PROMPT_VERSION: &str = "coauthor-v19";
+
+pub(super) fn source_provenance(result: &mut Value) {
+    if let Some(hits) = result.get_mut("hits").and_then(Value::as_array_mut) {
+        for hit in hits {
+            source_provenance(hit);
+        }
+    }
+    let origin = match result["kind"].as_str() {
+        Some("ENTITY" | "PLAN" | "MANUSCRIPT" | "FACT" | "RELATION") => "PROJECT_SHARED",
+        Some("MESSAGE") => "CURRENT_BRANCH_HISTORY",
+        _ => return,
+    };
+    result["provenance"] = json!({
+        "origin":origin, "isDiscussionDecision":false,
+        "truthDeterminedByLocation":false,
+    });
+}
+
+pub(super) fn decision_scope(result: &mut Value, session_id: uuid::Uuid) {
+    result["decisionScope"] = json!({
+        "sessionId":session_id, "origin":"CURRENT_BRANCH_DISCUSSION",
+        "updatesFormalSources":false, "impliesFormalSyncRequired":false,
+        "rejectedScope":"EXACT_DECISION_CONTENT_ONLY",
+    });
+}
+
+pub(super) fn advances_check(name: &str, result: &Value) -> bool {
+    matches!(
+        name,
+        "start_source_check" | "read_check_source" | "record_check_result" | "save_check_note"
+    ) && result["executed"] != false
+        && (result["check"]["id"].is_string() || result["checkId"].is_string())
+}
+
+pub(super) fn retrieval_receipt(
+    method: &str,
+    query: &str,
+    offset: u32,
+    history: bool,
+    result: &Value,
+) -> Value {
+    let failed = result["executed"] == false || result.get("error").is_some();
+    let not_run = method == "SEMANTIC"
+        && (result["status"]["indexedChunks"] == 0
+            || result["status"]
+                .get("settings")
+                .and_then(|settings| settings.get("profileId"))
+                .is_some_and(Value::is_null));
+    let hits = result["hits"].as_array();
+    json!({
+        "method":method, "query":query, "offset":offset,
+        "scope":if history { "CURRENT_BRANCH_HISTORY" } else { "PROJECT_SOURCES" },
+        "status":if failed || hits.is_none() { "UNAVAILABLE" } else if not_run { "NOT_RUN" } else { "RETURNED_PAGE" },
+        "returned":if failed || not_run { None } else { hits.map(Vec::len) },
+        "hasMore":result.get("hasMore"),
+        "contextOmittedHits":result.get("contextOmittedHits"),
+        "coverage":result.get("coverage"),
+        "indexStatus":if method == "SEMANTIC" {
+            json!({"kind":"SEMANTIC_INDEX",
+                "indexedChunks":result["status"]["indexedChunks"],
+                "pendingUpdates":result["status"]["pendingSourceUpdates"]})
+        } else {
+            json!({"kind":"SOURCE_SEARCH_INDEX","pendingUpdates":result["pendingIndexUpdates"]})
+        },
+    })
+}
+
+pub(super) fn search_summary(receipts: &[Value]) -> String {
+    if receipts.is_empty() {
+        return String::new();
+    }
+    let mut summary =
+        "\n\n检索操作回执（程序记录；计数为当次返回页，不是相关条数或全库总数）：\n".to_owned();
+    let omitted = receipts.len().saturating_sub(12);
+    if omitted > 0 {
+        let _ = writeln!(summary, "仅列最近 12 次，另 {omitted} 次见本轮审计。");
+    }
+    for receipt in receipts.iter().skip(omitted) {
+        let method = if receipt["method"] == "SEMANTIC" {
+            "语义"
+        } else {
+            "关键词"
+        };
+        let query = receipt["query"].to_string();
+        let scope = if receipt["scope"] == "CURRENT_BRANCH_HISTORY" {
+            "本分支历史"
+        } else {
+            "项目资料"
+        };
+        let _ = write!(
+            summary,
+            "- {method} {query}（{scope}，offset={}）：",
+            receipt["offset"]
+        );
+        if receipt["status"] == "RETURNED_PAGE"
+            && let Some(count) = receipt["returned"].as_u64()
+        {
+            let _ = write!(summary, "实际返回 {count} 条");
+            if receipt["hasMore"] == true {
+                summary.push_str("，仍有后续页");
+            }
+            if let Some(count) = receipt["contextOmittedHits"]
+                .as_u64()
+                .filter(|count| *count > 0)
+            {
+                let _ = write!(summary, "，另因上下文预算省略 {count} 条候选");
+            }
+        } else if receipt["status"] == "NOT_RUN" {
+            summary.push_str("未调用向量服务（未授权或无可用索引），不是 0 命中");
+        } else {
+            summary.push_str("未取得有效结果，不能记为 0 命中");
+        }
+        summary.push_str("。\n");
+    }
+    if let Some(receipt) = receipts.iter().rev().find(|r| r["method"] == "SEMANTIC") {
+        let status = &receipt["indexStatus"];
+        if let (Some(chunks), Some(pending)) = (
+            status["indexedChunks"].as_u64(),
+            status["pendingUpdates"].as_u64(),
+        ) {
+            let _ = writeln!(
+                summary,
+                "最近一次语义索引快照：已索引分块 {chunks}，语义索引待更新 {pending}；与查证索引独立，不合并计数。"
+            );
+        }
+    }
+    summary.push_str("未检索到不等于不存在；未形成有效查询、未授权或索引不完整均不能证明查全。");
+    summary
+}
 
 pub(super) struct InputBudget {
     pub initial: usize,
@@ -101,8 +230,7 @@ pub(super) fn history(
 }
 
 pub(super) fn input_size(messages: &[Value], definitions: &[Value]) -> usize {
-    json!(messages).to_string().chars().count()
-        + json!(definitions).to_string().chars().count()
+    json!(messages).to_string().chars().count() + json!(definitions).to_string().chars().count()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -162,11 +290,13 @@ pub(super) fn prepare_request(
     let estimate = prepare_input(messages, definitions, budget.current, audit);
     let previous = budget.current;
     if budget.expand_once(estimate.tokens) {
-        audit.push(json!({"kind":"input_budget_expansion","reason":"INPUT_TOKEN_BUDGET",
+        audit.push(
+            json!({"kind":"input_budget_expansion","reason":"INPUT_TOKEN_BUDGET",
             "previousInputTokenBudget":previous,"inputTokenBudget":budget.current,
             "estimatedInputTokens":estimate.tokens,"maxInputTokenBudget":budget.maximum,
             "expansionCount":1,"maxExpansions":1,"configurationPersisted":false,
-            "taskRestarted":false,"unit":"tokens"}));
+            "taskRestarted":false,"unit":"tokens"}),
+        );
     }
     estimate
 }
@@ -183,7 +313,8 @@ pub(super) fn budget_notice(estimate: InputEstimate, budget: &InputBudget, first
             budget.initial, budget.current
         )
     } else {
-        "已达到模型可用输入容量或自动扩容保护上限，无法继续扩容；提高输入设置不能突破模型容量。".into()
+        "已达到模型可用输入容量或自动扩容保护上限，无法继续扩容；提高输入设置不能突破模型容量。"
+            .into()
     };
     format!(
         "本轮上下文超出本地输入预算：估算 {} tokens，允许 {} tokens（已计入工具定义与估算余量，并为输出预留空间）。{expansion}{action}这不是账户余额或费用预算耗尽；估算不等于提供商实际用量。",
@@ -243,6 +374,18 @@ pub(super) fn draft_reply(initial: &CoauthorDocument, document: &CoauthorDocumen
     reply
 }
 
+fn compact_tool_result(message: &mut Value, result: Value) -> bool {
+    let mut candidate = message.clone();
+    candidate["content"] = result.to_string().into();
+    if estimate_input(std::slice::from_ref(&candidate), &[]).tokens
+        >= estimate_input(std::slice::from_ref(message), &[]).tokens
+    {
+        return false;
+    }
+    *message = candidate;
+    true
+}
+
 // Only a successful persisted assessment permits replacing previously delivered
 // source text. Tool-call/result pairs and exact identities remain intact.
 pub(super) fn compact_assessed_reads(messages: &mut [Value], assessment: &Value) -> usize {
@@ -272,13 +415,16 @@ pub(super) fn compact_assessed_reads(messages: &mut [Value], assessment: &Value)
         {
             continue;
         }
-        message["content"] = json!({
+        let compact = json!({
             "checkId":read["checkId"], "key":read["key"], "revision":read["revision"],
             "title":read["title"], "offset":read["offset"], "totalChars":read["totalChars"],
             "assessment":entry["assessment"], "reason":entry["reason"], "quote":entry["quote"],
+            "provenance":{"origin":"DERIVED_CHECK_ASSESSMENT","isDiscussionDecision":false},
             "compacted":true, "notice":"原文此前已送达，判断已落库；摘要不是新的原文读取，细节请read_check_source重读。"
-        }).to_string().into();
-        changed += 1;
+        });
+        if compact_tool_result(message, compact) {
+            changed += 1;
+        }
     }
     // Older progress counters are superseded by this receipt; retain each
     // persisted judgment, not six copies of the same full check header.
@@ -305,7 +451,9 @@ pub(super) fn compact_assessed_reads(messages: &mut [Value], assessment: &Value)
             continue;
         }
         result["check"] = json!({"id":assessment["check"]["id"],"progressSnapshotOmitted":true});
-        message["content"] = result.to_string().into();
+        if compact_tool_result(message, result) {
+            changed += 1;
+        }
     }
     changed
 }
@@ -491,6 +639,16 @@ pub(super) fn check_summary(page: &CoauthorCheckPage) -> String {
         check.total.saturating_sub(check.reviewed),
         check.id,
     );
+    let _ = writeln!(
+        summary,
+        "范围仅限 {}；不代表范围外资料或全书已查全。逐项理由是模型判断，不是作者决定或正式事实。",
+        check.kinds.join("、")
+    );
+    let _ = writeln!(
+        summary,
+        "当前查证索引待更新 {}；不是语义索引的待更新数。",
+        check.pending_index_updates
+    );
     for (status, label) in [
         (Some("RELEVANT"), "相关"),
         (Some("IRRELEVANT"), "无关"),
@@ -515,6 +673,7 @@ pub(super) fn check_summary(page: &CoauthorCheckPage) -> String {
             } else {
                 &entry.reason
             };
+            let reason_preview = reason.chars().take(160).collect::<String>();
             let _ = writeln!(
                 summary,
                 "- {} [{}]{}：{}",
@@ -525,8 +684,21 @@ pub(super) fn check_summary(page: &CoauthorCheckPage) -> String {
                 } else {
                     ""
                 },
-                reason.chars().take(160).collect::<String>()
+                reason_preview
             );
+            if reason.chars().count() > 160 {
+                summary.push_str("  （理由节选，完整内容见查证台账。）\n");
+            }
+            if !entry.quote.is_empty() {
+                let _ = writeln!(
+                    summary,
+                    "  原文引句：{}",
+                    entry.quote.chars().take(160).collect::<String>()
+                );
+                if entry.quote.chars().count() > 160 {
+                    summary.push_str("  （引句节选，完整内容见查证台账。）\n");
+                }
+            }
         }
     }
     if page.has_more {
@@ -535,11 +707,31 @@ pub(super) fn check_summary(page: &CoauthorCheckPage) -> String {
     }
     if check.complete {
         summary.push_str("\n本清单读取与判断流程完成，不代表语义判断全部正确或全书已修复。");
+    } else if check.read == check.total
+        && check.sent == check.total
+        && check.reviewed == check.total
+        && check.uncertain > 0
+        && check.needs_review == 0
+        && check.stale == 0
+        && check.added == 0
+        && check.pending_index_updates == 0
+    {
+        let _ = write!(
+            summary,
+            "\n本清单各项均已完成读取、送达与判断；仍有 {} 项不确定，疑点尚未解决，不能称为全部查证完成。",
+            check.uncertain
+        );
     } else {
         let _ = write!(
             summary,
-            "\n尚未完成查证：待核对 {}，旧版本 {}，新增 {}，索引待更新 {}。可按清单身份继续；不确定项不能算已解决。",
-            check.needs_review, check.stale, check.added, check.pending_index_updates,
+            "\n尚未完成查证：未读完 {}，未完整送达 {}，未判断 {}，待核对 {}，旧版本 {}，新增 {}，查证索引待更新 {}。可按清单身份继续；不确定项不能算已解决。",
+            check.total.saturating_sub(check.read),
+            check.total.saturating_sub(check.sent),
+            check.total.saturating_sub(check.reviewed),
+            check.needs_review,
+            check.stale,
+            check.added,
+            check.pending_index_updates,
         );
     }
     summary

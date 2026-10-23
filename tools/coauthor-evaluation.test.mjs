@@ -303,6 +303,33 @@ test("scripted full check deliberately rejects a typo then follows the native re
   assert.equal(JSON.parse(corrected.tool_calls[0].function.arguments).revision, "r0");
 });
 
+test("scripted search distinguishes an empty precise query from four broad candidates", () => {
+  const messages = [{ role: "user", content: JSON.stringify({ contextOnly: true }) },
+    { role: "user", content: "有没有设定过星砂契约？" }];
+  const turn = coauthorLoopbackTurn({ messages });
+  assert.deepEqual(turn.tool_calls.map((c) => JSON.parse(c.function.arguments).query),
+    ["星砂契约", "契约 交易 代价 术法"]);
+  const receipts = [{ method: "KEYWORD", query: "星砂契约", returned: 0 },
+    { method: "KEYWORD", query: "契约 交易 代价 术法", returned: 4 }];
+  const entry = { status: "COMPLETED", caseId: "absent-not-absolute",
+    output: '关键词 "契约 交易 代价 术法"（项目资料，offset=0）：实际返回 4 条',
+    audit: [{ kind: "retrieval_summary", receipts }] };
+  assert(assertLoopbackRegression(entry).scriptedNativeRegression);
+  assert.throws(() => assertLoopbackRegression({ ...entry, output: "两个搜索均0命中" }));
+  assert.throws(() => assertLoopbackRegression({ ...entry,
+    audit: [{ kind: "retrieval_summary", receipts: [receipts[0], { ...receipts[1], returned: 0 }] }] }));
+});
+
+test("scripted check retains malicious final wording only to test the native receipt boundary", () => {
+  const entries = Array.from({ length: 6 }, (_, i) => ({ key: `ENTITY:${i}`, revision: `r${i}` }));
+  const messages = [{ role: "user", content: JSON.stringify({ contextOnly: true,
+    checkAssessments: entries.map((entry) => ({ recorded: true, entry })) }) },
+  { role: "user", content: "完整查证全部设定卡" },
+  { role: "assistant", tool_calls: [{ id: "page", function: { name: "get_source_checks" } }] },
+  { role: "tool", tool_call_id: "page", content: JSON.stringify({ check: { id: "check" }, entries }) }];
+  assert.match(coauthorLoopbackTurn({ messages }).content, /故意错误的查证收尾/);
+});
+
 test("local regression cannot call an incomplete or fabricated draft receipt a pass", () => {
   const entry = { caseId: "extend-confirmed", turnIndex: 1, status: "COMPLETED",
     output: "归灯境之后为归灯境。第一句已改好，采用后会自动同步设定卡。" };
