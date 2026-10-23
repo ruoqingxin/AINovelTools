@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, ArrowUpRight, RefreshCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, MessageSquareText, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import {
-  errorMessage, listCoauthorDecisionConsumers, type CoauthorDecision, type CoauthorScope,
+  errorMessage, listCoauthorDecisionConsumers, type CoauthorDecision, type CoauthorDecisionConsumer, type CoauthorScope,
 } from "../lib/tauri-client";
 import { decisionStatuses } from "./coauthor-decision-dependencies";
 
@@ -10,13 +10,16 @@ const states: Record<string, string> = {
   PENDING: "待确认方案", ADOPTED: "已采用项目", NOT_ADOPTED: "本项未采用", DISCARDED: "方案已放弃", REVERSED: "采用已撤销",
 };
 const kinds = { MANUSCRIPT: "正文", SETTING: "设定", OUTLINE: "大纲" } as const;
-type Props = { scope: CoauthorScope; decision: CoauthorDecision; onOpenChangeSet: (id: string) => void };
+type Props = {
+  scope: CoauthorScope; decision: CoauthorDecision; onOpenChangeSet: (id: string) => void;
+  onDiscussItem: (decision: CoauthorDecision, item: CoauthorDecisionConsumer) => void;
+};
 
 export function CoauthorDecisionConsumers(props: Props) {
   return <ConsumerDirectory key={`${props.scope.projectId}:${props.scope.sessionId}:${props.decision.id}:${props.decision.version}`} {...props} />;
 }
 
-function ConsumerDirectory({ scope, decision, onOpenChangeSet }: Props) {
+function ConsumerDirectory({ scope, decision, onOpenChangeSet, onDiscussItem }: Props) {
   const [open, setOpen] = useState(false);
   const [reviewOnly, setReviewOnly] = useState(true);
   const [offset, setOffset] = useState(0);
@@ -53,9 +56,14 @@ function ConsumerDirectory({ scope, decision, onOpenChangeSet }: Props) {
           {entry.publishedKey && <><small>当时采用目标：{entry.publishedKey}</small>
             <small>当时采用修订：{entry.publishedRevision}</small>
             <p className="coauthor-notice">这是原采用记录，不代表目标仍处于该修订；正式内容未自动修改。</p></>}
-          <button type="button" disabled={!verified} onClick={() => onOpenChangeSet(entry.changeSetId)}>
-            <ArrowUpRight size={14} />{entry.state === "PENDING" || entry.state === "DISCARDED" ? "核对原方案" : "查看采用回执"}
-          </button>
+          <div className="coauthor-change-actions">
+            <button type="button" disabled={!verified} onClick={() => onOpenChangeSet(entry.changeSetId)}>
+              <ArrowUpRight size={14} />{entry.state === "PENDING" || entry.state === "DISCARDED" ? "核对原方案" : "查看采用回执"}
+            </button>
+            <button type="button" disabled={!verified} onClick={() => { if (directory.data) onDiscussItem(directory.data.decision, entry); }}>
+              <MessageSquareText size={14} />带回讨论核对
+            </button>
+          </div>
         </article>)}
         {(offset > 0 || directory.data.hasMore) && <nav className="coauthor-check-pagination" aria-label="决定关联分页">
           <button type="button" className="icon-command" title="上一页决定关联" aria-label="上一页决定关联"

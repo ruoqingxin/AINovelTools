@@ -98,6 +98,39 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it("brings the exact dependency review into the existing composer without sending, saving, or changing the draft", async () => {
+    const decision = { id: "rule", version: 2, topic: "突破代价", content: "改用失忆", status: "CHOSEN", sourceMessageId: "author" };
+    stored.decisions = [decision];
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command, args) => command === "list_coauthor_decision_consumers"
+      ? { decision: { ...decision, version: 3 }, unknownChangeSets: 0, offset: 0, hasMore: false, entries: [{
+        changeSetId: "exact-old-plan", changeSetVersion: 2, changeSetTitle: "不应复制的全文指令", itemId: "rule-item",
+        itemTitle: "旧规则", kind: "SETTING", decisionVersion: 1, state: "ADOPTED", needsReview: true,
+        publishedKey: "ENTITY:old", publishedRevision: "r1",
+      }] } : original(command, args));
+    renderWorkspace(); await screen.findByLabelText("讨论输入");
+    fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "请保留我正在写的问题。" } });
+    fireEvent.click(screen.getByRole("button", { name: /决定/ }));
+    fireEvent.click(screen.getByText("决定关联与影响", { exact: true }));
+    fireEvent.click(await screen.findByRole("button", { name: "带回讨论核对" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const input = (screen.getByLabelText("讨论输入") as HTMLTextAreaElement).value;
+    expect(input).toContain("请保留我正在写的问题。\n\n");
+    expect(input).toContain("决定 rule（目录读取时 v3）");
+    expect(input).toContain("方案 exact-old-plan（v2）项目 rule-item");
+    expect(input).toContain("原依赖决定 v1");
+    expect(input).toContain("get_change_plan");
+    expect(input).toContain("read_change_item");
+    expect(input).toContain("本次只讨论核对");
+    expect(input).not.toContain("不应复制的全文指令");
+    expect(screen.getByLabelText("讨论输入")).toHaveFocus();
+    expect((screen.getByLabelText("讨论输入") as HTMLTextAreaElement).selectionStart).toBe(input.length);
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    expect(mocks.invoke.mock.calls.some(([name]) => ["run_coauthor", "save_coauthor_document", "prepare_coauthor_changeset",
+      "commit_coauthor_changeset", "commit_coauthor_reversal", "get_coauthor_changeset"].includes(name))).toBe(false);
+    expect(pending).toHaveLength(0);
+  });
+
   it("opens the exact decision-dependent receipt on demand without saving the draft or starting a model", async () => {
     const decision = { id: "rule", version: 2, topic: "突破代价", content: "改用失忆", status: "CHOSEN", sourceMessageId: "author" };
     stored.decisions = [decision];

@@ -827,6 +827,32 @@ try {
     assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "commit_coauthor_changeset").length), 1);
     assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "run_coauthor").length), 1);
     await changesPanel.getByRole("button", { name: "关闭关联变更与影响", exact: true }).click();
+    const inputBeforeReview = await page.getByLabel("讨论输入", { exact: true }).inputValue();
+    await page.getByRole("navigation", { name: "工作区", exact: true })
+      .getByRole("button", { name: "决定", exact: false }).click();
+    await exception.getByText("决定关联与影响", { exact: true }).click();
+    await consumers.getByText("读取时当前决定 · v2 · 已撤回", { exact: true }).waitFor();
+    await consumers.getByRole("button", { name: "下一页决定关联", exact: true }).click();
+    await consumers.getByText("原方案：历史关联方案 16 · v1", { exact: true }).waitFor();
+    const writesBeforeReview = await page.evaluate(() => window.__coauthorCalls.filter(name =>
+      /^(save_|run_coauthor|prepare_|commit_|apply_)/.test(name)));
+    await consumers.getByRole("button", { name: "带回讨论核对", exact: true }).click();
+    await decisionsPanel.waitFor({ state: "hidden" });
+    const reviewInput = page.getByLabel("讨论输入", { exact: true });
+    const reviewText = await reviewInput.inputValue();
+    assert.ok(reviewText.startsWith(inputBeforeReview + "\n\n"), "Review continuation must preserve existing author input");
+    assert.ok(reviewText.includes("决定 d2（目录读取时 v2）"));
+    assert.ok(reviewText.includes("方案 historical-rule-change-15（v1）项目 draft"));
+    assert.ok(reviewText.includes("read_change_item") && reviewText.includes("get_change_plan"));
+    assert.ok(reviewText.includes("本次只讨论核对"));
+    assert.equal(await reviewInput.evaluate(el => document.activeElement === el && el.selectionStart === el.value.length), true);
+    assert.ok(await reviewInput.evaluate(el => el.scrollTop > 0), "The appended review must be visible at the end of the composer");
+    assert.equal(await draft.inputValue(), draftBeforeConsumers);
+    assert.deepEqual(await page.evaluate(() => window.__coauthorCalls.filter(name =>
+      /^(save_|run_coauthor|prepare_|commit_|apply_)/.test(name))), writesBeforeReview,
+    "Bringing a review back must not save, prepare, adopt, reverse, or start a model");
+    await reviewInput.evaluate(el => el.scrollIntoView({ block: "center" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-decision-review-composer.png`), fullPage: true });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     reports.push({ viewport, overflow, panelOverflow, boxes, commands: await page.evaluate(() => window.__coauthorCalls) });
     await context.close();

@@ -180,11 +180,21 @@ function CoauthorSession({ scope, initial, onFork }: {
   const mounted = useRef(true);
   const subscriptions = useRef(new Set<() => void>());
   const editor = useRef<HTMLTextAreaElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const focusReview = useRef(false);
   const proposalSelection = useRef("");
   const thread = useRef<HTMLDivElement>(null);
   const [source, setSource] = useState<CoauthorSource | null>(null);
   const [editingDecision, setEditingDecision] = useState<CoauthorDecision | null>(null);
   const [serverConflict, setServerConflict] = useState<CoauthorDocument | null>(null);
+  useEffect(() => {
+    if (panel !== null || !focusReview.current || !composer.current) return;
+    focusReview.current = false;
+    const element = composer.current;
+    element.focus();
+    element.setSelectionRange(element.value.length, element.value.length);
+    element.scrollTop = element.scrollHeight;
+  }, [panel, input, tab]);
   const messages = useQuery({
     queryKey: ["discussion-messages", scope.sessionId], queryFn: () => listDiscussionMessages(scope.sessionId), retry: false,
   });
@@ -457,7 +467,7 @@ function CoauthorSession({ scope, initial, onFork }: {
         <form className="coauthor-composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
           {selection && <div className="coauthor-selection"><span>选区 · {selection.slice(0, 40)}</span>
             <button type="button" className="icon-command" title="清除选区" aria-label="清除选区" onClick={() => setSelection("")}><X size={14} /></button></div>}
-          <textarea aria-label="讨论输入" placeholder="聊想法、查资料，或接着写…" value={input}
+          <textarea ref={composer} aria-label="讨论输入" placeholder="聊想法、查资料，或接着写…" value={input}
             onChange={(event) => changeInput(event.target.value)} rows={3} />
           <div className="coauthor-composer-actions">
             <label><input type="checkbox" checked={allowEdits} onChange={(event) => setAllowEdits(event.target.checked)} />允许改工作稿</label>
@@ -580,7 +590,16 @@ function CoauthorSession({ scope, initial, onFork }: {
           <strong>{decision.topic}</strong><small>{statuses[decision.status]} · v{decision.version}</small><p>{decision.content}</p>
           <button onClick={() => setEditingDecision({ ...decision })}>纠正</button>
           <CoauthorDecisionHistory key={`${decision.id}:${decision.version}`} scope={scope} decision={decision} />
-          <CoauthorDecisionConsumers scope={scope} decision={decision} onOpenChangeSet={(id) => { setChangeSetId(id); setPanel("changes"); }} />
+          <CoauthorDecisionConsumers scope={scope} decision={decision} onOpenChangeSet={(id) => { setChangeSetId(id); setPanel("changes"); }}
+            onDiscussItem={(current, item) => {
+              const continuation = `请核对决定 ${current.id}（目录读取时 v${current.version}）变化对方案 ${item.changeSetId}（v${item.changeSetVersion}）项目 ${item.itemId} 的影响，该项原依赖决定 v${item.decisionVersion}。`
+                + "先用 get_change_plan 重新核对准确方案和项目，再用 read_change_item 分页读取所需前后快照、用 get_decisions 核对当前决定及必要历史。"
+                + "历史快照不是当前正式原文；已采用项还需按实际目标重新读取当前原文。区分已知差异、推测与未核对范围，不因版本不同就认定矛盾。"
+                + "本次只讨论核对，暂不修改稿件或正式内容，不自动重准备、采用或撤销。";
+              changeInput(inputRef.current.trim() ? `${inputRef.current}\n\n${continuation}` : continuation);
+              focusReview.current = true;
+              setPanel(null); setTab("chat");
+            }} />
         </article>)}
         {editingDecision && <form onSubmit={(event) => {
           event.preventDefault(); void act(async () => {

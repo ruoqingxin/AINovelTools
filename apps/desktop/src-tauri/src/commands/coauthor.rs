@@ -7,7 +7,7 @@ use std::sync::{
 use novel_infrastructure::{
     CoauthorChangeRequest, CoauthorChangeSet, CoauthorChangesPage, CoauthorImpact,
     CoauthorChangeItemInput, CoauthorImpactInput,
-    CoauthorDecisionDependencyInput, CoauthorDecision, CoauthorDecisionConsumersPage,
+    CoauthorDecisionDependencyInput, CoauthorDecision, CoauthorDecisionConsumersPage, CoauthorChangeItemRead,
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
     CoauthorRun, CoauthorRunsPage,
     CoauthorBranchesPage, CoauthorBranchComparison, CoauthorBranchMergeInput, CoauthorBranchMerge, CoauthorBranchMergesPage,
@@ -68,6 +68,7 @@ link_source 仅在作者要以已读取的正式资料为修改目标时使用�
 稿件依赖某个新规则时，draftDependsOn 写入对应的变更标识；不要用空依赖绕开部分采用检查。
 方案依赖已有讨论决定时，用decisionDependencies明确decisionId、准确version及依赖它的itemIds（当前稿为draft）。准备前先get_decisions读取最新决定，并在后续请求收到结果；不能用历史修订、名称或猜测的版本代替。否定、待定及撤回也可作为需遵守的边界，不自动改为已选择。不声明的隐含依赖仍未核验，不能声称已排除语义矛盾；决定变化后旧方案须重新准备，不能删掉依赖来绕过检查。
 决定改变后可用get_decision_dependents分页反查本讨论明确声明依赖的方案与采用项。needsReview是旧版本的复查线索，不是已证实矛盾；unknownChangeSets表示另有方案依赖未知，不能从空列表断言没有影响。publishedKey/publishedRevision仅为当时采用回执，修改正式资料前仍须按准确身份重新读取当前原文；目录不授予原文已读、正式写入或自动撤销权限。
+核对具体旧方案时先get_change_plan按准确changeSetId读取项目、状态及决定版本摘要，再read_change_item指定expectedVersion、itemId与BEFORE/AFTER分页读前后纯文本快照，按nextOffset续读。snapshotOnly=true仅为当时方案，不是当前正式原文；available=false表示当时是新建项、没有修改前资料，不等于读取失败或正文为空。hasStructuredEdits=true时纯文本不含富文本格式依据。方案版本变化后先重取摘要，不混用两版页面；当前决定仍须get_decisions核对，旧版原话可按稳定身份查历史。依赖未知不能当无依赖。历史快照不能提供正式原文已读、决定送达、正文格式或工作稿改写资格，不自动采用、重准备、撤销或宣布冲突已解决。
 影响待办必须有实际读过的正式原文及准确引文，说明为什么需要复查，不把词面相似冒充已确认矛盾。
 coverage 如实说明查过什么、未查什么；没有全范围查证不能声称查全或修复全书。
 作者明确要求查全部相关章节或全范围影响时，用 start_source_check 建立指定类别的完整版本清单，不用关键词命中代替范围。普通讨论无需创建清单。
@@ -470,6 +471,20 @@ fn tools() -> Vec<Value> {
             &["title", "draftDependsOn", "decisionDependencies", "items", "impacts", "coverage"],
         ),
         tool(
+            "get_change_plan",
+            "按准确身份读取本讨论一份方案的逐项元数据及决定版本摘要，不返回全文；历史采用不是当前正式资料。",
+            json!({"changeSetId":{"type":"string"}}),
+            &["changeSetId"],
+        ),
+        tool(
+            "read_change_item",
+            "按准确方案版本及项目分页读BEFORE/AFTER纯文本快照，不是当前原文或格式编辑依据。没有修改前资料时available=false；按nextOffset续读。",
+            json!({"changeSetId":{"type":"string"},"expectedVersion":{"type":"integer","minimum":1},
+                "itemId":{"type":"string"},"side":{"type":"string","enum":["BEFORE","AFTER"]},
+                "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}}),
+            &["changeSetId","expectedVersion","itemId","side","offset","limit"],
+        ),
+        tool(
             "get_changes",
             "分页查看当前讨论的关联变更摘要和影响待办。不代表已检查全书，不提供正式写入权限。",
             json!({"changesOffset":{"type":"integer","minimum":0},"impactsOffset":{"type":"integer","minimum":0}}),
@@ -828,6 +843,10 @@ struct DecisionConsumersQuery {
     needs_review_only: bool,
     offset: u32,
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChangePlanQuery { change_set_id: uuid::Uuid }
 
 fn include_draft_default() -> bool { true }
 
@@ -1255,6 +1274,14 @@ fn execute_tool(
                 "title":changes.title,"itemCount":changes.items.len(),"impactCount":changes.impacts.len(),
                 "message":"已保留关联变更，作者可在「关联变更」面板核对差异、依赖与影响后一次确认。尚未正式采用。"}))
         }
+        "get_change_plan" => {
+            let args: ChangePlanQuery = arguments(call)?;
+            Ok(json!(manager.coauthor_change_plan(&input.scope, args.change_set_id)?))
+        }
+        "read_change_item" => {
+            let args: CoauthorChangeItemRead = arguments(call)?;
+            Ok(json!(manager.read_coauthor_change_item(&input.scope, args)?))
+        }
         "get_changes" => {
             let args: ChangesQuery = arguments(call)?;
             Ok(json!(manager.coauthor_changes(&input.scope, args.changes_offset, args.impacts_offset)?))
@@ -1452,7 +1479,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v14",
+                    prompt_version: "coauthor-v15",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -1473,7 +1500,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v14","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v15","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -2085,5 +2112,85 @@ mod tests {
         assert!(serde_json::from_value::<DecisionConsumersQuery>(negative).is_err());
         assert!(PROMPT.contains("目录不授予原文已读"));
         assert!(!tools().iter().any(|tool|tool["function"]["name"]=="commit_changeset"));
+    }
+
+    #[test]
+    fn change_snapshot_tool_protocol_requires_exact_identity_version_and_side_without_fake_permissions() {
+        let definitions = tools();
+        for name in ["get_change_plan", "read_change_item"] {
+            assert!(definitions.iter().any(|tool| tool["function"]["name"] == name));
+        }
+        let value = json!({"changeSetId":uuid::Uuid::new_v4(),"expectedVersion":1,"itemId":"draft","side":"AFTER","offset":0,"limit":4000});
+        assert!(serde_json::from_value::<CoauthorChangeItemRead>(value.clone()).is_ok());
+        for field in ["approved", "currentRevision", "sourceRead", "sessionId", "manuscriptEdits"] {
+            let mut forged = value.clone(); forged[field] = json!(true);
+            assert!(serde_json::from_value::<CoauthorChangeItemRead>(forged).is_err());
+        }
+        for field in ["changeSetId", "expectedVersion", "itemId", "side", "offset", "limit"] {
+            let mut missing = value.clone(); missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<CoauthorChangeItemRead>(missing).is_err());
+        }
+        for side in ["CURRENT", "before", "MANUSCRIPT"] {
+            let mut invalid = value.clone(); invalid["side"] = json!(side);
+            assert!(serde_json::from_value::<CoauthorChangeItemRead>(invalid).is_err());
+        }
+        let mut negative = value; negative["offset"] = json!(-1);
+        assert!(serde_json::from_value::<CoauthorChangeItemRead>(negative).is_err());
+        assert!(PROMPT.contains("历史快照不能提供正式原文已读"));
+    }
+
+    #[test]
+    fn snapshot_dispatcher_is_read_only_and_never_grants_current_source_or_decision_delivery_evidence() {
+        use novel_infrastructure::{DiscussionScopeKind, ModelProfileStore, ProjectManager};
+        use std::sync::Mutex;
+        let root = std::env::temp_dir().join(format!("coauthor-snapshot-native-{}", uuid::Uuid::new_v4()));
+        let mut manager = ProjectManager::new();
+        let project = manager.create(root.join("project"), "快照测试").unwrap();
+        let session = manager.create_discussion_session("讨论".into(), DiscussionScopeKind::Project, None, None).unwrap();
+        let scope = CoauthorScope { project_id: project.project_id, session_id: session.id };
+        let mut doc = manager.coauthor_document(&scope).unwrap();
+        doc.content = "甲😀这是历史方案。".into();
+        let mut doc = manager.save_coauthor_document(&scope, doc).unwrap();
+        let document_version = doc.version;
+        let request = || CoauthorChangeRequest {
+            expected_document_version: document_version, title: "快照".into(), draft_depends_on: vec![], items: vec![],
+            impacts: vec![], coverage: "只核对本项".into(), include_draft: true, decision_dependencies: vec![],
+        };
+        let plan = manager.prepare_coauthor_changeset(&scope, request(), None).unwrap();
+        let run = manager.start_coauthor_run(&scope, uuid::Uuid::new_v4(), "核对旧方案", doc.version).unwrap();
+        let state = ProjectState {
+            manager: Mutex::new(manager), model_profiles: Mutex::new(ModelProfileStore::open(root.join("models.sqlite")).unwrap()),
+            gateway: novel_infrastructure::ModelGateway::default(),
+            embedding_gateway: novel_infrastructure::EmbeddingGateway::default(), ai_cancellations: Mutex::new(HashMap::new()),
+        };
+        let input = CoauthorInput {
+            scope: scope.clone(), run_id: run.id, profile_id: uuid::Uuid::new_v4(), message: "核对旧方案".into(),
+            expected_document_version: doc.version, selection: None, allow_draft_edits: false, temperature: None, max_output_tokens: None,
+        };
+        let mut seen = HashMap::new();
+        let call = |name: &str, args: Value| ModelToolCall { id: uuid::Uuid::new_v4().to_string(), call_type: "function".into(),
+            function: novel_infrastructure::ModelToolFunction { name: name.into(), arguments: args.to_string() } };
+        let summary = execute_tool(&state, &input, &call("get_change_plan", json!({"changeSetId":plan.id})), &mut doc, &mut seen).unwrap();
+        let text = execute_tool(&state, &input, &call("read_change_item", json!({
+            "changeSetId":plan.id,"expectedVersion":1,"itemId":"draft","side":"AFTER","offset":1,"limit":1
+        })), &mut doc, &mut seen).unwrap();
+        assert_eq!(text["content"], "😀");
+        assert_eq!(text["snapshotOnly"], true);
+        assert!(summary["items"][0].get("content").is_none());
+        assert!(seen.is_empty());
+        assert!(evidence_read_receipt("read_change_item", &text).is_none());
+        let audit = [json!({"kind":"tool","name":"get_change_plan","result":summary}),
+            json!({"kind":"tool","name":"read_change_item","result":text})];
+        {
+            let mut manager = state.manager.lock().unwrap();
+            assert_eq!(manager.coauthor_document(&scope).unwrap(), doc);
+            manager.checkpoint_coauthor_run(&scope, run.id, "", &audit).unwrap();
+            let next = manager.prepare_coauthor_changeset(&scope, request(), Some(run.id)).unwrap();
+            assert!(next.read_dependencies.is_empty());
+        }
+        assert!(execute_tool(&state, &input, &call("read_change_item", json!({
+            "changeSetId":plan.id,"expectedVersion":1,"itemId":"draft","side":"AFTER","offset":0,"limit":12001
+        })), &mut doc, &mut seen).is_err());
+        drop(state); let _ = std::fs::remove_dir_all(root);
     }
 }

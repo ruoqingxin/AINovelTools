@@ -9,12 +9,13 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("../lib/ipc-transport", () => mocks);
 const scope = { projectId: "p1", sessionId: "s1" };
 const openPlan = vi.fn();
+const discussItem = vi.fn();
 let decision: CoauthorDecision;
 let page: CoauthorDecisionConsumersPage;
 function mount(session = "s1") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   const content = (id: string) => <QueryClientProvider client={client}>
-    <CoauthorDecisionConsumers scope={{ ...scope, sessionId: id }} decision={decision} onOpenChangeSet={openPlan} />
+    <CoauthorDecisionConsumers scope={{ ...scope, sessionId: id }} decision={decision} onOpenChangeSet={openPlan} onDiscussItem={discussItem} />
   </QueryClientProvider>;
   const view = render(content(session));
   return { ...view, changeScope: (id: string) => view.rerender(content(id)), changeVersion: () => view.rerender(content(session)) };
@@ -71,8 +72,20 @@ it("withdraws current verification and disables cached navigation when refreshin
   expect(screen.getByText(/以下为缓存记录/)).toBeVisible();
   expect(screen.getByText("上次读取时标记需复查，当前状态未核实。")).toBeVisible();
   expect(screen.getByRole("button", { name: "查看采用回执" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "带回讨论核对" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "带回讨论核对" }));
+  expect(discussItem).not.toHaveBeenCalled();
   expect(openPlan).not.toHaveBeenCalled();
   expect(screen.queryByText("决定版本已变化，需复查此项。")).not.toBeInTheDocument();
+});
+
+it("hands the exact verified item and freshly read decision back to discussion without another query or write", async () => {
+  page.decision = { ...decision, version: 3, status: "WITHDRAWN" };
+  mount(); expand(); await screen.findByText("读取时当前决定 · v3 · 已撤回");
+  fireEvent.click(screen.getByRole("button", { name: "带回讨论核对" }));
+  expect(discussItem).toHaveBeenCalledExactlyOnceWith(page.decision, page.entries[0]);
+  expect(openPlan).not.toHaveBeenCalled();
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
 });
 
 it("does not turn an empty declared directory into a claim of no semantic influence", async () => {

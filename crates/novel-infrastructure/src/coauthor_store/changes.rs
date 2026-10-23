@@ -4,6 +4,8 @@ mod decisions;
 pub use decisions::*;
 mod consumers;
 pub use consumers::*;
+mod reading;
+pub use reading::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
