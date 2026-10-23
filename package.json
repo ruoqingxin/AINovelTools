@@ -15,12 +15,17 @@
     "check": "pnpm check:ipc && pnpm test:desktop-acceptance-tools && pnpm -r check && cargo clippy --workspace --all-targets --features ainoveltools-desktop/ipc-contract -- -D warnings",
     "test": "pnpm check:ipc && pnpm test:desktop-acceptance-tools && pnpm -r check && pnpm -r test && cargo test --workspace --features ainoveltools-desktop/ipc-contract",
     "test:desktop-recovery": "node tools/desktop-recovery-smoke.mjs",
+    "eval:coauthor": "node tools/coauthor-evaluation.mjs",
+    "eval:coauthor:prepare": "node tools/coauthor-model-evaluation.mjs --prepare-only",
+    "eval:coauthor:model": "node tools/coauthor-model-evaluation.mjs",
+    "eval:coauthor:review": "node tools/coauthor-evaluation-review.mjs",
+    "test:coauthor-evaluation": "node --test tools/coauthor-evaluation.test.mjs",
     "test:desktop-interruption": "node tools/desktop-interruption-smoke.mjs",
     "test:desktop-backup-interruption": "node tools/desktop-backup-interruption-smoke.mjs",
     "test:desktop-model": "node tools/desktop-model-smoke.mjs",
     "test:desktop-files": "node tools/desktop-file-smoke.mjs",
     "test:desktop-install": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/desktop-install-smoke.ps1",
-    "test:desktop-acceptance-tools": "node --test tools/desktop-acceptance.test.mjs tools/desktop-interruption-db.test.mjs",
+    "test:desktop-acceptance-tools": "node --test tools/desktop-acceptance.test.mjs tools/desktop-interruption-db.test.mjs tools/coauthor-evaluation.test.mjs",
     "tauri": "pnpm --filter @ainoveltools/desktop tauri"
   },
   "devDependencies": {

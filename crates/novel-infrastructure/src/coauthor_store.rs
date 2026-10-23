@@ -30,6 +30,8 @@ pub use branches::*;
 mod tests;
 #[cfg(test)]
 mod changes_tests;
+#[cfg(test)]
+mod evaluation_tests;
 
 #[derive(Debug, Error)]
 pub enum CoauthorError {
