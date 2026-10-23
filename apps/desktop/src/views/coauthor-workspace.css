@@ -115,6 +115,11 @@
 .coauthor-decision-options input { width: 16px; height: 16px; flex: 0 0 16px; margin: 2px 0 0; }
 .coauthor-decision-snapshot { overflow-wrap: anywhere; }
 .coauthor-decision-snapshot small { display: block; }
+.coauthor-decision-dependencies .coauthor-diff pre { height: auto; max-height: 240px; }
+.coauthor-rule-selection { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.coauthor-rule-selection small { overflow-wrap: anywhere; min-width: 0; }
+.coauthor-rule-picker .coauthor-run-picker { display: flex; gap: 8px; flex-wrap: wrap; }
+.coauthor-rule-picker .coauthor-run-picker input { flex: 1 1 120px; min-width: 0; width: 100%; }
 .coauthor-decision-snapshot pre { height: auto; max-height: 240px; min-height: 0; }
 .coauthor-decision-snapshot blockquote { margin: 8px 0; padding-left: 12px; border-left: 2px solid var(--border); font-size: 12px; }
 .coauthor-branch-decisions .coauthor-run-picker input { min-width: 0; width: 100%; flex: 1 1 100px; }

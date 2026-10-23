@@ -33,7 +33,9 @@ function emit(runId: string, kind = "status", content = "正在推敲…") {
 async function begin(text = "写一个失忆版") {
   await screen.findByLabelText("工作稿内容");
   fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: text } });
-  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  const send = screen.getByRole("button", { name: "发送" });
+  await waitFor(() => expect(send).toBeEnabled());
+  fireEvent.click(send);
   await waitFor(() => expect(pending.length).toBeGreaterThan(0));
   const request = pending[pending.length - 1];
   emit(request.input.runId);

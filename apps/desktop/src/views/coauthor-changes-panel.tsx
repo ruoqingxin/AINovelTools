@@ -3,13 +3,14 @@ import { useEffect, useRef, useState } from "react";
 import {
   commitCoauthorChangeset, discardCoauthorChangeset, errorMessage, getCoauthorChanges, getCoauthorChangeset,
   prepareCoauthorChangeset, readCoauthorSource, updateCoauthorImpact,
-  type CoauthorChangeSet, type CoauthorChangesPage, type CoauthorDocument, type CoauthorImpact, type CoauthorScope, type CoauthorSource,
+  type CoauthorChangeSet, type CoauthorChangesPage, type CoauthorDocument, type CoauthorImpact, type CoauthorScope, type CoauthorSource, type CoauthorDecisionDependencyInput,
 } from "../lib/tauri-client";
 import { useConfirmAction } from "../shell/confirm-action-provider";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { sameDraft } from "./use-coauthor-draft";
 import { ManuscriptReader } from "./manuscript-reader";
 import { CoauthorReversalPanel } from "./coauthor-reversal-panel";
+import { DecisionDependencyPicker, DecisionDependenciesReview, hasStaleDecisionDependencies } from "./coauthor-decision-dependencies";
 
 const labels: Record<string, string> = {
   PENDING: "待核对", COMMITTED: "已提交", DISCARDED: "已放弃", RESOLVED: "已处理",
@@ -27,6 +28,9 @@ function recoverForm(key: string) {
     return {
       settingTitle: value.settingTitle as string, settingContent: value.settingContent as string,
       newSetting: value.newSetting as boolean, dependent: value.dependent as boolean,
+      rules: (Array.isArray(value.rules) ? value.rules.filter((entry: CoauthorDecisionDependencyInput) =>
+        entry && typeof entry.decisionId === "string" && Number.isSafeInteger(entry.version) && entry.version > 0
+        && Array.isArray(entry.itemIds) && entry.itemIds.length > 0 && entry.itemIds.every((id) => ["draft", "setting"].includes(id))) : []) as CoauthorDecisionDependencyInput[],
       editing: editing && typeof editing.id === "string" && typeof editing.version === "number"
         && typeof editing.status === "string" && typeof editing.resolution === "string" ? editing as ImpactEdit : null,
     };
@@ -45,6 +49,7 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
   const [loaded, setLoaded] = useState(false);
   const [source, setSource] = useState<CoauthorSource | null>(null);
   const [changes, setChanges] = useState<CoauthorChangeSet | null>(null);
+  const [rulesVerified, setRulesVerified] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -58,15 +63,16 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
   const [settingTitle, setSettingTitle] = useState(recovered?.settingTitle ?? "");
   const [settingContent, setSettingContent] = useState(recovered?.settingContent ?? "");
   const [dependent, setDependent] = useState(recovered?.dependent ?? true);
+  const [rules, setRules] = useState<CoauthorDecisionDependencyInput[]>(recovered?.rules ?? []);
   const [editing, setEditing] = useState<ImpactEdit | null>(recovered?.editing ?? null);
-  useUnsavedChangesGuard(Boolean(settingTitle || settingContent || editing?.resolution),
+  useUnsavedChangesGuard(Boolean(settingTitle || settingContent || editing?.resolution || rules.length),
     "关联变更有尚未保存的设定或待办处理依据。");
   useEffect(() => {
     try {
-      if (!settingTitle && !settingContent && !editing) localStorage.removeItem(backupKey);
-      else localStorage.setItem(backupKey, JSON.stringify({ newSetting, settingTitle, settingContent, dependent, editing }));
+      if (!settingTitle && !settingContent && !editing && !rules.length) localStorage.removeItem(backupKey);
+      else localStorage.setItem(backupKey, JSON.stringify({ newSetting, settingTitle, settingContent, dependent, editing, rules }));
     } catch { setError("变更输入的本地备份失败，请暂时不要关闭面板。"); }
-  }, [backupKey, newSetting, settingTitle, settingContent, dependent, editing]);
+  }, [backupKey, newSetting, settingTitle, settingContent, dependent, editing, rules]);
 
   async function reload() {
     const current = ++epoch.current;
@@ -89,6 +95,7 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
   function show(value: CoauthorChangeSet) {
     if (!mounted.current) return;
     setChanges(value);
+    setRulesVerified(true);
     setSelected(value.status === "COMMITTED" ? value.selectedIds : value.items.map((item) => item.id));
   }
   async function create() {
@@ -106,9 +113,11 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
           targetKey: null, targetRevision: null, dependsOn: [],
         }] : [],
         impacts: [], coverage: "作者手动准备当前稿件；未检索其他章节、设定或伏笔的影响。",
+        decisionDependencies: rules.map((entry) => ({ ...entry, itemIds: entry.itemIds.filter((id) => id === "draft" || newSetting) }))
+          .filter((entry) => entry.itemIds.length > 0),
       } });
       show(created);
-      if (mounted.current) { setSettingTitle(""); setSettingContent(""); setNewSetting(false); }
+      if (mounted.current) { setSettingTitle(""); setSettingContent(""); setNewSetting(false); setRules([]); }
       await reload();
     });
   }
@@ -117,11 +126,19 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
   const applicableImpacts = changes?.impacts.filter((impact) => impact.itemIds.some((id) => selected.includes(id))) ?? [];
 
   async function commit() {
-    if (!changes || changes.status !== "PENDING" || missingDependencies.length || !selected.length) return;
+    if (!changes || changes.status !== "PENDING" || missingDependencies.length || !selected.length
+      || !rulesVerified || hasStaleDecisionDependencies(changes, selected)) return;
     const reviewed = changes;
     const reviewedIds = [...selected];
     await act(async () => {
       const snapshot = getDocument();
+      setRulesVerified(false);
+      const fresh = await getCoauthorChangeset({ scope, id: reviewed.id });
+      if (!mounted.current) return;
+      setChanges(fresh); setRulesVerified(true);
+      if (fresh.version !== reviewed.version || fresh.status !== "PENDING" || hasStaleDecisionDependencies(fresh, reviewedIds)) {
+        throw new Error("决定依赖或方案状态已变化，请查看当前状态并重新准备；尚未正式采用。");
+      }
       if (isGenerating()) throw new Error("请先停止生成或等待完成，再核对采用。");
       if (snapshot.version !== reviewed.baseDocument.version || !sameDraft(snapshot, reviewed.baseDocument)) {
         throw new Error("工作稿已变化，此变更集不再基于当前版本；请重新准备。");
@@ -130,6 +147,7 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
         title: "正式采用关联变更",
         message: `提交以下 ${reviewedIds.length} 项：${reviewed.items.filter((item) => reviewedIds.includes(item.id))
           .map((item) => item.document.title).join("、")}。整组成功或整体回滚。`
+          + `核对 ${(fresh.decisionDependencies ?? []).filter((entry) => entry.itemIds.some((id) => reviewedIds.includes(id))).length} 条明确声明的决定依赖；未声明的隐含关系未核验。`
           + `保留 ${applicableImpacts.length} 项有依据的影响待办，其他内容未同步。未勾选的变更不会采用。`,
         confirmLabel: "采用所选变更",
       });
@@ -148,6 +166,10 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
         const actual = await getCoauthorChangeset({ scope, id: reviewed.id }).catch(() => null);
         if (actual?.status !== "COMMITTED" || actual.reversedBy || actual.version !== reviewed.version + 1
           || [...actual.selectedIds].sort().join("\0") !== [...reviewedIds].sort().join("\0")) {
+          if (mounted.current) {
+            if (actual) setChanges(actual);
+            setRulesVerified(actual !== null);
+          }
           throw new Error(`${errorMessage(cause)}。提交状态需重新核对，请刷新此变更集；重试不会重复创建条目。`);
         }
         result = actual;
@@ -163,7 +185,7 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
     <div className="coauthor-change-actions">
       <h3><ClipboardList size={16} />关联变更</h3>
       <button className="icon-command" title="刷新变更与待办" aria-label="刷新变更与待办" disabled={busy}
-        onClick={() => void act(async () => { await reload(); if (changes) show(await getCoauthorChangeset({ scope, id: changes.id })); })}>
+        onClick={() => void act(async () => { setRulesVerified(false); await reload(); if (changes) show(await getCoauthorChangeset({ scope, id: changes.id })); })}>
         <RefreshCw size={16} />
       </button>
     </div>
@@ -186,6 +208,8 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
       <p className="coauthor-notice">{changes.coverage}</p>
       <p className="coauthor-notice">以上为准备者报告的检查范围，尚无全书完备性核验；影响清单只列出当前已知项。</p>
       {changes.runId && changes.status === "PENDING" && <p className="coauthor-notice">AI 准备的待核对方案，尚未正式采用。</p>}
+      <DecisionDependenciesReview changes={changes} selected={selected} />
+      {!rulesVerified && <p className="coauthor-notice">决定依赖尚未重新核实，请刷新方案后再采用。</p>}
       {changes.items.map((item) => <article className="coauthor-change-item" key={item.id}>
         <label className="coauthor-change-check">
           <input type="checkbox" checked={selected.includes(item.id)} disabled={busy || changes.status !== "PENDING"}
@@ -245,7 +269,7 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
       </blockquote>)}
       {changes.status === "DISCARDED" && <p className="coauthor-notice">此方案已放弃，原方案保留，正式内容未变更。</p>}
       {changes.status === "PENDING" && <><button className="primary-action"
-        disabled={busy || !selected.length || Boolean(missingDependencies.length)}
+        disabled={busy || !selected.length || Boolean(missingDependencies.length) || !rulesVerified || hasStaleDecisionDependencies(changes, selected)}
         onClick={() => void commit()}><Check size={15} />确认采用所选变更</button>
         <button disabled={busy} onClick={() => void act(async () => {
           if (!await confirm({ title: "放弃关联变更", message: "放弃此方案，不修改工作稿或正式内容，原方案仍保留。",
@@ -265,7 +289,8 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
       <summary>准备新的变更集</summary>
       <form onSubmit={(event) => { event.preventDefault(); void create(); }}>
         <label className="coauthor-change-check"><input type="checkbox" checked={newSetting} disabled={busy}
-          onChange={(event) => setNewSetting(event.target.checked)} />同时新建设定</label>
+          onChange={(event) => { setNewSetting(event.target.checked); if (!event.target.checked) setRules((values) =>
+            values.map((entry) => ({ ...entry, itemIds: entry.itemIds.filter((id) => id !== "setting") })).filter((entry) => entry.itemIds.length > 0)); }} />同时新建设定</label>
         {newSetting && <>
           <label>设定标题<input aria-label="关联设定标题" required maxLength={200} value={settingTitle}
             disabled={busy} onChange={(event) => setSettingTitle(event.target.value)} /></label>
@@ -274,6 +299,7 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
           <label className="coauthor-change-check"><input type="checkbox" checked={dependent} disabled={busy}
             onChange={(event) => setDependent(event.target.checked)} />当前稿件依赖此设定</label>
         </>}
+        <DecisionDependencyPicker key={`${scope.projectId}:${scope.sessionId}`} scope={scope} value={rules} hasSetting={newSetting} disabled={busy} onChange={setRules} />
         <button disabled={busy} type="submit"><Plus size={15} />从当前工作稿准备</button>
       </form>
     </details>

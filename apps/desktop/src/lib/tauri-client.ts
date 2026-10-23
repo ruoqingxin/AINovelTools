@@ -16,6 +16,7 @@ export type ExtractionItemTarget = IpcRequests["adopt_extraction_item"]["target"
 export type PlanBatchInput = IpcRequests["adopt_plan_batch"]["input"];
 export type PlanningAiJobInput = IpcRequests["enqueue_planning_ai_job"]["input"];
 export type CoauthorScope = IpcRequests["get_coauthor_state"]["scope"];
+export type CoauthorDecisionDependencyInput = IpcRequests["prepare_coauthor_changeset"]["request"]["decisionDependencies"][number];
 // Unsaved forms have no stored version; raw IPC responses use VersionedPlanningSection.
 export type PlanningSection = InputPlanningSection & { version?: VersionedPlanningSection["version"] };
 // UI-only object selection is passed as a separate command argument.

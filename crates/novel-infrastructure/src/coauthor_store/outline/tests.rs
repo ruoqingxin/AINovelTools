@@ -50,6 +50,7 @@ impl Fixture {
     }
     fn request(&self) -> CoauthorChangeRequest {
         CoauthorChangeRequest {
+            decision_dependencies: vec![],
             expected_document_version: 0,
             title: "修改正式大纲".into(),
             include_draft: false,

@@ -54,7 +54,7 @@ beforeEach(() => {
     ],
     impacts: [{ itemIds: ["realm"], key: "MANUSCRIPT:old", revision: "m1", quote: "他还记得声音", reason: "复查突破后描写" }],
     coverage: "仅查了体系与旧章，未检查全书", selectedIds: [], published: [], runId: "run1",
-    undo: [], reversedBy: null, readDependencies: [],
+    undo: [], reversedBy: null, readDependencies: [], decisionDependencies: [],
   };
   page = {
     changeSets: [{ id: "c1", version: 1, title: changes.title, status: "PENDING", itemCount: 2, reversedBy: null }],
@@ -75,6 +75,69 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("linked coauthor changes", () => {
+  it("blocks only selected items with stale declared decisions and keeps other items selectable", async () => {
+    const decision = { id: "rule", topic: "突破代价", content: "失忆", status: "CHOSEN", version: 1, sourceMessageId: "m1" };
+    changes.decisionDependencies = [{ itemIds: ["draft"], decision, current: { ...decision, version: 2, status: "WITHDRAWN" } }];
+    renderPanel(); await openReview();
+    expect(screen.getByRole("button", { name: "确认采用所选变更" })).toBeDisabled();
+    expect(screen.getByText("当前 · v2 · 已撤回")).toBeVisible();
+    fireEvent.click(screen.getByRole("checkbox", { name: "突破 正文" }));
+    expect(screen.getByRole("button", { name: "确认采用所选变更" })).toBeEnabled();
+    expect(screen.getByText(/当前未选其依赖项/)).toBeVisible();
+  });
+
+  it("rereads rule state before opening confirmation and refuses a changed decision", async () => {
+    const decision = { id: "rule", topic: "突破代价", content: "失忆", status: "CHOSEN", version: 1, sourceMessageId: "m1" };
+    changes.decisionDependencies = [{ itemIds: ["draft"], decision, current: decision }];
+    renderPanel(); await openReview();
+    changes.decisionDependencies[0].current = { ...decision, version: 2, status: "REJECTED" };
+    fireEvent.click(screen.getByRole("button", { name: "确认采用所选变更" }));
+    expect(await screen.findByText(/决定依赖或方案状态已变化/)).toBeVisible();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认采用所选变更" })).toBeDisabled();
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "commit_coauthor_changeset")).toBe(false);
+  });
+
+  it("requires legacy pending plans without rule metadata to be prepared again", async () => {
+    changes.decisionDependencies = null;
+    renderPanel(); await openReview();
+    expect(screen.getByText(/旧方案未记录决定依赖核对信息/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "确认采用所选变更" })).toBeDisabled();
+  });
+
+  it("recovers a rule change during confirmation from the durable pending plan without pretending success", async () => {
+    const decision = { id: "rule", topic: "突破代价", content: "失忆", status: "CHOSEN", version: 1, sourceMessageId: "m1" };
+    changes.decisionDependencies = [{ itemIds: ["draft"], decision, current: decision }];
+    const base = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((name, args) => name === "commit_coauthor_changeset" ? Promise.reject(new Error("决定已变化")) : base(name, args));
+    renderPanel(); await openReview();
+    fireEvent.click(screen.getByRole("button", { name: "确认采用所选变更" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("核对 1 条明确声明的决定依赖");
+    changes.decisionDependencies[0].current = { ...decision, version: 2, status: "WITHDRAWN" };
+    fireEvent.click(within(dialog).getByRole("button", { name: "采用所选变更" }));
+    expect(await screen.findByText("当前 · v2 · 已撤回")).toBeVisible();
+    expect(screen.getByRole("button", { name: "确认采用所选变更" })).toBeDisabled();
+    expect(committed).not.toHaveBeenCalled();
+  });
+
+  it("backs up manually chosen exact rule versions and submits only explicitly checked bindings", async () => {
+    const base = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((name, args) => name === "search_coauthor_decisions" ? Promise.resolve({
+      memories: [{ decision: { id: "rule", topic: "突破代价", content: "失忆", status: "CHOSEN", version: 4, sourceMessageId: "m1" },
+        aliases: [], quote: "失忆" }], offset: 0, hasMore: false,
+    }) : base(name, args));
+    renderPanel();
+    fireEvent.click(screen.getByText("准备新的变更集"));
+    fireEvent.click(screen.getByText("依赖的讨论决定 · 0 条"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "突破代价 → 当前工作稿" }));
+    expect(localStorage.getItem("coauthor-change-form:p1:s1")).toContain('"version":4');
+    fireEvent.click(screen.getByRole("button", { name: "从当前工作稿准备" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("prepare_coauthor_changeset", expect.objectContaining({
+      request: expect.objectContaining({ decisionDependencies: [{ decisionId: "rule", version: 4, itemIds: ["draft"] }] }),
+    })));
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor")).toBe(false);
+  });
   it("compares exact formal outline ranges, preserves candidate metadata and adopts no unrelated draft", async () => {
     changes.items = [{
       id: "outline", document: { ...document, kind: "OUTLINE", title: "突破大纲", content: "甲😀突破消耗记忆。\n结尾不变。",
@@ -305,7 +368,7 @@ describe("linked coauthor changes", () => {
         expectedDocumentVersion: 3, title: "突破与照魂境", draftDependsOn: ["setting"],
         items: [{ id: "setting", kind: "SETTING", title: "照魂境", content: "金丹之后，突破会失忆。",
           targetKey: null, targetRevision: null, dependsOn: [] }],
-        impacts: [], coverage: "作者手动准备当前稿件；未检索其他章节、设定或伏笔的影响。",
+        impacts: [], coverage: "作者手动准备当前稿件；未检索其他章节、设定或伏笔的影响。", decisionDependencies: [],
       },
     }));
     expect(mocks.invoke.mock.calls.some(([name]) => name === "commit_coauthor_changeset")).toBe(false);

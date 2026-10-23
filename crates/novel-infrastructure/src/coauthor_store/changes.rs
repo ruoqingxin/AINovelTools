@@ -1,5 +1,7 @@
 use super::*;
 use std::collections::BTreeSet;
+mod decisions;
+pub use decisions::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -38,6 +40,7 @@ pub struct CoauthorChangeRequest {
     pub coverage: String,
     #[serde(default = "include_draft_default")]
     pub include_draft: bool,
+    pub decision_dependencies: Vec<CoauthorDecisionDependencyInput>,
 }
 
 fn include_draft_default() -> bool { true }
@@ -100,6 +103,8 @@ pub struct CoauthorChangeSet {
     pub reversed_by: Option<Uuid>,
     #[serde(default)]
     pub read_dependencies: Vec<CoauthorSourceDependency>,
+    #[serde(default)]
+    pub decision_dependencies: Option<Vec<CoauthorDecisionDependency>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -260,6 +265,9 @@ impl ProjectManager {
             items.push(change);
         }
         validate_dependencies(&items)?;
+        let decision_dependencies = db.prepare_coauthor_decision_dependencies(
+            scope, &items, &request.decision_dependencies,
+        )?;
         let targets: Vec<_> = items
             .iter()
             .filter_map(|item| item.document.target_key.as_ref())
@@ -281,6 +289,7 @@ impl ProjectManager {
                         + before.section.references.iter().map(String::len).sum::<usize>())
             })
             .sum::<usize>()
+            + decision_dependencies.iter().map(|entry| entry.decision.content.chars().count()).sum::<usize>()
             > 1_000_000
         {
             return Err(CoauthorError::Invalid(
@@ -305,7 +314,7 @@ impl ProjectManager {
             published: vec![],
             run_id,
             undo: vec![], reversed_by: None,
-            read_dependencies,
+            read_dependencies, decision_dependencies: Some(decision_dependencies),
         };
         tx.execute(
             "INSERT INTO coauthor_changesets(id,session_id,version,title,status,item_count,payload)
@@ -333,6 +342,7 @@ impl ProjectManager {
             .as_ref()
             .ok_or(CoauthorError::WrongProject)?
             .database;
+        let _snapshot = db.connection.unchecked_transaction()?;
         db.load_coauthor_changeset(scope, id)
     }
 
@@ -508,6 +518,7 @@ impl ProjectManager {
             else { db.validate_manuscript_item(item)?; }
         }
         db.validate_coauthor_dependencies(&changes.read_dependencies)?;
+        db.validate_coauthor_decision_dependencies(scope, &changes, &selected)?;
         // Evidence is checked before any targets change. Every todo is committed
         // alongside the exact subset that introduced its dependency.
         let impacts = changes
@@ -659,7 +670,11 @@ impl Database {
              WHERE c.session_id=?1 AND c.status='PENDING'
              AND json_extract(c.payload,'$.baseDocument.version')=?2
              AND json_extract(item.value,'$.id')='draft'
-             AND json_array_length(item.value,'$.dependsOn')>0)",
+             AND (json_array_length(item.value,'$.dependsOn')>0
+                OR json_type(c.payload,'$.decisionDependencies') IS NULL
+                OR json_type(c.payload,'$.decisionDependencies')='null'
+                OR EXISTS(SELECT 1 FROM json_each(c.payload,'$.decisionDependencies') dependency,
+                    json_each(dependency.value,'$.itemIds') target WHERE target.value='draft')))",
             rusqlite::params![document.session_id.to_string(), document.version],
             |row| row.get(0),
         )?)
@@ -681,6 +696,7 @@ impl Database {
             .ok_or(CoauthorError::NotFound)?;
         let mut changes: CoauthorChangeSet = decode(payload)?;
         changes.reversed_by = self.coauthor_reversed_by(id)?;
+        self.refresh_coauthor_decision_dependencies(scope, &mut changes)?;
         Ok(changes)
     }
 

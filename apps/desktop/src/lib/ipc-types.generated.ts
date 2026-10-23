@@ -1227,12 +1227,18 @@ export type InputArgsPrepareCoauthorChangeset = {
 };
 export type InputCoauthorChangeRequest = {
     coverage: string;
+    decisionDependencies: InputCoauthorDecisionDependencyInput[];
     draftDependsOn: string[];
     expectedDocumentVersion: number;
     impacts: InputCoauthorImpactInput[];
     includeDraft?: boolean;
     items: InputCoauthorChangeItemInput[];
     title: string;
+};
+export type InputCoauthorDecisionDependencyInput = {
+    decisionId: string;
+    itemIds: string[];
+    version: number;
 };
 export type InputCoauthorImpactInput = {
     itemIds: string[];
@@ -1974,6 +1980,7 @@ export type ProjectManifest = {
 export type CoauthorChangeSet = {
     baseDocument: CoauthorDocument;
     coverage: string;
+    decisionDependencies: CoauthorDecisionDependency[] | null;
     id: string;
     impacts: CoauthorImpactInput[];
     items: CoauthorChangeItem[];
@@ -1986,6 +1993,11 @@ export type CoauthorChangeSet = {
     title: string;
     undo: CoauthorUndoRecord[];
     version: number;
+};
+export type CoauthorDecisionDependency = {
+    current: CoauthorDecision | null;
+    decision: CoauthorDecision;
+    itemIds: string[];
 };
 export type CoauthorImpactInput = {
     itemIds: string[];

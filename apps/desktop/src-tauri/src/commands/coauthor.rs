@@ -7,6 +7,7 @@ use std::sync::{
 use novel_infrastructure::{
     CoauthorChangeRequest, CoauthorChangeSet, CoauthorChangesPage, CoauthorImpact,
     CoauthorChangeItemInput, CoauthorImpactInput,
+    CoauthorDecisionDependencyInput, CoauthorDecision,
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
     CoauthorRun, CoauthorRunsPage,
     CoauthorBranchesPage, CoauthorBranchComparison, CoauthorBranchMergeInput, CoauthorBranchMerge, CoauthorBranchMergesPage,
@@ -65,6 +66,7 @@ link_source 仅在作者要以已读取的正式资料为修改目标时使用�
 正文字符范围按 Unicode 标量计数（不是 UTF-16），相对该块原文从0开始，包含start、不包含end；同一块内可跨文字格式片段，不能跨段落或硬换行。单片段默认继承原格式；跨格式非空替换必须提供afterRuns，每项text与marksFrom指定替换文字及其在被替换原文范围内的格式来源字符位置，拼接须准确等于after，不猜测或新建格式。删除用空after。准确保留非目标部分、块属性和章节标题。
 局部正文项的 content 必须为空，程序生成真实的富文本前后预览；这不是纯文本覆盖。仅修改已有正式资料时 includeDraft=false，不夹带无关工作稿。
 稿件依赖某个新规则时，draftDependsOn 写入对应的变更标识；不要用空依赖绕开部分采用检查。
+方案依赖已有讨论决定时，用decisionDependencies明确decisionId、准确version及依赖它的itemIds（当前稿为draft）。准备前先get_decisions读取最新决定，并在后续请求收到结果；不能用历史修订、名称或猜测的版本代替。否定、待定及撤回也可作为需遵守的边界，不自动改为已选择。不声明的隐含依赖仍未核验，不能声称已排除语义矛盾；决定变化后旧方案须重新准备，不能删掉依赖来绕过检查。
 影响待办必须有实际读过的正式原文及准确引文，说明为什么需要复查，不把词面相似冒充已确认矛盾。
 coverage 如实说明查过什么、未查什么；没有全范围查证不能声称查全或修复全书。
 作者明确要求查全部相关章节或全范围影响时，用 start_source_check 建立指定类别的完整版本清单，不用关键词命中代替范围。普通讨论无需创建清单。
@@ -437,6 +439,10 @@ fn tools() -> Vec<Value> {
                 "title":{"type":"string"},
                 "includeDraft":{"type":"boolean"},
                 "draftDependsOn":{"type":"array","items":{"type":"string"}},
+                "decisionDependencies":{"type":"array","maxItems":32,"items":{"type":"object","additionalProperties":false,
+                    "properties":{"decisionId":{"type":"string"},"version":{"type":"integer","minimum":1},
+                        "itemIds":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string"}}},
+                    "required":["decisionId","version","itemIds"]}},
                 "items":{"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,
                     "properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["SETTING","OUTLINE","MANUSCRIPT"]},
                         "title":{"type":"string"},"content":{"type":"string"},"targetKey":{"type":["string","null"]},
@@ -453,7 +459,7 @@ fn tools() -> Vec<Value> {
                     "required":["itemIds","key","revision","quote","reason"]}},
                 "coverage":{"type":"string"}
             }),
-            &["title", "draftDependsOn", "items", "impacts", "coverage"],
+            &["title", "draftDependsOn", "decisionDependencies", "items", "impacts", "coverage"],
         ),
         tool(
             "get_changes",
@@ -790,6 +796,7 @@ struct DecisionQuery {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ChangeArgs {
     title: String,
+    decision_dependencies: Vec<CoauthorDecisionDependencyInput>,
     draft_depends_on: Vec<String>,
     items: Vec<CoauthorChangeItemInput>,
     impacts: Vec<CoauthorImpactInput>,
@@ -904,7 +911,23 @@ struct ReadEvidence {
     outline_pages: Vec<(usize, CoauthorOutlinePage)>,
 }
 
+fn remember_decision(seen: &mut HashMap<String, ReadEvidence>, decision: &CoauthorDecision) {
+    let key=format!("DECISION:{}",decision.id);
+    let revision=decision.version.to_string();
+    if seen.get(&key).is_some_and(|read|read.revision==revision) { return; }
+    seen.insert(key,ReadEvidence {
+        revision,fragments:vec![decision.content.clone()],sent_fragments:0,anchors:vec![],outline_pages:vec![],
+    });
+}
+
 fn validate_change_reads(args: &ChangeArgs, seen: &HashMap<String, ReadEvidence>) -> Result<(), CoauthorError> {
+    for dependency in &args.decision_dependencies {
+        if !seen.get(&format!("DECISION:{}",dependency.decision_id)).is_some_and(|read|
+            read.revision==dependency.version.to_string() && read.sent_fragments>0)
+        {
+            return Err(CoauthorError::Invalid("决定依赖必须先通过 get_decisions 接收本分支准确最新版本，不能猜测或引用未送达结果。".into()));
+        }
+    }
     for (key, revision) in args.items.iter()
         .filter_map(|item| item.target_key.as_ref().map(|key| (key, item.target_revision.as_ref())))
         .chain(args.impacts.iter().map(|impact| (&impact.key, Some(&impact.revision))))
@@ -1150,9 +1173,14 @@ fn execute_tool(
         }
         "get_decisions" => {
             let args: DecisionQuery = arguments(call)?;
-            match args.decision_id {
-                Some(id)=>Ok(json!(manager.list_coauthor_decision_history(&input.scope,id,args.before_version)?)),
-                None=>Ok(json!(manager.search_coauthor_decisions(&input.scope,&args.query,args.offset)?)),
+            if let Some(id)=args.decision_id {
+                let history=manager.list_coauthor_decision_history(&input.scope,id,args.before_version)?;
+                remember_decision(seen,&history.current.decision);
+                Ok(json!(history))
+            } else {
+                let page=manager.search_coauthor_decisions(&input.scope,&args.query,args.offset)?;
+                for memory in &page.memories { remember_decision(seen,&memory.decision); }
+                Ok(json!(page))
             }
         }
         "link_source" => {
@@ -1193,6 +1221,7 @@ fn execute_tool(
                 draft_depends_on: args.draft_depends_on, items: args.items,
                 impacts: args.impacts, coverage: args.coverage,
                 include_draft: args.include_draft,
+                decision_dependencies: args.decision_dependencies,
             }, Some(input.run_id))?;
             Ok(json!({"prepared":true,"formalCommit":false,"changeSetId":changes.id,
                 "title":changes.title,"itemCount":changes.items.len(),"impactCount":changes.impacts.len(),
@@ -1395,7 +1424,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v12",
+                    prompt_version: "coauthor-v13",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -1416,7 +1445,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v12","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v13","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -1638,6 +1667,7 @@ mod tests {
     #[test]
     fn knowledge_quotes_do_not_grant_manuscript_edit_evidence() {
         let args=ChangeArgs {
+            decision_dependencies:vec![],
             include_draft:false,title:"改正文".into(),draft_depends_on:vec![],
             items:vec![CoauthorChangeItemInput {
                 id:"patch".into(),kind:CoauthorDocumentKind::Manuscript,title:"旧章".into(),content:String::new(),
@@ -1733,6 +1763,7 @@ mod tests {
     #[test]
     fn changes_require_read_versions_for_targets_and_impact_evidence() {
         let args = ChangeArgs {
+            decision_dependencies:vec![],
             include_draft: true,
             title: "关联采用".into(), draft_depends_on: vec!["realm".into()],
             items: vec![CoauthorChangeItemInput {
@@ -1814,6 +1845,7 @@ mod tests {
         assert!(PROMPT.contains("不要只沿nextOffset继续就假装记得先前分析"));
         let seen=HashMap::new();
         let args=ChangeArgs {
+            decision_dependencies:vec![],
             include_draft:false,title:"无原文不能准备".into(),draft_depends_on:vec![],items:vec![],
             impacts:vec![CoauthorImpactInput {
                 key:"MANUSCRIPT:chapter".into(),revision:"r1".into(),
@@ -1846,6 +1878,7 @@ mod tests {
     #[test]
     fn manuscript_edits_require_sent_block_ranges_not_only_plain_text_or_unsent_results() {
         let mut args = ChangeArgs {
+            decision_dependencies:vec![],
             include_draft: false, title: "局部改稿".into(), draft_depends_on: vec![],
             items: vec![CoauthorChangeItemInput {
                 id: "patch".into(), kind: CoauthorDocumentKind::Manuscript,
@@ -1898,7 +1931,7 @@ mod tests {
     #[test]
     fn cross_format_changes_require_one_sent_page_covering_all_text_and_format_origins() {
         let mut args: ChangeArgs = serde_json::from_value(json!({
-            "title":"跨格式改稿","includeDraft":false,"draftDependsOn":[],"impacts":[],"coverage":"只查本段",
+            "title":"跨格式改稿","includeDraft":false,"draftDependsOn":[],"decisionDependencies":[],"impacts":[],"coverage":"只查本段",
             "items":[{"id":"patch","kind":"MANUSCRIPT","title":"旧章","content":"",
                 "targetKey":"MANUSCRIPT:old","targetRevision":"r1","dependsOn":[],
                 "manuscriptEdits":[{"blockId":"p","start":1,"end":5,"before":"寿元，声","after":"记忆，喑",
@@ -1931,6 +1964,7 @@ mod tests {
     #[test]
     fn outline_edits_require_sent_formal_pages_at_exact_unicode_offsets() {
         let mut args = ChangeArgs {
+            decision_dependencies:vec![],
             include_draft:false,title:"修改大纲".into(),draft_depends_on:vec![],impacts:vec![],coverage:"仅此大纲".into(),
             items:vec![CoauthorChangeItemInput {
                 id:"outline".into(),kind:CoauthorDocumentKind::Outline,title:"突破".into(),content:String::new(),
@@ -1961,5 +1995,51 @@ mod tests {
         assert!(validate_change_reads(&args,&seen).is_err());
         args.items[0].target_revision=Some("stale".into());
         assert!(validate_change_reads(&args,&seen).is_err());
+    }
+    #[test]
+    fn declared_decision_dependencies_require_exact_current_version_delivery() {
+        let decision=CoauthorDecision {
+            id:uuid::Uuid::new_v4(),version:1,topic:"突破代价".into(),content:"不可消耗寿元".into(),
+            status:"REJECTED".into(),source_message_id:uuid::Uuid::new_v4(),
+        };
+        let mut args=ChangeArgs {
+            title:"受决定约束".into(),draft_depends_on:vec![],items:vec![],impacts:vec![],coverage:"明确依赖".into(),
+            include_draft:true,decision_dependencies:vec![CoauthorDecisionDependencyInput {
+                decision_id:decision.id,version:1,item_ids:vec!["draft".into()],
+            }],
+        };
+        let mut seen=HashMap::new();
+        assert!(validate_change_reads(&args,&seen).is_err());
+        remember_decision(&mut seen,&decision);
+        assert!(validate_change_reads(&args,&seen).is_err());
+        let key=format!("DECISION:{}",decision.id);
+        seen.get_mut(&key).unwrap().sent_fragments=1;
+        assert!(validate_change_reads(&args,&seen).is_ok());
+        remember_decision(&mut seen,&decision);
+        assert!(validate_change_reads(&args,&seen).is_ok());
+        remember_decision(&mut seen,&CoauthorDecision {version:2,..decision});
+        assert!(validate_change_reads(&args,&seen).is_err());
+        args.decision_dependencies[0].version=2;
+        assert!(validate_change_reads(&args,&seen).is_err());
+        seen.get_mut(&key).unwrap().sent_fragments=1;
+        assert!(validate_change_reads(&args,&seen).is_ok());
+    }
+
+    #[test]
+    fn decision_dependency_tool_contract_cannot_accept_forged_snapshots_or_omit_the_declaration() {
+        let definition=tools().into_iter().find(|tool|tool["function"]["name"]=="prepare_changeset").unwrap();
+        assert!(definition["function"]["parameters"]["required"].as_array().unwrap().contains(&json!("decisionDependencies")));
+        let call=|arguments:Value|ModelToolCall {
+            id:"rules".into(),call_type:"function".into(),function:novel_infrastructure::ModelToolFunction {
+                name:"prepare_changeset".into(),arguments:arguments.to_string(),
+            },
+        };
+        let mut value=json!({"title":"明确范围","draftDependsOn":[],"items":[],"impacts":[],"coverage":"未查全"});
+        assert!(arguments::<ChangeArgs>(&call(value.clone())).is_err());
+        value["decisionDependencies"]=json!([]);
+        assert!(arguments::<ChangeArgs>(&call(value.clone())).is_ok());
+        value["decisionDependencies"]=json!([{"decisionId":uuid::Uuid::new_v4(),"version":1,"itemIds":["draft"],"current":true}]);
+        assert!(arguments::<ChangeArgs>(&call(value)).is_err());
+        assert!(PROMPT.contains("决定变化后旧方案须重新准备"));
     }
 }

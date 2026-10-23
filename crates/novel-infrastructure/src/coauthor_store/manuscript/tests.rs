@@ -76,6 +76,7 @@ impl Fixture {
     }
     fn input(&self) -> CoauthorChangeRequest {
         CoauthorChangeRequest {
+            decision_dependencies: vec![],
             expected_document_version: 0,
             include_draft: false,
             title: "旧章局部改稿".into(),

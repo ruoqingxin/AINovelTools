@@ -76,6 +76,7 @@ impl Fixture {
             .prepare_coauthor_changeset(
                 &scope,
                 CoauthorChangeRequest {
+                    decision_dependencies: vec![],
                     expected_document_version: saved.version,
                     title: "采用失忆版本".into(),
                     include_draft: true,
@@ -300,6 +301,7 @@ fn a_later_adoption_with_read_evidence_is_an_explicit_consumer_and_must_be_handl
         .prepare_coauthor_changeset(
             &f.scope,
             CoauthorChangeRequest {
+                decision_dependencies: vec![],
                 expected_document_version: f.changes.base_document.version + 1,
                 title: "后续设定".into(),
                 include_draft: false,
@@ -466,6 +468,7 @@ fn migration_54_is_atomic_retryable_and_preserves_prior_author_data() {
 
 fn new_setting_request(version: i64) -> CoauthorChangeRequest {
     CoauthorChangeRequest {
+        decision_dependencies: vec![],
         expected_document_version: version,
         include_draft: false,
         title: "后续设定".into(),

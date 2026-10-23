@@ -37,7 +37,7 @@ beforeEach(() => {
   changes = { id: "c1", version: 2, title: "采用突破版本", status: "COMMITTED", baseDocument: { ...document, version: 3 },
     items: [], impacts: [], coverage: "未检查全书", selectedIds: ["draft"], runId: null,
     published: [{ itemId: "draft", sourceKey: "MANUSCRIPT:new", revision: "m2" }],
-    undo: [], reversedBy: null, readDependencies: [] };
+    undo: [], reversedBy: null, readDependencies: [], decisionDependencies: [] };
   preview = { id: "reverse1", changeSetId: "c1", version: 1, status: "PENDING", baseDocument: structuredClone(document),
     items: [{ itemId: "draft", title: "突破", sourceKey: "MANUSCRIPT:new", action: "ARCHIVE",
       before: { key: "MANUSCRIPT:new", kind: "MANUSCRIPT", title: "突破", revision: "m2",

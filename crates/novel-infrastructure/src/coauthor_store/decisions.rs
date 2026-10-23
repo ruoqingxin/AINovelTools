@@ -164,7 +164,7 @@ impl Database {
         Ok(())
     }
 
-    fn decision(&self, session: Uuid, id: Uuid) -> Result<CoauthorDecision, CoauthorError> {
+    pub(super) fn decision(&self, session: Uuid, id: Uuid) -> Result<CoauthorDecision, CoauthorError> {
         self.connection
             .query_row(
                 "SELECT r.payload FROM coauthor_decisions d JOIN coauthor_decision_revisions r

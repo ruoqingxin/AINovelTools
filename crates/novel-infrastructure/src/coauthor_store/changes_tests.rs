@@ -26,6 +26,7 @@ fn request(manager: &mut ProjectManager, scope: &CoauthorScope) -> CoauthorChang
         .unwrap()
         .unwrap();
     CoauthorChangeRequest {
+        decision_dependencies: vec![],
         include_draft: true,
         expected_document_version: saved.version,
         title: "采用失忆版并更新体系".into(),
@@ -158,6 +159,7 @@ fn partial_adoption_checks_dependencies_and_only_commits_the_selected_subset() {
     assert_eq!(count(&manager, "coauthor_publications"), 0);
     assert_eq!(count(&manager, "coauthor_impacts"), 1);
     let mut independent = CoauthorChangeRequest {
+        decision_dependencies: vec![],
         include_draft: true,
         expected_document_version: base.version,
         title: "仅采用独立正文".into(),

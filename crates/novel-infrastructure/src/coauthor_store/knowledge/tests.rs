@@ -689,6 +689,7 @@ fn evidence_tool_dependencies_are_durable_and_source_changes_block_pending_forma
         .prepare_coauthor_changeset(
             &f.scope,
             CoauthorChangeRequest {
+                decision_dependencies: vec![],
                 title: "基于事实采用工作稿".into(),
                 include_draft: true,
                 expected_document_version: document.version,

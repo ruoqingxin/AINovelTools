@@ -115,6 +115,9 @@ try {
           return {id:"change1",version:1,title:"采用突破正文并更新修炼体系",status:"PENDING",
             baseDocument:structuredClone(state.document),runId:null,coverage:"已核对修炼体系与旧章片段；其余正文和伏笔尚未检查。",
             selectedIds:[],published:[],undo:[],reversedBy:null,readDependencies:[],
+            decisionDependencies:state.decisions.map((decision,index)=>({
+              itemIds:index===0?["draft","realm"]:["opening"],
+              decision:structuredClone(decision),current:structuredClone(decision)})),
             items:[{id:"draft",document:structuredClone(state.document),before:null,dependsOn:["realm"]},
               {id:"realm",document:{...state.document,kind:"SETTING",title:"修炼体系",content:"炼气、筑基、金丹、照魂。突破照魂境需要失去一段记忆。",
                 targetKey:"ENTITY:realm",targetRevision:"r1"},
@@ -269,6 +272,12 @@ try {
             revisions:[{decision:structuredClone(state.decisions[0]),quote:"代价改为失去记忆"},
               {decision:{...state.decisions[0],version:1,content:"突破消耗寿元。",sourceMessageId:"earlier-message"},
                 quote:null}],hasMore:false};
+          if(command==="correct_coauthor_decision"){
+            const decision=state.decisions.find(entry=>entry.id===args.id);
+            if(!decision||decision.version!==args.expectedVersion)throw new Error("Decision version conflict");
+            Object.assign(decision,{version:decision.version+1,content:args.content,status:args.status,sourceMessageId:"correction"});
+            return structuredClone(decision);
+          }
           if(command==="list_coauthor_source_checks")return {checks:structuredClone(sourceChecks),hasMore:false};
           if(command==="get_coauthor_source_check"){
             const check=sourceChecks.find(item=>item.id===args.id);
@@ -310,15 +319,35 @@ try {
           }
           if(command==="cancel_coauthor_run")return;
           if(command==="list_coauthor_document_history")return [doc];
+          if(command==="prepare_coauthor_changeset"){
+            const request=args.request;
+            if(request.expectedDocumentVersion!==state.document.version)throw new Error("Draft version conflict");
+            changes={...preparedChanges(),id:"manual-rule-change",title:request.title,coverage:request.coverage,
+              items:[{id:"draft",document:structuredClone(state.document),before:null,dependsOn:request.draftDependsOn},
+                ...request.items.map(item=>({id:item.id,document:{...state.document,kind:item.kind,title:item.title,
+                  content:item.content,targetKey:item.targetKey,targetRevision:item.targetRevision},
+                  before:null,dependsOn:item.dependsOn}))],
+              impacts:request.impacts,decisionDependencies:request.decisionDependencies.map(entry=>{
+                const decision=state.decisions.find(decision=>decision.id===entry.decisionId);
+                if(!decision||decision.version!==entry.version)throw new Error("Decision version conflict");
+                return {itemIds:entry.itemIds,decision:structuredClone(decision),current:structuredClone(decision)};
+              })};
+            return structuredClone(changes);
+          }
           if(command==="get_coauthor_changes"){
             changes??=preparedChanges();
             return {changeSets:[{id:changes.id,version:changes.version,title:changes.title,status:changes.status,itemCount:changes.items.length,reversedBy:changes.reversedBy}],
               impacts:structuredClone(impacts),hasMoreChanges:false,hasMoreImpacts:false};
           }
-          if(command==="get_coauthor_changeset")return structuredClone(changes);
+          if(command==="get_coauthor_changeset")return {...structuredClone(changes),
+            decisionDependencies:changes.decisionDependencies.map(entry=>({...structuredClone(entry),
+              current:structuredClone(state.decisions.find(decision=>decision.id===entry.decision.id)??null)}))};
           if(command==="commit_coauthor_changeset"){
             if(changes.status==="COMMITTED")return structuredClone(changes);
             if(args.selectedIds.includes("draft")&&!args.selectedIds.includes("realm"))throw new Error("missing dependency");
+            if(changes.decisionDependencies.some(entry=>entry.itemIds.some(id=>args.selectedIds.includes(id))
+              &&JSON.stringify(entry.decision)!==JSON.stringify(state.decisions.find(decision=>decision.id===entry.decision.id))))
+              throw new Error("Decision dependency changed");
             changes={...changes,status:"COMMITTED",version:2,selectedIds:args.selectedIds,
               published:args.selectedIds.map(id=>({itemId:id,sourceKey:id==="draft"?"MANUSCRIPT:new":id==="opening"?"MANUSCRIPT:opening":id==="outline"?"PLAN:plan-node:outline":"ENTITY:realm",revision:"v2"}))};
             if(args.selectedIds.includes("draft"))state.document={...state.document,version:state.document.version+1,
@@ -572,6 +601,15 @@ try {
     await page.getByRole("button", { name: "关联变更", exact: true }).click();
     const changesPanel = page.getByRole("dialog", { name: "关联变更与影响" });
     await changesPanel.getByRole("button", { name: "核对差异" }).click();
+    const decisionDependencies = changesPanel.getByRole("region", { name: "讨论决定依赖核对" });
+    await decisionDependencies.getByText("准备时 · v2 · 已选择", { exact: true }).waitFor();
+    await decisionDependencies.getByText("当前 · v2 · 已选择", { exact: true }).waitFor();
+    await decisionDependencies.getByText("准备时 · v1 · 已否定", { exact: true }).waitFor();
+    await decisionDependencies.getByText("当前 · v1 · 已否定", { exact: true }).waitFor();
+    assert.equal(await decisionDependencies.getByText("用丹药免除突破代价", { exact: true }).count(), 2);
+    await decisionDependencies.evaluate((el) => el.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-decision-dependencies.png`), fullPage: true });
+    assert.equal(await decisionDependencies.evaluate((el) => el.scrollWidth > el.clientWidth), false);
     const setting = changesPanel.getByRole("checkbox", { name: "修炼体系 设定" });
     await setting.uncheck();
     await page.waitForTimeout(50);
@@ -607,6 +645,7 @@ try {
     await changesPanel.getByRole("button", { name: "确认采用所选变更" }).click();
     const confirmation = page.getByRole("alertdialog", { name: "正式采用关联变更" });
     await confirmation.waitFor({ state: "visible" });
+    assert.ok((await confirmation.innerText()).includes("核对 2 条明确声明的决定依赖"));
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-confirmation.png`), fullPage: true });
     await confirmation.getByRole("button", { name: "采用所选变更", exact: true }).click();
     await changesPanel.getByText("已正式采用 4 项；其他内容未同步。", { exact: true }).waitFor();
@@ -676,7 +715,8 @@ try {
     assert.ok((await page.getByLabel("讨论输入", { exact: true }).inputValue()).includes("继续查证清单 check2"));
     const runCount = await page.evaluate(() => window.__coauthorCalls.filter((name) => name === "run_coauthor").length);
     assert.equal(runCount, 1, "Viewing, creating and continuing a check must not auto-run a model");
-    await page.getByRole("button", { name: "决定", exact: false }).click();
+    await page.getByRole("navigation", { name: "工作区", exact: true })
+      .getByRole("button", { name: "决定", exact: false }).click();
     const decisionsPanel = page.getByRole("dialog", { name: "讨论决定" });
     await decisionsPanel.getByRole("article").filter({ has: page.getByText("突破代价", { exact: true }) }).getByText("决定来源与修订", { exact: true }).click();
     await decisionsPanel.getByText("v2 · 当前修订", { exact: true }).waitFor();
@@ -685,6 +725,44 @@ try {
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-decision-history.png`), fullPage: true });
     assert.equal(await decisionsPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
     await decisionsPanel.getByRole("button", { name: "关闭讨论决定", exact: true }).click();
+    await page.getByRole("button", { name: "关联变更", exact: true }).click();
+    await changesPanel.getByText("准备新的变更集", { exact: true }).click();
+    await changesPanel.getByRole("checkbox", { name: "同时新建设定", exact: true }).check();
+    await changesPanel.getByLabel("关联设定标题", { exact: true }).fill("独立城门");
+    await changesPanel.getByLabel("关联设定内容", { exact: true }).fill("城门向南。");
+    const decisionSearches = await page.evaluate(() => window.__coauthorCalls.filter(name => name === "search_coauthor_decisions").length);
+    await changesPanel.getByText("依赖的讨论决定 · 0 条", { exact: true }).click();
+    await changesPanel.getByRole("checkbox", { name: "突破例外 → 当前工作稿", exact: true }).check();
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "search_coauthor_decisions").length), decisionSearches + 1);
+    await changesPanel.getByRole("button", { name: "从当前工作稿准备", exact: true }).click();
+    await decisionDependencies.getByText("准备时 · v1 · 已否定", { exact: true }).waitFor();
+    await changesPanel.getByRole("button", { name: "关闭关联变更与影响", exact: true }).click();
+    await page.getByRole("navigation", { name: "工作区", exact: true })
+      .getByRole("button", { name: "决定", exact: false }).click();
+    await decisionsPanel.getByRole("article").filter({ has: page.getByText("突破例外", { exact: true }) })
+      .getByRole("button", { name: "纠正", exact: true }).click();
+    await decisionsPanel.getByLabel("决定状态", { exact: true }).selectOption("WITHDRAWN");
+    await decisionsPanel.getByRole("button", { name: "保存纠正", exact: true }).click();
+    await decisionsPanel.getByText("已撤回 · v2", { exact: true }).waitFor();
+    await decisionsPanel.getByRole("button", { name: "关闭讨论决定", exact: true }).click();
+    await page.getByRole("button", { name: "关联变更", exact: true }).click();
+    await changesPanel.getByRole("button", { name: "核对差异", exact: true }).click();
+    await decisionDependencies.getByText("当前 · v2 · 已撤回", { exact: true }).waitFor();
+    await decisionDependencies.getByText("所选变更依赖的决定已变化，须重新核对并准备。", { exact: true }).waitFor();
+    assert.equal(await changesPanel.getByRole("button", { name: "确认采用所选变更", exact: true }).isDisabled(), true);
+    await changesPanel.getByRole("checkbox", { name: "第十二章 · 声音的代价 正文", exact: true }).uncheck();
+    await decisionDependencies.getByText("决定已变化；当前未选其依赖项，不阻止其他独立项目。", { exact: true }).waitFor();
+    assert.equal(await changesPanel.getByRole("button", { name: "确认采用所选变更", exact: true }).isEnabled(), true);
+    await decisionDependencies.evaluate(el => el.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-stale-decision-dependencies.png`), fullPage: true });
+    assert.equal(await changesPanel.evaluate(el => el.scrollWidth > el.clientWidth), false);
+    await changesPanel.getByRole("button", { name: "确认采用所选变更", exact: true }).click();
+    await confirmation.waitFor({ state: "visible" });
+    assert.ok((await confirmation.innerText()).includes("核对 0 条明确声明的决定依赖"));
+    await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "commit_coauthor_changeset").length), 1);
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "run_coauthor").length), 1);
+    await changesPanel.getByRole("button", { name: "关闭关联变更与影响", exact: true }).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     reports.push({ viewport, overflow, panelOverflow, boxes, commands: await page.evaluate(() => window.__coauthorCalls) });
     await context.close();

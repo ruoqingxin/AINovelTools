@@ -193,6 +193,7 @@ fn unseen_evidence_lifecycle_change_blocks_a_prepared_formal_adoption_based_on_a
     let audit = vec![serde_json::json!({"kind":"tool","name":"read_knowledge_evidence","result":result})];
     f.manager.checkpoint_coauthor_run(&f.scope, run.id, "已查看一条后续页证据", &audit).unwrap();
     let changes = f.manager.prepare_coauthor_changeset(&f.scope, CoauthorChangeRequest {
+        decision_dependencies: vec![],
         title: "采用试写".into(), include_draft: true, expected_document_version: draft.version,
         draft_depends_on: vec![], items: vec![], impacts: vec![], coverage: "仅核验第17条证据".into(),
     }, Some(run.id)).unwrap();
