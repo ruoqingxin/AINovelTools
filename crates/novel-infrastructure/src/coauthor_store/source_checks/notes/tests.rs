@@ -401,6 +401,7 @@ fn migration_failure_rolls_back_and_retry_keeps_author_text() {
     db.migrate_coauthor_knowledge_checks().unwrap();
     db.migrate_coauthor_knowledge_anchor_pages().unwrap();
     db.migrate_coauthor_evidence_progress().unwrap();
+    db.migrate_coauthor_branch_merges().unwrap();
     assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         db.coauthor_source(&f.key).unwrap().unwrap().content,

@@ -63,6 +63,9 @@ try {
         }
         let changes=null;
         let reversal=null;
+        let branchMerge=null;
+        const branch={sessionId:"branch1",title:"照魂境 · 另一结尾",relationship:"CHILD"};
+        const branchDocument={...doc,sessionId:"branch1",version:2,content:"甲😀另一个结尾。\\n来源保留。"};
         let impacts=[];
         let sourceChecks=[{id:"check1",title:"突破代价 · 全部旧章",query:"失忆代价是否影响旧章",
           kinds:["MANUSCRIPT"],total:3,read:2,sent:1,reviewed:1,relevant:1,uncertain:0,
@@ -138,7 +141,7 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:62};
+          if(command==="health_query")return {schemaVersion:63};
           if(command==="get_coauthor_semantic_status")return structuredClone(semanticStatus);
           if(command==="save_coauthor_semantic_settings"){
             if(args.expectedVersion!==semanticStatus.settings.version)throw new Error("Semantic permission conflict");
@@ -159,6 +162,35 @@ try {
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
           if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
           if(command==="get_coauthor_state")return lightState();
+          if(command==="list_coauthor_branches")return {branches:[branch],hasMore:false};
+          if(command==="compare_coauthor_branch")return {
+            branch:structuredClone(branch),baseDocument:structuredClone(doc),
+            currentDocument:structuredClone(state.document),sourceDocument:structuredClone(branchDocument)};
+          if(command==="prepare_coauthor_branch_merge"){
+            const input=args.input;
+            if(input.sourceSessionId!==branch.sessionId||input.expectedVersion!==state.document.version
+              ||input.sourceVersion!==branchDocument.version)throw new Error("Branch snapshot changed");
+            const before=structuredClone(state.document);
+            const content=[...before.content].slice(0,input.targetStart).join("")
+              +[...branchDocument.content].slice(input.sourceStart,input.sourceEnd).join("")
+              +[...before.content].slice(input.targetEnd).join("");
+            branchMerge={id:"merge1",status:"PENDING",branch:structuredClone(branch),before,source:structuredClone(branchDocument),
+              after:{...before,version:before.version+1,content},sourceStart:input.sourceStart,sourceEnd:input.sourceEnd,
+              targetStart:input.targetStart,targetEnd:input.targetEnd};
+            return structuredClone(branchMerge);
+          }
+          if(command==="apply_coauthor_branch_merge"){
+            if(!branchMerge||args.id!==branchMerge.id)throw new Error("Unknown merge receipt");
+            if(branchMerge.status!=="APPLIED"){
+              if(state.document.version!==branchMerge.before.version)throw new Error("Target changed");
+              state.document=structuredClone(branchMerge.after);branchMerge.status="APPLIED";
+            }
+            return structuredClone(branchMerge);
+          }
+          if(command==="get_coauthor_branch_merge")return structuredClone(branchMerge);
+          if(command==="list_coauthor_branch_merges")return {merges:branchMerge?[{
+            id:branchMerge.id,status:branchMerge.status,sourceTitle:branch.title,beforeVersion:branchMerge.before.version,
+            sourceVersion:branchDocument.version,afterVersion:branchMerge.after.version}]:[],hasMore:false};
           if(command==="list_coauthor_runs"){
             const start=args.beforeRunId?state.runs.findIndex(run=>run.id===args.beforeRunId)+1:0;
             if(args.beforeRunId&&start===0)throw new Error("Unknown run cursor");
@@ -433,6 +465,47 @@ try {
     await draft.fill(`${await draft.inputValue()}\n\n作者继续写下去。`);
     await page.getByText(/已保存 v2/).waitFor();
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-draft.png`), fullPage: true });
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("list_coauthor_branches")), false,
+      "Opening a workspace must not load branch drafts or the branch directory");
+    await page.getByRole("button", { name: "分支比较与合并", exact: true }).click();
+    const branchPanel = page.getByRole("dialog", { name: "分支比较与合并", exact: true });
+    await branchPanel.getByRole("option", { name: "子分支 · 照魂境 · 另一结尾", exact: true }).waitFor({ state: "attached" });
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("compare_coauthor_branch")), false);
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("list_coauthor_branch_merges")), false);
+    await branchPanel.getByLabel("对照分支", { exact: true }).selectOption("branch1");
+    await branchPanel.getByRole("button", { name: "比较分支", exact: true }).click();
+    const branchSource = branchPanel.getByLabel("合并来源稿", { exact: true });
+    await branchSource.waitFor();
+    await branchPanel.getByText("继承起点 · v1", { exact: true }).click();
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-branch-comparison.png`), fullPage: true });
+    await branchSource.focus();
+    await branchSource.evaluate(el => el.setSelectionRange(1, 8));
+    await branchSource.press("Shift");
+    await branchPanel.getByText("来源字符 1 至 7", { exact: true }).waitFor();
+    const draftBeforeMerge = await draft.inputValue();
+    await branchPanel.getByRole("button", { name: "准备合并预览", exact: true }).click();
+    await branchPanel.getByRole("button", { name: "确认合并到工作稿", exact: true }).waitFor();
+    assert.equal(await branchPanel.getByLabel("分支合并后", { exact: true }).innerText(), `${draftBeforeMerge}😀另一个结尾`);
+    assert.equal(await branchPanel.evaluate(el => el.scrollWidth > el.clientWidth), false);
+    await branchPanel.getByRole("region", { name: "分支合并预览", exact: true }).evaluate(el => el.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-branch-preview.png`), fullPage: true });
+    await branchPanel.getByRole("button", { name: "确认合并到工作稿", exact: true }).click();
+    const mergeConfirmation = page.getByRole("alertdialog", { name: "合并分支文字", exact: true });
+    await mergeConfirmation.waitFor();
+    assert.ok((await mergeConfirmation.innerText()).includes("讨论决定、正式设定与其他章节不合并"));
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("apply_coauthor_branch_merge")), false);
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-branch-confirmation.png`), fullPage: true });
+    await mergeConfirmation.getByRole("button", { name: "确认合并文字", exact: true }).click();
+    await branchPanel.getByText("已合并为工作稿 v3，当前稿件可能已有后续编辑。", { exact: true }).waitFor();
+    assert.equal(await draft.inputValue(), `${draftBeforeMerge}😀另一个结尾`);
+    await branchPanel.getByText("分支合并记录", { exact: true }).click();
+    await branchPanel.getByRole("button", { name: "查看合并记录", exact: true }).click();
+    await branchPanel.getByRole("heading", { name: "合并回执 · 照魂境 · 另一结尾", exact: true }).waitFor();
+    assert.equal(await branchPanel.getByRole("button", { name: "确认合并到工作稿", exact: true }).count(), 0);
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-branch-receipt.png`), fullPage: true });
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "run_coauthor").length), 1,
+      "Branch comparison and author merge must not run a model");
+    await branchPanel.getByRole("button", { name: "关闭分支比较与合并", exact: true }).click();
     const boxes = await page.evaluate(() => {
       const selectors = [".coauthor-heading", ".coauthor-toolbar", ".coauthor-composer", ".coauthor-manuscript"];
       return selectors.map((selector) => {
@@ -443,7 +516,7 @@ try {
       });
     });
     for (const box of boxes.filter((box) => box.visible)) {
-      assert.ok(box.x >= 0 && box.right <= viewport.width + 1, `${box.selector} must fit ${viewport.width}px`);
+      assert.ok(box.x >= 0 && box.right <= viewport.width + 1, `${box.selector} must fit ${viewport.width}px: ${JSON.stringify(box)}`);
       assert.ok(box.height > 0, `${box.selector} is not blank`);
     }
     await page.getByRole("button", { name: "关联变更", exact: true }).click();

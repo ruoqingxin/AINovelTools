@@ -9,6 +9,7 @@ use novel_infrastructure::{
     CoauthorChangeItemInput, CoauthorImpactInput,
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
     CoauthorRun, CoauthorRunsPage,
+    CoauthorBranchesPage, CoauthorBranchComparison, CoauthorBranchMergeInput, CoauthorBranchMerge, CoauthorBranchMergesPage,
     CoauthorSearchPage, CoauthorKnowledgeEvidence, CoauthorKnowledgeAnchorsPage, CoauthorEvidenceProgress,
     CoauthorManuscriptBlock,
     CoauthorOutlinePage,
@@ -130,6 +131,54 @@ impl Drop for RunGuard<'_> {
             );
         }
     }
+}
+
+#[tauri::command]
+pub(crate) fn list_coauthor_branches(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, offset: u32,
+) -> Result<CoauthorBranchesPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_coauthor_branches(&scope,offset).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn compare_coauthor_branch(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, source_session_id: uuid::Uuid,
+) -> Result<CoauthorBranchComparison, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .compare_coauthor_branch(&scope,source_session_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn prepare_coauthor_branch_merge(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, input: CoauthorBranchMergeInput,
+) -> Result<CoauthorBranchMerge, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .prepare_coauthor_branch_merge(&scope,input).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn get_coauthor_branch_merge(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid,
+) -> Result<CoauthorBranchMerge, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .get_coauthor_branch_merge(&scope,id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn list_coauthor_branch_merges(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, offset: u32,
+) -> Result<CoauthorBranchMergesPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_coauthor_branch_merges(&scope,offset).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn apply_coauthor_branch_merge(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid,
+) -> Result<CoauthorBranchMerge, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .apply_coauthor_branch_merge(&scope,id).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -1680,6 +1729,8 @@ mod tests {
         assert!(!names.contains(&"update_coauthor_impact"));
         assert!(!names.contains(&"commit_coauthor_reversal"));
         assert!(!names.contains(&"prepare_coauthor_reversal"));
+        assert!(!names.contains(&"prepare_coauthor_branch_merge"));
+        assert!(!names.contains(&"apply_coauthor_branch_merge"));
         let call = ModelToolCall {
             id: "forged".into(), call_type: "function".into(),
             function: novel_infrastructure::ModelToolFunction {

@@ -483,6 +483,7 @@ fn migration_52_rolls_back_new_tables_on_failure_and_preserves_formal_text_on_re
     db.migrate_coauthor_knowledge_checks().unwrap();
     db.migrate_coauthor_knowledge_anchor_pages().unwrap();
     db.migrate_coauthor_evidence_progress().unwrap();
+    db.migrate_coauthor_branch_merges().unwrap();
     assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         db.current_manuscript(chapter.id).unwrap().unwrap(),

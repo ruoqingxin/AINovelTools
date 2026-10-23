@@ -448,4 +448,47 @@ describe("coauthor workspace", () => {
     expect((screen.getByLabelText("讨论输入") as HTMLTextAreaElement).value).toContain("保留我刚才的条件。\n\n继续查证清单 check-1");
     expect(pending).toHaveLength(0);
   });
+
+  it("loads branch comparison only on demand and applies its receipt while preserving newer local typing", async () => {
+    const base = mocks.invoke.getMockImplementation()!;
+    let receipt: import("../lib/tauri-client").CoauthorBranchMerge;
+    let resolveApply!: (value: typeof receipt) => void;
+    const branch = { sessionId: "s2", title: "失忆分支", relationship: "CHILD" };
+    const source = { ...baseline, sessionId: "s2", content: "分支新结尾。" };
+    mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === "list_coauthor_branches") return { branches: [branch], hasMore: false };
+      if (command === "compare_coauthor_branch") return {
+        branch, baseDocument: baseline, currentDocument: structuredClone(stored.document), sourceDocument: source,
+      };
+      if (command === "prepare_coauthor_branch_merge") {
+        const before = structuredClone(stored.document);
+        const total = [...before.content].length;
+        receipt = { id: "merge", status: "PENDING", branch, before, source,
+          after: { ...before, version: before.version + 1, content: before.content + source.content },
+          sourceStart: 0, sourceEnd: [...source.content].length, targetStart: total, targetEnd: total };
+        return structuredClone(receipt);
+      }
+      if (command === "apply_coauthor_branch_merge") return new Promise(done => { resolveApply = done; });
+      return base(command, args);
+    });
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "list_coauthor_branches")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "分支比较与合并" }));
+    await screen.findByRole("option", { name: "子分支 · 失忆分支" });
+    fireEvent.change(screen.getByLabelText("对照分支"), { target: { value: "s2" } });
+    fireEvent.click(screen.getByRole("button", { name: "比较分支" }));
+    fireEvent.click(await screen.findByRole("button", { name: "准备合并预览" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认合并到工作稿" }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认合并文字" }));
+    await waitFor(() => expect(resolveApply).toBeDefined());
+    fireEvent.change(screen.getByLabelText("工作稿内容"), { target: { value: "请求等待期间作者又写了新段。" } });
+    stored.document = { ...receipt!.after };
+    await act(async () => resolveApply({ ...receipt!, status: "APPLIED" }));
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue("请求等待期间作者又写了新段。");
+    expect(localStorage.getItem("coauthor-draft:p1:s1")).toContain("请求等待期间作者又写了新段");
+    expect(screen.getByText("已合并为工作稿 v2，当前稿件可能已有后续编辑。")).toBeVisible();
+    expect(pending).toHaveLength(0);
+  });
 });

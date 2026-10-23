@@ -186,6 +186,24 @@ export function listCoauthorRuns(input: IpcRequests["list_coauthor_runs"]) {
 export function getCoauthorRun(input: IpcRequests["get_coauthor_run"]) {
   return invoke("get_coauthor_run", input);
 }
+export function listCoauthorBranches(input: IpcRequests["list_coauthor_branches"]) {
+  return invoke("list_coauthor_branches", input);
+}
+export function compareCoauthorBranch(input: IpcRequests["compare_coauthor_branch"]) {
+  return invoke("compare_coauthor_branch", input);
+}
+export function prepareCoauthorBranchMerge(input: IpcRequests["prepare_coauthor_branch_merge"]) {
+  return invoke("prepare_coauthor_branch_merge", input);
+}
+export function getCoauthorBranchMerge(input: IpcRequests["get_coauthor_branch_merge"]) {
+  return invoke("get_coauthor_branch_merge", input);
+}
+export function listCoauthorBranchMerges(input: IpcRequests["list_coauthor_branch_merges"]) {
+  return invoke("list_coauthor_branch_merges", input);
+}
+export function applyCoauthorBranchMerge(input: IpcRequests["apply_coauthor_branch_merge"]) {
+  return invoke("apply_coauthor_branch_merge", input);
+}
 export function listCoauthorRelatedKnowledge(input: IpcRequests["list_coauthor_related_knowledge"]) {
   return invoke("list_coauthor_related_knowledge", input);
 }

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Check, ClipboardList, DatabaseZap, FileText, GitBranch, History, ListChecks, MessageSquareText, Plus, RefreshCw, Save, Send, Square, X } from "lucide-react";
+import { BookOpen, Check, ClipboardList, DatabaseZap, FileText, GitBranch, GitCompareArrows, History, ListChecks, MessageSquareText, Plus, RefreshCw, Save, Send, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "../lib/ipc-transport";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
@@ -22,6 +22,7 @@ import { CoauthorDecisionHistory, DecisionContext } from "./coauthor-decision-hi
 import { CoauthorRunDirectory } from "./coauthor-run-directory";
 import { CoauthorKnowledge } from "./coauthor-knowledge";
 import { CoauthorSemanticPanel } from "./coauthor-semantic-panel";
+import { CoauthorBranchesPanel } from "./coauthor-branches-panel";
 import "./coauthor-workspace.css";
 
 const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
@@ -166,7 +167,7 @@ function CoauthorSession({ scope, initial, onFork }: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState("chat");
-  const [panel, setPanel] = useState<"sources" | "semantic" | "checks" | "decisions" | "history" | "proposal" | "publish" | "changes" | null>(null);
+  const [panel, setPanel] = useState<"sources" | "semantic" | "checks" | "decisions" | "history" | "proposal" | "publish" | "changes" | "branches" | null>(null);
   const [publication, setPublication] = useState<{ document: CoauthorDocument; before: string } | null>(null);
   const [runId, setRunId] = useState(initial.runs[0]?.id ?? "");
   const [history, setHistory] = useState<CoauthorDocument[]>([]);
@@ -407,6 +408,7 @@ function CoauthorSession({ scope, initial, onFork }: {
         <button onClick={() => setPanel("changes")}><ClipboardList size={15} />关联变更</button>
         <button className="icon-command" title="工作稿版本" aria-label="工作稿版本" onClick={() => void showHistory()} disabled={busy}><History size={17} /></button>
         <button className="icon-command" title="另开分支" aria-label="另开分支" onClick={() => void fork()} disabled={busy || Boolean(active) || draft.conflict}><GitBranch size={17} /></button>
+        <button className="icon-command" title="分支比较与合并" aria-label="分支比较与合并" onClick={() => setPanel("branches")}><GitCompareArrows size={17} /></button>
       </div>
     </nav>
     {(error || draft.error || messages.error || profiles.error || preferences.error || overrides.error) && <p role="alert" className="project-error">
@@ -493,8 +495,16 @@ function CoauthorSession({ scope, initial, onFork }: {
           {runId && <button onClick={() => setPanel("proposal")}>{proposal ? "查看改稿差异" : "查看运行结果"}</button>}</footer>
       </section>
     </div>
-    <WorkspacePanel open={panel !== null} title={panel === "semantic" ? "语义索引与外发授权" : panel === "checks" ? "查证范围与进度" : panel === "changes" ? "关联变更与影响" : panel === "sources" ? "依据与运行记录" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : panel === "publish" ? "正式采用预览" : "改稿差异"}
+    <WorkspacePanel open={panel !== null} title={panel === "branches" ? "分支比较与合并" : panel === "semantic" ? "语义索引与外发授权" : panel === "checks" ? "查证范围与进度" : panel === "changes" ? "关联变更与影响" : panel === "sources" ? "依据与运行记录" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : panel === "publish" ? "正式采用预览" : "改稿差异"}
       onClose={() => { setPanel(null); setSource(null); }}>
+      {panel === "branches" && <CoauthorBranchesPanel key={`${scope.projectId}:${scope.sessionId}`} scope={scope}
+        getDocument={() => draft.current.current} saveDraft={async () => {
+          if (draft.backup || draft.conflict) throw new Error("请先处理本地恢复稿或版本冲突，再比较分支。");
+          return draft.save();
+        }} isGenerating={() => Boolean(activeRef.current)} onApplied={async (merge) => {
+          draft.acceptSaved(merge.after, merge.before); setSelection("");
+          await refresh();
+        }} />}
       {panel === "semantic" && <CoauthorSemanticPanel key={`${scope.projectId}:${scope.sessionId}`} scope={scope} />}
       {panel === "checks" && <CoauthorChecksPanel key={`${scope.projectId}:${scope.sessionId}`} scope={scope}
         isGenerating={Boolean(active)} onContinue={(check) => {

@@ -24,6 +24,8 @@ mod decisions;
 pub use decisions::*;
 mod runs;
 pub use runs::*;
+mod branches;
+pub use branches::*;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
