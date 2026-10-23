@@ -2,6 +2,8 @@ use super::*;
 use std::collections::BTreeSet;
 mod decisions;
 pub use decisions::*;
+mod consumers;
+pub use consumers::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -327,6 +329,7 @@ impl ProjectManager {
                 encode(&changes)?
             ],
         )?;
+        db.index_coauthor_decision_consumers(&changes)?;
         tx.commit()?;
         Ok(changes)
     }
@@ -591,6 +594,7 @@ impl ProjectManager {
             "UPDATE coauthor_changesets SET status='COMMITTED',version=?2,payload=?3 WHERE id=?1",
             rusqlite::params![changes.id.to_string(), changes.version, encode(&changes)?],
         )?;
+        db.index_coauthor_decision_consumers(&changes)?;
         tx.commit()?;
         Ok(changes)
     }

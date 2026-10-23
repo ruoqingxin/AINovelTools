@@ -265,7 +265,8 @@ fn migration_63_is_atomic_retryable_and_keeps_existing_working_drafts() {
     let f = Fixture::new();
     let original = f.manager.coauthor_document(&f.scope).unwrap();
     f.db().connection.execute_batch(
-        "DROP TABLE coauthor_branch_decision_adoptions; DROP TABLE coauthor_branch_merges; DELETE FROM schema_migrations WHERE version>=63;
+        "DROP TABLE coauthor_decision_consumers; DROP TABLE coauthor_changeset_dependency_coverage;
+         DROP TABLE coauthor_branch_decision_adoptions; DROP TABLE coauthor_branch_merges; DELETE FROM schema_migrations WHERE version>=63;
          CREATE TRIGGER fail63 BEFORE INSERT ON schema_migrations WHEN NEW.version=63
          BEGIN SELECT RAISE(ABORT,'late migration failure'); END;",
     ).unwrap();
@@ -278,6 +279,7 @@ fn migration_63_is_atomic_retryable_and_keeps_existing_working_drafts() {
     f.db().connection.execute_batch("DROP TRIGGER fail63").unwrap();
     f.db().migrate_coauthor_branch_merges().unwrap();
     f.db().migrate_coauthor_branch_decisions().unwrap();
+    f.db().migrate_coauthor_decision_consumers().unwrap();
     assert_eq!(f.db().health().unwrap().schema_version,CURRENT_SCHEMA_VERSION);
     assert_eq!(f.manager.coauthor_document(&f.scope).unwrap(),original);
 }

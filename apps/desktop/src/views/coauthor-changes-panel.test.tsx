@@ -14,8 +14,8 @@ let page: CoauthorChangesPage;
 let generating: boolean;
 const committed = vi.fn();
 
-function renderPanel() {
-  return render(<ConfirmActionProvider><CoauthorChangesPanel scope={scope}
+function renderPanel(initialChangeSetId?: string) {
+  return render(<ConfirmActionProvider><CoauthorChangesPanel scope={scope} initialChangeSetId={initialChangeSetId}
     getDocument={() => document} saveDraft={async () => structuredClone(document)}
     isGenerating={() => generating} onCommitted={committed} /></ConfirmActionProvider>);
 }
@@ -75,6 +75,60 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("linked coauthor changes", () => {
+  it("opens an exact requested plan even when it is outside the current directory page without adopting anything", async () => {
+    page.changeSets = [];
+    changes.id = "old-exact-plan";
+    renderPanel("old-exact-plan");
+    expect(await screen.findByRole("region", { name: "关联变更差异" })).toHaveTextContent("采用失忆版本");
+    expect(mocks.invoke).toHaveBeenCalledWith("get_coauthor_changeset", { scope, id: "old-exact-plan" });
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "commit_coauthor_changeset")).toBe(false);
+  });
+
+  it("rejects a detail response for a different plan identity", async () => {
+    renderPanel("requested-plan");
+    expect(await screen.findByRole("alert")).toHaveTextContent("返回方案身份与请求不符");
+    expect(screen.queryByRole("region", { name: "关联变更差异" })).not.toBeInTheDocument();
+  });
+
+  it("reports an exact-plan read failure without selecting a different directory entry", async () => {
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === "get_coauthor_changeset") throw new Error("准确方案读取失败");
+      return original(command, args);
+    });
+    renderPanel("missing-plan");
+    expect(await screen.findByRole("alert")).toHaveTextContent("指定方案无法核实：准确方案读取失败");
+    expect(screen.queryByRole("region", { name: "关联变更差异" })).not.toBeInTheDocument();
+    expect(committed).not.toHaveBeenCalled();
+  });
+
+  it("does not reconnect a late exact-plan response after closing the panel", async () => {
+    let resolve!: (value: unknown) => void;
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command, args) => command === "get_coauthor_changeset"
+      ? new Promise((done) => { resolve = done; }) : original(command, args));
+    const view = renderPanel("old-exact-plan");
+    await waitFor(() => expect(resolve).toBeDefined());
+    view.unmount();
+    await act(async () => resolve(structuredClone(changes)));
+    expect(committed).not.toHaveBeenCalled();
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "commit_coauthor_changeset")).toBe(false);
+  });
+
+  it("keeps a newer manual selection when the initial exact-plan request finishes late", async () => {
+    let resolve!: (value: unknown) => void;
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command, args) => command === "get_coauthor_changeset" && args.id === "old-exact-plan"
+      ? new Promise((done) => { resolve = done; }) : original(command, args));
+    renderPanel("old-exact-plan");
+    await waitFor(() => expect(resolve).toBeDefined());
+    await openReview();
+    await act(async () => resolve({ ...structuredClone(changes), id: "old-exact-plan", title: "迟到的旧方案" }));
+    expect(screen.getByRole("region", { name: "关联变更差异" })).toHaveTextContent("采用失忆版本");
+    expect(screen.queryByText("迟到的旧方案")).not.toBeInTheDocument();
+    expect(committed).not.toHaveBeenCalled();
+  });
+
   it("blocks only selected items with stale declared decisions and keeps other items selectable", async () => {
     const decision = { id: "rule", topic: "突破代价", content: "失忆", status: "CHOSEN", version: 1, sourceMessageId: "m1" };
     changes.decisionDependencies = [{ itemIds: ["draft"], decision, current: { ...decision, version: 2, status: "WITHDRAWN" } }];

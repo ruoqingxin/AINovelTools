@@ -17,7 +17,7 @@ use novel_infrastructure::{
     CoauthorReversal,
     CoauthorSourceCheckInput,CoauthorCheckPage,CoauthorChecksPage,
     CoauthorCheckNotesPage,
-    CoauthorDecisionHistory,
+    CoauthorDecisionHistory, CoauthorDecisionConsumersPage,
     CoauthorRun, CoauthorRunsPage,
     CoauthorBranchesPage, CoauthorBranchComparison, CoauthorBranchMergeInput, CoauthorBranchMerge, CoauthorBranchMergesPage,
     CoauthorDecisionsPage, CoauthorBranchDecisionInput, CoauthorBranchDecisionAdoption, CoauthorBranchDecisionAdoptionsPage,
@@ -102,7 +102,7 @@ mod tests {
         };
         assert_eq!(keys("requests"), keys("responses"));
         assert_eq!(keys("requests"), keys("errors"));
-        assert_eq!(keys("requests").len(), 187);
+        assert_eq!(keys("requests").len(), 188);
         assert_eq!(
             keys("events"),
             ["ai-task-attempt", "ai-task-chunk", "ai-task-started", "coauthor-progress"]

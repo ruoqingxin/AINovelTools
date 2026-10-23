@@ -1241,6 +1241,9 @@ impl Database {
         if applied.unwrap_or(0) < 64 {
             self.migrate_coauthor_branch_decisions()?;
         }
+        if applied.unwrap_or(0) < 65 {
+            self.migrate_coauthor_decision_consumers()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }

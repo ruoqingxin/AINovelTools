@@ -289,6 +289,9 @@ export function correctCoauthorDecision(input: IpcRequests["correct_coauthor_dec
 export function listCoauthorDecisionHistory(input: IpcRequests["list_coauthor_decision_history"]) {
   return invoke("list_coauthor_decision_history", input);
 }
+export function listCoauthorDecisionConsumers(input: IpcRequests["list_coauthor_decision_consumers"]) {
+  return invoke("list_coauthor_decision_consumers", input);
+}
 export function prepareCoauthorChangeset(input: IpcRequests["prepare_coauthor_changeset"]) {
   return invoke("prepare_coauthor_changeset", input);
 }

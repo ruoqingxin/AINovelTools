@@ -98,6 +98,38 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it("opens the exact decision-dependent receipt on demand without saving the draft or starting a model", async () => {
+    const decision = { id: "rule", version: 2, topic: "突破代价", content: "改用失忆", status: "CHOSEN", sourceMessageId: "author" };
+    stored.decisions = [decision];
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === "list_coauthor_decision_consumers") return { decision, unknownChangeSets: 0, offset: 0, hasMore: false, entries: [{
+        changeSetId: "exact-old-plan", changeSetVersion: 1, changeSetTitle: "旧方案", itemId: "draft", itemTitle: "旧失忆试写",
+        kind: "MANUSCRIPT", decisionVersion: 1, state: "PENDING", needsReview: true, publishedKey: null, publishedRevision: null,
+      }] };
+      if (command === "get_coauthor_changes") return { changeSets: [], impacts: [], hasMoreChanges: false, hasMoreImpacts: false };
+      if (command === "get_coauthor_changeset") return {
+        id: "exact-old-plan", version: 1, title: "准确的旧方案", status: "PENDING", baseDocument: baseline,
+        coverage: "仅核对明确依赖", items: [], impacts: [], selectedIds: [], published: [], runId: null,
+        undo: [], reversedBy: null, readDependencies: [], decisionDependencies: [],
+      };
+      return original(command, args);
+    });
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "list_coauthor_decision_consumers")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: /决定/ }));
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "list_coauthor_decision_consumers")).toBe(false);
+    fireEvent.click(screen.getByText("决定关联与影响", { exact: true }));
+    await screen.findByText("旧失忆试写");
+    fireEvent.click(screen.getByRole("button", { name: "核对原方案" }));
+    const panel = await screen.findByRole("dialog", { name: "关联变更与影响" });
+    expect(await within(panel).findByRole("region", { name: "关联变更差异" })).toHaveTextContent("准确的旧方案");
+    expect(mocks.invoke).toHaveBeenCalledWith("get_coauthor_changeset", { scope: { projectId: "p1", sessionId: "s1" }, id: "exact-old-plan" });
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    expect(mocks.invoke.mock.calls.some(([name]) => ["save_coauthor_document", "run_coauthor", "commit_coauthor_changeset"].includes(name))).toBe(false);
+  });
+
   it("distinguishes semantic candidates and exposes coverage failures without treating them as read evidence", async () => {
     stored.runs = [{ id: "latest", sessionId: "s1", userMessageId: "m", documentVersion: 1, status: "COMPLETED", output: "",
       audit: [{ kind: "initial_semantic_search", result: {

@@ -80,7 +80,8 @@ impl Database {
 
     #[cfg(test)]
     pub(crate) fn drop_coauthor_knowledge_checks_fixture(&self) {
-        self.connection.execute_batch("DROP TABLE coauthor_branch_decision_adoptions; DROP TABLE coauthor_branch_merges;").unwrap();
+        self.connection.execute_batch("DROP TABLE coauthor_decision_consumers; DROP TABLE coauthor_changeset_dependency_coverage;
+            DROP TABLE coauthor_branch_decision_adoptions; DROP TABLE coauthor_branch_merges;").unwrap();
         self.drop_coauthor_evidence_progress_fixture();
         let triggers = self.connection.prepare(
             "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'coauthor_knowledge_%'",

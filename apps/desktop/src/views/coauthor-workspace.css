@@ -99,6 +99,10 @@
 .coauthor-reversal { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 20px; min-width: 0; }
 .coauthor-checks { min-width: 0; font-size: 13px; }
 .coauthor-decision-history { margin-top: 10px; }
+.coauthor-decision-consumers { margin-top: 10px; }
+.coauthor-decision-consumers small { display: block; overflow-wrap: anywhere; }
+.coauthor-decision-consumers label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.coauthor-decision-consumers label input { width: 16px; height: 16px; flex: 0 0 16px; }
 .coauthor-format-mapping { margin: 10px 0; }
 .coauthor-run-directory { margin-bottom: 16px; }
 .coauthor-run-picker { display: flex; gap: 8px; align-items: center; }

@@ -19,6 +19,7 @@ import { WorkspacePanel } from "./workspace-panel";
 import { CoauthorChangesPanel } from "./coauthor-changes-panel";
 import { CoauthorChecksPanel } from "./coauthor-checks-panel";
 import { CoauthorDecisionHistory, DecisionContext } from "./coauthor-decision-history";
+import { CoauthorDecisionConsumers } from "./coauthor-decision-consumers";
 import { CoauthorRunDirectory } from "./coauthor-run-directory";
 import { CoauthorKnowledge } from "./coauthor-knowledge";
 import { CoauthorSemanticPanel } from "./coauthor-semantic-panel";
@@ -171,6 +172,7 @@ function CoauthorSession({ scope, initial, onFork }: {
   const [publication, setPublication] = useState<{ document: CoauthorDocument; before: string } | null>(null);
   const [runId, setRunId] = useState(initial.runs[0]?.id ?? "");
   const [history, setHistory] = useState<CoauthorDocument[]>([]);
+  const [changeSetId, setChangeSetId] = useState<string | null>(null);
   const [older, setOlder] = useState<DiscussionMessage[]>([]);
   const [moreHistory, setMoreHistory] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -405,7 +407,7 @@ function CoauthorSession({ scope, initial, onFork }: {
         <button onClick={() => setPanel("semantic")}><DatabaseZap size={15} />语义索引</button>
         <button className="icon-command" title="查证范围" aria-label="查证范围" onClick={() => setPanel("checks")}><ListChecks size={17} /></button>
         <button onClick={() => setPanel("decisions")}>决定 <span>{state.decisions.length}</span></button>
-        <button onClick={() => setPanel("changes")}><ClipboardList size={15} />关联变更</button>
+        <button onClick={() => { setChangeSetId(null); setPanel("changes"); }}><ClipboardList size={15} />关联变更</button>
         <button className="icon-command" title="工作稿版本" aria-label="工作稿版本" onClick={() => void showHistory()} disabled={busy}><History size={17} /></button>
         <button className="icon-command" title="另开分支" aria-label="另开分支" onClick={() => void fork()} disabled={busy || Boolean(active) || draft.conflict}><GitBranch size={17} /></button>
         <button className="icon-command" title="分支比较与合并" aria-label="分支比较与合并" onClick={() => setPanel("branches")}><GitCompareArrows size={17} /></button>
@@ -512,7 +514,7 @@ function CoauthorSession({ scope, initial, onFork }: {
           changeInput(inputRef.current.trim() ? `${inputRef.current}\n\n${continuation}` : continuation);
           setPanel(null); setTab("chat");
         }} />}
-      {panel === "changes" && <CoauthorChangesPanel scope={scope} getDocument={() => draft.current.current}
+      {panel === "changes" && <CoauthorChangesPanel scope={scope} initialChangeSetId={changeSetId} getDocument={() => draft.current.current}
         saveDraft={draft.save} isGenerating={() => Boolean(activeRef.current)} onCommitted={async (snapshot, linkedDraft) => {
           const updated = await refresh();
           if (mounted.current && linkedDraft) draft.acceptSaved(updated.document, snapshot);
@@ -578,6 +580,7 @@ function CoauthorSession({ scope, initial, onFork }: {
           <strong>{decision.topic}</strong><small>{statuses[decision.status]} · v{decision.version}</small><p>{decision.content}</p>
           <button onClick={() => setEditingDecision({ ...decision })}>纠正</button>
           <CoauthorDecisionHistory key={`${decision.id}:${decision.version}`} scope={scope} decision={decision} />
+          <CoauthorDecisionConsumers scope={scope} decision={decision} onOpenChangeSet={(id) => { setChangeSetId(id); setPanel("changes"); }} />
         </article>)}
         {editingDecision && <form onSubmit={(event) => {
           event.preventDefault(); void act(async () => {

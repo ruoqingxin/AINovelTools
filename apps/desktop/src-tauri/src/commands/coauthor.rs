@@ -7,7 +7,7 @@ use std::sync::{
 use novel_infrastructure::{
     CoauthorChangeRequest, CoauthorChangeSet, CoauthorChangesPage, CoauthorImpact,
     CoauthorChangeItemInput, CoauthorImpactInput,
-    CoauthorDecisionDependencyInput, CoauthorDecision,
+    CoauthorDecisionDependencyInput, CoauthorDecision, CoauthorDecisionConsumersPage,
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
     CoauthorRun, CoauthorRunsPage,
     CoauthorBranchesPage, CoauthorBranchComparison, CoauthorBranchMergeInput, CoauthorBranchMerge, CoauthorBranchMergesPage,
@@ -67,6 +67,7 @@ link_source 仅在作者要以已读取的正式资料为修改目标时使用�
 局部正文项的 content 必须为空，程序生成真实的富文本前后预览；这不是纯文本覆盖。仅修改已有正式资料时 includeDraft=false，不夹带无关工作稿。
 稿件依赖某个新规则时，draftDependsOn 写入对应的变更标识；不要用空依赖绕开部分采用检查。
 方案依赖已有讨论决定时，用decisionDependencies明确decisionId、准确version及依赖它的itemIds（当前稿为draft）。准备前先get_decisions读取最新决定，并在后续请求收到结果；不能用历史修订、名称或猜测的版本代替。否定、待定及撤回也可作为需遵守的边界，不自动改为已选择。不声明的隐含依赖仍未核验，不能声称已排除语义矛盾；决定变化后旧方案须重新准备，不能删掉依赖来绕过检查。
+决定改变后可用get_decision_dependents分页反查本讨论明确声明依赖的方案与采用项。needsReview是旧版本的复查线索，不是已证实矛盾；unknownChangeSets表示另有方案依赖未知，不能从空列表断言没有影响。publishedKey/publishedRevision仅为当时采用回执，修改正式资料前仍须按准确身份重新读取当前原文；目录不授予原文已读、正式写入或自动撤销权限。
 影响待办必须有实际读过的正式原文及准确引文，说明为什么需要复查，不把词面相似冒充已确认矛盾。
 coverage 如实说明查过什么、未查什么；没有全范围查证不能声称查全或修复全书。
 作者明确要求查全部相关章节或全范围影响时，用 start_source_check 建立指定类别的完整版本清单，不用关键词命中代替范围。普通讨论无需创建清单。
@@ -427,6 +428,13 @@ fn tools() -> Vec<Value> {
             &[],
         ),
         tool(
+            "get_decision_dependents",
+            "反查本讨论明确依赖指定决定的变更项，每页16项；默认使用needsReviewOnly=true查旧版本的待确认/已采用项。完整历史用false。没有声明的隐含关系未覆盖，采用修订不是当前原文。",
+            json!({"decisionId":{"type":"string"},"offset":{"type":"integer","minimum":0},
+                "needsReviewOnly":{"type":"boolean"}}),
+            &["decisionId","offset","needsReviewOnly"],
+        ),
+        tool(
             "link_source",
             "关联已读取的正式来源作为工作稿的采用目标；不直接覆盖该来源。",
             json!({"key":{"type":"string"},"revision":{"type":"string"}}),
@@ -650,6 +658,14 @@ pub(crate) fn list_coauthor_decision_history(
 }
 
 #[tauri::command]
+pub(crate) fn list_coauthor_decision_consumers(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, decision_id: uuid::Uuid, needs_review_only: bool, offset: u32,
+) -> Result<CoauthorDecisionConsumersPage, ApiError> {
+    state.manager.lock().map_err(|_|ApiError::internal("project mutex poisoned"))?
+        .coauthor_decision_consumers(&scope,decision_id,needs_review_only,offset).map_err(Into::into)
+}
+
+#[tauri::command]
 pub(crate) fn prepare_coauthor_changeset(
     state: tauri::State<'_, ProjectState>,
     scope: CoauthorScope,
@@ -803,6 +819,14 @@ struct ChangeArgs {
     coverage: String,
     #[serde(default = "include_draft_default")]
     include_draft: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DecisionConsumersQuery {
+    decision_id: uuid::Uuid,
+    needs_review_only: bool,
+    offset: u32,
 }
 
 fn include_draft_default() -> bool { true }
@@ -1183,6 +1207,10 @@ fn execute_tool(
                 Ok(json!(page))
             }
         }
+        "get_decision_dependents" => {
+            let args: DecisionConsumersQuery=arguments(call)?;
+            Ok(json!(manager.coauthor_decision_consumers(&input.scope,args.decision_id,args.needs_review_only,args.offset)?))
+        },
         "link_source" => {
             if !input.allow_draft_edits {
                 return Err(CoauthorError::Invalid("本轮禁止修改工作稿目标。".into()));
@@ -1424,7 +1452,7 @@ pub(crate) async fn run_coauthor(
                     chapter_id: None,
                     display_title: &document.title,
                     profile_id: profile.id,
-                    prompt_version: "coauthor-v13",
+                    prompt_version: "coauthor-v14",
                     estimated_input_tokens: u32::try_from(prompt_size).unwrap_or(u32::MAX),
                 })
                 .map_err(ApiError::from)?
@@ -1445,7 +1473,7 @@ pub(crate) async fn run_coauthor(
         );
         audit.push(
             json!({"kind":"model_request","round":round+1,"usageId":usage_id,
-            "profileId":profile.id,"promptVersion":"coauthor-v13","inputChars":prompt_size}),
+            "profileId":profile.id,"promptVersion":"coauthor-v14","inputChars":prompt_size}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
@@ -2041,5 +2069,21 @@ mod tests {
         value["decisionDependencies"]=json!([{"decisionId":uuid::Uuid::new_v4(),"version":1,"itemIds":["draft"],"current":true}]);
         assert!(arguments::<ChangeArgs>(&call(value)).is_err());
         assert!(PROMPT.contains("决定变化后旧方案须重新准备"));
+    }
+
+    #[test]
+    fn decision_consumer_directory_is_read_only_scoped_and_does_not_grant_original_read_evidence() {
+        let definition=tools().into_iter().find(|tool|tool["function"]["name"]=="get_decision_dependents").unwrap();
+        assert_eq!(definition["function"]["parameters"]["required"],json!(["decisionId","offset","needsReviewOnly"]));
+        let valid=json!({"decisionId":uuid::Uuid::new_v4(),"offset":0,"needsReviewOnly":true});
+        assert!(serde_json::from_value::<DecisionConsumersQuery>(valid.clone()).is_ok());
+        for field in ["complete","approved","currentRevision","sessionId"] {
+            let mut forged=valid.clone();forged[field]=json!(true);
+            assert!(serde_json::from_value::<DecisionConsumersQuery>(forged).is_err());
+        }
+        let mut negative=valid;negative["offset"]=json!(-1);
+        assert!(serde_json::from_value::<DecisionConsumersQuery>(negative).is_err());
+        assert!(PROMPT.contains("目录不授予原文已读"));
+        assert!(!tools().iter().any(|tool|tool["function"]["name"]=="commit_changeset"));
     }
 }

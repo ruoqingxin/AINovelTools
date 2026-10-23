@@ -37,8 +37,9 @@ function recoverForm(key: string) {
   } catch { return null; }
 }
 
-export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerating, onCommitted }: {
+export function CoauthorChangesPanel({ scope, initialChangeSetId = null, getDocument, saveDraft, isGenerating, onCommitted }: {
   scope: CoauthorScope;
+  initialChangeSetId?: string | null;
   getDocument: () => CoauthorDocument;
   saveDraft: () => Promise<CoauthorDocument>;
   isGenerating: () => boolean;
@@ -55,6 +56,7 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
   const busyRef = useRef(false);
   const mounted = useRef(false);
   const epoch = useRef(0);
+  const detailEpoch = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const backupKey = `coauthor-change-form:${scope.projectId}:${scope.sessionId}`;
@@ -84,9 +86,22 @@ export function CoauthorChangesPanel({ scope, getDocument, saveDraft, isGenerati
     void reload().catch((cause) => { if (mounted.current) setError(errorMessage(cause)); });
     return () => { mounted.current = false; epoch.current++; };
   }, [scope.projectId, scope.sessionId]);
+  useEffect(() => {
+    let current = true;
+    const request = ++detailEpoch.current;
+    if (initialChangeSetId) { setChanges(null); setSelected([]); setRulesVerified(false); }
+    if (initialChangeSetId) void getCoauthorChangeset({ scope, id: initialChangeSetId }).then((value) => {
+      if (value.id !== initialChangeSetId) throw new Error("返回方案身份与请求不符，未接入其他方案。");
+      if (current && request === detailEpoch.current) show(value);
+    }).catch((cause) => {
+      if (current && mounted.current && request === detailEpoch.current) setError(`指定方案无法核实：${errorMessage(cause)}`);
+    });
+    return () => { current = false; };
+  }, [scope.projectId, scope.sessionId, initialChangeSetId]);
 
   async function act(action: () => Promise<void>) {
     if (busyRef.current) return;
+    detailEpoch.current++;
     busyRef.current = true; setBusy(true); setError(null); setNotice(null);
     try { await action(); }
     catch (cause) { if (mounted.current) setError(errorMessage(cause)); }

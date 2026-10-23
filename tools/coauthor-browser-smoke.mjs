@@ -62,6 +62,7 @@ try {
           return {...structuredClone(state),runs:state.runs.slice(0,20).map(({audit,output,...summary})=>summary)};
         }
         let changes=null;
+        let consumerHistory=[];
         let reversal=null;
         let branchMerge=null;
         let branchDecision=null;
@@ -147,7 +148,7 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:63};
+          if(command==="health_query")return {schemaVersion:65};
           if(command==="get_coauthor_semantic_status")return structuredClone(semanticStatus);
           if(command==="save_coauthor_semantic_settings"){
             if(args.expectedVersion!==semanticStatus.settings.version)throw new Error("Semantic permission conflict");
@@ -332,6 +333,8 @@ try {
                 if(!decision||decision.version!==entry.version)throw new Error("Decision version conflict");
                 return {itemIds:entry.itemIds,decision:structuredClone(decision),current:structuredClone(decision)};
               })};
+            consumerHistory=Array.from({length:16},(_,index)=>({...structuredClone(changes),
+              id:"historical-rule-change-"+index,title:"历史关联方案 "+(index+1)}));
             return structuredClone(changes);
           }
           if(command==="get_coauthor_changes"){
@@ -339,9 +342,33 @@ try {
             return {changeSets:[{id:changes.id,version:changes.version,title:changes.title,status:changes.status,itemCount:changes.items.length,reversedBy:changes.reversedBy}],
               impacts:structuredClone(impacts),hasMoreChanges:false,hasMoreImpacts:false};
           }
-          if(command==="get_coauthor_changeset")return {...structuredClone(changes),
-            decisionDependencies:changes.decisionDependencies.map(entry=>({...structuredClone(entry),
-              current:structuredClone(state.decisions.find(decision=>decision.id===entry.decision.id)??null)}))};
+          if(command==="get_coauthor_changeset"){
+            const selected=[changes,...consumerHistory].find(value=>value?.id===args.id);
+            if(!selected)throw new Error("Unknown exact change set");
+            return {...structuredClone(selected),
+              decisionDependencies:selected.decisionDependencies.map(entry=>({...structuredClone(entry),
+                current:structuredClone(state.decisions.find(decision=>decision.id===entry.decision.id)??null)}))};
+          }
+          if(command==="list_coauthor_decision_consumers"){
+            if(args.scope.projectId!=="p1"||args.scope.sessionId!=="s1"
+              ||![0,16].includes(args.offset)||typeof args.needsReviewOnly!=="boolean")throw new Error("Invalid consumer scope");
+            const decision=state.decisions.find(value=>value.id===args.decisionId);
+            if(!decision)throw new Error("Unknown exact decision");
+            const entries=[changes,...consumerHistory].filter(Boolean).flatMap(plan=>
+              plan.decisionDependencies.filter(dependency=>dependency.decision.id===decision.id).flatMap(dependency=>
+                dependency.itemIds.map(itemId=>{
+                  const item=plan.items.find(value=>value.id===itemId);
+                  const published=plan.published.find(value=>value.itemId===itemId);
+                  const state=plan.status==="PENDING"?"PENDING":plan.status==="DISCARDED"?"DISCARDED":
+                    !published?"NOT_ADOPTED":plan.reversedBy?"REVERSED":"ADOPTED";
+                  return {changeSetId:plan.id,changeSetTitle:plan.title,changeSetVersion:plan.version,
+                    itemId,itemTitle:item.document.title,kind:item.document.kind,decisionVersion:dependency.decision.version,
+                    state,needsReview:dependency.decision.version!==decision.version&&["PENDING","ADOPTED"].includes(state),
+                    publishedKey:published?.sourceKey??null,publishedRevision:published?.revision??null};
+                }))).filter(entry=>!args.needsReviewOnly||entry.needsReview);
+            return {decision:structuredClone(decision),entries:entries.slice(args.offset,args.offset+16),
+              unknownChangeSets:1,offset:args.offset,hasMore:args.offset+16<entries.length};
+          }
           if(command==="commit_coauthor_changeset"){
             if(changes.status==="COMMITTED")return structuredClone(changes);
             if(args.selectedIds.includes("draft")&&!args.selectedIds.includes("realm"))throw new Error("missing dependency");
@@ -760,6 +787,43 @@ try {
     await confirmation.waitFor({ state: "visible" });
     assert.ok((await confirmation.innerText()).includes("核对 0 条明确声明的决定依赖"));
     await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "commit_coauthor_changeset").length), 1);
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "run_coauthor").length), 1);
+    await changesPanel.getByRole("button", { name: "关闭关联变更与影响", exact: true }).click();
+    const draftBeforeConsumers = await draft.inputValue();
+    await page.getByRole("navigation", { name: "工作区", exact: true })
+      .getByRole("button", { name: "决定", exact: false }).click();
+    const consumerQueries = await page.evaluate(() => window.__coauthorCalls.filter(name => name === "list_coauthor_decision_consumers").length);
+    const exception = decisionsPanel.getByRole("article").filter({ has: page.getByText("突破例外", { exact: true }) });
+    assert.equal(consumerQueries, 0, "Collapsed decision consumers must not query");
+    await exception.getByText("决定关联与影响", { exact: true }).click();
+    const consumers = exception.getByRole("region", { name: "决定关联项目", exact: true });
+    await consumers.getByText("读取时当前决定 · v2 · 已撤回", { exact: true }).waitFor();
+    await consumers.getByText("另有 1 份有效或待确认方案未记录依赖，无法判断是否相关。", { exact: true }).waitFor();
+    assert.equal(await consumers.getByRole("article").count(), 16);
+    assert.equal(await consumers.getByRole("button", { name: "上一页决定关联", exact: true }).isDisabled(), true);
+    await consumers.getByRole("button", { name: "下一页决定关联", exact: true }).click();
+    await consumers.getByText("原方案：历史关联方案 16 · v1", { exact: true }).waitFor();
+    assert.equal(await consumers.getByRole("article").count(), 1);
+    assert.equal(await consumers.getByRole("button", { name: "下一页决定关联", exact: true }).isDisabled(), true);
+    await consumers.getByRole("checkbox", { name: "仅需复查", exact: true }).uncheck();
+    await consumers.getByText("第 1 页", { exact: true }).waitFor();
+    await consumers.getByRole("button", { name: "下一页决定关联", exact: true }).click();
+    await consumers.getByText("原方案：历史关联方案 16 · v1", { exact: true }).waitFor();
+    await consumers.getByRole("button", { name: "刷新决定关联", exact: true }).click();
+    await consumers.getByText("读取时当前决定 · v2 · 已撤回", { exact: true }).waitFor();
+    await consumers.evaluate(el => el.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-decision-consumers.png`), fullPage: true });
+    assert.equal(await decisionsPanel.evaluate(el => el.scrollWidth > el.clientWidth), false);
+    await consumers.getByRole("button", { name: "核对原方案", exact: true }).click();
+    await changesPanel.getByRole("heading", { name: "历史关联方案 16", exact: true }).waitFor();
+    assert.equal(await changesPanel.getByRole("article").filter({ hasText: "历史关联方案 16" }).count(), 0,
+      "Exact target is not in the first directory page");
+    await decisionDependencies.getByText("当前 · v2 · 已撤回", { exact: true }).waitFor();
+    assert.equal(await changesPanel.getByRole("button", { name: "确认采用所选变更", exact: true }).isDisabled(), true);
+    await decisionDependencies.evaluate(el => el.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-decision-consumer-exact-plan.png`), fullPage: true });
+    assert.equal(await draft.inputValue(), draftBeforeConsumers, "Reverse lookup must not change the draft");
     assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "commit_coauthor_changeset").length), 1);
     assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "run_coauthor").length), 1);
     await changesPanel.getByRole("button", { name: "关闭关联变更与影响", exact: true }).click();

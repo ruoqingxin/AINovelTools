@@ -262,7 +262,8 @@ fn directories_are_paged_and_do_not_decode_drafts_or_embedded_receipt_content() 
 fn migration_64_is_atomic_retryable_and_leaves_existing_author_decisions_unchanged() {
     let f=Fixture::new();
     f.db().connection.execute_batch(
-        "DROP TABLE coauthor_branch_decision_adoptions; DELETE FROM schema_migrations WHERE version=64;
+        "DROP TABLE coauthor_decision_consumers; DROP TABLE coauthor_changeset_dependency_coverage;
+         DROP TABLE coauthor_branch_decision_adoptions; DELETE FROM schema_migrations WHERE version>=64;
          CREATE TRIGGER fail64 BEFORE INSERT ON schema_migrations WHEN NEW.version=64
          BEGIN SELECT RAISE(ABORT,'late migration failure'); END;",
     ).unwrap();
@@ -273,6 +274,7 @@ fn migration_64_is_atomic_retryable_and_leaves_existing_author_decisions_unchang
     ).unwrap(),0);
     f.db().connection.execute_batch("DROP TRIGGER fail64").unwrap();
     f.db().migrate_coauthor_branch_decisions().unwrap();
+    f.db().migrate_coauthor_decision_consumers().unwrap();
     assert_eq!(f.db().health().unwrap().schema_version,CURRENT_SCHEMA_VERSION);
     assert_eq!(f.manager.search_coauthor_decisions(&f.scope,"",0).unwrap().memories[0].decision,f.target);
 }

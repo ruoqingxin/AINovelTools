@@ -191,6 +191,7 @@ export type IpcErrors = {
     list_coauthor_branch_decisions: ApiError;
     list_coauthor_branch_merges: ApiError;
     list_coauthor_branches: ApiError;
+    list_coauthor_decision_consumers: ApiError;
     list_coauthor_decision_history: ApiError;
     list_coauthor_document_history: ApiError;
     list_coauthor_knowledge_anchors: ApiError;
@@ -409,6 +410,7 @@ export type IpcRequests = {
     list_coauthor_branch_decisions: InputArgsListCoauthorBranchDecisions;
     list_coauthor_branch_merges: InputArgsListCoauthorBranchMerges;
     list_coauthor_branches: InputArgsListCoauthorBranches;
+    list_coauthor_decision_consumers: InputArgsListCoauthorDecisionConsumers;
     list_coauthor_decision_history: InputArgsListCoauthorDecisionHistory;
     list_coauthor_document_history: InputArgsListCoauthorDocumentHistory;
     list_coauthor_knowledge_anchors: InputArgsListCoauthorKnowledgeAnchors;
@@ -1092,6 +1094,12 @@ export type InputArgsListCoauthorBranches = {
     offset: number;
     scope: InputCoauthorScope;
 };
+export type InputArgsListCoauthorDecisionConsumers = {
+    decisionId: string;
+    needsReviewOnly: boolean;
+    offset: number;
+    scope: InputCoauthorScope;
+};
 export type InputArgsListCoauthorDecisionHistory = {
     beforeVersion?: number | null;
     id: string;
@@ -1705,6 +1713,7 @@ export type IpcResponses = {
     list_coauthor_branch_decisions: CoauthorDecisionsPage;
     list_coauthor_branch_merges: CoauthorBranchMergesPage;
     list_coauthor_branches: CoauthorBranchesPage;
+    list_coauthor_decision_consumers: CoauthorDecisionConsumersPage;
     list_coauthor_decision_history: CoauthorDecisionHistory;
     list_coauthor_document_history: CoauthorDocument[];
     list_coauthor_knowledge_anchors: CoauthorKnowledgeAnchorsPage;
@@ -2901,6 +2910,26 @@ export type CoauthorBranchMergeSummary = {
 export type CoauthorBranchesPage = {
     branches: CoauthorBranchEntry[];
     hasMore: boolean;
+};
+export type CoauthorDecisionConsumersPage = {
+    decision: CoauthorDecision;
+    entries: CoauthorDecisionConsumer[];
+    hasMore: boolean;
+    offset: number;
+    unknownChangeSets: number;
+};
+export type CoauthorDecisionConsumer = {
+    changeSetId: string;
+    changeSetTitle: string;
+    changeSetVersion: number;
+    decisionVersion: number;
+    itemId: string;
+    itemTitle: string;
+    kind: CoauthorDocumentKind;
+    needsReview: boolean;
+    publishedKey: string | null;
+    publishedRevision: string | null;
+    state: string;
 };
 export type CoauthorDecisionHistory = {
     current: CoauthorDecisionMemory;

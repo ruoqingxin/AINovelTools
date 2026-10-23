@@ -292,7 +292,8 @@ fn backup_reopen_preserves_partial_receipts_and_a_new_run_continues_the_exact_ga
 #[test]
 fn migration_62_failure_is_atomic_retryable_and_never_backfills_unconfirmed_historical_audits() {
     let f=Fixture::new();
-    f.db().connection.execute_batch("DROP TABLE coauthor_branch_decision_adoptions; DROP TABLE coauthor_branch_merges; DELETE FROM schema_migrations WHERE version>=63;").unwrap();
+    f.db().connection.execute_batch("DROP TABLE coauthor_decision_consumers; DROP TABLE coauthor_changeset_dependency_coverage;
+        DROP TABLE coauthor_branch_decision_adoptions; DROP TABLE coauthor_branch_merges; DELETE FROM schema_migrations WHERE version>=63;").unwrap();
     f.db().drop_coauthor_evidence_progress_fixture();
     f.db().connection.execute_batch(
         "DELETE FROM schema_migrations WHERE version=62;
@@ -310,6 +311,7 @@ fn migration_62_failure_is_atomic_retryable_and_never_backfills_unconfirmed_hist
     f.db().migrate_coauthor_evidence_progress().unwrap();
     f.db().migrate_coauthor_branch_merges().unwrap();
     f.db().migrate_coauthor_branch_decisions().unwrap();
+    f.db().migrate_coauthor_decision_consumers().unwrap();
     assert_eq!(f.db().health().unwrap().schema_version,CURRENT_SCHEMA_VERSION);
     assert_eq!(f.manager.current_manuscript(f.chapter).unwrap().unwrap(),f.revision);
     assert!(f.evidence_progress(&f.fact()).id.is_none());
