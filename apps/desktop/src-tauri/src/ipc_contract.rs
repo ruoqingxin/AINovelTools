@@ -20,6 +20,7 @@ use novel_infrastructure::{
     CoauthorDecisionHistory,
     CoauthorRun, CoauthorRunsPage,
     CoauthorBranchesPage, CoauthorBranchComparison, CoauthorBranchMergeInput, CoauthorBranchMerge, CoauthorBranchMergesPage,
+    CoauthorDecisionsPage, CoauthorBranchDecisionInput, CoauthorBranchDecisionAdoption, CoauthorBranchDecisionAdoptionsPage,
     CoauthorSearchPage, CoauthorKnowledgeEvidence, CoauthorKnowledgeAnchorsPage, CoauthorEvidenceProgress,
     CoauthorSemanticStatus,
 };
@@ -101,7 +102,7 @@ mod tests {
         };
         assert_eq!(keys("requests"), keys("responses"));
         assert_eq!(keys("requests"), keys("errors"));
-        assert_eq!(keys("requests").len(), 181);
+        assert_eq!(keys("requests").len(), 187);
         assert_eq!(
             keys("events"),
             ["ai-task-attempt", "ai-task-chunk", "ai-task-started", "coauthor-progress"]

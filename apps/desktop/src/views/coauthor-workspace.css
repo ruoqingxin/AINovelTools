@@ -108,6 +108,16 @@
 .coauthor-branches .coauthor-run-picker { flex-wrap: wrap; }
 .coauthor-branches .coauthor-run-picker select { flex-basis: 170px; }
 .coauthor-branches small { overflow-wrap: anywhere; }
+.coauthor-branch-decisions { min-width: 0; padding: 12px 0; }
+.coauthor-decision-options { display: grid; gap: 10px; min-width: 0; border: 0; padding: 8px 0; margin: 0; }
+.coauthor-decision-options legend { font-size: 12px; color: var(--muted); }
+.coauthor-decision-options label { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; overflow-wrap: anywhere; }
+.coauthor-decision-options input { width: 16px; height: 16px; flex: 0 0 16px; margin: 2px 0 0; }
+.coauthor-decision-snapshot { overflow-wrap: anywhere; }
+.coauthor-decision-snapshot small { display: block; }
+.coauthor-decision-snapshot pre { height: auto; max-height: 240px; min-height: 0; }
+.coauthor-decision-snapshot blockquote { margin: 8px 0; padding-left: 12px; border-left: 2px solid var(--border); font-size: 12px; }
+.coauthor-branch-decisions .coauthor-run-picker input { min-width: 0; width: 100%; flex: 1 1 100px; }
 .coauthor-merge-mode { display: flex; flex-wrap: wrap; gap: 8px 16px; min-width: 0; padding: 12px 0; border: 0; margin: 8px 0; }
 .coauthor-merge-mode legend { font-size: 12px; color: var(--muted); }
 .coauthor-merge-mode label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }

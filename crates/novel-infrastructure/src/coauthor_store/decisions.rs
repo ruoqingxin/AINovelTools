@@ -14,7 +14,7 @@ pub struct CoauthorDecisionInput {
     pub quote: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CoauthorDecisionMemory {
     pub decision: CoauthorDecision,
@@ -61,7 +61,7 @@ pub struct CoauthorDecisionContext {
     pub has_more: bool,
 }
 
-fn topic_key(topic: &str) -> String {
+pub(super) fn topic_key(topic: &str) -> String {
     topic
         .chars()
         .filter(|c| !c.is_whitespace())
@@ -177,7 +177,7 @@ impl Database {
             .and_then(decode)
     }
 
-    fn decision_memory(
+    pub(super) fn decision_memory(
         &self,
         session: Uuid,
         id: Uuid,
@@ -247,7 +247,7 @@ impl Database {
         Ok(())
     }
 
-    fn write_decision(
+    pub(super) fn write_decision(
         &self,
         session: Uuid,
         decision: &CoauthorDecision,

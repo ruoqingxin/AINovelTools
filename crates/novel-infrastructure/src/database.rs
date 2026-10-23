@@ -1238,6 +1238,9 @@ impl Database {
         if applied.unwrap_or(0) < 63 {
             self.migrate_coauthor_branch_merges()?;
         }
+        if applied.unwrap_or(0) < 64 {
+            self.migrate_coauthor_branch_decisions()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }

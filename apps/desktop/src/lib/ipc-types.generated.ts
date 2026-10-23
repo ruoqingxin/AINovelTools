@@ -94,6 +94,7 @@ export type IpcErrors = {
     acknowledge_failed_jobs: ApiError;
     adopt_extraction_item: ApiError;
     adopt_plan_batch: ApiError;
+    apply_coauthor_branch_decision: ApiError;
     apply_coauthor_branch_merge: ApiError;
     apply_coauthor_proposal: ApiError;
     ask_project_discussion: ApiError;
@@ -156,6 +157,7 @@ export type IpcErrors = {
     get_ai_usage_summary: ApiError;
     get_audit_flow_settings: ApiError;
     get_chapter_entity_references: ApiError;
+    get_coauthor_branch_decision: ApiError;
     get_coauthor_branch_merge: ApiError;
     get_coauthor_changes: ApiError;
     get_coauthor_changeset: ApiError;
@@ -185,6 +187,8 @@ export type IpcErrors = {
     list_author_todos: ApiError;
     list_beliefs: ApiError;
     list_chapter_extractions: ApiError;
+    list_coauthor_branch_decision_adoptions: ApiError;
+    list_coauthor_branch_decisions: ApiError;
     list_coauthor_branch_merges: ApiError;
     list_coauthor_branches: ApiError;
     list_coauthor_decision_history: ApiError;
@@ -223,6 +227,7 @@ export type IpcErrors = {
     merge_manuscript: ApiError;
     move_plan_node: ApiError;
     open_project: ApiError;
+    prepare_coauthor_branch_decision: ApiError;
     prepare_coauthor_branch_merge: ApiError;
     prepare_coauthor_changeset: ApiError;
     prepare_coauthor_reversal: ApiError;
@@ -254,6 +259,7 @@ export type IpcErrors = {
     save_project_ai_task_overrides: ApiError;
     save_recovery_log: ApiError;
     save_writing_review_policy: ApiError;
+    search_coauthor_decisions: ApiError;
     search_project: ApiError;
     set_entity_archived: ApiError;
     set_summary_material_lifecycle: ApiError;
@@ -306,6 +312,7 @@ export type IpcRequests = {
     acknowledge_failed_jobs: InputArgsAcknowledgeFailedJobs;
     adopt_extraction_item: InputArgsAdoptExtractionItem;
     adopt_plan_batch: InputArgsAdoptPlanBatch;
+    apply_coauthor_branch_decision: InputArgsApplyCoauthorBranchDecision;
     apply_coauthor_branch_merge: InputArgsApplyCoauthorBranchMerge;
     apply_coauthor_proposal: InputArgsApplyCoauthorProposal;
     ask_project_discussion: InputArgsAskProjectDiscussion;
@@ -368,6 +375,7 @@ export type IpcRequests = {
     get_ai_usage_summary: InputArgsGetAiUsageSummary;
     get_audit_flow_settings: InputArgsGetAuditFlowSettings;
     get_chapter_entity_references: InputArgsGetChapterEntityReferences;
+    get_coauthor_branch_decision: InputArgsGetCoauthorBranchDecision;
     get_coauthor_branch_merge: InputArgsGetCoauthorBranchMerge;
     get_coauthor_changes: InputArgsGetCoauthorChanges;
     get_coauthor_changeset: InputArgsGetCoauthorChangeset;
@@ -397,6 +405,8 @@ export type IpcRequests = {
     list_author_todos: InputArgsListAuthorTodos;
     list_beliefs: InputArgsListBeliefs;
     list_chapter_extractions: InputArgsListChapterExtractions;
+    list_coauthor_branch_decision_adoptions: InputArgsListCoauthorBranchDecisionAdoptions;
+    list_coauthor_branch_decisions: InputArgsListCoauthorBranchDecisions;
     list_coauthor_branch_merges: InputArgsListCoauthorBranchMerges;
     list_coauthor_branches: InputArgsListCoauthorBranches;
     list_coauthor_decision_history: InputArgsListCoauthorDecisionHistory;
@@ -435,6 +445,7 @@ export type IpcRequests = {
     merge_manuscript: InputArgsMergeManuscript;
     move_plan_node: InputArgsMovePlanNode;
     open_project: InputArgsOpenProject;
+    prepare_coauthor_branch_decision: InputArgsPrepareCoauthorBranchDecision;
     prepare_coauthor_branch_merge: InputArgsPrepareCoauthorBranchMerge;
     prepare_coauthor_changeset: InputArgsPrepareCoauthorChangeset;
     prepare_coauthor_reversal: InputArgsPrepareCoauthorReversal;
@@ -466,6 +477,7 @@ export type IpcRequests = {
     save_project_ai_task_overrides: InputArgsSaveProjectAiTaskOverrides;
     save_recovery_log: InputArgsSaveRecoveryLog;
     save_writing_review_policy: InputArgsSaveWritingReviewPolicy;
+    search_coauthor_decisions: InputArgsSearchCoauthorDecisions;
     search_project: InputArgsSearchProject;
     set_entity_archived: InputArgsSetEntityArchived;
     set_summary_material_lifecycle: InputArgsSetSummaryMaterialLifecycle;
@@ -521,13 +533,17 @@ export type InputPlanningSection = {
     storyState: InputPlanningStoryState;
     updatedAt: string;
 };
-export type InputArgsApplyCoauthorBranchMerge = {
+export type InputArgsApplyCoauthorBranchDecision = {
     id: string;
     scope: InputCoauthorScope;
 };
 export type InputCoauthorScope = {
     projectId: string;
     sessionId: string;
+};
+export type InputArgsApplyCoauthorBranchMerge = {
+    id: string;
+    scope: InputCoauthorScope;
 };
 export type InputArgsApplyCoauthorProposal = {
     expectedVersion: number;
@@ -932,6 +948,10 @@ export type InputArgsGetChapterEntityReferences = {
     chapterId: string;
     projectId: string;
 };
+export type InputArgsGetCoauthorBranchDecision = {
+    id: string;
+    scope: InputCoauthorScope;
+};
 export type InputArgsGetCoauthorBranchMerge = {
     id: string;
     scope: InputCoauthorScope;
@@ -1054,6 +1074,16 @@ export type InputArgsListBeliefs = {};
 export type InputArgsListChapterExtractions = {
     chapterId: string;
 };
+export type InputArgsListCoauthorBranchDecisionAdoptions = {
+    offset: number;
+    scope: InputCoauthorScope;
+};
+export type InputArgsListCoauthorBranchDecisions = {
+    offset: number;
+    query: string;
+    scope: InputCoauthorScope;
+    sourceSessionId: string;
+};
 export type InputArgsListCoauthorBranchMerges = {
     offset: number;
     scope: InputCoauthorScope;
@@ -1166,6 +1196,17 @@ export type InputArgsMovePlanNode = {
 };
 export type InputArgsOpenProject = {
     root: string;
+};
+export type InputArgsPrepareCoauthorBranchDecision = {
+    input: InputCoauthorBranchDecisionInput;
+    scope: InputCoauthorScope;
+};
+export type InputCoauthorBranchDecisionInput = {
+    expectedVersion: number;
+    sourceDecisionId: string;
+    sourceSessionId: string;
+    sourceVersion: number;
+    targetDecisionId?: string | null;
 };
 export type InputArgsPrepareCoauthorBranchMerge = {
     input: InputCoauthorBranchMergeInput;
@@ -1431,6 +1472,11 @@ export type InputArgsSaveRecoveryLog = {
 export type InputArgsSaveWritingReviewPolicy = {
     policy: InputWritingReviewPolicy;
 };
+export type InputArgsSearchCoauthorDecisions = {
+    offset: number;
+    query: string;
+    scope: InputCoauthorScope;
+};
 export type InputArgsSearchProject = {
     limit: number;
     objectType?: string | null;
@@ -1556,6 +1602,7 @@ export type IpcResponses = {
     acknowledge_failed_jobs: number;
     adopt_extraction_item: ChapterExtractionItem;
     adopt_plan_batch: PlanBatchReceipt;
+    apply_coauthor_branch_decision: CoauthorBranchDecisionAdoption;
     apply_coauthor_branch_merge: CoauthorBranchMerge;
     apply_coauthor_proposal: CoauthorDocument;
     ask_project_discussion: DiscussionExchange;
@@ -1618,6 +1665,7 @@ export type IpcResponses = {
     get_ai_usage_summary: AiUsageSummary;
     get_audit_flow_settings: AuditFlowSettings;
     get_chapter_entity_references: ChapterEntityReferences;
+    get_coauthor_branch_decision: CoauthorBranchDecisionAdoption;
     get_coauthor_branch_merge: CoauthorBranchMerge;
     get_coauthor_changes: CoauthorChangesPage;
     get_coauthor_changeset: CoauthorChangeSet;
@@ -1647,6 +1695,8 @@ export type IpcResponses = {
     list_author_todos: AuthorTodoQueue;
     list_beliefs: Belief[];
     list_chapter_extractions: ChapterExtractionProposal[];
+    list_coauthor_branch_decision_adoptions: CoauthorBranchDecisionAdoptionsPage;
+    list_coauthor_branch_decisions: CoauthorDecisionsPage;
     list_coauthor_branch_merges: CoauthorBranchMergesPage;
     list_coauthor_branches: CoauthorBranchesPage;
     list_coauthor_decision_history: CoauthorDecisionHistory;
@@ -1685,6 +1735,7 @@ export type IpcResponses = {
     merge_manuscript: MergeResult;
     move_plan_node: PlanNode;
     open_project: ProjectManifest;
+    prepare_coauthor_branch_decision: CoauthorBranchDecisionAdoption;
     prepare_coauthor_branch_merge: CoauthorBranchMerge;
     prepare_coauthor_changeset: CoauthorChangeSet;
     prepare_coauthor_reversal: CoauthorReversal;
@@ -1716,6 +1767,7 @@ export type IpcResponses = {
     save_project_ai_task_overrides: ProjectAiTaskOverrides;
     save_recovery_log: null;
     save_writing_review_policy: WritingReviewPolicy;
+    search_coauthor_decisions: CoauthorDecisionsPage;
     search_project: SearchResult[];
     set_entity_archived: Entity;
     set_summary_material_lifecycle: SummaryMaterial;
@@ -1771,6 +1823,32 @@ export type VersionedPlanningSection = {
     updatedAt: string;
     version: number;
 };
+export type CoauthorBranchDecisionAdoption = {
+    after: CoauthorDecisionMemory;
+    before: CoauthorDecisionMemory | null;
+    branch: CoauthorBranchEntry;
+    id: string;
+    source: CoauthorDecisionMemory;
+    status: string;
+};
+export type CoauthorDecisionMemory = {
+    aliases: string[];
+    decision: CoauthorDecision;
+    quote: string | null;
+};
+export type CoauthorDecision = {
+    content: string;
+    id: string;
+    sourceMessageId: string;
+    status: string;
+    topic: string;
+    version: number;
+};
+export type CoauthorBranchEntry = {
+    relationship: string;
+    sessionId: string;
+    title: string;
+};
 export type CoauthorBranchMerge = {
     after: CoauthorDocument;
     before: CoauthorDocument;
@@ -1792,11 +1870,6 @@ export type CoauthorDocument = {
     targetRevision: string | null;
     title: string;
     version: number;
-};
-export type CoauthorBranchEntry = {
-    relationship: string;
-    sessionId: string;
-    title: string;
 };
 export type DiscussionExchange = {
     assistantMessage: DiscussionMessage;
@@ -1954,14 +2027,6 @@ export type CoauthorDecisionGuard = {
     current: CoauthorDecision;
     referencedVersion: number;
     superseded: boolean;
-};
-export type CoauthorDecision = {
-    content: string;
-    id: string;
-    sourceMessageId: string;
-    status: string;
-    topic: string;
-    version: number;
 };
 export type CoauthorKnowledgeContext = {
     anchors: CoauthorKnowledgeAnchor[];
@@ -2791,6 +2856,24 @@ export type AuthorTodo = {
     targetTitle: string;
     updatedAt: string;
 };
+export type CoauthorBranchDecisionAdoptionsPage = {
+    adoptions: CoauthorBranchDecisionSummary[];
+    hasMore: boolean;
+};
+export type CoauthorBranchDecisionSummary = {
+    afterVersion: number;
+    decisionStatus: string;
+    id: string;
+    sourceTitle: string;
+    sourceVersion: number;
+    status: string;
+    topic: string;
+};
+export type CoauthorDecisionsPage = {
+    hasMore: boolean;
+    memories: CoauthorDecisionMemory[];
+    offset: number;
+};
 export type CoauthorBranchMergesPage = {
     hasMore: boolean;
     merges: CoauthorBranchMergeSummary[];
@@ -2811,11 +2894,6 @@ export type CoauthorDecisionHistory = {
     current: CoauthorDecisionMemory;
     hasMore: boolean;
     revisions: CoauthorDecisionRevision[];
-};
-export type CoauthorDecisionMemory = {
-    aliases: string[];
-    decision: CoauthorDecision;
-    quote: string | null;
 };
 export type CoauthorDecisionRevision = {
     decision: CoauthorDecision;

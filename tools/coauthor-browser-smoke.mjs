@@ -64,6 +64,9 @@ try {
         let changes=null;
         let reversal=null;
         let branchMerge=null;
+        let branchDecision=null;
+        const sourceDecision={decision:{id:"branch-decision",topic:"突破例外",content:"用丹药免除突破代价",
+          status:"REJECTED",sourceMessageId:"branch-author",version:4},aliases:["突破例外","丹药豁免"],quote:"不能靠丹药绕过代价"};
         const branch={sessionId:"branch1",title:"照魂境 · 另一结尾",relationship:"CHILD"};
         const branchDocument={...doc,sessionId:"branch1",version:2,content:"甲😀另一个结尾。\\n来源保留。"};
         let impacts=[];
@@ -162,6 +165,27 @@ try {
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
           if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
           if(command==="get_coauthor_state")return lightState();
+          if(command==="list_coauthor_branch_decisions")return {memories:[structuredClone(sourceDecision)],offset:args.offset,hasMore:false};
+          if(command==="search_coauthor_decisions")return {memories:state.decisions.map(decision=>({
+            decision:structuredClone(decision),aliases:[decision.topic],quote:null})),offset:args.offset,hasMore:false};
+          if(command==="prepare_coauthor_branch_decision"){
+            if(args.input.sourceDecisionId!=="branch-decision"||args.input.sourceVersion!==4
+              ||args.input.targetDecisionId!==null||args.input.expectedVersion!==0)throw new Error("Unexpected decision selection");
+            branchDecision={id:"branch-adopt1",status:"PENDING",branch:structuredClone(branch),
+              source:structuredClone(sourceDecision),before:null,
+              after:{...structuredClone(sourceDecision),decision:{...sourceDecision.decision,id:"d2",version:1,sourceMessageId:"branch-confirm"},
+                quote:sourceDecision.decision.content}};
+            return structuredClone(branchDecision);
+          }
+          if(command==="apply_coauthor_branch_decision"){
+            if(args.id!==branchDecision?.id)throw new Error("Unknown decision receipt");
+            if(branchDecision.status!=="APPLIED"){state.decisions.push(structuredClone(branchDecision.after.decision));branchDecision.status="APPLIED";}
+            return structuredClone(branchDecision);
+          }
+          if(command==="get_coauthor_branch_decision")return structuredClone(branchDecision);
+          if(command==="list_coauthor_branch_decision_adoptions")return {adoptions:branchDecision?[{
+            id:branchDecision.id,status:branchDecision.status,sourceTitle:branch.title,topic:branchDecision.after.decision.topic,
+            decisionStatus:branchDecision.after.decision.status,sourceVersion:4,afterVersion:1}]:[],hasMore:false};
           if(command==="list_coauthor_branches")return {branches:[branch],hasMore:false};
           if(command==="compare_coauthor_branch")return {
             branch:structuredClone(branch),baseDocument:structuredClone(doc),
@@ -505,6 +529,32 @@ try {
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-branch-receipt.png`), fullPage: true });
     assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "run_coauthor").length), 1,
       "Branch comparison and author merge must not run a model");
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("list_coauthor_branch_decisions")), false);
+    const draftBeforeDecision = await draft.inputValue();
+    await branchPanel.getByText("分支决定对照与采用", { exact: true }).click();
+    const decisionRegion = branchPanel.getByRole("region", { name: "分支决定对照与采用", exact: true });
+    await decisionRegion.getByRole("radio", { name: "突破例外 · 已否定 · v4", exact: true }).check();
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("list_coauthor_branch_decision_adoptions")), false);
+    await decisionRegion.getByRole("button", { name: "准备决定采用预览", exact: true }).click();
+    await decisionRegion.getByRole("button", { name: "确认采用到当前讨论", exact: true }).waitFor();
+    await decisionRegion.getByRole("region", { name: "决定采用预览", exact: true }).evaluate(el => el.scrollIntoView({ block: "start" }));
+    assert.equal(await branchPanel.evaluate(el => el.scrollWidth > el.clientWidth), false);
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-branch-decision-preview.png`), fullPage: true });
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("apply_coauthor_branch_decision")), false);
+    await decisionRegion.getByRole("button", { name: "确认采用到当前讨论", exact: true }).click();
+    const decisionConfirmation = page.getByRole("alertdialog", { name: "采用分支决定", exact: true });
+    await decisionConfirmation.waitFor();
+    assert.ok((await decisionConfirmation.innerText()).includes("从不存在变为已否定"));
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-branch-decision-confirmation.png`), fullPage: true });
+    await decisionConfirmation.getByRole("button", { name: "确认采用决定", exact: true }).click();
+    await decisionRegion.getByText(/已采用为决定 v1/).waitFor();
+    assert.equal(await draft.inputValue(), draftBeforeDecision, "Decision adoption must not change the draft");
+    await decisionRegion.getByText("分支决定采用记录", { exact: true }).click();
+    await decisionRegion.getByRole("button", { name: "查看决定采用记录", exact: true }).click();
+    await decisionRegion.getByRole("heading", { name: "决定采用回执 · 照魂境 · 另一结尾", exact: true }).waitFor();
+    assert.equal(await decisionRegion.getByRole("button", { name: "确认采用到当前讨论", exact: true }).count(), 0);
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-branch-decision-receipt.png`), fullPage: true });
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "run_coauthor").length), 1);
     await branchPanel.getByRole("button", { name: "关闭分支比较与合并", exact: true }).click();
     const boxes = await page.evaluate(() => {
       const selectors = [".coauthor-heading", ".coauthor-toolbar", ".coauthor-composer", ".coauthor-manuscript"];
@@ -628,7 +678,7 @@ try {
     assert.equal(runCount, 1, "Viewing, creating and continuing a check must not auto-run a model");
     await page.getByRole("button", { name: "决定", exact: false }).click();
     const decisionsPanel = page.getByRole("dialog", { name: "讨论决定" });
-    await decisionsPanel.getByText("决定来源与修订", { exact: true }).click();
+    await decisionsPanel.getByRole("article").filter({ has: page.getByText("突破代价", { exact: true }) }).getByText("决定来源与修订", { exact: true }).click();
     await decisionsPanel.getByText("v2 · 当前修订", { exact: true }).waitFor();
     await decisionsPanel.getByText("v1 · 已替代（历史）", { exact: true }).waitFor();
     await decisionsPanel.getByText("主题别名：突破代价、境界代偿", { exact: true }).waitFor();

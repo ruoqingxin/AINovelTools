@@ -189,6 +189,24 @@ export function getCoauthorRun(input: IpcRequests["get_coauthor_run"]) {
 export function listCoauthorBranches(input: IpcRequests["list_coauthor_branches"]) {
   return invoke("list_coauthor_branches", input);
 }
+export function listCoauthorBranchDecisions(input: IpcRequests["list_coauthor_branch_decisions"]) {
+  return invoke("list_coauthor_branch_decisions", input);
+}
+export function searchCoauthorDecisions(input: IpcRequests["search_coauthor_decisions"]) {
+  return invoke("search_coauthor_decisions", input);
+}
+export function prepareCoauthorBranchDecision(input: IpcRequests["prepare_coauthor_branch_decision"]) {
+  return invoke("prepare_coauthor_branch_decision", input);
+}
+export function getCoauthorBranchDecision(input: IpcRequests["get_coauthor_branch_decision"]) {
+  return invoke("get_coauthor_branch_decision", input);
+}
+export function listCoauthorBranchDecisionAdoptions(input: IpcRequests["list_coauthor_branch_decision_adoptions"]) {
+  return invoke("list_coauthor_branch_decision_adoptions", input);
+}
+export function applyCoauthorBranchDecision(input: IpcRequests["apply_coauthor_branch_decision"]) {
+  return invoke("apply_coauthor_branch_decision", input);
+}
 export function compareCoauthorBranch(input: IpcRequests["compare_coauthor_branch"]) {
   return invoke("compare_coauthor_branch", input);
 }

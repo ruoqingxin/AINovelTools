@@ -501,7 +501,7 @@ function CoauthorSession({ scope, initial, onFork }: {
         getDocument={() => draft.current.current} saveDraft={async () => {
           if (draft.backup || draft.conflict) throw new Error("请先处理本地恢复稿或版本冲突，再比较分支。");
           return draft.save();
-        }} isGenerating={() => Boolean(activeRef.current)} onApplied={async (merge) => {
+        }} isGenerating={() => Boolean(activeRef.current)} onDecisionsApplied={async () => { await refresh(); }} onApplied={async (merge) => {
           draft.acceptSaved(merge.after, merge.before); setSelection("");
           await refresh();
         }} />}

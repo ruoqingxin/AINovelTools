@@ -8,6 +8,7 @@ import {
 } from "../lib/tauri-client";
 import { useConfirmAction } from "../shell/confirm-action-provider";
 import { sameDraft } from "./use-coauthor-draft";
+import { CoauthorBranchDecisions } from "./coauthor-branch-decisions";
 
 type Range = { start: number; end: number };
 function selectedRange(element: HTMLTextAreaElement): Range | null {
@@ -18,12 +19,13 @@ function selectedRange(element: HTMLTextAreaElement): Range | null {
   return { start: [...value.slice(0, start)].length, end: [...value.slice(0, end)].length };
 }
 
-export function CoauthorBranchesPanel({ scope, getDocument, saveDraft, isGenerating, onApplied }: {
+export function CoauthorBranchesPanel({ scope, getDocument, saveDraft, isGenerating, onApplied, onDecisionsApplied }: {
   scope: CoauthorScope;
   getDocument: () => CoauthorDocument;
   saveDraft: () => Promise<CoauthorDocument>;
   isGenerating: () => boolean;
   onApplied: (merge: CoauthorBranchMerge) => Promise<void>;
+  onDecisionsApplied?: () => Promise<void>;
 }) {
   const confirm = useConfirmAction();
   const client = useQueryClient();
@@ -35,6 +37,7 @@ export function CoauthorBranchesPanel({ scope, getDocument, saveDraft, isGenerat
   const [mode, setMode] = useState("append");
   const [merge, setMerge] = useState<CoauthorBranchMerge | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [decisionsOpen, setDecisionsOpen] = useState(false);
   const [historyOffset, setHistoryOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -147,6 +150,12 @@ export function CoauthorBranchesPanel({ scope, getDocument, saveDraft, isGenerat
         onClick={() => branchPage(offset + 20)}><ArrowRight size={16} /></button>
     </nav>}
     {error && <p role="alert" className="project-error">{error}</p>}
+    <details onToggle={(event) => setDecisionsOpen(event.currentTarget.open)}>
+      <summary>分支决定对照与采用</summary>
+      {decisionsOpen && <CoauthorBranchDecisions key={`${scope.projectId}:${scope.sessionId}:${sourceId}`} scope={scope} sourceId={sourceId}
+        isGenerating={isGenerating} parentBusy={busy} onApplied={onDecisionsApplied ?? (async () => {})}
+        onBusyChange={(value) => { if (mounted.current) { busyRef.current = value; setBusy(value); } }} />}
+    </details>
     {comparison && <section aria-label="分支稿件对照">
       <h3>{comparison.branch.title}</h3>
       <details><summary>继承起点 · v{comparison.baseDocument.version}</summary>
@@ -182,7 +191,7 @@ export function CoauthorBranchesPanel({ scope, getDocument, saveDraft, isGenerat
         <section><h4>合并前 · v{merge.before.version}</h4><pre aria-label="分支合并前">{merge.before.content}</pre></section>
         <section><h4>合并后 · v{merge.after.version}</h4><pre aria-label="分支合并后">{merge.after.content}</pre></section>
       </div>
-      <p>仅合并工作稿文字；讨论决定、正式内容与其他分支未采用，规则依赖仍待核对。</p>
+      <p>此文字合并不包含讨论决定或正式资料；另行采用的决定不属于这份回执，规则依赖仍待核对。</p>
       {merge.status === "APPLIED" ? <p role="status">已合并为工作稿 v{merge.after.version}，当前稿件可能已有后续编辑。</p>
         : <button className="primary-action" disabled={busy} onClick={() => void apply()}><Check size={16} />确认合并到工作稿</button>}
     </section>}

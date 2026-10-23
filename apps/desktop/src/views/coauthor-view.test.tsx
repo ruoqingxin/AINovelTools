@@ -491,4 +491,45 @@ describe("coauthor workspace", () => {
     expect(screen.getByText("已合并为工作稿 v2，当前稿件可能已有后续编辑。")).toBeVisible();
     expect(pending).toHaveLength(0);
   });
+
+  it("refreshes adopted branch decisions without saving or replacing concurrent local writing", async () => {
+    const base = mocks.invoke.getMockImplementation()!;
+    let receipt: import("../lib/tauri-client").CoauthorBranchDecisionAdoption;
+    let resolveApply!: (value: typeof receipt) => void;
+    const branch = { sessionId: "s2", title: "失忆分支", relationship: "CHILD" };
+    const memory = { decision: { id: "foreign", topic: "记忆例外", content: "丹药不能豁免代价", status: "CHOSEN", version: 2,
+      sourceMessageId: "foreign-message" }, aliases: ["记忆例外"], quote: "保留丹药限制" };
+    mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === "list_coauthor_branches") return { branches: [branch], hasMore: false };
+      if (command === "list_coauthor_branch_decisions") return { memories: [memory], offset: 0, hasMore: false };
+      if (command === "search_coauthor_decisions") return { memories: [], offset: 0, hasMore: false };
+      if (command === "prepare_coauthor_branch_decision") {
+        receipt = { id: "decision-adoption", status: "PENDING", branch, source: memory, before: null,
+          after: { ...memory, decision: { ...memory.decision, id: "local", version: 1, sourceMessageId: "authorization" } } };
+        return structuredClone(receipt);
+      }
+      if (command === "apply_coauthor_branch_decision") return new Promise(done => { resolveApply = done; });
+      return base(command, args);
+    });
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    fireEvent.click(screen.getByRole("button", { name: "分支比较与合并" }));
+    await screen.findByRole("option", { name: "子分支 · 失忆分支" });
+    fireEvent.change(screen.getByLabelText("对照分支"), { target: { value: "s2" } });
+    fireEvent.click(screen.getByText("分支决定对照与采用"));
+    fireEvent.click(await screen.findByRole("radio", { name: "记忆例外 · 已选择 · v2" }));
+    fireEvent.click(screen.getByRole("button", { name: "准备决定采用预览" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认采用到当前讨论" }));
+    const confirmation = await screen.findByRole("alertdialog");
+    fireEvent.click(within(confirmation).getByRole("button", { name: "确认采用决定" }));
+    await waitFor(() => expect(resolveApply).toBeDefined());
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "save_coauthor_document")).toBe(false);
+    fireEvent.change(screen.getByLabelText("工作稿内容"), { target: { value: "采用决定等待期间的新段。" } });
+    stored.decisions = [receipt!.after.decision];
+    await act(async () => resolveApply({ ...receipt!, status: "APPLIED" }));
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue("采用决定等待期间的新段。");
+    expect(localStorage.getItem("coauthor-draft:p1:s1")).toContain("采用决定等待期间的新段");
+    expect(screen.getByText(/已采用为决定 v1/)).toBeVisible();
+    expect(pending).toHaveLength(0);
+  });
 });

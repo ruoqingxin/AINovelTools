@@ -85,6 +85,8 @@ it("loads a lightweight directory on opening and fetches documents and merge his
   renderPanel();
   await screen.findByRole("option", { name: "子分支 · 失忆分支" });
   expect(calls("compare_coauthor_branch")).toHaveLength(0);
+  expect(calls("list_coauthor_branch_decisions")).toHaveLength(0);
+  expect(calls("search_coauthor_decisions")).toHaveLength(0);
   expect(calls("list_coauthor_branch_merges")).toHaveLength(0);
   await compare();
   expect(saveDraft).toHaveBeenCalledOnce();

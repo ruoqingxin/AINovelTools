@@ -10,6 +10,7 @@ use novel_infrastructure::{
     CoauthorDocument, CoauthorDocumentKind, CoauthorError, CoauthorScope, CoauthorState,
     CoauthorRun, CoauthorRunsPage,
     CoauthorBranchesPage, CoauthorBranchComparison, CoauthorBranchMergeInput, CoauthorBranchMerge, CoauthorBranchMergesPage,
+    CoauthorDecisionsPage, CoauthorBranchDecisionInput, CoauthorBranchDecisionAdoption, CoauthorBranchDecisionAdoptionsPage,
     CoauthorSearchPage, CoauthorKnowledgeEvidence, CoauthorKnowledgeAnchorsPage, CoauthorEvidenceProgress,
     CoauthorManuscriptBlock,
     CoauthorOutlinePage,
@@ -131,6 +132,54 @@ impl Drop for RunGuard<'_> {
             );
         }
     }
+}
+
+#[tauri::command]
+pub(crate) fn search_coauthor_decisions(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, query: String, offset: u32,
+) -> Result<CoauthorDecisionsPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .search_coauthor_decisions(&scope,&query,offset).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn list_coauthor_branch_decisions(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, source_session_id: uuid::Uuid, query: String, offset: u32,
+) -> Result<CoauthorDecisionsPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_coauthor_branch_decisions(&scope,source_session_id,&query,offset).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn prepare_coauthor_branch_decision(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, input: CoauthorBranchDecisionInput,
+) -> Result<CoauthorBranchDecisionAdoption, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .prepare_coauthor_branch_decision(&scope,input).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn get_coauthor_branch_decision(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid,
+) -> Result<CoauthorBranchDecisionAdoption, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .get_coauthor_branch_decision(&scope,id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn list_coauthor_branch_decision_adoptions(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, offset: u32,
+) -> Result<CoauthorBranchDecisionAdoptionsPage, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .list_coauthor_branch_decision_adoptions(&scope,offset).map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn apply_coauthor_branch_decision(
+    state: tauri::State<'_, ProjectState>, scope: CoauthorScope, id: uuid::Uuid,
+) -> Result<CoauthorBranchDecisionAdoption, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .apply_coauthor_branch_decision(&scope,id).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -1731,6 +1780,9 @@ mod tests {
         assert!(!names.contains(&"prepare_coauthor_reversal"));
         assert!(!names.contains(&"prepare_coauthor_branch_merge"));
         assert!(!names.contains(&"apply_coauthor_branch_merge"));
+        assert!(!names.contains(&"list_coauthor_branch_decisions"));
+        assert!(!names.contains(&"prepare_coauthor_branch_decision"));
+        assert!(!names.contains(&"apply_coauthor_branch_decision"));
         let call = ModelToolCall {
             id: "forged".into(), call_type: "function".into(),
             function: novel_infrastructure::ModelToolFunction {
