@@ -599,9 +599,22 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
             "missing prompt rule: {instruction}"
         );
     }
-    assert_eq!(PROMPT_VERSION, "coauthor-v24");
+    assert_eq!(PROMPT_VERSION, "coauthor-v26");
 }
 
+#[test]
+fn program_receipts_hide_discussion_delivery_without_removing_other_tools() {
+    let definitions = crate::commands::coauthor::tools();
+    assert_eq!(request_tools(&definitions, false), definitions);
+    let receipt = request_tools(&definitions, true);
+    assert_eq!(receipt.len(), definitions.len() - 1);
+    assert!(!receipt.iter().any(|tool| tool["function"]["name"] == "deliver_reply"));
+    assert!(receipt.iter().any(|tool| tool["function"]["name"] == "record_check_result"));
+    for instruction in ["更不能总结为“只能部分、不能全部”", "已明确全面重构或将旧规则仅作对照时", "旧代价重新加为已选新代价的前置",
+        "未读原文不能断言该来源没写某条规则"] {
+        assert!(PROMPT.contains(instruction));
+    }
+}
 #[test]
 fn repeated_identical_tool_errors_stop_but_success_or_changed_failure_resets_recovery() {
     let mut guard = ToolFailureGuard::default();
@@ -668,8 +681,24 @@ fn historical_assistant_outputs_cannot_establish_rules_or_author_decisions() {
     assert_eq!(selected[1]["provenance"]["origin"], "PRIOR_ASSISTANT_OUTPUT");
     assert_eq!(selected[1]["provenance"]["establishesRules"], false);
     assert_eq!(selected[1]["provenance"]["establishesAuthorDecision"], false);
+    assert!(selected[0].get("continuationReference").is_none());
+    assert_eq!(selected[1]["continuationReference"], "history-2");
     assert!(json!(&selected).to_string().chars().count() <= 2048);
     assert!(selected.iter().all(|entry| entry["referenceOnly"] == true));
+}
+
+#[test]
+fn generation_strategy_distinguishes_exact_boundaries_new_effects_and_recovery() {
+    for rule in [
+        "解释现行限制优先引完整原句",
+        "不能断言项目里没有其他支持资料",
+        "先定新效果是临时还是永久",
+        "不靠“我建议”后再声称“不用改规则、完全兼容”",
+        "不手填UUID/anchor",
+        "REGENERATE_CONTENT必须重写正文",
+    ] {
+        assert!(PROMPT.contains(rule), "{rule}");
+    }
 }
 
 #[test]

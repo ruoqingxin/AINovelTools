@@ -43,9 +43,10 @@ impl ModelGateway {
         messages: &[Value],
         tools: &[Value],
         options: GenerationOptions,
+        require_tool_call: bool,
     ) -> (String, Value) {
         let mut body = json!({"model":profile.model_id,"messages":messages,
-            "tools":tools,"tool_choice":"auto","stream":true,
+            "tools":tools,"tool_choice":if require_tool_call { "required" } else { "auto" },"stream":true,
             "stream_options":{"include_usage":true}});
         body[if profile.provider == ModelProvider::OpenAi {
             "max_completion_tokens"
@@ -80,6 +81,7 @@ impl ModelGateway {
         messages: &[Value],
         tools: &[Value],
         options: GenerationOptions,
+        require_tool_call: bool,
         cancelled: Arc<AtomicBool>,
         mut on_text: F,
     ) -> Result<ModelToolTurn, AiError>
@@ -92,7 +94,11 @@ impl ModelGateway {
         if profile.privacy_level == PrivacyLevel::LocalOnly {
             return Err(AiError::PrivacyPolicy);
         }
-        let (url, body) = self.tool_request_preview(profile, messages, tools, options);
+        if require_tool_call && tools.is_empty() {
+            return Err(AiError::InvalidResponse);
+        }
+        let (url, body) =
+            self.tool_request_preview(profile, messages, tools, options, require_tool_call);
         let request = async {
             let response = self
                 .client

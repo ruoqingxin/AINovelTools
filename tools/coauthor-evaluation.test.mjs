@@ -962,9 +962,9 @@ test("native regression uses estimated tokens including overhead, not serialized
     kind: "model_request", inputChars: 50_000, estimatedInputTokens: 15_800, inputTokenBudget: 16_384,
   }] };
   assert.equal(assertLoopbackRegression(entry).scriptedNativeRegression, true);
-  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v24"] }).scriptedNativeRegression, true);
+  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v26"] }).scriptedNativeRegression, true);
   assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v21"] }));
-  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v24", "coauthor-v23"] }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v26", "coauthor-v25"] }));
   assert.throws(() => assertLoopbackRegression({ ...entry, audit: [{
     ...entry.audit[0], estimatedInputTokens: 16_385,
   }] }));

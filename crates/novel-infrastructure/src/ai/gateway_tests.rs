@@ -65,6 +65,31 @@ fn server(
     (format!("http://{address}/v1"), thread)
 }
 
+#[test]
+fn required_tool_policy_is_explicit_and_auto_remains_available_for_program_receipts() {
+    let gateway = ModelGateway::default();
+    let tools = vec![
+        serde_json::json!({"type":"function","function":{"name":"deliver_reply",
+        "parameters":{"type":"object"}}}),
+    ];
+    for required in [false, true] {
+        let mut model = profile("http://127.0.0.1/v1".into());
+        model.provider = ModelProvider::DeepSeek;
+        let (_, body) = gateway.tool_request_preview(
+            &model,
+            &[],
+            &tools,
+            GenerationOptions::default(),
+            required,
+        );
+        assert_eq!(
+            body["tool_choice"],
+            if required { "required" } else { "auto" }
+        );
+        assert_eq!(body["thinking"]["type"], "disabled");
+    }
+}
+
 #[tokio::test]
 async fn native_tools_round_trip_over_http_and_keep_arguments_out_of_text_stream() {
     let (url, thread) = server(|mut socket| {
@@ -100,6 +125,7 @@ async fn native_tools_round_trip_over_http_and_keep_arguments_out_of_text_stream
             &messages,
             &tools,
             GenerationOptions::default(),
+            false,
             Arc::new(AtomicBool::new(false)),
             |chunk| text.push_str(chunk),
         )
@@ -117,6 +143,7 @@ async fn native_tools_round_trip_over_http_and_keep_arguments_out_of_text_stream
         &next,
         &tools,
         GenerationOptions::default(),
+        false,
     );
     assert_eq!(body["messages"][1]["tool_calls"][0]["id"], "call_read");
     assert_eq!(body["messages"][2]["tool_call_id"], "call_read");
@@ -140,6 +167,7 @@ async fn native_tool_cancellation_interrupts_a_provider_without_a_final_event() 
             &[serde_json::json!({"role":"user","content":"write"})],
             &[],
             GenerationOptions::default(),
+            false,
             cancelled,
             |chunk| {
                 if !chunk.is_empty() {

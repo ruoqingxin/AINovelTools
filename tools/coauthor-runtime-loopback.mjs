@@ -210,11 +210,12 @@ export function coauthorLoopbackTurn(body, options = {}) {
   if (prior.some((result) => result.value.executed !== false
     && (result.name === "edit_draft" || ["start_source_check", "read_check_source",
       "record_check_result", "save_check_note"].includes(result.name)))) return message;
-  return tools([call("deliver_reply", { mode: "DISCUSSION", content: message.content, ruleChanges: [] })]);
+  return tools([call("deliver_reply", { mode: "DISCUSSION", content: message.content,
+    requestQuote: null, continuation: null, ruleChanges: [] })]);
 }
 
 export function assertLoopbackRegression(entry, { expectInputLimit = false, expectLateExpansion = false } = {}) {
-  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v24"));
+  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v26"));
   const setup = entry.audit?.find((a) => a.kind === "input_budget");
   let currentBudget = setup?.initialInputTokenBudget;
   let expanded = false;

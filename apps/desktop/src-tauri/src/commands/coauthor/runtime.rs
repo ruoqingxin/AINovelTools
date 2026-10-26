@@ -8,7 +8,15 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
-pub(super) const PROMPT_VERSION: &str = "coauthor-v24";
+pub(super) const PROMPT_VERSION: &str = "coauthor-v26";
+
+pub(super) fn request_tools(definitions: &[Value], program_receipt: bool) -> Vec<Value> {
+    definitions
+        .iter()
+        .filter(|tool| !program_receipt || tool["function"]["name"] != "deliver_reply")
+        .cloned()
+        .collect()
+}
 
 #[derive(Default)]
 pub(super) struct ToolFailureGuard {
@@ -260,6 +268,9 @@ pub(super) fn history(
                 "origin":"PRIOR_ASSISTANT_OUTPUT",
                 "establishesRules":false, "establishesAuthorDecision":false,
             });
+            if entry["historicalMessage"].as_str().is_some_and(|content| content.chars().count() >= 8) {
+                entry["continuationReference"] = json!(format!("history-{}", index + 1));
+            }
         }
         let size = entry.to_string().chars().count();
         if used + size <= budget {

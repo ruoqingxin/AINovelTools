@@ -23,7 +23,9 @@ const newStory = "她将铜匣推回桌角。窗纸上多了一道影子。她�
 const call = (name, args, index = 0) => ({ id: `delivery-${requests}-${index}`, type: "function",
   function: { name, arguments: JSON.stringify(args) } });
 const tools = (...calls) => ({ role: "assistant", content: "", tool_calls: calls });
-const deliver = (args) => tools(call("deliver_reply", { ruleChanges: [], ...args }));
+const deliver = (args) => tools(call("deliver_reply", {
+  requestQuote: null, continuation: null, ruleChanges: [], ...args,
+}));
 const plain = (content) => ({ role: "assistant", content });
 const continuation = (content) => ({
   mode: "CONTINUATION", content, requestQuote: "继续写",
@@ -34,7 +36,53 @@ const continuation = (content) => ({
 function response(body) {
   const { context } = loopbackContext(body.messages);
   assert(body.tools.some((tool) => tool.function.name === "deliver_reply"));
+  assert.equal(body.tool_choice, "required");
+  const schema = body.tools.find((tool) => tool.function.name === "deliver_reply").function.parameters;
+  for (const field of ["requestQuote", "continuation", "ruleChanges"]) assert(schema.required.includes(field));
   if (probe === "seed") return deliver({ mode: "DISCUSSION", content: oldStory });
+  if (["program-reference", "v25-metadata-recovery", "v25-unchanged-retry"].includes(probe)) {
+    const original = context.historicalMessages.find((message) => message.id === seedMessage.id);
+    assert(original?.continuationReference, "The actual supplied AI entry must carry a program reference.");
+    assert(!context.historicalMessages.some((message) => message.role === "USER" && message.continuationReference));
+    const args = {
+      mode: "CONTINUATION", content: newStory, requestQuote: "继续写",
+      continuation: { reference: original.continuationReference, preservedQuotes: ["她将铜匣推回桌角。"] },
+    };
+    if (probe === "program-reference") return deliver(args);
+    if (requests === 1) {
+      const user = context.historicalMessages.find((message) => message.role === "USER");
+      assert(user);
+      return deliver({ ...continuation(oldStory + "\n窗外来了新的人。"),
+        continuation: { messageId: user.id, anchor: "继续写，保留她将铜匣推回桌角这句",
+          preservedQuotes: ["她将铜匣推回桌角。"] } });
+    }
+    const rejected = JSON.parse(body.messages.filter((message) => message.role === "tool").at(-1).content);
+    assert.equal(rejected.recovery.action, "REGENERATE_CONTENT");
+    assert.equal(rejected.recovery.contentMustChange, true);
+    assert.equal([...rejected.recovery.repeatedExcerpt].length, 80);
+    assert(rejected.recovery.preserveQuotes.some((quote) => quote.includes("她将铜匣推回桌角")));
+    const previousCall = body.messages.filter((message) => message.tool_calls).at(-1).tool_calls[0];
+    assert(!JSON.parse(previousCall.function.arguments).content.includes("只是心里没有动静"));
+    if (probe === "v25-unchanged-retry" && requests === 2) args.content = oldStory + "\n窗外来了新的人。";
+    return deliver(args);
+  }
+  if (probe === "read-reference") {
+    if (requests === 1) return tools(call("search_sources", { query: "她将铜匣推回桌角", history: true }));
+    const outputs = body.messages.filter((message) => message.role === "tool").map((message) => JSON.parse(message.content));
+    const read = outputs.find((result) => result.kind === "MESSAGE" && result.content?.startsWith("历史发言 [ASSISTANT]"));
+    if (!read) {
+      const hit = outputs.flatMap((result) => result.hits ?? []).find((hit) => hit.key === `MESSAGE:${seedMessage.id}`);
+      assert(hit, "Only a real search result supplies the historical source revision.");
+      return tools(call("read_source", { key: hit.key, revision: hit.revision, offset: 0, limit: 4000 }));
+    }
+    assert(read.continuationReference?.startsWith("read-"));
+    return deliver({ mode: "CONTINUATION", content: newStory, requestQuote: "继续写",
+      continuation: { reference: read.continuationReference, preservedQuotes: ["她将铜匣推回桌角。"] } });
+  }
+  if (probe === "unknown-reference") {
+    return deliver({ mode: "CONTINUATION", content: newStory, requestQuote: "继续写",
+      continuation: { reference: "not-issued", preservedQuotes: [] } });
+  }
   if (probe === "repair") {
     assert(context.historicalMessages.some((message) => message.id === seedMessage.id));
     if (requests === 1) return plain(oldStory + "\n要不要我接着写？");
@@ -44,6 +92,27 @@ function response(body) {
     return deliver(continuation(newStory));
   }
   if (probe === "reprint") return deliver({ mode: "REPRINT", content: oldStory, requestQuote: "重贴整合全文" });
+  if (probe === "v24-parameters") {
+    if (requests === 1) return deliver({ mode: "CONTINUATION", content: newStory });
+    assert.equal(requests, 2);
+    const error = JSON.parse(body.messages.filter((message) => message.role === "tool").at(-1).content).error;
+    assert(error.includes("requestQuote") && error.includes("continuation.messageId"));
+    const args = continuation(newStory);
+    args.continuation.preservedQuotes = ["她将铜匣推回桌角。"];
+    return deliver(args);
+  }
+  if (probe === "v24-preservation") {
+    if (requests === 1) return deliver(continuation(oldStory + "\n新来的人递进一封信。"));
+    if (requests === 2) {
+      const args = continuation(oldStory.replace("她将铜匣推回桌角。", "") + "\n新来的人递进一封信。");
+      args.continuation.preservedQuotes = [];
+      return deliver(args);
+    }
+    assert.equal(requests, 3);
+    const error = JSON.parse(body.messages.filter((message) => message.role === "tool").at(-1).content).error;
+    assert(error.includes("缺少作者明确要求保留") && error.includes("连续80字"));
+    return deliver(continuation(newStory));
+  }
   if (probe === "changing-errors") {
     if (requests === 1) return deliver({ mode: "DISCUSSION", content: "" });
     if (requests === 2) return deliver({ mode: "REPRINT", content: "伪造授权", requestQuote: "重贴整合全文" });
@@ -52,7 +121,7 @@ function response(body) {
   if (probe === "missing-delivery") return plain("这不是已交付回复，要不要继续？");
   if (probe === "batch") return tools(call("deliver_reply", { mode: "DISCUSSION", content: "不能抢先完成", ruleChanges: [] }),
     call("record_decision", { expectedVersion: 0, topic: "不应执行", content: "继续写", quote: "继续写", status: "CHOSEN" }, 1));
-  if (probe === "rule-change") {
+  if (probe === "rule-change" || probe === "explicit-change") {
     if (requests === 1) {
       ruleSource = context.relevantSources.hits.find((source) => source.title === "突破代价规则");
       assert(ruleSource);
@@ -61,6 +130,14 @@ function response(body) {
     const read = body.messages.filter((message) => message.role === "tool").map((message) => JSON.parse(message.content))
       .find((result) => result.key === ruleSource.key);
     assert(read?.content.includes("普通术法"));
+    if (probe === "explicit-change" && requests === 2) {
+      return deliver({ mode: "DISCUSSION", content: "这是改规则。可以改用新的恢复机制。" });
+    }
+    if (probe === "explicit-change") {
+      assert.equal(requests, 3);
+      assert(body.messages.some((message) => message.role === "tool"
+        && JSON.parse(message.content).error?.includes("ruleChanges为空")));
+    }
     return deliver({ mode: "DISCUSSION", content: "这里提出特殊恢复机制，不视为原规则已有的能力。",
       ruleChanges: [{ key: read.key, revision: read.revision, quote: "普通术法", proposal: "新增有代价的特殊恢复机制，仍待作者决定。" }] });
   }
@@ -117,7 +194,7 @@ async function run(name, message, expectedStatus, expectedRequests) {
   assert.equal(run.status, expectedStatus);
   assert.equal(requests, expectedRequests);
   assert.equal(run.audit.filter((event) => event.kind === "model_request").length, requests);
-  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v24"));
+  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v26"));
   assert.deepEqual((await invoke(main, "get_coauthor_state", { scope })).document, before.document);
   assert.equal(snapshot(), original, "Delivery must not alter formal content or decisions.");
   assert.deepEqual(await invoke(main, "get_ai_task_preferences"), preferences);
@@ -190,6 +267,8 @@ try {
   assert(!repaired.output.includes("要不要我接着写"));
   assert.equal(repaired.audit.filter((event) => event.kind === "reply_delivery_rejected").length, 2);
   await run("reprint", "请重贴整合全文。", "COMPLETED", 1);
+  await run("v24-parameters", "继续写，保留她将铜匣推回桌角这句，只给新增情节。", "COMPLETED", 2);
+  await run("v24-preservation", "继续写，保留她将铜匣推回桌角这句，只给新增情节。", "COMPLETED", 3);
   await run("changing-errors", "继续写。", "FAILED", 3);
   await run("missing-delivery", "继续写。", "FAILED", 3);
   const batch = await run("batch", "继续写。", "FAILED", 3);
@@ -197,6 +276,27 @@ try {
   const changed = await run("rule-change", "讨论突破代价规则的改动提案，不修改资料。", "COMPLETED", 2);
   assert(changed.output.includes("待作者决定，未修改正式资料"));
   assert(changed.output.includes(ruleSource.revision));
+  await run("explicit-change", "讨论突破代价规则的改动提案，不修改资料。", "COMPLETED", 3);
+  for (const [name, count] of [["program-reference", 1], ["v25-metadata-recovery", 2], ["v25-unchanged-retry", 3]]) {
+    const session = await invoke(main, "create_discussion_session", {
+      title: name, scopeKind: "PROJECT", scopeId: null, scopeText: null,
+      topicKind: null, linkedEntityId: null,
+    });
+    scope = { ...scope, sessionId: session.id };
+    await run("seed", "请给出短方案，只在回复中试写。", "COMPLETED", 1);
+    const current = await invoke(main, "list_discussion_messages", { sessionId: scope.sessionId, limit: 16 });
+    seedMessage = current.filter((message) => message.role === "ASSISTANT" && message.content === oldStory)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    assert(seedMessage);
+    const result = await run(name, "继续写，保留她将铜匣推回桌角这句，只给新增情节。", "COMPLETED", count);
+    if (name === "v25-metadata-recovery") {
+      assert.equal(result.audit.filter((event) => event.kind === "reply_recovery_context").length, 1);
+      assert(result.audit.some((event) => event.name === "deliver_reply"
+        && JSON.parse(event.arguments).content.includes("只是心里没有动静")));
+    }
+  }
+  await run("read-reference", "继续写，保留她将铜匣推回桌角这句，只给新增情节。", "COMPLETED", 3);
+  await run("unknown-reference", "继续写。", "FAILED", 3);
   await run("cancel", "继续写。", "CANCELLED", 1);
   assert.equal(report.httpRequests, report.turns.reduce((count, turn) => count + turn.requests, 0));
   assert.equal(main.pageErrors.length, 0);

@@ -9,7 +9,11 @@ afterEach(cleanup);
 
 describe("ManuscriptCandidateEditor", () => {
   it("tracks undo and redo availability and keeps the character count in the toolbar", async () => {
-    const editor = new Editor({ extensions: [StarterKit], content: "<p>Original</p>" });
+    const editor = new Editor({
+      extensions: [StarterKit], content: "<p>Original</p>",
+      // This test covers editing state; jsdom has no selection layout geometry.
+      editorProps: { handleScrollToSelection: () => true },
+    });
     try {
       render(<ManuscriptCandidateEditor editor={editor} characterCount={8} />);
       expect(screen.getByRole("button", { name: "撤销" })).toBeDisabled();
