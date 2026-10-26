@@ -522,7 +522,7 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
             "missing prompt rule: {instruction}"
         );
     }
-    assert_eq!(PROMPT_VERSION, "coauthor-v19");
+    assert_eq!(PROMPT_VERSION, "coauthor-v20");
 }
 
 #[test]
@@ -619,31 +619,49 @@ fn read_only_check_lookup_does_not_replace_an_ordinary_discussion_reply() {
 }
 
 #[test]
+fn invalid_keyword_query_is_not_an_executed_zero_hit_page() {
+    let receipt = retrieval_receipt(
+        "KEYWORD", "砂", 0, false,
+        &json!({"execution":"INVALID_QUERY","hits":[],"hasMore":false,
+            "pendingIndexUpdates":2,"coverage":"未形成有效查询"}),
+    );
+    assert_eq!(receipt["status"], "INVALID_QUERY");
+    assert_eq!(receipt["returned"], Value::Null);
+    assert_eq!(receipt["indexStatus"]["pendingUpdates"], 2);
+    let summary = search_summary(&[receipt]);
+    assert!(summary.contains("未形成有效查询，不能记为 0 命中"));
+    assert!(summary.contains("关键词索引待更新 2 项"));
+    assert!(!summary.contains("实际返回 0 条"));
+}
+
+#[test]
 fn search_receipts_keep_each_query_count_offset_and_scope_separate() {
     let no_hits = retrieval_receipt(
         "KEYWORD",
         "契约",
         0,
         false,
-        &json!({"hits":[],"hasMore":false,"pendingIndexUpdates":0}),
+        &json!({"execution":"RETURNED_PAGE","hits":[],"hasMore":false,"pendingIndexUpdates":0}),
     );
     let four = retrieval_receipt(
         "KEYWORD",
         "契约 交易 代价 术法",
         12,
         true,
-        &json!({"hits":[{},{},{},{}],"hasMore":true,"pendingIndexUpdates":2}),
+        &json!({"execution":"RETURNED_PAGE","hits":[{},{},{},{}],"hasMore":true,"pendingIndexUpdates":2}),
     );
     assert_eq!(no_hits["returned"], 0);
     assert_eq!(four["returned"], 4);
     assert_eq!(four["offset"], 12);
     assert_eq!(four["scope"], "CURRENT_BRANCH_HISTORY");
+    assert_eq!(four["indexStatus"]["pendingUpdates"], 2);
     let summary = search_summary(&[no_hits, four]);
     assert!(summary.contains("关键词 \"契约\"（项目资料，offset=0）：实际返回 0 条"));
     assert!(summary.contains(
         "关键词 \"契约 交易 代价 术法\"（本分支历史，offset=12）：实际返回 4 条，仍有后续页"
     ));
     assert!(summary.contains("不是相关条数或全库总数"));
+    assert!(summary.contains("实际返回 4 条，仍有后续页；关键词索引待更新 2 项"));
 }
 
 #[test]
@@ -651,6 +669,14 @@ fn failed_or_malformed_search_is_never_reported_as_zero_hits() {
     for result in [
         json!({"executed":false,"error":"网络错误"}),
         json!({"hits":[],"executed":false,"error":"查询失败"}),
+        json!({"execution":"RETURNED_PAGE","hits":[],"error":"查询失败"}),
+        json!({"execution":"INVALID_QUERY","hits":[],"executed":false}),
+        json!({"execution":"NOT_RUN","hits":[],"error":"服务错误"}),
+        json!({"hits":[]}),
+        json!({"execution":"UNKNOWN","hits":[]}),
+        json!({"execution":"INVALID_QUERY","hits":[{}]}),
+        json!({"execution":"NOT_RUN","hits":[{}]}),
+        json!({"execution":"RETURNED_PAGE"}),
         json!({}),
     ] {
         let receipt = retrieval_receipt("SEMANTIC", "星砂", 0, false, &result);
@@ -669,7 +695,7 @@ fn semantic_receipts_keep_budget_omissions_and_independent_index_snapshot_visibl
         "星砂\n契约",
         0,
         false,
-        &json!({"hits":[{}],"hasMore":false,"contextOmittedHits":3,
+        &json!({"execution":"RETURNED_PAGE","hits":[{}],"hasMore":false,"contextOmittedHits":3,
             "status":{"indexedChunks":9,"pendingSourceUpdates":1}}),
     );
     let summary = search_summary(&[receipt]);
@@ -677,6 +703,23 @@ fn semantic_receipts_keep_budget_omissions_and_independent_index_snapshot_visibl
     assert!(summary.contains("语义索引待更新 1；与查证索引独立"));
     assert!(summary.contains("\"星砂\\n契约\""));
     assert!(!summary.contains("星砂\n契约"));
+}
+
+#[test]
+fn explicit_semantic_execution_accepts_single_character_queries_and_valid_zero_hits() {
+    for hits in [json!([]), json!([{}])] {
+        let receipt = retrieval_receipt("SEMANTIC", "砂", 12, false,
+            &json!({"execution":"RETURNED_PAGE","hits":hits,"hasMore":true,
+                "status":{"indexedChunks":9,"pendingSourceUpdates":2}}));
+        assert_eq!(receipt["status"], "RETURNED_PAGE");
+        assert_eq!(receipt["returned"], hits.as_array().unwrap().len());
+        assert_eq!(receipt["indexStatus"]["pendingUpdates"], 2);
+        assert!(search_summary(&[receipt]).contains("仍有后续页"));
+    }
+    let receipt = retrieval_receipt("KEYWORD", "砂", 0, false,
+        &json!({"execution":"NOT_RUN","hits":[]}));
+    assert_eq!(receipt["status"], "UNAVAILABLE");
+    assert_eq!(receipt["returned"], Value::Null);
 }
 
 #[test]
@@ -690,7 +733,7 @@ fn disabled_or_unbuilt_semantic_search_is_not_a_zero_hit_provider_query() {
             "星砂契约",
             0,
             false,
-            &json!({"hits":[],"hasMore":false,"status":status}),
+            &json!({"execution":"NOT_RUN","hits":[],"hasMore":false,"status":status}),
         );
         assert_eq!(receipt["status"], "NOT_RUN");
         assert_eq!(receipt["returned"], Value::Null);
@@ -709,7 +752,7 @@ fn search_receipt_display_is_bounded_without_discarding_audit_observations() {
                 &format!("query-{index}"),
                 0,
                 false,
-                &json!({"hits":[],"hasMore":false}),
+                &json!({"execution":"RETURNED_PAGE","hits":[],"hasMore":false}),
             )
         })
         .collect::<Vec<_>>();

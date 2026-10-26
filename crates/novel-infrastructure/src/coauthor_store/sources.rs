@@ -19,8 +19,17 @@ pub struct CoauthorSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CoauthorSearchExecution {
+    ReturnedPage,
+    InvalidQuery,
+    NotRun,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CoauthorSearchPage {
+    pub execution: CoauthorSearchExecution,
     pub hits: Vec<CoauthorSource>,
     pub has_more: bool,
     pub pending_index_updates: usize,
@@ -79,6 +88,7 @@ impl ProjectManager {
         let terms = coauthor_terms(query);
         if terms.is_empty() {
             return Ok(CoauthorSearchPage {
+                execution: CoauthorSearchExecution::InvalidQuery,
                 hits: vec![],
                 has_more: false,
                 pending_index_updates: db.coauthor_pending_updates()?,
@@ -126,6 +136,7 @@ impl ProjectManager {
             }
         }
         Ok(CoauthorSearchPage {
+            execution: CoauthorSearchExecution::ReturnedPage,
             hits,
             has_more,
             pending_index_updates: db.coauthor_pending_updates()?,

@@ -84,6 +84,7 @@ export type AiConsistencyVerdict = "PASS" | "REVIEW" | "BLOCKED" | "NEEDS_INPUT"
 export type ConsistencyReviewFreshness = "MISSING" | "FRESH" | "STALE" | "UNVERIFIED";
 export type AiProposalFeedbackRating = "HELPFUL" | "NOT_HELPFUL";
 export type AuthorTodoKind = "FACT_REVIEW" | "FACT_FINALIZE" | "EXTRACTION" | "EXTRACTION_DEFERRED" | "DISCUSSION_DESIGN" | "RECOVERY" | "WRITING_PROPOSAL";
+export type CoauthorSearchExecution = "RETURNED_PAGE" | "INVALID_QUERY" | "NOT_RUN";
 export type IpcContracts = {
     errors: IpcErrors;
     events: IpcEvents;
@@ -2950,6 +2951,7 @@ export type CoauthorKnowledgeAnchorsPage = {
 };
 export type CoauthorSearchPage = {
     coverage: string;
+    execution: CoauthorSearchExecution;
     hasMore: boolean;
     hits: CoauthorSource[];
     pendingIndexUpdates: number;

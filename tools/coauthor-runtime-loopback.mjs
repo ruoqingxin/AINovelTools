@@ -97,7 +97,8 @@ export function coauthorLoopbackTurn(body) {
   if (request.includes("有没有设定过星砂契约")) {
     if (!prior.some((r) => r.name === "search_sources")) {
       return tools([call("search_sources", { query: "星砂契约" }, 0),
-        call("search_sources", { query: "契约 交易 代价 术法" }, 1)]);
+        call("search_sources", { query: "契约 交易 代价 术法" }, 1),
+        call("search_sources", { query: "砂" }, 2)]);
     }
     return text();
   }
@@ -123,7 +124,7 @@ export function coauthorLoopbackTurn(body) {
 }
 
 export function assertLoopbackRegression(entry, { expectInputLimit = false } = {}) {
-  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v19"));
+  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v20"));
   const setup = entry.audit?.find((a) => a.kind === "input_budget");
   let currentBudget = setup?.initialInputTokenBudget;
   let expanded = false;
@@ -206,10 +207,15 @@ export function assertLoopbackRegression(entry, { expectInputLimit = false } = {
     const receipt = entry.audit.find((a) => a.kind === "retrieval_summary");
     assert(receipt, "Native search operations must have a deterministic receipt.");
     const specific = receipt.receipts.find((r) => r.query === "星砂契约" && r.method === "KEYWORD"
-      && r.returned === 0);
+      && r.status === "RETURNED_PAGE" && r.returned === 0);
     const broad = receipt.receipts.find((r) => r.query === "契约 交易 代价 术法" && r.method === "KEYWORD");
-    assert(specific && broad?.returned === 4, "The two searches must not be merged into zero hits.");
+    const invalid = receipt.receipts.find((r) => r.query === "砂" && r.method === "KEYWORD");
+    assert(specific && broad?.status === "RETURNED_PAGE" && broad.returned === 4,
+      "Valid empty and nonempty pages must retain separate counts.");
+    assert(invalid?.status === "INVALID_QUERY" && invalid.returned === null,
+      "An invalid query must not be counted as an executed zero-hit page.");
     assert(entry.output.includes("关键词 \"契约 交易 代价 术法\"（项目资料，offset=0）：实际返回 4 条"));
+    assert(entry.output.includes("关键词 \"砂\"（项目资料，offset=0）：未形成有效查询，不能记为 0 命中"));
   }
   return { scriptedNativeRegression: true, qualityVerified: false };
 }

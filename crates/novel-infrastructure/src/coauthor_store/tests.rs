@@ -69,6 +69,50 @@ fn document_versions_conflicts_history_and_reopen_preserve_originals() {
 }
 
 #[test]
+fn invalid_keyword_queries_are_distinct_from_valid_empty_pages() {
+    let (mut manager, root, scope) = project();
+    entity(&mut manager, "星砂记录", "只记载星砂的颜色。");
+    for history in [false, true] {
+        for query in ["砂", "", "   ", "设定", "a", "!?"] {
+            let page = manager.search_coauthor_sources(&scope, query, history, 0).unwrap();
+            assert!(page.hits.is_empty());
+            assert!(!page.has_more);
+            assert_eq!(serde_json::to_value(page).unwrap()["execution"], "INVALID_QUERY");
+        }
+        let page = manager.search_coauthor_sources(&scope, "不存在的契约", history, 0).unwrap();
+        assert!(page.hits.is_empty());
+        assert_eq!(serde_json::to_value(page).unwrap()["execution"], "RETURNED_PAGE");
+    }
+    drop(manager);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn keyword_execution_status_survives_real_pagination_and_requires_an_explicit_contract() {
+    let (mut manager, root, scope) = project();
+    for index in 0..13 {
+        entity(&mut manager, &format!("星砂记录{index}"), "星砂的颜色。");
+    }
+    for (offset, count, has_more) in [(0, 12, true), (12, 1, false), (24, 0, false)] {
+        let page = manager.search_coauthor_sources(&scope, "星砂", false, offset).unwrap();
+        assert_eq!(page.hits.len(), count);
+        assert_eq!(page.has_more, has_more);
+        assert_eq!(page.pending_index_updates, 0);
+        let value = serde_json::to_value(page).unwrap();
+        assert_eq!(value["execution"], "RETURNED_PAGE");
+        assert!(serde_json::from_value::<CoauthorSearchPage>(value.clone()).is_ok());
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove("execution");
+        assert!(serde_json::from_value::<CoauthorSearchPage>(missing).is_err());
+        let mut unknown = value;
+        unknown["execution"] = serde_json::json!("UNKNOWN");
+        assert!(serde_json::from_value::<CoauthorSearchPage>(unknown).is_err());
+    }
+    drop(manager);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn queries_find_chinese_bigrams_aliases_and_refresh_only_changed_sources() {
     let (mut manager, root, scope) = project();
     let saved = entity(&mut manager, "境界体系", "炼气、筑基、金丹。突破消耗寿元。");

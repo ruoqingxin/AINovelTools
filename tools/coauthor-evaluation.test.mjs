@@ -303,21 +303,32 @@ test("scripted full check deliberately rejects a typo then follows the native re
   assert.equal(JSON.parse(corrected.tool_calls[0].function.arguments).revision, "r0");
 });
 
-test("scripted search distinguishes an empty precise query from four broad candidates", () => {
+test("scripted search distinguishes valid zero hits, four candidates and an invalid query", () => {
   const messages = [{ role: "user", content: JSON.stringify({ contextOnly: true }) },
     { role: "user", content: "有没有设定过星砂契约？" }];
   const turn = coauthorLoopbackTurn({ messages });
   assert.deepEqual(turn.tool_calls.map((c) => JSON.parse(c.function.arguments).query),
-    ["星砂契约", "契约 交易 代价 术法"]);
-  const receipts = [{ method: "KEYWORD", query: "星砂契约", returned: 0 },
-    { method: "KEYWORD", query: "契约 交易 代价 术法", returned: 4 }];
+    ["星砂契约", "契约 交易 代价 术法", "砂"]);
+  const receipts = [{ method: "KEYWORD", query: "星砂契约", status: "RETURNED_PAGE", returned: 0 },
+    { method: "KEYWORD", query: "契约 交易 代价 术法", status: "RETURNED_PAGE", returned: 4 },
+    { method: "KEYWORD", query: "砂", status: "INVALID_QUERY", returned: null }];
   const entry = { status: "COMPLETED", caseId: "absent-not-absolute",
-    output: '关键词 "契约 交易 代价 术法"（项目资料，offset=0）：实际返回 4 条',
+    output: '关键词 "契约 交易 代价 术法"（项目资料，offset=0）：实际返回 4 条\n'
+      + '关键词 "砂"（项目资料，offset=0）：未形成有效查询，不能记为 0 命中',
     audit: [{ kind: "retrieval_summary", receipts }] };
   assert(assertLoopbackRegression(entry).scriptedNativeRegression);
   assert.throws(() => assertLoopbackRegression({ ...entry, output: "两个搜索均0命中" }));
   assert.throws(() => assertLoopbackRegression({ ...entry,
     audit: [{ kind: "retrieval_summary", receipts: [receipts[0], { ...receipts[1], returned: 0 }] }] }));
+  assert.throws(() => assertLoopbackRegression({ ...entry,
+    audit: [{ kind: "retrieval_summary", receipts: receipts.slice(0, 2) }] }));
+  for (const invalid of [{ ...receipts[2], returned: 0 },
+    { ...receipts[2], status: "RETURNED_PAGE", returned: 0 }]) {
+    assert.throws(() => assertLoopbackRegression({ ...entry,
+      audit: [{ kind: "retrieval_summary", receipts: [...receipts.slice(0, 2), invalid] }] }));
+  }
+  assert.throws(() => assertLoopbackRegression({ ...entry,
+    output: '关键词 "契约 交易 代价 术法"（项目资料，offset=0）：实际返回 4 条' }));
 });
 
 test("scripted check retains malicious final wording only to test the native receipt boundary", () => {

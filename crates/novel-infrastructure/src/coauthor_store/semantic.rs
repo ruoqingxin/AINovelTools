@@ -500,6 +500,7 @@ impl ProjectManager {
         }
         let (total, indexed) = db.semantic_counts(settings)?;
         Ok(CoauthorSearchPage {
+            execution: CoauthorSearchExecution::ReturnedPage,
             hits,
             has_more,
             pending_index_updates: db.coauthor_pending_updates()?,

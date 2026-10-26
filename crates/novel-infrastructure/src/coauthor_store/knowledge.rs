@@ -394,7 +394,7 @@ impl ProjectManager {
                 hits.push(source);
             }
         }
-        Ok(CoauthorSearchPage { hits,has_more,pending_index_updates:db.coauthor_pending_updates()?,
+        Ok(CoauthorSearchPage { execution:CoauthorSearchExecution::ReturnedPage,hits,has_more,pending_index_updates:db.coauthor_pending_updates()?,
             coverage:"只列出此事实的直接关系，不是语义检索或全书影响扫描；关系和关联事实的证据状态须分别核对。".into() })
     }
 

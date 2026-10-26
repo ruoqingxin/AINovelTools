@@ -91,6 +91,7 @@ fn expired_cached_revisions_requeue_for_repair_instead_of_remaining_permanently_
     let found = manager
         .search_coauthor_semantic_vector(&scope, &settings, &[1., 0.], 0)
         .unwrap();
+    assert_eq!(serde_json::to_value(&found).unwrap()["execution"], "RETURNED_PAGE");
     assert!(found.hits.is_empty());
     assert!(found.coverage.contains("跳过 1 项过期来源"));
     assert!(found.pending_index_updates > 0);
@@ -196,6 +197,9 @@ fn semantic_vectors_find_different_wording_with_exact_unicode_offsets_and_no_key
     let hit = &found.hits[0];
     assert_eq!(hit.key, format!("ENTITY:{}", source.id));
     assert_eq!(hit.offset, 1200);
+    let empty = manager.search_coauthor_semantic_vector(&scope, &settings, &[1., 0.], 12).unwrap();
+    assert!(empty.hits.is_empty());
+    assert_eq!(serde_json::to_value(empty).unwrap()["execution"], "RETURNED_PAGE");
     assert!(hit.content.contains("陆沉😀"));
     assert!(
         manager

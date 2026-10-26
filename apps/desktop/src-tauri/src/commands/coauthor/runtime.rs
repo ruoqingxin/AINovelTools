@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
-pub(super) const PROMPT_VERSION: &str = "coauthor-v19";
+pub(super) const PROMPT_VERSION: &str = "coauthor-v20";
 
 pub(super) fn source_provenance(result: &mut Value) {
     if let Some(hits) = result.get_mut("hits").and_then(Value::as_array_mut) {
@@ -51,18 +51,22 @@ pub(super) fn retrieval_receipt(
     result: &Value,
 ) -> Value {
     let failed = result["executed"] == false || result.get("error").is_some();
-    let not_run = method == "SEMANTIC"
-        && (result["status"]["indexedChunks"] == 0
-            || result["status"]
-                .get("settings")
-                .and_then(|settings| settings.get("profileId"))
-                .is_some_and(Value::is_null));
     let hits = result["hits"].as_array();
+    let status = if failed || hits.is_none() {
+        "UNAVAILABLE"
+    } else {
+        match result["execution"].as_str() {
+            Some("RETURNED_PAGE") => "RETURNED_PAGE",
+            Some("INVALID_QUERY") if hits.is_some_and(Vec::is_empty) => "INVALID_QUERY",
+            Some("NOT_RUN") if method == "SEMANTIC" && hits.is_some_and(Vec::is_empty) => "NOT_RUN",
+            _ => "UNAVAILABLE",
+        }
+    };
     json!({
         "method":method, "query":query, "offset":offset,
         "scope":if history { "CURRENT_BRANCH_HISTORY" } else { "PROJECT_SOURCES" },
-        "status":if failed || hits.is_none() { "UNAVAILABLE" } else if not_run { "NOT_RUN" } else { "RETURNED_PAGE" },
-        "returned":if failed || not_run { None } else { hits.map(Vec::len) },
+        "status":status,
+        "returned":if status == "RETURNED_PAGE" { hits.map(Vec::len) } else { None },
         "hasMore":result.get("hasMore"),
         "contextOmittedHits":result.get("contextOmittedHits"),
         "coverage":result.get("coverage"),
@@ -116,10 +120,19 @@ pub(super) fn search_summary(receipts: &[Value]) -> String {
             {
                 let _ = write!(summary, "，另因上下文预算省略 {count} 条候选");
             }
+        } else if receipt["status"] == "INVALID_QUERY" {
+            summary.push_str("未形成有效查询，不能记为 0 命中");
         } else if receipt["status"] == "NOT_RUN" {
             summary.push_str("未调用向量服务（未授权或无可用索引），不是 0 命中");
         } else {
             summary.push_str("未取得有效结果，不能记为 0 命中");
+        }
+        if receipt["method"] == "KEYWORD"
+            && let Some(pending) = receipt["indexStatus"]["pendingUpdates"]
+                .as_u64()
+                .filter(|pending| *pending > 0)
+        {
+            let _ = write!(summary, "；关键词索引待更新 {pending} 项，不能据此声称查全");
         }
         summary.push_str("。\n");
     }

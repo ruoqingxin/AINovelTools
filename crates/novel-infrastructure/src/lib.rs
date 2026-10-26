@@ -545,6 +545,13 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         unavailable_reason: None,
     },
     FeatureDescriptor {
+        id: "coauthor_retrieval_receipts",
+        display_name: "共创检索执行状态与逐次回执",
+        stage: "COAUTHOR-N1",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
         id: "r5_1_unified_metadata",
         display_name: "R5.1 统一候选元数据",
         stage: "R5.1",

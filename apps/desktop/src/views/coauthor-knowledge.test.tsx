@@ -51,7 +51,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.invoke.mockImplementation(async (command: string) => command === "read_coauthor_knowledge_evidence"
     ? structuredClone(evidence) : command === "get_coauthor_evidence_progress" ? structuredClone(evidenceProgress)
-      : { hits: [structuredClone(relation)], hasMore: false, pendingIndexUpdates: 0, coverage: "" });
+      : { execution: "RETURNED_PAGE", hits: [structuredClone(relation)], hasMore: false, pendingIndexUpdates: 0, coverage: "" });
 });
 afterEach(cleanup);
 
@@ -103,7 +103,7 @@ it("reports invalid evidence without substituting another quote or calling a mod
 
 it("pages direct relationships and opens their exact stable source identity without auto-reading all endpoints", async () => {
   mocks.invoke.mockImplementation(async (_command, args: { offset: number }) => ({
-    hits: args.offset ? [] : [relation], hasMore: !args.offset, pendingIndexUpdates: 0, coverage: "",
+    execution: "RETURNED_PAGE", hits: args.offset ? [] : [relation], hasMore: !args.offset, pendingIndexUpdates: 0, coverage: "",
   }));
   mount();
   fireEvent.click(screen.getByText("直接关联关系"));

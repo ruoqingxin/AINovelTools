@@ -2,7 +2,7 @@ use super::{ApiError,CoauthorError,CoauthorScope,ProjectState,invalid};
 use serde::{Deserialize,Serialize};
 use serde_json::{Value,json};
 use novel_infrastructure::{
-    CoauthorSemanticSettings, CoauthorSemanticStatus, ModelProfile, coauthor_embedding_fingerprint,
+    CoauthorSearchExecution, CoauthorSemanticSettings, CoauthorSemanticStatus, ModelProfile, coauthor_embedding_fingerprint,
 };
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -264,7 +264,7 @@ pub(super) async fn semantic_search(
         .coauthor_semantic_status(scope)?;
     if status.settings.profile_id.is_none() || status.indexed_chunks == 0 {
         return Ok(
-            json!({"hits":[],"hasMore":false,"status":status,"sentChars":0,
+            json!({"execution":CoauthorSearchExecution::NotRun,"hits":[],"hasMore":false,"status":status,"sentChars":0,
             "coverage":"语义检索未授权或尚无可用向量，未调用向量服务；不能据此判断没有相关设定。"}),
         );
     }
@@ -286,7 +286,7 @@ pub(super) async fn semantic_search(
     let result =
         manager.search_coauthor_semantic_vector(scope, &status.settings, vector, offset)?;
     Ok(limit_semantic_hits(
-        json!({"hits":result.hits,"hasMore":result.has_more,"pendingIndexUpdates":result.pending_index_updates,
+        json!({"execution":result.execution,"hits":result.hits,"hasMore":result.has_more,"pendingIndexUpdates":result.pending_index_updates,
         "coverage":result.coverage,"profileId":status.settings.profile_id,"settingsVersion":status.settings.version,
         "sentChars":query.chars().count(),"status":status}),
         6000,
@@ -367,6 +367,7 @@ mod tests {
         )
         .await
         .unwrap();
+        assert_eq!(result["execution"], "NOT_RUN");
         assert_eq!(result["sentChars"], 0);
         state
             .manager
@@ -377,6 +378,7 @@ mod tests {
         let result = semantic_search(&state, &scope, "另一种表达", 0, uuid::Uuid::new_v4())
             .await
             .unwrap();
+        assert_eq!(result["execution"], "NOT_RUN");
         assert_eq!(result["sentChars"], 0);
         assert_eq!(
             embedding_profile(&state, profile.id).unwrap().retry_limit,
