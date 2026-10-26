@@ -216,6 +216,22 @@ export function reserveCost(profile, currency, turns) {
   return reserved;
 }
 
+export function priorReplyReuse(previous, current) {
+  const chars = Array.from(current);
+  let low = 0, high = chars.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (previous.includes(chars.slice(0, mid).join(""))) low = mid;
+    else high = mid - 1;
+  }
+  const prefix = chars.slice(0, low).join("");
+  return {
+    verbatimPrefixChars: low,
+    previousOffsetChars: low ? Array.from(previous.slice(0, previous.indexOf(prefix))).length : null,
+    reviewCandidate: low >= 80, observationOnly: true, authorIntentAssessed: false,
+  };
+}
+
 export function reviewTemplate(cases, repetitions) {
   return cases.flatMap((c) => Array.from({ length: repetitions }, (_, repetition) => ({
     caseId: c.id, repetition, goal: c.goal, workload: c.workload,
@@ -295,6 +311,13 @@ export async function writeReport(directory, report) {
         "| --- | ---: | --- | ---: | ---: | ---: |");
       for (const t of report.turns) {
         lines.push(`| ${t.caseId} | ${t.turnIndex + 1} | ${t.status} | ${t.elapsedMs.toFixed(2)} | ${t.modelRequests} | ${t.toolErrors} |`);
+      }
+      const reuses = report.turns.filter((t) => t.priorReplyReuse?.reviewCandidate);
+      if (reuses.length) {
+        lines.push("", "Verbatim prefix reuse observations (not quality failures; explicit reprints may be requested):");
+        for (const t of reuses) {
+          lines.push(`- ${t.caseId}, turn ${t.turnIndex + 1}: ${t.priorReplyReuse.verbatimPrefixChars} Unicode characters from the previous reply.`);
+        }
       }
     }
   }

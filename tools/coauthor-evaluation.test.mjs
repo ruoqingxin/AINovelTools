@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { join } from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { assessReview, distribution, loadFixture, loadModelFixture, nativeRows, percentile, reserveCost,
+import { assessReview, distribution, loadFixture, loadModelFixture, nativeRows, percentile, priorReplyReuse, reserveCost,
   retrievalScore, reviewTemplate, summarizeBaseline, validateCloudOptions, writeReport } from "./coauthor-evaluation-core.mjs";
 import { workspace } from "./desktop-smoke-runtime.mjs";
 import { createBudgetLedger, createBudgetRelay, responseUsage } from "./coauthor-evaluation-budget.mjs";
@@ -15,6 +15,22 @@ const cloudProfile = { capability: "CHAT", privacy_level: "ALLOW_CLOUD", secret_
   base_url: "https://example.invalid/v1", model_id: "synthetic-test", price_currency: "CNY",
   context_window: 1_000_000, max_output_tokens: 384_000,
   input_price_micros_per_million: 2_000_000, output_price_micros_per_million: 8_000_000 };
+
+test("verbatim continuation observation uses the matching option and Unicode positions without grading", () => {
+  const selected = "她将铜匣推回桌角。\n\n" + "她还不想付出代价。".repeat(12);
+  const previous = `前案😀\n\n方案一：她已经割舍。\n\n方案二：${selected}\n\n两案均未采用。`;
+  const current = selected + "\n\n门外的人终于开口。";
+  const observation = priorReplyReuse(previous, current);
+  assert.equal(observation.verbatimPrefixChars, Array.from(selected + "\n\n").length);
+  assert.equal(observation.previousOffsetChars, Array.from(previous.slice(0, previous.indexOf(selected))).length);
+  assert.equal(observation.reviewCandidate, true);
+  assert.equal(observation.authorIntentAssessed, false);
+  assert.equal(observation.observationOnly, true);
+  assert.equal(priorReplyReuse(previous, "她将铜匣推回桌角。\n\n新的情节。").reviewCandidate, false);
+  assert.equal(priorReplyReuse(previous, "").previousOffsetChars, null);
+  assert.equal(priorReplyReuse("", current).verbatimPrefixChars, 0);
+  assert.equal(priorReplyReuse("😀".repeat(100), "😀".repeat(81)).verbatimPrefixChars, 81);
+});
 
 test("request budget settles actual conservative usage instead of reserving all 150 requests", () => {
   const ledger = createBudgetLedger(cloudProfile, "CNY", 10_000_000, 150);
@@ -41,6 +57,44 @@ test("unknown usage, failures and concurrent reservations never release reserved
     { prompt_tokens: 1_000_001, completion_tokens: 0 }, 200), /envelope/);
   assert(excessive.snapshot().blocked);
   assert.throws(() => excessive.reserve());
+});
+
+test("request allowance counts reservations independently of money and cannot be reset by settlement", () => {
+  const ledger = createBudgetLedger(cloudProfile, "CNY", 10_000_000, 3);
+  const ids = [ledger.reserve(), ledger.reserve(), ledger.reserve()];
+  assert.equal(ledger.snapshot().remainingRequests, 0);
+  ids.forEach((id) => ledger.settle(id, { prompt_tokens: 1, completion_tokens: 1 }, 200));
+  assert.throws(() => ledger.reserve(), /MODEL_REQUEST_LIMIT/);
+  assert.equal(ledger.snapshot().blockedReason, "MODEL_REQUEST_LIMIT");
+  assert.equal(ledger.snapshot().records.length, 3);
+  assert(ledger.snapshot().conservativeSpentMicros < 10_000_000);
+  assert.throws(() => ledger.reserve(), /MODEL_REQUEST_LIMIT/);
+});
+
+test("three-request HTTP allowance rejects the fourth before invoking the upstream", async () => {
+  let calls = 0;
+  const relay = await createBudgetRelay({ profile: cloudProfile, currency: "CNY",
+    limitMicros: 10_000_000, maxRequests: 3, fetchImpl: async () => {
+      calls++;
+      return new Response(JSON.stringify({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 1 } }),
+        { headers: { "Content-Type": "application/json" } });
+    } });
+  const send = () => fetch(`${relay.baseUrl}/chat/completions`, { method: "POST",
+    headers: { Authorization: "Bearer synthetic-test-only", "Content-Type": "application/json" },
+    body: JSON.stringify({ model: cloudProfile.model_id, max_tokens: 2048 }) });
+  try {
+    for (let i = 0; i < 3; i++) {
+      const response = await send();
+      assert.equal(response.status, 200);
+      await response.text();
+    }
+    const denied = await send();
+    assert.equal(denied.status, 402);
+    await denied.text();
+    assert.equal(calls, 3);
+    assert.equal(relay.snapshot().blockedReason, "MODEL_REQUEST_LIMIT");
+    assert.equal(relay.snapshot().records.length, 3);
+  } finally { await relay.close(); }
 });
 
 test("usage parser handles JSON, CRLF SSE, multibyte text and truncated frames conservatively", () => {
@@ -457,6 +511,23 @@ test("CLI without permission fails before reading profiles or launching native a
   assert.doesNotMatch(result.stdout, /Desktop launched/);
 });
 
+test("cloud request cap is validated before profile access and cannot bypass authorization", () => {
+  for (const value of ["0", "-1", "NaN", "3.5", "451"]) {
+    const result = spawnSync(process.execPath, [join(workspace, "tools/coauthor-model-evaluation.mjs"),
+      `--max-model-requests=${value}`], { encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Cloud request cap must be an integer/);
+    assert.doesNotMatch(result.stdout, /Desktop launched/);
+  }
+  for (const args of [["--max-model-requests", "3"], ["--loopback", "--max-model-requests", "3"]]) {
+    const result = spawnSync(process.execPath, [join(workspace, "tools/coauthor-model-evaluation.mjs"), ...args],
+      { encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /allow-cloud|cannot be used with local modes/);
+    assert.doesNotMatch(result.stdout, /Desktop launched/);
+  }
+});
+
 test("local token-budget overrides cannot alter cloud runs or launch with invalid values", () => {
   for (const args of [
     ["--loopback-input-tokens", "16384"],
@@ -777,6 +848,32 @@ test("loopback regression requires a separate current request and reference-only
   assert.match(coauthorLoopbackTurn({ messages }).content, /不用于创作质量评分/);
 });
 
+test("current native protocol delivers final discussion without an extra simulated request", () => {
+  const context = { contextOnly: true, relevantSources: { hits: [] }, relevantDecisions: { memories: [],
+    decisionScope: { origin: "CURRENT_BRANCH_DISCUSSION", updatesFormalSources: false, impliesFormalSyncRequired: false } } };
+  const messages = [{ role: "user", content: JSON.stringify(context) }, { role: "user", content: "普通讨论" }];
+  const body = { messages, tools: [{ function: { name: "deliver_reply" } }] };
+  const result = coauthorLoopbackTurn(body);
+  assert.equal(result.tool_calls.length, 1);
+  assert.equal(result.tool_calls[0].function.name, "deliver_reply");
+  const args = JSON.parse(result.tool_calls[0].function.arguments);
+  assert.equal(args.mode, "DISCUSSION");
+  assert.match(args.content, /不用于创作质量评分/);
+  assert.equal(result.content, "");
+  messages.push({ role: "assistant", content: "", tool_calls: [{ id: "edit", function: { name: "edit_draft" } }] },
+    { role: "tool", tool_call_id: "edit", content: JSON.stringify({ prepared: true }) });
+  assert.match(coauthorLoopbackTurn(body).content, /不用于创作质量评分/,
+    "Draft completion must remain a program receipt, not a second final delivery.");
+});
+
+test("delivery smoke refuses cloud or arbitrary options before starting a desktop", () => {
+  const result = spawnSync(process.execPath, [join(workspace, "tools/coauthor-delivery-smoke.mjs"), "--allow-cloud"],
+    { encoding: "utf8", windowsHide: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /local-only smoke test accepts no cloud\/profile options/);
+  assert(!result.stdout.includes("Desktop launched"));
+});
+
 test("scripted full check deliberately rejects a typo then follows the native recovery instruction", () => {
   const context = { contextOnly: true, relevantSources: { hits: [] } };
   const messages = [{ role: "user", content: JSON.stringify(context) },
@@ -865,9 +962,9 @@ test("native regression uses estimated tokens including overhead, not serialized
     kind: "model_request", inputChars: 50_000, estimatedInputTokens: 15_800, inputTokenBudget: 16_384,
   }] };
   assert.equal(assertLoopbackRegression(entry).scriptedNativeRegression, true);
-  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v22"] }).scriptedNativeRegression, true);
+  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v24"] }).scriptedNativeRegression, true);
   assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v21"] }));
-  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v22", "coauthor-v21"] }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v24", "coauthor-v23"] }));
   assert.throws(() => assertLoopbackRegression({ ...entry, audit: [{
     ...entry.audit[0], estimatedInputTokens: 16_385,
   }] }));

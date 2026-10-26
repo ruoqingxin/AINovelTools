@@ -9,8 +9,10 @@ export function createBudgetLedger(profile, currency, limitMicros, maxRequests) 
   const requestReserve = reserveCost(profile, currency, 1) / 10;
   const records = [];
   let blocked = false;
+  let blockedReason = null;
   const snapshot = () => ({
-    currency, limitMicros, requestReserveMicros: requestReserve, blocked,
+    currency, limitMicros, requestReserveMicros: requestReserve, blocked, blockedReason,
+    maxRequests, remainingRequests: Math.max(0, maxRequests - records.length),
     conservativeSpentMicros: records.reduce((n, r) => n + r.chargedMicros, 0),
     records: structuredClone(records),
   });
@@ -19,8 +21,9 @@ export function createBudgetLedger(profile, currency, limitMicros, maxRequests) 
     reserve() {
       const spent = snapshot().conservativeSpentMicros;
       if (blocked || records.length >= maxRequests || spent + requestReserve > limitMicros) {
+        blockedReason ??= records.length >= maxRequests ? "MODEL_REQUEST_LIMIT" : "MONEY_BUDGET";
         blocked = true;
-        throw new Error("Evaluation budget exhausted; no upstream request sent.");
+        throw new Error(`Evaluation allowance exhausted (${blockedReason}); no upstream request sent.`);
       }
       const record = { id: records.length + 1, state: "reserved", chargedMicros: requestReserve };
       records.push(record);
@@ -43,6 +46,7 @@ export function createBudgetLedger(profile, currency, limitMicros, maxRequests) 
       if (input > profile.context_window || output > Math.min(profile.max_output_tokens, 2048)
           || !Number.isSafeInteger(cost) || cost > record.chargedMicros) {
         blocked = true;
+        blockedReason = "PROVIDER_EXCEEDED_RESERVATION";
         record.state = "providerExceededReservation";
         record.chargedMicros = Number.isSafeInteger(cost) ? Math.max(record.chargedMicros, cost) : record.chargedMicros;
         throw new Error("Provider usage exceeded its configured envelope; no further requests allowed.");

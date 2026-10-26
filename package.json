@@ -20,6 +20,7 @@
     "eval:coauthor:model": "node tools/coauthor-model-evaluation.mjs",
     "eval:coauthor:review": "node tools/coauthor-evaluation-review.mjs",
     "test:coauthor-evaluation": "node --test tools/coauthor-evaluation.test.mjs",
+    "test:coauthor-delivery": "node tools/coauthor-delivery-smoke.mjs",
     "test:desktop-interruption": "node tools/desktop-interruption-smoke.mjs",
     "test:desktop-backup-interruption": "node tools/desktop-backup-interruption-smoke.mjs",
     "test:desktop-model": "node tools/desktop-model-smoke.mjs",

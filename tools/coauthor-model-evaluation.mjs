@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
 import { createDesktopHarness, invoke, until, workspace } from "./desktop-smoke-runtime.mjs";
 import { runNative } from "./coauthor-evaluation.mjs";
-import { distribution, environment, loadModelFixture, reserveCost, reviewTemplate,
+import { distribution, environment, loadModelFixture, priorReplyReuse, reserveCost, reviewTemplate,
   retrievalScore, validateCloudOptions, writeReport } from "./coauthor-evaluation-core.mjs";
 import { createBudgetRelay } from "./coauthor-evaluation-budget.mjs";
 import { coauthorLoopbackTurn, assertLoopbackRegression } from "./coauthor-runtime-loopback.mjs";
@@ -19,6 +19,7 @@ const { values } = parseArgs({ options: {
   "prepare-only": { type: "boolean", default: false }, loopback: { type: "boolean", default: false },
   "allow-cloud": { type: "boolean", default: false }, "cloud-profile": { type: "string" },
   "max-cost-micros": { type: "string" }, currency: { type: "string" },
+  "max-model-requests": { type: "string" },
   "loopback-input-tokens": { type: "string" },
   "loopback-expect-input-limit": { type: "boolean", default: false },
   "loopback-expect-late-expansion": { type: "boolean", default: false },
@@ -33,6 +34,12 @@ if (values.suite === "n2-retrieval") {
 const { fixture, hash } = await loadModelFixture(values.suite);
 assert(!(values["prepare-only"] && values.loopback), "Choose prepare-only or loopback.");
 const local = values["prepare-only"] || values.loopback;
+const maxModelRequests = values["max-model-requests"] === undefined ? null : Number(values["max-model-requests"]);
+if (maxModelRequests !== null) {
+  assert(!local, "A cloud request cap cannot be used with local modes.");
+  assert(Number.isSafeInteger(maxModelRequests) && maxModelRequests > 0 && maxModelRequests <= 450,
+    "Cloud request cap must be an integer from 1 to 450.");
+}
 const loopbackInputTokens = Number(values["loopback-input-tokens"] ?? 32768);
 if (values["loopback-input-tokens"] !== undefined) {
   assert(values.loopback, "A custom local input budget requires --loopback.");
@@ -257,6 +264,13 @@ async function runTurn(project, scenario, turn, profile, repetition, turnIndex) 
       === JSON.stringify(await invoke(main, "get_ai_budget_settings")),
     events: state.events,
   };
+  const previous = report.turns.findLast((t) =>
+    t.caseId === scenario.id && t.repetition === repetition && t.turnIndex === turnIndex - 1);
+  if (previous) {
+    entry.priorReplyReuse = {
+      ...priorReplyReuse(previous.output, entry.output), previousRunId: previous.runId,
+    };
+  }
   if (scenario.nativeRetrievalContract) {
     const contract = scenario.nativeRetrievalContract;
     entry.nativeRetrievalContract = {
@@ -295,8 +309,9 @@ try {
       selected = readSelectedProfile();
       const turns = options.cases.reduce((n, c) => n + c.turns.length, 0) * options.repetitions;
       report.fullPlanReserveMicros = reserveCost(selected.profile, values.currency, turns);
+      report.maxModelRequests = Math.min(maxModelRequests ?? turns * 10, turns * 10);
       relay = await createBudgetRelay({ profile: selected.profile, currency: values.currency,
-        limitMicros: options.maxCostMicros, maxRequests: turns * 10 });
+        limitMicros: options.maxCostMicros, maxRequests: report.maxModelRequests });
       report.budget = relay.snapshot();
       report.reservedCostMicros = report.budget.requestReserveMicros;
       report.profile = { host: new URL(selected.profile.base_url).hostname, model: selected.profile.model_id,
@@ -334,7 +349,7 @@ try {
           report.turns.at(-1).formalContentUnchanged = unchanged;
           await writeFile(join(directory, "turns.jsonl"), report.turns.map((t) => JSON.stringify(t)).join("\n") + "\n");
           assert(unchanged, "Blocking failure: formal entities, planning or manuscript content changed.");
-          assert(!relay?.snapshot().blocked, "Request-boundary budget guard stopped the evaluation.");
+          assert(!relay?.snapshot().blocked, "Request/cost allowance guard stopped the evaluation.");
           if (entry.status !== "COMPLETED") break;
         }
       }

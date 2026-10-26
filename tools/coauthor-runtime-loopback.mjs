@@ -123,12 +123,18 @@ function retrievalVariantTurn(context, prior, scenario) {
   return calls.length ? tools(calls) : text();
 }
 
-export function coauthorLoopbackTurn(body, { scenario } = {}) {
+function scriptedTurn(body, { scenario } = {}) {
   const { context, request } = loopbackContext(body.messages);
   if (body.tools) {
     assert.equal(context.relevantDecisions?.decisionScope?.origin, "CURRENT_BRANCH_DISCUSSION");
     assert.equal(context.relevantDecisions.decisionScope.updatesFormalSources, false);
     assert.equal(context.relevantDecisions.decisionScope.impliesFormalSyncRequired, false);
+    for (const message of context.historicalMessages ?? []) {
+      if (message.role !== "ASSISTANT") continue;
+      assert.equal(message.provenance?.origin, "PRIOR_ASSISTANT_OUTPUT");
+      assert.equal(message.provenance.establishesRules, false);
+      assert.equal(message.provenance.establishesAuthorDecision, false);
+    }
   }
   for (const hit of [...(context.relevantSources?.hits ?? []), ...(context.semanticSources?.hits ?? []),
     ...(context.supplementalSources?.result?.hits ?? [])]) {
@@ -197,8 +203,18 @@ export function coauthorLoopbackTurn(body, { scenario } = {}) {
   return text();
 }
 
+export function coauthorLoopbackTurn(body, options = {}) {
+  const message = scriptedTurn(body, options);
+  if (!message.content || !body.tools?.some((tool) => tool.function.name === "deliver_reply")) return message;
+  const prior = results(body.messages);
+  if (prior.some((result) => result.value.executed !== false
+    && (result.name === "edit_draft" || ["start_source_check", "read_check_source",
+      "record_check_result", "save_check_note"].includes(result.name)))) return message;
+  return tools([call("deliver_reply", { mode: "DISCUSSION", content: message.content, ruleChanges: [] })]);
+}
+
 export function assertLoopbackRegression(entry, { expectInputLimit = false, expectLateExpansion = false } = {}) {
-  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v22"));
+  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v24"));
   const setup = entry.audit?.find((a) => a.kind === "input_budget");
   let currentBudget = setup?.initialInputTokenBudget;
   let expanded = false;

@@ -559,6 +559,13 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         unavailable_reason: None,
     },
     FeatureDescriptor {
+        id: "coauthor_reply_delivery",
+        display_name: "共创结构化交付、续写逐字复用与改规则引文校验",
+        stage: "COAUTHOR-N2",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
         id: "r5_1_unified_metadata",
         display_name: "R5.1 统一候选元数据",
         stage: "R5.1",

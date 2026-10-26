@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
-pub(super) const PROMPT_VERSION: &str = "coauthor-v22";
+pub(super) const PROMPT_VERSION: &str = "coauthor-v24";
 
 #[derive(Default)]
 pub(super) struct ToolFailureGuard {
@@ -248,13 +248,19 @@ pub(super) fn history(
         }
         let limit = remaining.saturating_sub(160).min(900);
         let content = relevance.excerpt(&message.content, limit);
-        let entry = json!({
+        let mut entry = json!({
             "id":message.id, "role":message.role, "createdAt":message.created_at,
             "historicalMessage":content,
             "truncated":message.content.chars().count() > limit,
             "decisionContext":contexts.get(&message.id).and_then(Option::as_ref),
             "referenceOnly":true,
         });
+        if message.role == novel_infrastructure::DiscussionMessageRole::Assistant {
+            entry["provenance"] = json!({
+                "origin":"PRIOR_ASSISTANT_OUTPUT",
+                "establishesRules":false, "establishesAuthorDecision":false,
+            });
+        }
         let size = entry.to_string().chars().count();
         if used + size <= budget {
             used += size;

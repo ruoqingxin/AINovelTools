@@ -599,7 +599,7 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
             "missing prompt rule: {instruction}"
         );
     }
-    assert_eq!(PROMPT_VERSION, "coauthor-v22");
+    assert_eq!(PROMPT_VERSION, "coauthor-v24");
 }
 
 #[test]
@@ -626,6 +626,50 @@ fn prompt_preserves_object_scopes_proposal_provenance_and_selected_story_continu
         "prepare_changeset每次必须显式传includeDraft"] {
         assert!(PROMPT.contains(rule), "{rule}");
     }
+}
+
+#[test]
+fn composition_contract_tracks_consumed_actions_and_discloses_rule_changes_through_the_ending() {
+    for rule in [
+        "按情节先后核对主体、动作、触发条件、次数与例外",
+        "已耗尽的一次机会不能在后文再次使用",
+        "将一次启用改成多次借用或持续通道也是新机制",
+        "不能只改名为“租借、非普通”就声称未改规则",
+        "下一阶不再付该代价属于局部改规则提案",
+        "商品颜色尺寸不推出能力",
+        "个人偏好的避坑建议不冒充原规则禁令",
+        "总结须如实说明沿用什么、新增什么、改变什么",
+    ] {
+        assert!(PROMPT.contains(rule), "{rule}");
+    }
+}
+
+#[test]
+fn continuation_contract_preserves_explicit_reprints_without_defaulting_to_them() {
+    for rule in [
+        "除作者要求重贴或整合全文外，续写只给新增进展",
+        "所选方案被截断而承接不明时，先查本分支历史并读取",
+        "不猜另一方案补齐",
+    ] {
+        assert!(PROMPT.contains(rule), "{rule}");
+    }
+}
+
+#[test]
+fn historical_assistant_outputs_cannot_establish_rules_or_author_decisions() {
+    let recent = [
+        message(DiscussionMessageRole::User, "给两个方案，尚未选择。"),
+        message(DiscussionMessageRole::Assistant, "方案二：先不启用铜匣。"),
+    ];
+    let selected = history(&recent, "继续方案二", &HashMap::new(), &no_decisions(), 2048);
+    assert_eq!(selected.len(), 2);
+    assert!(selected[0].get("provenance").is_none());
+    assert_eq!(selected[1]["historicalMessage"], recent[1].content);
+    assert_eq!(selected[1]["provenance"]["origin"], "PRIOR_ASSISTANT_OUTPUT");
+    assert_eq!(selected[1]["provenance"]["establishesRules"], false);
+    assert_eq!(selected[1]["provenance"]["establishesAuthorDecision"], false);
+    assert!(json!(&selected).to_string().chars().count() <= 2048);
+    assert!(selected.iter().all(|entry| entry["referenceOnly"] == true));
 }
 
 #[test]
