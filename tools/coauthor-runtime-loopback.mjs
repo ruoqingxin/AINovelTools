@@ -77,7 +77,53 @@ function fullCheck(prior) {
   }));
 }
 
-export function coauthorLoopbackTurn(body) {
+function retrievalVariantTurn(context, prior, scenario) {
+  const contract = scenario.nativeRetrievalContract;
+  if (context.navigationCompacted) {
+    for (const pointer of context.sourcePointers ?? []) {
+      assert.equal(pointer.navigationOnly, true);
+      assert.equal(pointer.sourceTextRetained, false);
+      assert(!Object.hasOwn(pointer, "content"), "Compacted pointers must not retain original text.");
+    }
+  }
+  const candidates = [
+    ...(context.relevantSources?.hits ?? []), ...(context.supplementalSources?.result?.hits ?? []),
+    ...(context.sourcePointers ?? []),
+    ...prior.filter((result) => result.name === "search_sources").flatMap((result) => result.value.hits ?? []),
+  ];
+  const missing = contract.sources.filter((source) => !candidates.some((hit) => hit.title === source.title));
+  if (missing.length) {
+    assert.equal(contract.expectedFollowup.length, 0,
+      "A weak-match variant must discover its companion before navigation is compacted.");
+    assert(!prior.some((result) => result.name === "search_sources"),
+      "An explicit requery must return the missing exact-named seed.");
+    return tools([call("search_sources", { query: scenario.retrieval.query })]);
+  }
+  const calls = [];
+  for (const expected of contract.sources) {
+    const source = candidates.find((candidate) => candidate.title === expected.title);
+    assert(source.key && source.revision);
+    const reads = prior.filter((result) => result.name === "read_source"
+      && result.value.key === source.key && result.value.revision === source.revision);
+    assert(reads.every((read) => read.value.executed !== false && !Object.hasOwn(read.value, "error")
+      && typeof read.value.content === "string"));
+    if (reads.some((read) => read.value.content.includes(expected.requiredQuote))) continue;
+    let offset = 0;
+    let limit = 256;
+    if (reads.length) {
+      const total = reads[0].value.totalChars;
+      assert(Number.isSafeInteger(total) && total > 256, "Original source length is required for a tail read.");
+      offset = Math.max(0, total - 512);
+      limit = 512;
+      assert(!reads.some((read) => read.value.offset === offset),
+        "The tail read must contain the frozen restrictions; do not loop until a fixture passes.");
+    }
+    calls.push(call("read_source", { key: source.key, revision: source.revision, offset, limit }, calls.length));
+  }
+  return calls.length ? tools(calls) : text();
+}
+
+export function coauthorLoopbackTurn(body, { scenario } = {}) {
   const { context, request } = loopbackContext(body.messages);
   if (body.tools) {
     assert.equal(context.relevantDecisions?.decisionScope?.origin, "CURRENT_BRANCH_DISCUSSION");
@@ -94,6 +140,10 @@ export function coauthorLoopbackTurn(body) {
   }
   const prior = [...(context.checkAssessments ?? []).map((value) => ({ name: "record_check_result", value })),
     ...results(body.messages)];
+  if (scenario?.nativeRetrievalContract) {
+    assert(scenario.turns.some((turn) => turn.message === request), "Active variant and current request must agree.");
+    return retrievalVariantTurn(context, prior, scenario);
+  }
   if (request.includes("完整查证全部设定卡")) return fullCheck(prior);
   if (request.includes("有没有设定过星砂契约")) {
     if (!prior.some((r) => r.name === "search_sources")) {
@@ -148,7 +198,7 @@ export function coauthorLoopbackTurn(body) {
 }
 
 export function assertLoopbackRegression(entry, { expectInputLimit = false, expectLateExpansion = false } = {}) {
-  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v21"));
+  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v22"));
   const setup = entry.audit?.find((a) => a.kind === "input_budget");
   let currentBudget = setup?.initialInputTokenBudget;
   let expanded = false;
@@ -206,6 +256,47 @@ export function assertLoopbackRegression(entry, { expectInputLimit = false, expe
     return { scriptedNativeRegression: true, qualityVerified: false, expectedInputLimit: true };
   }
   assert.equal(entry.status, "COMPLETED", "Scripted native regression must finish.");
+  if (entry.suite === "n2-retrieval" || entry.caseId?.startsWith("n2-")) {
+    assert.equal(entry.suite, "n2-retrieval");
+    const contract = entry.nativeRetrievalContract;
+    assert(contract?.sources?.length, "N2 native regression requires the frozen retrieval contract.");
+    const primary = entry.audit.find((event) => event.kind === "initial_search")?.result;
+    const supplemental = entry.audit.find((event) => event.kind === "local_source_followup")?.result;
+    assert.equal(primary?.execution, "RETURNED_PAGE");
+    assert.deepEqual(primary.hits.map((hit) => hit.key).sort(), [...contract.initialKeys].sort());
+    assert.deepEqual((supplemental?.result?.hits ?? []).map((hit) => hit.key).sort(), [...contract.followupKeys].sort());
+    if (!contract.followupKeys.length) {
+      assert.equal(supplemental?.execution, "NOT_RUN", "Exact naming must not force an automatic followup.");
+      assert(!Object.hasOwn(supplemental, "error") && !Object.hasOwn(supplemental, "result"));
+    } else {
+      assert.equal(supplemental?.result?.execution, "RETURNED_PAGE");
+      assert(!Object.hasOwn(supplemental, "error"));
+    }
+    const discovered = [...primary.hits, ...(supplemental?.result?.hits ?? [])];
+    for (const expected of contract.sources) {
+      const source = discovered.find((hit) => hit.key === expected.key);
+      assert(source?.revision && source.title === expected.title);
+      const index = entry.audit.findIndex((event) => event.kind === "tool" && event.name === "read_source"
+        && event.result?.executed !== false && !Object.hasOwn(event.result ?? {}, "error") && event.result?.key === source.key
+        && event.result?.revision === source.revision && event.result?.content?.includes(expected.requiredQuote));
+      assert(index >= 0, "Frozen restrictions must occur in a successful original read, not a candidate excerpt.");
+      const read = entry.audit[index].result;
+      const later = entry.audit.slice(index + 1);
+      assert(later.some((event, deliveryIndex) => event.kind === "source_delivery"
+        && event.transportAcknowledged === true && event.understandingVerified === false
+        && later.slice(0, deliveryIndex).some((request) => request.kind === "model_request"
+          && request.round === event.round)
+        && event.sources.some((delivered) => delivered.key === source.key && delivered.revision === source.revision
+          && delivered.offset === read.offset && delivered.chars === [...read.content].length)),
+      "An exact source, revision, offset and character count must have acknowledged delivery.");
+      if (entry.caseId === "n2-long-tail") {
+        assert(read.offset > 0, "The long-tail regression must actually deliver a later original range.");
+      }
+    }
+    assert(!entry.audit.some((event) => event.kind === "tool" && event.name === "read_source"
+      && event.result?.executed !== false && !contract.sources.some((source) => source.key === event.result?.key)),
+    "The irrelevant warehouse must not be read as a rule.");
+  }
   if (entry.caseId === "semantic-paraphrase") {
     const primary = entry.audit.find((event) => event.kind === "initial_search")?.result;
     const supplemental = entry.audit.find((event) => event.kind === "local_source_followup")?.result;

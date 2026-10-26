@@ -4,6 +4,52 @@ use crate::coauthor_store::tests::{entity, project};
 const FIXTURE: &str = include_str!("../../../../../../tools/fixtures/coauthor-n2-regression.json");
 
 #[test]
+fn deepseek_regression_noisy_natural_query_recovers_missing_rule_without_relabelling_primary() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../../tools/fixtures/coauthor-deepseek-comparison.json"
+    )).unwrap();
+    for case_id in ["compare-renamed-short", "compare-renamed-long-tail"] {
+        let (mut manager, root, scope) = project();
+        let case = fixture["cases"].as_array().unwrap().iter().find(|case| case["id"] == case_id).unwrap();
+        let prefix = "风景与路况。".repeat(case["prefixRepeat"].as_u64().unwrap_or(0) as usize);
+        let mut keys = std::collections::HashMap::new();
+        for source in fixture["sources"].as_array().unwrap() {
+            let id = source["id"].as_str().unwrap();
+            let saved = manager.upsert_entity(EntityInput {
+                id: None, entity_type: EntityType::Concept, name: source["title"].as_str().unwrap().into(),
+                aliases: serde_json::from_value(source["aliases"].clone()).unwrap(),
+                description: format!("{}{}", if id == "noise" { "" } else { &prefix }, source["content"].as_str().unwrap()),
+                fixed_attributes_json: "{}".into(), tags: vec![], base_revision_id: None,
+                source_version: None, expected_version: None,
+            }).unwrap();
+            keys.insert(id.to_owned(), format!("ENTITY:{}", saved.id));
+        }
+        let query = case["turns"][0]["message"].as_str().unwrap();
+        let primary = manager.search_coauthor_sources(&scope, query, false, 0).unwrap();
+        let before = serde_json::to_value(&primary).unwrap();
+        let actual = primary.hits.iter().map(|hit| hit.key.clone()).collect::<BTreeSet<_>>();
+        assert_eq!(actual, BTreeSet::from([keys["ladder"].clone(), keys["noise"].clone()]));
+        let followup = manager.coauthor_source_followup(&scope, query, &primary).unwrap().expect(case_id);
+        assert_eq!(followup.result.hits.len(), 1);
+        assert_eq!(followup.result.hits[0].key, keys["cost"]);
+        assert_eq!(followup.seed_key, keys["ladder"]);
+        assert!(followup.result.hits[0].content.contains("不得无条件还原全部情绪"));
+        assert_eq!(serde_json::to_value(&primary).unwrap(), before);
+        let mut reordered = primary.clone();
+        reordered.hits.reverse();
+        assert_eq!(manager.coauthor_source_followup(&scope, query, &reordered).unwrap().unwrap().result.hits[0].key, keys["cost"]);
+        let mut complete = primary.clone();
+        complete.hits.push(followup.result.hits[0].clone());
+        assert!(manager.coauthor_source_followup(&scope, query, &complete).unwrap().is_none());
+        let mut oversized = complete.clone();
+        oversized.hits.push(primary.hits[0].clone());
+        assert!(manager.coauthor_source_followup(&scope, query, &oversized).unwrap().is_none());
+        drop(manager);
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[test]
 fn frozen_renamed_cost_and_long_tail_variants_preserve_primary_and_retrieve_one_companion() {
     let data: Value = serde_json::from_str(FIXTURE).unwrap();
     assert_eq!(data["version"], "coauthor-n2-v1");
@@ -95,6 +141,10 @@ fn followup_does_not_expand_empty_invalid_exact_or_already_multiple_results() {
     let (mut manager, root, scope) = project();
     entity(&mut manager, "青阶体系", "登阶需要听觉，铜铃只能使用一次。");
     entity(&mut manager, "听觉损耗条款", "登阶需要听觉，铜铃只能使用一次。");
+    entity(&mut manager, "无关器物杂记", "铜铃只能使用一次。这里只是工匠的无关记述。");
+    for index in 0..3 {
+        entity(&mut manager, &format!("背景{index}"), "远山下着细雨，船工收起绳索。");
+    }
     for query in ["砂", "完全无匹配", "青阶体系", "修行等级", "听觉"] {
         let primary = manager.search_coauthor_sources(&scope, query, false, 0).unwrap();
         assert!(manager.coauthor_source_followup(&scope, query, &primary).unwrap().is_none(), "{query}");

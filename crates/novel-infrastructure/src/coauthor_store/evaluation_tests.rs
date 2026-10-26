@@ -4,9 +4,29 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 const FIXTURE: &str = include_str!("../../../../tools/fixtures/coauthor-evaluation.json");
+const N2_FIXTURE: &str = include_str!("../../../../tools/fixtures/coauthor-n2-regression.json");
+const COMPARISON_FIXTURE: &str = include_str!("../../../../tools/fixtures/coauthor-deepseek-comparison.json");
 
 fn fixture() -> Value {
     serde_json::from_str(FIXTURE).expect("evaluation fixture")
+}
+
+fn model_fixture(suite: &str) -> Result<Value, &'static str> {
+    match suite {
+        "fixed" => Ok(fixture()),
+        "n2-comparison" => serde_json::from_str(COMPARISON_FIXTURE).map_err(|_| "invalid comparison fixture"),
+        "n2-retrieval" => {
+            let frozen: Value = serde_json::from_str(N2_FIXTURE).map_err(|_| "invalid N2 fixture")?;
+            let cases = frozen["retrieval"]["cases"].as_array().ok_or("missing N2 cases")?
+                .iter().map(|case| serde_json::json!({
+                    "id":format!("n2-{}", text(case, "id")),
+                    "prefixRepeat":case["prefixRepeat"],
+                })).collect::<Vec<_>>();
+            Ok(serde_json::json!({"version":frozen["version"],
+                "sources":frozen["retrieval"]["sources"],"cases":cases}))
+        }
+        _ => Err("unknown evaluation suite"),
+    }
 }
 
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
@@ -14,7 +34,14 @@ fn text<'a>(value: &'a Value, key: &str) -> &'a str {
 }
 
 fn seed_sources(manager: &mut ProjectManager, scope: &CoauthorScope) -> HashMap<String, String> {
-    fixture()["sources"]
+    seed_fixture_sources(manager, scope, &fixture(), 0)
+}
+
+fn seed_fixture_sources(
+    manager: &mut ProjectManager, scope: &CoauthorScope, data: &Value, prefix_repeat: usize,
+) -> HashMap<String, String> {
+    let prefix = "风景与路况。".repeat(prefix_repeat);
+    data["sources"]
         .as_array()
         .unwrap()
         .iter()
@@ -25,7 +52,7 @@ fn seed_sources(manager: &mut ProjectManager, scope: &CoauthorScope) -> HashMap<
                     entity_type: EntityType::Concept,
                     name: text(source, "title").into(),
                     aliases: serde_json::from_value(source["aliases"].clone()).unwrap(),
-                    description: text(source, "content").into(),
+                    description: format!("{}{}", if source["id"] == "noise" { "" } else { &prefix }, text(source, "content")),
                     fixed_attributes_json: "{\"settingScope\":\"PROJECT\"}".into(),
                     tags: vec![],
                     base_revision_id: None,
@@ -125,6 +152,43 @@ fn evaluation_fixture_has_unique_cases_and_valid_relevance_labels() {
 }
 
 #[test]
+fn model_export_suites_are_closed_and_preserve_the_fixed_fixture() {
+    assert_eq!(model_fixture("fixed").unwrap(), fixture());
+    assert!(model_fixture("../external.json").is_err());
+    let data = model_fixture("n2-retrieval").unwrap();
+    let frozen: Value = serde_json::from_str(N2_FIXTURE).unwrap();
+    assert_eq!(data["sources"], frozen["retrieval"]["sources"]);
+    assert_eq!(data["cases"].as_array().unwrap().len(), 3);
+    assert_eq!(data["cases"][1]["prefixRepeat"], 240);
+    assert_eq!(data["cases"][1]["id"], "n2-long-tail");
+    let comparison = model_fixture("n2-comparison").unwrap();
+    assert_eq!(comparison["version"], "coauthor-deepseek-comparison-v1");
+    assert_eq!(comparison["cases"].as_array().unwrap().len(), 9);
+    assert_eq!(comparison["cases"][2]["decisions"][0]["status"], "REJECTED");
+    assert_eq!(comparison["cases"][4]["turns"][0]["allowDraftEdits"], true);
+    assert_eq!(comparison["cases"][6]["prefixRepeat"], 240);
+}
+
+#[test]
+fn n2_native_export_seed_keeps_the_tail_and_noise_source_exact() {
+    let (mut manager, root, scope) = tests::project();
+    let data = model_fixture("n2-retrieval").unwrap();
+    let keys = seed_fixture_sources(&mut manager, &scope, &data, 240);
+    let page = manager.search_coauthor_sources(&scope, "情绪折损条例", false, 0).unwrap();
+    let candidate = page.hits.iter().find(|hit| hit.key == keys["cost"]).unwrap();
+    let source = manager.read_coauthor_source(&scope, &candidate.key, &candidate.revision, 0, 12_000).unwrap();
+    assert!(source.content.starts_with(&"风景与路况。".repeat(240)));
+    assert!(source.content.contains("不得无条件还原全部情绪"));
+    let page = manager.search_coauthor_sources(&scope, "城外仓库", false, 0).unwrap();
+    let noise = page.hits.iter().find(|hit| hit.key == keys["noise"]).unwrap();
+    let noise = manager.read_coauthor_source(&scope, &noise.key, &noise.revision, 0, 12_000).unwrap();
+    assert!(noise.content.starts_with("仓库出售空铜匣"));
+    assert!(!noise.content.contains("风景与路况"));
+    drop(manager);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 #[ignore = "explicit local evaluation; run alone via pnpm eval:coauthor"]
 fn measure_retrieval_baseline() {
     let data = fixture();
@@ -191,6 +255,8 @@ fn measure_retrieval_baseline() {
 #[test]
 #[ignore = "explicit isolated project export; no models or real author projects"]
 fn prepare_model_evaluation_projects() {
+    let suite = std::env::var("COAUTHOR_EVAL_SUITE").unwrap_or_else(|_| "fixed".into());
+    let data = model_fixture(&suite).expect("supported evaluation suite");
     let output = PathBuf::from(std::env::var("COAUTHOR_EVAL_EXPORT_ROOT").expect("export root"));
     assert!(
         output.is_absolute() && !output.exists(),
@@ -207,7 +273,7 @@ fn prepare_model_evaluation_projects() {
     );
     std::fs::create_dir(&output).unwrap();
     let selected = std::env::var("COAUTHOR_EVAL_CASES").unwrap_or_default();
-    for case in fixture()["cases"].as_array().unwrap() {
+    for case in data["cases"].as_array().unwrap() {
         let id = text(case, "id");
         if !selected.is_empty() && !selected.split(',').any(|s| s == id) {
             continue;
@@ -224,7 +290,8 @@ fn prepare_model_evaluation_projects() {
             project_id: project.project_id,
             session_id: session.id,
         };
-        let keys = seed_sources(&mut manager, &scope);
+        let prefix_repeat = case["prefixRepeat"].as_u64().unwrap_or(0) as usize;
+        let keys = seed_fixture_sources(&mut manager, &scope, &data, prefix_repeat);
         let mut document = manager.coauthor_state(&scope).unwrap().document;
         document.content = case["draft"].as_str().unwrap_or_default().into();
         document.narrative_position = case["narrativePosition"]
@@ -299,7 +366,8 @@ fn prepare_model_evaluation_projects() {
         }
         emit(
             serde_json::json!({"type":"project","caseId":id,"root":root,"scope":scope,
-            "sources":keys,"document":document,"modelRequests":0}),
+            "sources":keys,"document":document,"modelRequests":0,
+            "suite":suite,"fixtureVersion":data["version"],"prefixRepeat":prefix_repeat}),
         );
     }
 }

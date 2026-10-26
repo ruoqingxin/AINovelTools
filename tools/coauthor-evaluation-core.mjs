@@ -21,6 +21,51 @@ export async function loadFixture() {
   return { fixture, hash: createHash("sha256").update(raw).digest("hex") };
 }
 
+export async function loadModelFixture(suite = "fixed") {
+  if (suite === "fixed") return loadFixture();
+  if (suite === "n2-comparison") {
+    const raw = await readFile(join(workspace, "tools/fixtures/coauthor-deepseek-comparison.json"), "utf8");
+    const fixture = JSON.parse(raw);
+    assert.equal(fixture.version, "coauthor-deepseek-comparison-v1");
+    assert.equal(fixture.name, suite);
+    const ids = new Set(fixture.sources.map((source) => source.id));
+    assert.equal(ids.size, fixture.sources.length);
+    assert.equal(new Set(fixture.cases.map((entry) => entry.id)).size, fixture.cases.length);
+    for (const entry of fixture.cases) {
+      assert(entry.turns.length && entry.rubric.length);
+      assert(entry.retrieval.relevant.every((id) => ids.has(id)));
+    }
+    return { fixture, hash: createHash("sha256").update(raw).digest("hex") };
+  }
+  assert.equal(suite, "n2-retrieval", "Unknown evaluation suite.");
+  const raw = await readFile(join(workspace, "tools/fixtures/coauthor-n2-regression.json"), "utf8");
+  const data = JSON.parse(raw);
+  assert.equal(data.version, "coauthor-n2-v1");
+  const sources = data.retrieval.sources;
+  const cases = data.retrieval.cases.map((entry) => {
+    const required = [...entry.expectedInitial, ...entry.expectedFollowup];
+    assert.equal(new Set(required).size, required.length);
+    const contractSources = required.map((id) => {
+      const source = sources.find((candidate) => candidate.id === id);
+      assert(source, `Unknown N2 source ${id}`);
+      return { id, title: source.title, requiredQuote: source.content };
+    });
+    return {
+      id: `n2-${entry.id}`, goal: "relevant", workload: "discussion",
+      turns: [{ message: entry.query }], prefixRepeat: entry.prefixRepeat,
+      retrieval: { query: entry.query, relevant: ["ladder", "cost"] },
+      rubric: ["初始、补查与原文送达分开核对，不视为自然语言质量评分", "准确版本和关键限制原文实际送达，不引入无关仓库"],
+      nativeRetrievalContract: {
+        expectedInitial: entry.expectedInitial, expectedFollowup: entry.expectedFollowup,
+        sources: contractSources,
+      },
+    };
+  });
+  assert.equal(new Set(cases.map((entry) => entry.id)).size, cases.length);
+  return { fixture: { version: data.version, name: "n2-retrieval", sources, cases },
+    hash: createHash("sha256").update(raw).digest("hex") };
+}
+
 export function percentile(values, p) {
   assert(p > 0 && p <= 1);
   assert(values.every((v) => Number.isFinite(v) && v >= 0), "Invalid measurement");
@@ -213,6 +258,7 @@ export async function writeReport(directory, report) {
   await writeFile(join(directory, "report.json"), JSON.stringify(report, null, 2));
   const lines = ["# Coauthor Evaluation", "", `Mode: ${report.mode}`,
     `Fixture: ${report.environment.fixtureSha256}`, `Commit: ${report.environment.commit}`, ""];
+  if (report.suite) lines.push(`Suite: ${report.suite}`, "");
   if (report.mode === "localRetrieval") {
     lines.push("| Scale | Cold ms (n=1) | Warm n | P50 ms | P95 ms | Recall@12 | Noise@12 | False empty |",
       "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");

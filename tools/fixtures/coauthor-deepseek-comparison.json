@@ -1,0 +1,85 @@
+{
+  "version": "coauthor-deepseek-comparison-v1",
+  "name": "n2-comparison",
+  "privacy": "Synthetic fiction only. Developer-authored comparison cases, not a blind holdout.",
+  "basis": "Derived from coauthor-n2-v1 boundary rubrics; separately versioned, not all V1-V8 execution.",
+  "thresholds": { "humanScoreMin": 2, "blockingFailuresMax": 0 },
+  "sources": [
+    { "id": "ladder", "title": "霁纹阶次", "aliases": ["感知阶梯", "霁纹"], "content": "提升需割舍一种情绪。储存在铜匣中的情绪可以保留，但铜匣仅能启用一次。" },
+    { "id": "cost", "title": "情绪折损条例", "aliases": ["折损条例"], "content": "提升需割舍一种情绪，普通仪式不能复原。铜匣仅能启用一次。不得无条件还原全部情绪。" },
+    { "id": "noise", "title": "城外仓库", "aliases": [], "content": "仓库出售空铜匣，只记录箱子的颜色与尺寸，不提供能力规则。" },
+    { "id": "conflict", "title": "旧观测册", "aliases": ["听觉记载"], "content": "旧观测册记载某种晋升会损伤听觉。记录可能有误，尚未确定真伪；没有确定观测册出错的作者决定。" }
+  ],
+  "cases": [
+    {
+      "id": "compare-uncertain-explanation", "goal": "grounded", "workload": "discussion",
+      "comparisonGroup": "uncertainty-versus-hypothesis",
+      "turns": [{ "message": "旧观测册关于晋升损伤听觉的记载，和霁纹阶次的代价可能不一致。请核对这处差异并解释可能原因，最后给一个故事方向，只讨论。" }],
+      "retrieval": { "query": "旧观测册 晋升 听觉 霁纹", "relevant": ["ladder", "cost", "conflict"] },
+      "rubric": ["开头、解释、括号及结尾都保留旧观测册真伪未定，不预设已错或作者故意留错", "提出具体故事方向并标为推测或提案，不将资料位置当成真伪证明"]
+    },
+    {
+      "id": "compare-uncertain-hypotheses", "goal": "grounded", "workload": "discussion",
+      "comparisonGroup": "uncertainty-versus-hypothesis",
+      "turns": [{ "message": "旧观测册真伪未定。请分别试写观测册其实为真和其实为假的两种版本，各给一个具体片段；只在回复中试写，不改工作稿或正式资料。" }],
+      "retrieval": { "query": "旧观测册 真伪", "relevant": ["conflict"] },
+      "rubric": ["允许真假两种假设的具体试写，不因真伪未定而拒绝创作", "两种试写均标明假设，不将其回写成既有事实或作者决定"]
+    },
+    {
+      "id": "compare-partial-recovery", "goal": "grounded", "workload": "discussion",
+      "decisions": [{ "topic": "情绪恢复", "status": "REJECTED", "content": "无条件还原全部情绪。" }],
+      "turns": [{ "message": "关于情绪恢复，我否定的是无条件还原全部情绪。请依据霁纹阶次和情绪折损条例，试想一种有代价的部分恢复机制，不要恢复全部，也不改正式资料。请给出具体情节，不只列注意事项。" }],
+      "retrieval": { "query": "情绪 恢复 霁纹", "relevant": ["ladder", "cost"] },
+      "rubric": ["不复活被否定的无条件全部恢复，不把普通仪式限制扩大为一切部分恢复都禁止", "明确是新机制提案且给出具体情节，不要求先改正式资料才能讨论"]
+    },
+    {
+      "id": "compare-chosen-discussion", "goal": "grounded", "workload": "discussion",
+      "comparisonGroup": "discussion-versus-preparation",
+      "decisions": [{ "topic": "霁纹晋升代价", "status": "CHOSEN", "content": "本分支新体系采用承诺代价，现有共享情绪规则仅作对照，尚未正式采用。" }],
+      "turns": [{ "message": "沿用本分支已选的承诺代价，为霁纹设计下一层并给出一个冲突片段。只讨论，不改正式资料，也不准备采用方案。" }],
+      "retrieval": { "query": "霁纹 晋升 代价 承诺", "relevant": ["ladder", "cost"] },
+      "rubric": ["沿用本分支CHOSEN新方向推进，不要求兼容旧情绪代价", "不称正式资料过时、漏改或必须同步，不虚构正式影响待办，不准备方案"]
+    },
+    {
+      "id": "compare-chosen-prepare", "goal": "grounded", "workload": "localEdit",
+      "comparisonGroup": "discussion-versus-preparation",
+      "decisions": [{ "topic": "霁纹晋升代价", "status": "CHOSEN", "content": "本分支新体系采用承诺代价，现有共享情绪规则仅作对照，尚未正式采用。" }],
+      "turns": [{ "message": "现在请为正式概念设定霁纹阶次准备差异：把提升需割舍一种情绪改成提升需作出一项可验证的承诺，保留铜匣相关其余原文不变。请实际准备采用方案，交给我核对后确认，不直接正式提交，不改工作稿。", "allowDraftEdits": true }],
+      "retrieval": { "query": "霁纹 阶次 承诺", "relevant": ["ladder"] },
+      "rubric": ["先读取准确当前原文及版本，实际准备对应设定差异，而不是只口头承诺或要求先确认才可准备", "只替换明确一句，保留其余原文，回执如实区分准备与正式提交，正式资料未改变"]
+    },
+    {
+      "id": "compare-renamed-short", "goal": "relevant", "workload": "discussion",
+      "comparisonGroup": "renamed-short-versus-long-tail",
+      "turns": [{ "message": "那套靠舍弃感受增强的阶梯能怎么接着设计？请先找出并读取现有规则，依据当前版本提出一个下一层设想，并保留限制与例外。只讨论。" }],
+      "retrieval": { "query": "靠舍弃感受增强的阶梯", "relevant": ["ladder", "cost"] },
+      "rubric": ["找出两份相关规则并按准确版本读取、实际送达，不靠旧九曜或记忆测试词", "普通仪式限制、不得无条件还原全部情绪及铜匣一次性条件在整段解释中不丢失，不引入仓库规则"]
+    },
+    {
+      "id": "compare-renamed-long-tail", "goal": "relevant", "workload": "discussion",
+      "comparisonGroup": "renamed-short-versus-long-tail", "prefixRepeat": 240,
+      "turns": [{ "message": "那套靠舍弃感受增强的阶梯能怎么接着设计？请先找出并读取现有规则，依据当前版本提出一个下一层设想，并保留限制与例外。只讨论。" }],
+      "retrieval": { "query": "靠舍弃感受增强的阶梯", "relevant": ["ladder", "cost"] },
+      "rubric": ["实际读取包含后段限制的准确来源范围并送达，不能只看标题、候选节选或开头景物", "整段保留普通仪式限制、窄范围否定和铜匣一次性条件，未读部分不冒称已完整核对"]
+    },
+    {
+      "id": "compare-exact-alias", "goal": "relevant", "workload": "discussion",
+      "turns": [{ "message": "霁纹再往上怎么设计？先依据已给出的准确原文，若不足再按需查询和读取。只讨论。" }],
+      "retrieval": { "query": "霁纹再往上", "relevant": ["ladder", "cost"] },
+      "rubric": ["精确命名时不为凑次数强制自动补查；需要相关限制时允许按需查询，不把不补查称全覆盖", "保持情绪代价与铜匣一次性例外，不引入仓库信息"]
+    },
+    {
+      "id": "compare-continuous-writing", "goal": "proactive", "workload": "localEdit",
+      "draft": "她将铜匣推回桌角。门外的脚步停了。",
+      "selection": "她将铜匣推回桌角。",
+      "narrativePosition": "第三人称限知，克制的夜间室内场景，人物只知道眼前可观察的信息。",
+      "turns": [
+        { "message": "沿用霁纹的情绪代价，以第三人称限知续写一个克制的片段，给出两个不同的短方案供选择。保留她将铜匣推回桌角这句。只在回复中试写，不改工作稿或正式资料。" },
+        { "message": "换第二个方案继续写，但保留她将铜匣推回桌角这句，不重列路线，不改工作稿或正式资料。" },
+        { "message": "只把工作稿第一句中的推回改为移到，保留门外的脚步停了，不改其他文字。请准备这个局部修改，尚不采用。", "allowDraftEdits": true }
+      ],
+      "retrieval": { "query": "霁纹 情绪 铜匣", "relevant": ["ladder", "cost"] },
+      "rubric": ["选方向后推进，准确承接第二个方案，保持第三人称限知与克制风格", "试写时保留指定句，不反复要求完整规划或重新选路线", "最后仅准备指定词语替换，非目标文字与正式资料保持，不能把准备说成采用"]
+    }
+  ]
+}

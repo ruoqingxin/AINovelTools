@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { join } from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { assessReview, distribution, loadFixture, nativeRows, percentile, reserveCost,
+import { assessReview, distribution, loadFixture, loadModelFixture, nativeRows, percentile, reserveCost,
   retrievalScore, reviewTemplate, summarizeBaseline, validateCloudOptions, writeReport } from "./coauthor-evaluation-core.mjs";
 import { workspace } from "./desktop-smoke-runtime.mjs";
 import { createBudgetLedger, createBudgetRelay, responseUsage } from "./coauthor-evaluation-budget.mjs";
 import { loopbackContext, coauthorLoopbackTurn, assertLoopbackRegression } from "./coauthor-runtime-loopback.mjs";
+import { assertReviewEvidence, inspectReviewEvidence, renderReviewPacket } from "./coauthor-review-evidence.mjs";
 
 const cloudProfile = { capability: "CHAT", privacy_level: "ALLOW_CLOUD", secret_ref: "synthetic",
   base_url: "https://example.invalid/v1", model_id: "synthetic-test", price_currency: "CNY",
@@ -155,6 +156,194 @@ test("N2 freezes renamed retrieval variants and V1-V8 paired boundary rubrics wi
   }
   assert(fixture.retrieval.cases.some((entry) => entry.prefixRepeat > 0));
   assert(fixture.retrieval.cases.some((entry) => entry.expectedFollowup.length === 0));
+});
+
+test("model suite adapters retain both frozen hashes, labels and source bodies", async () => {
+  const fixed = await loadModelFixture();
+  assert.equal(fixed.hash, "45470389a637a61f0948dbd9c18ae702c6fffdf1877abc20c7f5cc42ba78bb47");
+  assert.equal(fixed.fixture.cases.length, 13);
+  const n2 = await loadModelFixture("n2-retrieval");
+  assert.equal(n2.hash, "66a12d9f9f75743fd215f0c283306aaf6a83b301edd9a89f1691a76867854d93");
+  assert.deepEqual(n2.fixture.cases.map((entry) => entry.id),
+    ["n2-renamed-cost", "n2-long-tail", "n2-exact-alias-no-repeat"]);
+  assert.equal(n2.fixture.cases[1].prefixRepeat, 240);
+  assert.deepEqual(n2.fixture.cases[2].nativeRetrievalContract.expectedFollowup, []);
+  assert.deepEqual(n2.fixture.cases[2].retrieval.relevant, ["ladder", "cost"],
+    "Skipping an automatic followup must not relabel the cost rule as irrelevant.");
+  for (const entry of n2.fixture.cases) {
+    for (const source of entry.nativeRetrievalContract.sources) {
+      assert.equal(source.requiredQuote, n2.fixture.sources.find((candidate) => candidate.id === source.id).content);
+    }
+  }
+  await assert.rejects(loadModelFixture("../custom.json"), /Unknown/);
+});
+
+test("DeepSeek comparison suite freezes nine additional cases, matched pairs and eleven turns separately", async () => {
+  const { fixture, hash } = await loadModelFixture("n2-comparison");
+  assert.equal(hash, "5f23d62c34a34f9473d21839496fd114c0b70c11330da5aa620ced6e7e6ebd14");
+  assert.equal(fixture.cases.length, 9);
+  assert.equal(fixture.cases.reduce((total, entry) => total + entry.turns.length, 0), 11);
+  assert(fixture.cases.every((entry) => entry.id.startsWith("compare-")));
+  const [short, long] = fixture.cases.filter((entry) => entry.comparisonGroup === "renamed-short-versus-long-tail");
+  assert.deepEqual(short.turns, long.turns);
+  assert.equal(long.prefixRepeat, 240);
+  const [discuss, prepare] = fixture.cases.filter((entry) => entry.comparisonGroup === "discussion-versus-preparation");
+  assert.deepEqual(discuss.decisions, prepare.decisions);
+  assert(!discuss.turns[0].allowDraftEdits);
+  assert.equal(prepare.turns[0].allowDraftEdits, true);
+  assert.equal(fixture.thresholds.humanScoreMin, 2);
+  assert.equal((await loadFixture()).hash, "45470389a637a61f0948dbd9c18ae702c6fffdf1877abc20c7f5cc42ba78bb47");
+  for (const [args, message] of [
+    [[], /requires --allow-cloud/],
+    [["--allow-cloud"], /cloud-profile/],
+    [["--prepare-only", "--allow-cloud"], /Local modes/],
+    [["--loopback", "--case", "alias-recall"], /Unknown/],
+  ]) {
+    const result = spawnSync(process.execPath, [join(workspace, "tools/coauthor-model-evaluation.mjs"),
+      "--suite", "n2-comparison", ...args], { encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, message);
+    assert.doesNotMatch(result.stdout, /Desktop launched/);
+  }
+});
+
+test("N2 suite is local-only and invalid suite/case options fail before native launch", () => {
+  for (const [args, message] of [
+    [["--suite", "n2-retrieval"], /local-only/],
+    [["--suite", "n2-retrieval", "--loopback", "--allow-cloud"], /local-only/],
+    [["--suite", "n2-retrieval", "--prepare-only", "--cloud-profile", "anything"], /local-only/],
+    [["--suite", "n2-retrieval", "--loopback", "--loopback-expect-input-limit"], /cannot use/],
+    [["--suite", "n2-retrieval", "--loopback", "--case", "semantic-paraphrase"], /Unknown/],
+    [["--suite", "../custom.json", "--loopback"], /Unknown evaluation suite/],
+  ]) {
+    const result = spawnSync(process.execPath, [join(workspace, "tools/coauthor-model-evaluation.mjs"), ...args],
+      { encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, message);
+    assert.doesNotMatch(result.stdout, /Desktop launched/);
+  }
+});
+
+test("N2 driver reads discovered exact pointers then locates the real tail without calling it a full read", async () => {
+  const { fixture } = await loadModelFixture("n2-retrieval");
+  const scenario = fixture.cases[1];
+  const pointers = scenario.nativeRetrievalContract.sources.map((source) => ({
+    key: `ENTITY:${source.id}`, revision: `rev-${source.id}`, title: source.title,
+    navigationOnly: true, sourceTextRetained: false,
+  }));
+  const messages = [{ role: "user", content: JSON.stringify({
+    contextOnly: true, navigationCompacted: true, sourcePointers: pointers,
+  }) }, { role: "user", content: scenario.turns[0].message }];
+  const first = coauthorLoopbackTurn({ messages }, { scenario });
+  assert.equal(first.tool_calls.length, 2);
+  first.tool_calls.forEach((item, i) => {
+    assert.deepEqual(JSON.parse(item.function.arguments), {
+      key: pointers[i].key, revision: pointers[i].revision, offset: 0, limit: 256,
+    });
+  });
+  const retainedText = structuredClone(messages);
+  const retainedContext = JSON.parse(retainedText[0].content);
+  retainedContext.sourcePointers[0].content = "不得伪装成仅身份指针";
+  retainedText[0].content = JSON.stringify(retainedContext);
+  assert.throws(() => coauthorLoopbackTurn({ messages: retainedText }, { scenario }), /must not retain/);
+  const notPointerOnly = structuredClone(messages);
+  const invalidContext = JSON.parse(notPointerOnly[0].content);
+  invalidContext.sourcePointers[0].sourceTextRetained = true;
+  notPointerOnly[0].content = JSON.stringify(invalidContext);
+  assert.throws(() => coauthorLoopbackTurn({ messages: notPointerOnly }, { scenario }));
+  messages.push(first);
+  first.tool_calls.forEach((item, i) => messages.push({ role: "tool", tool_call_id: item.id,
+    content: JSON.stringify({ ...pointers[i], offset: 0, totalChars: 1800, content: "风景与路况。".repeat(36) }) }));
+  const tail = coauthorLoopbackTurn({ messages }, { scenario });
+  tail.tool_calls.forEach((item) => assert.equal(JSON.parse(item.function.arguments).offset, 1288));
+  messages.push(tail);
+  tail.tool_calls.forEach((item, i) => messages.push({ role: "tool", tool_call_id: item.id,
+    content: JSON.stringify({ ...pointers[i], offset: 1288, totalChars: 1800,
+      content: scenario.nativeRetrievalContract.sources[i].requiredQuote }) }));
+  assert.match(coauthorLoopbackTurn({ messages }, { scenario }).content, /不用于创作质量评分/);
+  const broken = structuredClone(messages);
+  broken.at(-1).content = JSON.stringify({ ...pointers[1], offset: 1288, totalChars: 1800, content: "缺少尾部规则" });
+  assert.throws(() => coauthorLoopbackTurn({ messages: broken }, { scenario }), /tail read/);
+  assert.throws(() => coauthorLoopbackTurn({ messages: messages.slice(0, 1).concat({
+    role: "user", content: "与当前变体不符",
+  }) }, { scenario }), /must agree/);
+});
+
+test("N2 driver does not silently repair a missing companion; exact-alias compacted navigation can requery once", async () => {
+  const { fixture } = await loadModelFixture("n2-retrieval");
+  const messages = (scenario) => [{ role: "user", content: JSON.stringify({
+    contextOnly: true, navigationCompacted: true,
+  }) }, { role: "user", content: scenario.turns[0].message }];
+  assert.throws(() => coauthorLoopbackTurn({ messages: messages(fixture.cases[0]) },
+    { scenario: fixture.cases[0] }), /must discover/);
+  const exact = fixture.cases[2];
+  const turn = coauthorLoopbackTurn({ messages: messages(exact) }, { scenario: exact });
+  assert.equal(turn.tool_calls[0].function.name, "search_sources");
+  assert.equal(JSON.parse(turn.tool_calls[0].function.arguments).query, exact.retrieval.query);
+});
+
+test("N2 audit rejects candidate-only evidence, wrong delivery ranges, extra reads and premature coverage claims", async () => {
+  const { fixture } = await loadModelFixture("n2-retrieval");
+  const scenario = fixture.cases[1];
+  const sources = scenario.nativeRetrievalContract.sources.map((source) => ({
+    ...source, key: `ENTITY:${source.id}`, revision: `rev-${source.id}`,
+  }));
+  const contract = { initialKeys: [sources[0].key], followupKeys: [sources[1].key], sources };
+  const prefix = [
+    { kind: "initial_search", result: { execution: "RETURNED_PAGE", hits: [sources[0]] } },
+    { kind: "local_source_followup", result: { result: { execution: "RETURNED_PAGE", hits: [sources[1]] } } },
+  ];
+  const reads = sources.map((source) => ({ kind: "tool", name: "read_source", result: {
+    ...source, offset: 1200, content: source.requiredQuote, totalChars: 1800,
+  } }));
+  const request = { kind: "model_request", round: 2, estimatedInputTokens: 100, inputTokenBudget: 32768 };
+  const delivery = { kind: "source_delivery", round: 2, transportAcknowledged: true, understandingVerified: false,
+    sources: reads.map((event) => ({ key: event.result.key, revision: event.result.revision,
+      offset: event.result.offset, chars: [...event.result.content].length })) };
+  const entry = { suite: "n2-retrieval", caseId: scenario.id, status: "COMPLETED",
+    nativeRetrievalContract: contract, audit: [...prefix, ...reads, request, delivery] };
+  assert.equal(assertLoopbackRegression(entry).qualityVerified, false);
+  for (const field of ["offset", "revision", "chars"]) {
+    const broken = structuredClone(entry);
+    broken.audit.at(-1).sources[0][field] = field === "revision" ? "wrong" : 0;
+    assert.throws(() => assertLoopbackRegression(broken), /acknowledged delivery/);
+  }
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [...prefix, delivery] }), /original read/);
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [...prefix, ...reads] }), /acknowledged delivery/);
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [...prefix, ...reads, delivery] }), /acknowledged delivery/);
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [
+    ...prefix, ...reads, { ...request, round: 3 }, delivery,
+  ] }), /acknowledged delivery/);
+  for (const failure of [{ executed: false }, { error: "read failed" }]) {
+    const broken = structuredClone(entry);
+    Object.assign(broken.audit[2].result, failure);
+    assert.throws(() => assertLoopbackRegression(broken), /original read/);
+  }
+  const invalidFollowup = structuredClone(entry);
+  invalidFollowup.audit[1].result.result.execution = "FAILED";
+  assert.throws(() => assertLoopbackRegression(invalidFollowup));
+  assert.throws(() => assertLoopbackRegression({ ...entry, nativeRetrievalContract: undefined }), /frozen retrieval contract/);
+  assert.throws(() => assertLoopbackRegression({ ...entry, suite: undefined }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [
+    ...entry.audit, { kind: "tool", name: "read_source", result: { key: "ENTITY:noise" } },
+  ] }), /warehouse/);
+  const zeroOffset = structuredClone(entry);
+  zeroOffset.audit.filter((event) => event.kind === "tool").forEach((event) => { event.result.offset = 0; });
+  zeroOffset.audit.at(-1).sources.forEach((source) => { source.offset = 0; });
+  assert.throws(() => assertLoopbackRegression(zeroOffset), /later original range/);
+  const exact = { ...entry, caseId: "n2-exact-alias-no-repeat", nativeRetrievalContract: {
+    initialKeys: [sources[0].key], followupKeys: [], sources: [sources[0]],
+  }, audit: [prefix[0], { kind: "local_source_followup", result: { execution: "NOT_RUN" } },
+    reads[0], request, delivery] };
+  assert.equal(assertLoopbackRegression(exact).qualityVerified, false);
+  assert.throws(() => assertLoopbackRegression({ ...exact, audit: [
+    prefix[0], prefix[1], reads[0], request, delivery,
+  ] }));
+  for (const unexpected of [{ error: "followup failed" }, { result: { hits: [] } }]) {
+    const broken = structuredClone(exact);
+    Object.assign(broken.audit[1].result, unexpected);
+    assert.throws(() => assertLoopbackRegression(broken));
+  }
 });
 
 test("followup coverage and latency never overwrite the initial retrieval baseline", () => {
@@ -356,6 +545,204 @@ test("unscored human criteria are pending; one blocking failure cannot be averag
   assert.equal(assessReview(rows, cases, 1).status, "failed", "Known blocker survives incomplete scoring.");
 });
 
+test("model quality review cannot pass a report with no recorded turns even when all scores are filled", async () => {
+  const { fixture, hash } = await loadFixture();
+  const directory = await mkdtemp(join(tmpdir(), "coauthor-review-missing-turns-"));
+  const cases = fixture.cases.slice(0, 1);
+  const review = reviewTemplate(cases, 1);
+  review[0].reviewer = "synthetic regression reviewer";
+  review[0].blockingFailures = [];
+  review[0].criteria.forEach((criterion) => { criterion.score = 3; criterion.evidence = "synthetic evidence"; });
+  try {
+    await writeFile(join(directory, "report.json"), JSON.stringify({
+      mode: "realModel", status: "pendingHumanReview", environment: { fixtureSha256: hash },
+      selection: { caseIds: cases.map((entry) => entry.id), repetitions: 1 }, turns: [], modelRequests: 0,
+    }));
+    await writeFile(join(directory, "review.json"), JSON.stringify(review));
+    const result = spawnSync(process.execPath, [join(workspace, "tools/coauthor-evaluation-review.mjs"), directory],
+      { encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 1, "Filled scores cannot substitute for missing native turns.");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+function recordedReviewReport(fixture, hash, repetitions = 2) {
+  const cases = fixture.cases.filter((entry) => ["alias-recall", "extend-confirmed"].includes(entry.id));
+  const turns = cases.flatMap((entry) => Array.from({ length: repetitions }, (_, repetition) =>
+    entry.turns.map((_turn, turnIndex) => ({
+      caseId: entry.id, repetition, turnIndex, runId: `${entry.id}-${repetition}-${turnIndex}`,
+      status: "COMPLETED", error: null, output: "Complete synthetic response, including its ending.",
+      modelRequests: 1, promptVersions: ["synthetic-test"],
+      audit: [{ kind: "model_request", round: 1, promptVersion: "synthetic-test" }],
+      workingDocumentUnchanged: true, formalContentUnchanged: true,
+      taskPreferencesUnchanged: true, feeBudgetSettingsUnchanged: true,
+    }))).flat());
+  return { mode: "realModel", suite: "fixed", status: "pendingHumanReview",
+    environment: { fixtureSha256: hash }, selection: { caseIds: cases.map((entry) => entry.id), repetitions },
+    turns, modelRequests: turns.length };
+}
+
+test("comparison review binds its own fixture and cannot be substituted for the original fixed suite", async () => {
+  const fixed = await loadFixture();
+  const comparison = await loadModelFixture("n2-comparison");
+  const record = recordedReviewReport(fixed.fixture, fixed.hash, 1).turns[0];
+  const scenario = comparison.fixture.cases[0];
+  const report = { mode: "realModel", suite: "n2-comparison", status: "pendingHumanReview",
+    environment: { fixtureSha256: comparison.hash }, modelRequests: 1,
+    selection: { caseIds: [scenario.id], repetitions: 1 },
+    turns: [{ ...record, caseId: scenario.id }] };
+  assert.equal(assertReviewEvidence(report, comparison.fixture, comparison.hash).samples.length, 1);
+  assert.throws(() => assertReviewEvidence(report, fixed.fixture, fixed.hash), /suite and fixture/);
+  assert.throws(() => assertReviewEvidence({ ...report, suite: "fixed" }, comparison.fixture, comparison.hash));
+  assert.match(renderReviewPacket(report, comparison.fixture, comparison.hash, "synthetic"), /compare-uncertain-explanation/);
+});
+
+test("review evidence covers every selected repetition and turn without accepting duplicates or foreign identities", async () => {
+  const { fixture, hash } = await loadFixture();
+  const report = recordedReviewReport(fixture, hash);
+  assert.equal(assertReviewEvidence(report, fixture, hash).samples.length, 6);
+  const missing = structuredClone(report);
+  missing.turns.pop();
+  missing.modelRequests--;
+  assert.throws(() => assertReviewEvidence(missing, fixture, hash), /missing recorded turn/);
+  for (const mutate of [
+    (value) => value.turns.push(value.turns[0]),
+    (value) => { value.turns[0].caseId = "foreign"; },
+    (value) => { value.turns[0].repetition = -1; },
+    (value) => { value.turns[0].repetition = 2; },
+    (value) => { value.turns[0].turnIndex = "0"; },
+    (value) => { value.turns[0].turnIndex = 0.5; },
+    (value) => { value.turns[0].runId = value.turns[1].runId; },
+    (value) => { value.turns[0].runId = ""; },
+    (value) => { value.selection.caseIds = []; },
+    (value) => { value.selection.caseIds.push(value.selection.caseIds[0]); },
+    (value) => { value.selection.caseIds = ["foreign"]; },
+    (value) => { value.selection.repetitions = 4; },
+  ]) {
+    const broken = structuredClone(report);
+    mutate(broken);
+    assert.throws(() => assertReviewEvidence(broken, fixture, hash));
+  }
+});
+
+test("review evidence rejects interrupted runs, contradictory counters, mixed prompts and unverified write guards", async () => {
+  const { fixture, hash } = await loadFixture();
+  const report = recordedReviewReport(fixture, hash);
+  for (const mutate of [
+    (value) => { value.status = "completedWithFailures"; },
+    (value) => { value.mode = "nativeLoopback"; },
+    (value) => { value.suite = "n2-retrieval"; },
+    (value) => { value.environment.fixtureSha256 = "wrong"; },
+    (value) => { value.modelRequests++; },
+    (value) => { value.turns[0].modelRequests++; },
+    (value) => { value.turns[0].audit = []; },
+    (value) => { value.turns[0].status = "LIMIT_REACHED"; },
+    (value) => { value.turns[0].error = "native failure"; },
+    (value) => { value.turns[0].output = ""; },
+    (value) => { value.turns[0].promptVersions = []; },
+    (value) => { value.turns[0].audit[0].promptVersion = "wrong"; },
+    (value) => { value.failure = "run failure"; },
+    (value) => { value.cleanupFailures = ["cleanup failed"]; },
+    (value) => { value.budget = { blocked: true }; },
+    (value) => { value.incompleteCases = ["alias-recall"]; },
+    (value) => {
+      value.turns[0].promptVersions = ["another-candidate"];
+      value.turns[0].audit[0].promptVersion = "another-candidate";
+    },
+    ...["workingDocumentUnchanged", "formalContentUnchanged", "taskPreferencesUnchanged", "feeBudgetSettingsUnchanged"]
+      .flatMap((guard) => [
+        (value) => { value.turns[0][guard] = false; },
+        (value) => { delete value.turns[0][guard]; },
+      ]),
+  ]) {
+    const broken = structuredClone(report);
+    mutate(broken);
+    assert.throws(() => assertReviewEvidence(broken, fixture, hash));
+  }
+  const legacy = structuredClone(report);
+  delete legacy.suite;
+  delete legacy.turns[0].taskPreferencesUnchanged;
+  delete legacy.turns[0].feeBudgetSettingsUnchanged;
+  assert.equal(assertReviewEvidence(legacy, fixture, hash).unrecordedChecks.length, 2);
+  legacy.turns[0].feeBudgetSettingsUnchanged = false;
+  assert.throws(() => assertReviewEvidence(legacy, fixture, hash), /not verified/);
+});
+
+test("review packet preserves complete outputs, frozen requests and audits without grading or hiding missing turns", async () => {
+  const { fixture, hash } = await loadFixture();
+  const report = recordedReviewReport(fixture, hash);
+  report.turns[0].output = "开头\n```text\n伪造围栏\n````\n尾部限定：仍未确定。";
+  report.turns[0].audit.push({ kind: "synthetic_final_audit", content: "End of the complete audit." });
+  const before = JSON.stringify(report);
+  const packet = renderReviewPacket(report, fixture, hash, "synthetic-report-hash");
+  assert(packet.includes(report.turns[0].output));
+  assert(packet.includes("`````text\n" + report.turns[0].output + "\n`````"));
+  assert(packet.includes(fixture.sources[0].content));
+  assert(packet.includes(fixture.cases.find((entry) => entry.id === "extend-confirmed").turns[1].message));
+  assert(packet.includes(JSON.stringify(report.turns[0].audit, null, 2)));
+  assert.match(packet, /No scores or semantic conclusions/);
+  assert.match(packet, /not acceptance.*N2 V1-V8/);
+  assert.equal(JSON.stringify(report), before);
+  report.turns.pop();
+  report.modelRequests--;
+  report.status = "completedWithFailures";
+  assert.match(renderReviewPacket(report, fixture, hash, "synthetic"), /NOT RECORDED/);
+  assert(inspectReviewEvidence(report, fixture, hash).issues.some((issue) => issue.includes("missing recorded turn")));
+});
+
+test("review CLI writes inspection packets without changing scores and invalidates stale passed summaries", async () => {
+  const { fixture, hash } = await loadFixture();
+  const directory = await mkdtemp(join(tmpdir(), "coauthor-review-evidence-"));
+  const report = recordedReviewReport(fixture, hash);
+  const cases = fixture.cases.filter((entry) => report.selection.caseIds.includes(entry.id));
+  const review = reviewTemplate(cases, report.selection.repetitions);
+  const invoke = (...args) => spawnSync(process.execPath,
+    [join(workspace, "tools/coauthor-evaluation-review.mjs"), ...args, directory],
+    { encoding: "utf8", windowsHide: true });
+  const readSummary = async () => JSON.parse(await readFile(join(directory, "quality-summary.json"), "utf8"));
+  try {
+    const reportRaw = JSON.stringify(report);
+    const reviewRaw = JSON.stringify(review);
+    await writeFile(join(directory, "report.json"), reportRaw);
+    await writeFile(join(directory, "review.json"), reviewRaw);
+    assert.equal(invoke("--packet").status, 0);
+    assert.match(await readFile(join(directory, "review-packet.md"), "utf8"), /Complete Recorded Output/);
+    assert.equal(await readFile(join(directory, "report.json"), "utf8"), reportRaw);
+    assert.equal(await readFile(join(directory, "review.json"), "utf8"), reviewRaw);
+    assert.equal(invoke().status, 1);
+    const pending = await readSummary();
+    assert.equal(pending.status, "pending");
+    assert.match(pending.reportSha256, /^[0-9a-f]{64}$/);
+    assert.match(pending.reviewSha256, /^[0-9a-f]{64}$/);
+    assert.equal(pending.selection.fullFixedSuite, false);
+    assert.equal(pending.selection.recordedTurns, 6);
+    for (const row of review) {
+      row.reviewer = "synthetic regression reviewer";
+      row.blockingFailures = [];
+      row.criteria.forEach((criterion) => { criterion.score = 3; criterion.evidence = "synthetic regression only"; });
+    }
+    await writeFile(join(directory, "review.json"), JSON.stringify(review));
+    assert.equal(invoke().status, 0);
+    assert.equal((await readSummary()).status, "passed", "This is synthetic CLI regression, not a real quality result.");
+    report.turns.pop();
+    report.modelRequests--;
+    await writeFile(join(directory, "report.json"), JSON.stringify(report));
+    assert.equal(invoke().status, 1);
+    const invalid = await readSummary();
+    assert.equal(invalid.status, "invalid");
+    assert.match(invalid.failure, /missing recorded turn/);
+    assert.notEqual(invalid.reportSha256, pending.reportSha256);
+    report.mode = "nativeLoopback";
+    await writeFile(join(directory, "report.json"), JSON.stringify(report));
+    assert.equal(invoke("--packet").status, 1);
+    assert.equal(invoke().status, 1);
+    assert.equal((await readSummary()).status, "invalid");
+    await writeFile(join(directory, "quality-summary.json"), JSON.stringify({ status: "passed" }));
+    await writeFile(join(directory, "report.json"), "{broken");
+    assert.equal(invoke().status, 1);
+    assert.equal((await readSummary()).status, "invalid", "Unreadable evidence must not leave a stale pass.");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("incomplete or duplicate timing samples cannot produce a baseline pass", async () => {
   const { fixture } = await loadFixture();
   assert.throws(() => summarizeBaseline([], fixture), /Incomplete/);
@@ -478,6 +865,9 @@ test("native regression uses estimated tokens including overhead, not serialized
     kind: "model_request", inputChars: 50_000, estimatedInputTokens: 15_800, inputTokenBudget: 16_384,
   }] };
   assert.equal(assertLoopbackRegression(entry).scriptedNativeRegression, true);
+  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v22"] }).scriptedNativeRegression, true);
+  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v21"] }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v22", "coauthor-v21"] }));
   assert.throws(() => assertLoopbackRegression({ ...entry, audit: [{
     ...entry.audit[0], estimatedInputTokens: 16_385,
   }] }));

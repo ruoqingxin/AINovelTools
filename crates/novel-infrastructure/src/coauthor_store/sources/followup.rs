@@ -20,13 +20,28 @@ impl ProjectManager {
     ) -> Result<Option<CoauthorSourceFollowup>, CoauthorError> {
         self.validate_coauthor_scope(scope)?;
         if !matches!(primary.execution, CoauthorSearchExecution::ReturnedPage)
-            || primary.hits.len() != 1
+            || primary.hits.is_empty()
+            || primary.hits.len() > 3
             || primary.has_more
             || primary.pending_index_updates != 0
         {
             return Ok(None);
         }
-        let seed = &primary.hits[0];
+        for seed in &primary.hits {
+            if let Some(followup) = self.coauthor_followup_from_seed(scope, query, primary, seed)? {
+                return Ok(Some(followup));
+            }
+        }
+        Ok(None)
+    }
+
+    fn coauthor_followup_from_seed(
+        &self,
+        scope: &CoauthorScope,
+        query: &str,
+        primary: &CoauthorSearchPage,
+        seed: &CoauthorSource,
+    ) -> Result<Option<CoauthorSourceFollowup>, CoauthorError> {
         if seed.kind != "ENTITY" {
             return Ok(None);
         }
@@ -104,6 +119,10 @@ impl ProjectManager {
                 (weight, key, revision)
             })
         }).collect::<Vec<_>>();
+        // An existing lexical companion is enough; do not expand to a weaker third source.
+        if ranked.iter().any(|(_, key, _)| primary.hits.iter().any(|hit| hit.key == *key)) {
+            return Ok(None);
+        }
         ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
         let Some((_, key, revision)) = ranked.into_iter().next() else { return Ok(None) };
         let terms = shared.into_iter().map(|(_, term)| term).collect::<Vec<_>>();
@@ -116,7 +135,7 @@ impl ProjectManager {
             result: CoauthorSearchPage {
                 execution: CoauthorSearchExecution::ReturnedPage, hits: vec![candidate],
                 has_more: false, pending_index_updates: db.coauthor_pending_updates()?,
-                coverage: "仅从单个弱词面候选的当前片段生成共有词项，在至多16份概念候选中补充1份；本操作不提供分页，不是语义判定、精读或查全。仍须按需检索并读取原文条件。".into(),
+                coverage: "仅对至多3个初始候选中的弱词面概念尝试关联，每个种子在至多16份概念候选中筛选，合计最多补充1份未在初始页的资料；本操作不提供分页，不是语义判定、精读或查全。仍须按需检索并读取原文条件。".into(),
             },
         }))
     }

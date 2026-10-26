@@ -599,7 +599,33 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
             "missing prompt rule: {instruction}"
         );
     }
-    assert_eq!(PROMPT_VERSION, "coauthor-v21");
+    assert_eq!(PROMPT_VERSION, "coauthor-v22");
+}
+
+#[test]
+fn repeated_identical_tool_errors_stop_but_success_or_changed_failure_resets_recovery() {
+    let mut guard = ToolFailureGuard::default();
+    let invalid = json!({"error":"includeDraft=true 包含了空工作稿","executed":false});
+    assert!(!guard.observe("prepare_changeset", &invalid));
+    assert!(!guard.observe("prepare_changeset", &invalid));
+    assert!(guard.observe("prepare_changeset", &invalid));
+    assert!(!guard.observe("read_source", &json!({"content":"准确原文"})));
+    assert!(!guard.observe("prepare_changeset", &invalid));
+    assert!(!guard.observe("prepare_changeset", &json!({"error":"准确版本已改变","executed":false})));
+    assert!(!guard.observe("prepare_changeset", &invalid));
+    assert!(!guard.observe("prepare_changeset", &invalid));
+    assert!(guard.observe("prepare_changeset", &invalid));
+    assert!(!guard.observe("get_decisions", &invalid));
+}
+
+#[test]
+fn prompt_preserves_object_scopes_proposal_provenance_and_selected_story_continuity() {
+    for rule in ["单件物品仅启用一次不等于每个人终身一次", "储存能保留不自动等于能够取回",
+        "没有写可逆不推出永久不可逆", "介绍、情节及总结均保持为本次提案",
+        "不混入未选方案独有细节", "先读取相关规则的准确版本再给结论",
+        "prepare_changeset每次必须显式传includeDraft"] {
+        assert!(PROMPT.contains(rule), "{rule}");
+    }
 }
 
 #[test]

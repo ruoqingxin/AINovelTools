@@ -8,12 +8,13 @@ import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
 import { createDesktopHarness, invoke, until, workspace } from "./desktop-smoke-runtime.mjs";
 import { runNative } from "./coauthor-evaluation.mjs";
-import { distribution, environment, loadFixture, reserveCost, reviewTemplate,
+import { distribution, environment, loadModelFixture, reserveCost, reviewTemplate,
   retrievalScore, validateCloudOptions, writeReport } from "./coauthor-evaluation-core.mjs";
 import { createBudgetRelay } from "./coauthor-evaluation-budget.mjs";
 import { coauthorLoopbackTurn, assertLoopbackRegression } from "./coauthor-runtime-loopback.mjs";
 
 const { values } = parseArgs({ options: {
+  suite: { type: "string", default: "fixed" },
   app: { type: "string" }, case: { type: "string" }, repetitions: { type: "string" },
   "prepare-only": { type: "boolean", default: false }, loopback: { type: "boolean", default: false },
   "allow-cloud": { type: "boolean", default: false }, "cloud-profile": { type: "string" },
@@ -22,7 +23,14 @@ const { values } = parseArgs({ options: {
   "loopback-expect-input-limit": { type: "boolean", default: false },
   "loopback-expect-late-expansion": { type: "boolean", default: false },
 } });
-const { fixture, hash } = await loadFixture();
+assert(["fixed", "n2-retrieval", "n2-comparison"].includes(values.suite), "Unknown evaluation suite.");
+if (values.suite === "n2-retrieval") {
+  assert((values.loopback || values["prepare-only"]) && !values["allow-cloud"] && !values["cloud-profile"],
+    "N2 retrieval suite is local-only; use --loopback or --prepare-only without cloud options.");
+  assert(!values["loopback-expect-input-limit"] && !values["loopback-expect-late-expansion"],
+    "N2 retrieval suite cannot use fixed-suite expected-limit modes.");
+}
+const { fixture, hash } = await loadModelFixture(values.suite);
 assert(!(values["prepare-only"] && values.loopback), "Choose prepare-only or loopback.");
 const local = values["prepare-only"] || values.loopback;
 const loopbackInputTokens = Number(values["loopback-input-tokens"] ?? 32768);
@@ -52,6 +60,7 @@ const directory = await mkdtemp(join(workspace, ".tmp/coauthor-model-eval-"));
 const review = reviewTemplate(options.cases, options.repetitions);
 await writeFile(join(directory, "review.json"), JSON.stringify(review, null, 2));
 const report = {
+  suite: values.suite,
   mode: values["prepare-only"] ? "preparedOnly" : values.loopback ? "nativeLoopback" : "realModel",
   environment: environment(hash), status: "running", turns: [], reservedCostMicros: 0,
   selection: { caseIds: options.cases.map((c) => c.id), repetitions: options.repetitions },
@@ -70,7 +79,7 @@ if (values.loopback) {
   report.expectedLateExpansion = values["loopback-expect-late-expansion"];
   report.loopbackHttpRequests = 0;
 }
-let harness, main, server, relay, temporaryProfileId, encryptedCopy;
+let harness, main, server, relay, temporaryProfileId, encryptedCopy, activeScenario;
 
 function formalSnapshot(root) {
   const db = new DatabaseSync(join(root, "project.sqlite"), { readOnly: true });
@@ -85,9 +94,17 @@ async function seedProjects(repetition) {
   const result = await runNative("prepare_model_evaluation_projects", {
     COAUTHOR_EVAL_EXPORT_ROOT: join(directory, `projects-${repetition}`),
     COAUTHOR_EVAL_CASES: options.cases.map((c) => c.id).join(","),
+    COAUTHOR_EVAL_SUITE: values.suite,
   });
   const projects = result.rows.filter((row) => row.type === "project");
   assert.equal(projects.length, options.cases.length, "Native seed export incomplete");
+  for (const project of projects) {
+    assert.equal(project.suite, values.suite);
+    const scenario = options.cases.find((entry) => entry.id === project.caseId);
+    assert(scenario && project.fixtureVersion === fixture.version, "Native suite identity mismatch.");
+    assert.equal(project.prefixRepeat, scenario.prefixRepeat ?? 0, "Native prefix differs from frozen fixture.");
+    assert.deepEqual(Object.keys(project.sources).sort(), fixture.sources.map((source) => source.id).sort());
+  }
   return projects;
 }
 
@@ -132,7 +149,7 @@ async function configureLoopback() {
       let raw = "";
       for await (const chunk of request) raw += chunk;
       const body = JSON.parse(raw);
-      const message = coauthorLoopbackTurn(body);
+      const message = coauthorLoopbackTurn(body, { scenario: activeScenario });
       response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
         choices: [{ message, finish_reason: message.tool_calls ? "tool_calls" : "stop" }],
         usage: { prompt_tokens: 100, completion_tokens: 30 },
@@ -156,6 +173,7 @@ async function configureLoopback() {
 }
 
 async function runTurn(project, scenario, turn, profile, repetition, turnIndex) {
+  activeScenario = scenario;
   const runId = randomUUID();
   const before = await invoke(main, "get_coauthor_state", { scope: project.scope });
   const preferencesBefore = await invoke(main, "get_ai_task_preferences");
@@ -212,7 +230,9 @@ async function runTurn(project, scenario, turn, profile, repetition, turnIndex) 
   const after = await invoke(main, "get_coauthor_state", { scope: project.scope });
   const unchanged = JSON.stringify(before.document) === JSON.stringify(after.document);
   const entry = {
+    suite: values.suite,
     caseId: scenario.id, repetition, turnIndex, workload: scenario.workload, runId,
+    comparisonGroup: scenario.comparisonGroup ?? null,
     status: run?.status ?? "FAILED_BEFORE_RUN", error: state.error,
     elapsedMs: state.elapsedMs,
     firstTextMs: state.events.find((e) => e.kind === "text" && e.characters > 0)?.elapsedMs ?? null,
@@ -237,6 +257,14 @@ async function runTurn(project, scenario, turn, profile, repetition, turnIndex) 
       === JSON.stringify(await invoke(main, "get_ai_budget_settings")),
     events: state.events,
   };
+  if (scenario.nativeRetrievalContract) {
+    const contract = scenario.nativeRetrievalContract;
+    entry.nativeRetrievalContract = {
+      initialKeys: contract.expectedInitial.map((id) => project.sources[id]),
+      followupKeys: contract.expectedFollowup.map((id) => project.sources[id]),
+      sources: contract.sources.map((source) => ({ ...source, key: project.sources[source.id] })),
+    };
+  }
   report.turns.push(entry);
   report.modelRequests += requests.length;
   if (relay) {

@@ -8,7 +8,30 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
-pub(super) const PROMPT_VERSION: &str = "coauthor-v21";
+pub(super) const PROMPT_VERSION: &str = "coauthor-v22";
+
+#[derive(Default)]
+pub(super) struct ToolFailureGuard {
+    last: Option<(String, String)>,
+    repeats: usize,
+}
+
+impl ToolFailureGuard {
+    pub(super) fn observe(&mut self, name: &str, result: &Value) -> bool {
+        let Some(error) = result["error"].as_str() else {
+            self.last = None;
+            self.repeats = 0;
+            return false;
+        };
+        if self.last.as_ref().is_some_and(|(previous, message)| previous == name && message == error) {
+            self.repeats += 1;
+        } else {
+            self.last = Some((name.into(), error.into()));
+            self.repeats = 1;
+        }
+        self.repeats >= 3
+    }
+}
 
 pub(super) fn source_provenance(result: &mut Value) {
     if let Some(hits) = result.get_mut("hits").and_then(Value::as_array_mut) {
