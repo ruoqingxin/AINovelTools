@@ -548,3 +548,35 @@ fn ordinary_discussion_reuse_is_not_mislabeled_as_a_continuation_rewrite() {
     assert_eq!(result["action"], "REPAIR_ARGUMENTS");
     assert_eq!(result["repeatedExcerpt"], Value::Null);
 }
+
+#[test]
+fn omitted_preserved_sentence_requires_a_content_repair_without_discarding_the_new_draft() {
+    let id = uuid::Uuid::new_v4();
+    let old = "她将铜匣推回桌角。门外的脚步停了。";
+    let messages = referenced_context(id, old);
+    let value = referenced_reply("窗缝滑进一片带着泥土的红纸。");
+    let result = recovery(Some(&value), "继续写，保留她将铜匣推回桌角这句", &messages, &[old]);
+    assert_eq!(result["action"], "REPAIR_CONTENT");
+    assert_eq!(result["contentMustChange"], true);
+    assert_eq!(result["missingPreservedQuotes"], json!(["她将铜匣推回桌角。"]));
+    assert_eq!(result["discardRejectedContent"], false);
+}
+
+#[test]
+fn literal_preservation_requirements_are_supplied_before_first_generation_but_not_inferred_from_negation() {
+    let id = uuid::Uuid::new_v4();
+    let old = "她将铜匣推回桌角。门外的脚步停了。";
+    let mut messages = referenced_context(id, old);
+    attach_requirements(&mut messages, "继续写，保留她将铜匣推回桌角这句");
+    let context: Value = serde_json::from_str(messages[0]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(context["requiredPreservedQuotes"], json!(["她将铜匣推回桌角。"]));
+    assert_eq!(context["historicalMessages"][0]["historicalMessage"], old);
+    let mut messages = referenced_context(id, old);
+    attach_requirements(&mut messages, "继续写，不必保留她将铜匣推回桌角这句");
+    let context: Value = serde_json::from_str(messages[0]["content"].as_str().unwrap()).unwrap();
+    assert!(context.get("requiredPreservedQuotes").is_none());
+    let mut messages = referenced_context(id, old);
+    attach_requirements(&mut messages, "保留没有读到的另一句话这句");
+    let context: Value = serde_json::from_str(messages[0]["content"].as_str().unwrap()).unwrap();
+    assert!(context.get("requiredPreservedQuotes").is_none());
+}

@@ -559,8 +559,15 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         unavailable_reason: None,
     },
     FeatureDescriptor {
+        id: "coauthor_source_references",
+        display_name: "共创来源短引用、准确版本读取与同目标无进展保护",
+        stage: "COAUTHOR-N2",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
         id: "coauthor_reply_delivery",
-        display_name: "共创交付、承接短引用、重复正文恢复及改规则引文校验",
+        display_name: "共创交付、承接短引用、重复正文与保留句修复及改规则引文校验",
         stage: "COAUTHOR-N2",
         status: FeatureStatus::Implemented,
         unavailable_reason: None,

@@ -218,6 +218,36 @@ fn requested_quotes(request: &str, fragments: &[String]) -> Vec<String> {
         .collect()
 }
 
+fn canonical_quotes(quotes: &[String], fragments: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    for quote in quotes {
+        let core = quote.trim_end_matches(['。', '！', '？', '.', '!', '?']);
+        let canonical = fragments.iter().find_map(|fragment| {
+            let end = fragment.find(core)? + core.len();
+            let punctuation = fragment[end..].chars().next()
+                .filter(|ch| ['。', '！', '？', '.', '!', '?'].contains(ch));
+            Some(punctuation.map_or_else(|| quote.clone(), |ch| format!("{core}{ch}")))
+        }).unwrap_or_else(|| quote.clone());
+        if !result.contains(&canonical) {
+            result.push(canonical);
+        }
+    }
+    result
+}
+
+pub(super) fn attach_requirements(messages: &mut [Value], request: &str) {
+    let fragments = references(messages).into_iter().map(|(_, _, content)| content).collect::<Vec<_>>();
+    let quotes = canonical_quotes(&requested_quotes(request, &fragments), &fragments);
+    if !quotes.is_empty()
+        && let Some(message) = messages.iter_mut().find(|message| message["role"] == "user")
+        && let Ok(mut context) = serde_json::from_str::<Value>(message["content"].as_str().unwrap_or(""))
+        && context["contextOnly"] == true
+    {
+        context["requiredPreservedQuotes"] = json!(quotes);
+        message["content"] = context.to_string().into();
+    }
+}
+
 fn declares_rule_change(content: &str) -> bool {
     let mut fenced = false;
     content.lines().any(|line| {
@@ -430,16 +460,23 @@ pub(super) fn recovery(
             previous.iter().find_map(|previous| repeated_excerpt(previous, segment))
         })
     });
+    let missing = args.filter(|args| matches!(args.mode, ReplyMode::Continuation))
+        .map(|args| canonical_quotes(&quotes.iter().filter(|quote| !args.content.contains(*quote))
+            .cloned().collect::<Vec<_>>(), &fragments)).unwrap_or_default();
     json!({
-        "action":if repeated.is_some() { "REGENERATE_CONTENT" } else { "REPAIR_ARGUMENTS" },
-        "contentMustChange":repeated.is_some(),
+        "action":if repeated.is_some() { "REGENERATE_CONTENT" } else if missing.is_empty() { "REPAIR_ARGUMENTS" } else { "REPAIR_CONTENT" },
+        "contentMustChange":repeated.is_some() || !missing.is_empty(),
+        "discardRejectedContent":repeated.is_some(),
         "repeatedExcerpt":repeated,
         "preserveQuotes":quotes,
+        "missingPreservedQuotes":missing,
         "continuationReferences":available.into_iter().take(8).map(|(reference, _, content)|
             json!({"reference":reference,"excerpt":content.chars().take(80).collect::<String>()}))
             .collect::<Vec<_>>(),
         "instruction":if repeated.is_some() {
             "重写content：只保留作者指定原句，从所选方案结尾推进新增情节，不再复述旧段；只改reference、anchor或模式不能修复正文重复。失败正文已保留审计，不是可继续照抄的草稿。"
+        } else if !missing.is_empty() {
+            "修复content：在刚生成的新增正文合适位置补齐missingPreservedQuotes原句，同时保留正确reference和preservedQuotes；不丢弃新段、不重贴旧文，不通过清空声明绕过。"
         } else {
             "按本轮错误修正参数；有可用continuationReference时只复制reference，不填写UUID/anchor。没有可用引用先检索并读取本分支AI原回复，不猜测。"
         },

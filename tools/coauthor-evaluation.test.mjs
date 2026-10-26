@@ -281,20 +281,29 @@ test("N2 suite is local-only and invalid suite/case options fail before native l
 test("N2 driver reads discovered exact pointers then locates the real tail without calling it a full read", async () => {
   const { fixture } = await loadModelFixture("n2-retrieval");
   const scenario = fixture.cases[1];
-  const pointers = scenario.nativeRetrievalContract.sources.map((source) => ({
+  const pointers = scenario.nativeRetrievalContract.sources.map((source, i) => ({
     key: `ENTITY:${source.id}`, revision: `rev-${source.id}`, title: source.title,
+    sourceReference: `source-0-${i + 1}`,
     navigationOnly: true, sourceTextRetained: false,
   }));
   const messages = [{ role: "user", content: JSON.stringify({
     contextOnly: true, navigationCompacted: true, sourcePointers: pointers,
+    relevantDecisions: { decisionScope: { origin: "CURRENT_BRANCH_DISCUSSION",
+      updatesFormalSources: false, impliesFormalSyncRequired: false } },
   }) }, { role: "user", content: scenario.turns[0].message }];
-  const first = coauthorLoopbackTurn({ messages }, { scenario });
+  const tools = [{ function: { name: "read_source", parameters: { required: ["reference"] } } }];
+  const first = coauthorLoopbackTurn({ messages, tools }, { scenario });
   assert.equal(first.tool_calls.length, 2);
   first.tool_calls.forEach((item, i) => {
     assert.deepEqual(JSON.parse(item.function.arguments), {
-      key: pointers[i].key, revision: pointers[i].revision, offset: 0, limit: 256,
+      reference: pointers[i].sourceReference, offset: 0, limit: 256,
     });
   });
+  const noReference = structuredClone(messages);
+  const missingReferenceContext = JSON.parse(noReference[0].content);
+  delete missingReferenceContext.sourcePointers[0].sourceReference;
+  noReference[0].content = JSON.stringify(missingReferenceContext);
+  assert.throws(() => coauthorLoopbackTurn({ messages: noReference }, { scenario }), /program reference/);
   const retainedText = structuredClone(messages);
   const retainedContext = JSON.parse(retainedText[0].content);
   retainedContext.sourcePointers[0].content = "不得伪装成仅身份指针";
@@ -308,7 +317,7 @@ test("N2 driver reads discovered exact pointers then locates the real tail witho
   messages.push(first);
   first.tool_calls.forEach((item, i) => messages.push({ role: "tool", tool_call_id: item.id,
     content: JSON.stringify({ ...pointers[i], offset: 0, totalChars: 1800, content: "风景与路况。".repeat(36) }) }));
-  const tail = coauthorLoopbackTurn({ messages }, { scenario });
+  const tail = coauthorLoopbackTurn({ messages, tools }, { scenario });
   tail.tool_calls.forEach((item) => assert.equal(JSON.parse(item.function.arguments).offset, 1288));
   messages.push(tail);
   tail.tool_calls.forEach((item, i) => messages.push({ role: "tool", tool_call_id: item.id,
@@ -866,6 +875,21 @@ test("current native protocol delivers final discussion without an extra simulat
     "Draft completion must remain a program receipt, not a second final delivery.");
 });
 
+test("native source reads copy only program references and cannot substitute a fixture identity", () => {
+  const source = { key: "ENTITY:realm", revision: "382f1b21-38a9-4319-b93a-d919781f6329:1:hash",
+    title: "九曜境界体系", sourceReference: "source-0-1",
+    provenance: { origin: "PROJECT_SHARED", isDiscussionDecision: false, truthDeterminedByLocation: false } };
+  const context = { contextOnly: true, relevantSources: { hits: [source] }, relevantDecisions: { memories: [],
+    decisionScope: { origin: "CURRENT_BRANCH_DISCUSSION", updatesFormalSources: false, impliesFormalSyncRequired: false } } };
+  const body = { messages: [{ role: "user", content: JSON.stringify(context) }, { role: "user", content: "普通讨论" }],
+    tools: [{ function: { name: "read_source", parameters: { required: ["reference"] } } }] };
+  const message = coauthorLoopbackTurn(body);
+  assert.deepEqual(JSON.parse(message.tool_calls[0].function.arguments), { reference: "source-0-1", offset: 0, limit: 2000 });
+  delete source.sourceReference;
+  body.messages[0].content = JSON.stringify(context);
+  assert.throws(() => coauthorLoopbackTurn(body), /actual delivered candidate/);
+});
+
 test("delivery smoke refuses cloud or arbitrary options before starting a desktop", () => {
   const result = spawnSync(process.execPath, [join(workspace, "tools/coauthor-delivery-smoke.mjs"), "--allow-cloud"],
     { encoding: "utf8", windowsHide: true });
@@ -962,9 +986,9 @@ test("native regression uses estimated tokens including overhead, not serialized
     kind: "model_request", inputChars: 50_000, estimatedInputTokens: 15_800, inputTokenBudget: 16_384,
   }] };
   assert.equal(assertLoopbackRegression(entry).scriptedNativeRegression, true);
-  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v26"] }).scriptedNativeRegression, true);
+  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v27"] }).scriptedNativeRegression, true);
   assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v21"] }));
-  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v26", "coauthor-v25"] }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v27", "coauthor-v26"] }));
   assert.throws(() => assertLoopbackRegression({ ...entry, audit: [{
     ...entry.audit[0], estimatedInputTokens: 16_385,
   }] }));

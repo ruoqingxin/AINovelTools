@@ -83,6 +83,54 @@ function response(body) {
     return deliver({ mode: "CONTINUATION", content: newStory, requestQuote: "继续写",
       continuation: { reference: "not-issued", preservedQuotes: [] } });
   }
+  if (probe === "missing-preserved-quote") {
+    const original = context.historicalMessages.find((message) => message.id === seedMessage.id);
+    assert(original?.continuationReference);
+    assert.deepEqual(context.requiredPreservedQuotes, ["她将铜匣推回桌角。"]);
+    const args = {
+      mode: "CONTINUATION", content: newStory, requestQuote: "继续写",
+      continuation: { reference: original.continuationReference, preservedQuotes: ["她将铜匣推回桌角。"] },
+    };
+    if (requests === 1) return deliver({ ...args, content: newStory.replace("她将铜匣推回桌角。", "") });
+    const last = JSON.parse(body.messages.filter((message) => message.role === "tool").at(-1).content);
+    assert.equal(last.recovery.action, "REPAIR_CONTENT");
+    assert.equal(last.recovery.contentMustChange, true);
+    assert.equal(last.recovery.discardRejectedContent, false);
+    assert.deepEqual(last.recovery.missingPreservedQuotes, ["她将铜匣推回桌角。"]);
+    const previousCall = body.messages.filter((message) => message.tool_calls).at(-1).tool_calls[0];
+    assert(JSON.parse(previousCall.function.arguments).content.includes("窗纸上多了一道影子"));
+    return deliver(args);
+  }
+  if (["source-reference", "source-version-recovery", "source-no-progress", "unknown-source-reference"].includes(probe)) {
+    const schema = body.tools.find((tool) => tool.function.name === "read_source").function.parameters;
+    assert.deepEqual(schema.required, ["reference"]);
+    assert(!Object.hasOwn(schema.properties, "revision") && !Object.hasOwn(schema.properties, "key"));
+    if (probe === "unknown-source-reference") return tools(call("read_source", { reference: "not-issued" }));
+    ruleSource = context.relevantSources.hits.find((source) => source.title === "九曜境界体系");
+    assert(ruleSource?.sourceReference && ruleSource.revision);
+    const prior = body.messages.filter((message) => message.role === "tool")
+      .map((message) => JSON.parse(message.content));
+    if (probe === "source-no-progress") {
+      if (requests === 2) return tools(call("search_sources", { query: "九曜境界体系" }));
+      if (requests === 4) return tools(call("get_decisions", { query: "境界" }));
+      assert([1, 3, 5].includes(requests));
+      if (requests > 1) assert(prior.some((result) => result.errorCode === "SOURCE_VERSION_MISMATCH"));
+      return tools(call("read_source", { key: ruleSource.key, revision: ruleSource.revision + "-copy-error" }));
+    }
+    if (probe === "source-version-recovery" && requests === 1) {
+      return tools(call("read_source", { key: ruleSource.key, revision: ruleSource.revision + "-copy-error" }));
+    }
+    if (!prior.some((result) => result.key === ruleSource.key && result.content && !result.error)) {
+      const rejected = prior.find((result) => result.errorCode === "SOURCE_VERSION_MISMATCH");
+      if (probe === "source-version-recovery") {
+        assert(rejected);
+        assert(!rejected.error.includes("已经变化"));
+        assert(rejected.recovery.sourceReferences.some((source) => source.reference === ruleSource.sourceReference));
+      }
+      return tools(call("read_source", { reference: ruleSource.sourceReference, offset: 0, limit: 4000 }));
+    }
+    return deliver({ mode: "DISCUSSION", content: "只核对本地原文读取和版本恢复，不作为真实模型质量证据。" });
+  }
   if (probe === "repair") {
     assert(context.historicalMessages.some((message) => message.id === seedMessage.id));
     if (requests === 1) return plain(oldStory + "\n要不要我接着写？");
@@ -194,7 +242,7 @@ async function run(name, message, expectedStatus, expectedRequests) {
   assert.equal(run.status, expectedStatus);
   assert.equal(requests, expectedRequests);
   assert.equal(run.audit.filter((event) => event.kind === "model_request").length, requests);
-  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v26"));
+  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v27"));
   assert.deepEqual((await invoke(main, "get_coauthor_state", { scope })).document, before.document);
   assert.equal(snapshot(), original, "Delivery must not alter formal content or decisions.");
   assert.deepEqual(await invoke(main, "get_ai_task_preferences"), preferences);
@@ -277,7 +325,8 @@ try {
   assert(changed.output.includes("待作者决定，未修改正式资料"));
   assert(changed.output.includes(ruleSource.revision));
   await run("explicit-change", "讨论突破代价规则的改动提案，不修改资料。", "COMPLETED", 3);
-  for (const [name, count] of [["program-reference", 1], ["v25-metadata-recovery", 2], ["v25-unchanged-retry", 3]]) {
+  for (const [name, count] of [["program-reference", 1], ["v25-metadata-recovery", 2],
+    ["v25-unchanged-retry", 3], ["missing-preserved-quote", 2]]) {
     const session = await invoke(main, "create_discussion_session", {
       title: name, scopeKind: "PROJECT", scopeId: null, scopeText: null,
       topicKind: null, linkedEntityId: null,
@@ -294,9 +343,35 @@ try {
       assert(result.audit.some((event) => event.name === "deliver_reply"
         && JSON.parse(event.arguments).content.includes("只是心里没有动静")));
     }
+    if (name === "missing-preserved-quote") {
+      assert(!result.audit.some((event) => event.kind === "reply_recovery_context"));
+    }
   }
   await run("read-reference", "继续写，保留她将铜匣推回桌角这句，只给新增情节。", "COMPLETED", 3);
   await run("unknown-reference", "继续写。", "FAILED", 3);
+  for (const [name, status, count] of [
+    ["source-reference", "COMPLETED", 2], ["source-version-recovery", "COMPLETED", 3],
+    ["source-no-progress", "FAILED", 5], ["unknown-source-reference", "FAILED", 3],
+  ]) {
+    const result = await run(name, "核对九曜境界体系原文，只讨论。", status, count);
+    const reads = result.audit.filter((event) => event.name === "read_source");
+    if (name === "source-reference" || name === "source-version-recovery") {
+      const read = reads.find((event) => event.result?.content);
+      assert(read);
+      assert.deepEqual(read.resolvedSource, { key: ruleSource.key, revision: ruleSource.revision, offset: 0, limit: 4000 });
+      assert(JSON.parse(read.arguments).reference, "Audit must retain the actual model reference, not replace it with canonical args.");
+      assert(result.audit.some((event) => event.kind === "source_delivery"
+        && event.sources.some((source) => source.key === ruleSource.key && source.revision === ruleSource.revision)));
+    }
+    if (name === "source-no-progress") {
+      assert.equal(reads.filter((event) => event.result.errorCode === "SOURCE_VERSION_MISMATCH").length, 3);
+      assert(result.audit.some((event) => event.kind === "tool_recovery_limit"
+        && event.reason === "SOURCE_NO_PROGRESS" && event.interleavingResets === false));
+    }
+    if (name === "unknown-source-reference") {
+      assert(reads.every((event) => event.result.executed === false && !event.result.content && !event.resolvedSource));
+    }
+  }
   await run("cancel", "继续写。", "CANCELLED", 1);
   assert.equal(report.httpRequests, report.turns.reduce((count, turn) => count + turn.requests, 0));
   assert.equal(main.pageErrors.length, 0);

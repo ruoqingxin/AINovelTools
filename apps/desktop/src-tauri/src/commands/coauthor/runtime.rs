@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
-pub(super) const PROMPT_VERSION: &str = "coauthor-v26";
+pub(super) const PROMPT_VERSION: &str = "coauthor-v27";
 
 pub(super) fn request_tools(definitions: &[Value], program_receipt: bool) -> Vec<Value> {
     definitions
@@ -22,9 +22,26 @@ pub(super) fn request_tools(definitions: &[Value], program_receipt: bool) -> Vec
 pub(super) struct ToolFailureGuard {
     last: Option<(String, String)>,
     repeats: usize,
+    source_failures: HashMap<String, usize>,
 }
 
 impl ToolFailureGuard {
+    pub(super) fn observe_source(&mut self, arguments: &str, result: &Value) -> bool {
+        self.last = None;
+        self.repeats = 0;
+        let args = serde_json::from_str::<Value>(arguments).unwrap_or(Value::Null);
+        let target = args["key"].as_str().or_else(|| args["reference"].as_str()).unwrap_or("invalid");
+        if result["error"].is_string() {
+            let failures = self.source_failures.entry(target.to_owned()).or_default();
+            *failures += 1;
+            return *failures >= 3;
+        }
+        if result["content"].is_string() && result["key"].as_str() == Some(target) {
+            self.source_failures.remove(target);
+        }
+        false
+    }
+
     pub(super) fn observe(&mut self, name: &str, result: &Value) -> bool {
         let Some(error) = result["error"].as_str() else {
             self.last = None;
@@ -531,10 +548,16 @@ pub(super) fn compact_navigation(messages: &mut [Value]) -> bool {
             let seed = navigation["relevantSources"]["hits"].as_array().into_iter().flatten()
                 .find(|hit| hit["key"] == navigation["supplementalSources"]["seedKey"]
                     && hit["revision"] == navigation["supplementalSources"]["seedRevision"]);
-            let pointers = hits.iter().take(1).chain(seed).map(|hit| json!({
-                "key":hit["key"],"revision":hit["revision"],"title":hit["title"],
-                "navigationOnly":true,"sourceTextRetained":false,
-            })).collect::<Vec<_>>();
+            let pointers = hits.iter().take(1).chain(seed).map(|hit| {
+                let mut pointer = json!({
+                    "key":hit["key"],"revision":hit["revision"],"title":hit["title"],
+                    "navigationOnly":true,"sourceTextRetained":false,
+                });
+                if hit["sourceReference"].is_string() {
+                    pointer["sourceReference"] = hit["sourceReference"].clone();
+                }
+                pointer
+            }).collect::<Vec<_>>();
             if !pointers.is_empty() {
                 navigation["sourcePointers"] = json!(pointers);
             }

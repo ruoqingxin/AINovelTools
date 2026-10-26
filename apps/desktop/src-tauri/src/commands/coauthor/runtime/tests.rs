@@ -599,7 +599,7 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
             "missing prompt rule: {instruction}"
         );
     }
-    assert_eq!(PROMPT_VERSION, "coauthor-v26");
+    assert_eq!(PROMPT_VERSION, "coauthor-v27");
 }
 
 #[test]
@@ -629,6 +629,33 @@ fn repeated_identical_tool_errors_stop_but_success_or_changed_failure_resets_rec
     assert!(!guard.observe("prepare_changeset", &invalid));
     assert!(guard.observe("prepare_changeset", &invalid));
     assert!(!guard.observe("get_decisions", &invalid));
+}
+
+#[test]
+fn interleaved_searches_do_not_erase_repeated_source_read_failures() {
+    let mut guard = ToolFailureGuard::default();
+    let invalid = json!({"error":"来源版本未匹配","executed":false});
+    let target = r#"{"key":"ENTITY:realm","revision":"wrong"}"#;
+    assert!(!guard.observe_source(target, &invalid));
+    assert!(!guard.observe("search_sources", &json!({"hits":[]})));
+    assert!(!guard.observe_source(target, &invalid));
+    assert!(!guard.observe("get_decisions", &json!({"memories":[]})));
+    assert!(guard.observe_source(target, &invalid));
+}
+
+#[test]
+fn only_successful_reading_of_the_same_source_resets_its_failure_counter() {
+    let mut guard = ToolFailureGuard::default();
+    let invalid = json!({"error":"来源版本未匹配","executed":false});
+    let realm = r#"{"key":"ENTITY:realm","revision":"r1","offset":0}"#;
+    let cost = r#"{"key":"ENTITY:cost","revision":"r2","offset":0}"#;
+    assert!(!guard.observe_source(realm, &invalid));
+    assert!(!guard.observe_source(cost, &json!({"key":"ENTITY:cost","content":"代价原文"})));
+    assert!(!guard.observe_source(realm, &invalid));
+    assert!(!guard.observe_source(realm, &json!({"key":"ENTITY:realm","content":"体系原文"})));
+    assert!(!guard.observe_source(realm, &invalid));
+    assert!(!guard.observe_source(r#"{"key":"ENTITY:realm","revision":"r2","offset":1}"#, &invalid));
+    assert!(guard.observe_source(realm, &json!({"error":"来源读取位置超出原文。","executed":false})));
 }
 
 #[test]

@@ -118,7 +118,8 @@ function retrievalVariantTurn(context, prior, scenario) {
       assert(!reads.some((read) => read.value.offset === offset),
         "The tail read must contain the frozen restrictions; do not loop until a fixture passes.");
     }
-    calls.push(call("read_source", { key: source.key, revision: source.revision, offset, limit }, calls.length));
+    assert.equal(typeof source.sourceReference, "string", "Every readable candidate needs a program reference.");
+    calls.push(call("read_source", { reference: source.sourceReference, offset, limit }, calls.length));
   }
   return calls.length ? tools(calls) : text();
 }
@@ -205,6 +206,27 @@ function scriptedTurn(body, { scenario } = {}) {
 
 export function coauthorLoopbackTurn(body, options = {}) {
   const message = scriptedTurn(body, options);
+  const readsByReference = body.tools?.some((tool) => tool.function.name === "read_source"
+    && tool.function.parameters.required.includes("reference"));
+  if (readsByReference && message.tool_calls) {
+    const { context } = loopbackContext(body.messages);
+    const prior = results(body.messages);
+    const candidates = [
+      ...(context.relevantSources?.hits ?? []), ...(context.semanticSources?.hits ?? []),
+      ...(context.supplementalSources?.result?.hits ?? []), ...(context.sourcePointers ?? []),
+      ...prior.flatMap((result) => [...(result.value.hits ?? []), result.value]),
+    ];
+    for (const item of message.tool_calls.filter((item) => item.function.name === "read_source")) {
+      const args = JSON.parse(item.function.arguments);
+      const source = candidates.find((candidate) => typeof candidate.sourceReference === "string"
+        && (typeof args.reference === "string" ? candidate.sourceReference === args.reference
+          : candidate.key === args.key && candidate.revision === args.revision));
+      assert(source, "Reference reads must use an actual delivered candidate, never the frozen export identity.");
+      item.function.arguments = JSON.stringify({ reference: source.sourceReference,
+        ...(Object.hasOwn(args, "offset") ? { offset: args.offset } : {}),
+        ...(Object.hasOwn(args, "limit") ? { limit: args.limit } : {}) });
+    }
+  }
   if (!message.content || !body.tools?.some((tool) => tool.function.name === "deliver_reply")) return message;
   const prior = results(body.messages);
   if (prior.some((result) => result.value.executed !== false
@@ -215,7 +237,7 @@ export function coauthorLoopbackTurn(body, options = {}) {
 }
 
 export function assertLoopbackRegression(entry, { expectInputLimit = false, expectLateExpansion = false } = {}) {
-  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v26"));
+  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v27"));
   const setup = entry.audit?.find((a) => a.kind === "input_budget");
   let currentBudget = setup?.initialInputTokenBudget;
   let expanded = false;
