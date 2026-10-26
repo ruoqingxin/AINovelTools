@@ -13,7 +13,7 @@ pub use reversal::*;
 mod reversal_targets;
 mod schema;
 mod sources;
-pub use sources::{CoauthorSearchExecution, CoauthorSearchPage, CoauthorSource};
+pub use sources::{CoauthorSearchExecution, CoauthorSearchPage, CoauthorSource, CoauthorSourceFollowup};
 mod knowledge;
 pub use knowledge::*;
 mod semantic;

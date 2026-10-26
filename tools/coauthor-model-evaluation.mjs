@@ -20,6 +20,7 @@ const { values } = parseArgs({ options: {
   "max-cost-micros": { type: "string" }, currency: { type: "string" },
   "loopback-input-tokens": { type: "string" },
   "loopback-expect-input-limit": { type: "boolean", default: false },
+  "loopback-expect-late-expansion": { type: "boolean", default: false },
 } });
 const { fixture, hash } = await loadFixture();
 assert(!(values["prepare-only"] && values.loopback), "Choose prepare-only or loopback.");
@@ -33,6 +34,11 @@ if (values["loopback-input-tokens"] !== undefined) {
 if (values["loopback-expect-input-limit"]) {
   assert(values.loopback && values["loopback-input-tokens"] !== undefined,
     "An expected input limit requires --loopback and --loopback-input-tokens.");
+}
+if (values["loopback-expect-late-expansion"]) {
+  assert(values.loopback && values["loopback-input-tokens"] !== undefined
+    && values.case === "full-source-check" && !values["loopback-expect-input-limit"],
+  "Late expansion requires --loopback, --loopback-input-tokens and --case full-source-check without expected input limit.");
 }
 if (local) {
   assert(!values["allow-cloud"] && !values["cloud-profile"], "Local modes cannot read a cloud profile.");
@@ -61,6 +67,7 @@ const report = {
 if (values.loopback) {
   report.loopbackInputTokenBudget = loopbackInputTokens;
   report.expectedInitialInputLimit = values["loopback-expect-input-limit"];
+  report.expectedLateExpansion = values["loopback-expect-late-expansion"];
   report.loopbackHttpRequests = 0;
 }
 let harness, main, server, relay, temporaryProfileId, encryptedCopy;
@@ -219,6 +226,10 @@ async function runTurn(project, scenario, turn, profile, repetition, turnIndex) 
     promptVersions: [...new Set(requests.map((r) => r.promptVersion))],
     initialRetrieval: retrievalScore(scenario.retrieval.relevant.map((id) => project.sources[id]),
       run?.audit.find((a) => a.kind === "initial_search")?.result?.hits ?? []),
+    candidateCoverageAfterLocalFollowup: retrievalScore(scenario.retrieval.relevant.map((id) => project.sources[id]), [
+      ...(run?.audit.find((a) => a.kind === "initial_search")?.result?.hits ?? []),
+      ...(run?.audit.find((a) => a.kind === "local_source_followup")?.result?.result?.hits ?? []),
+    ]),
     workingDocumentUnchanged: unchanged, output: run?.output ?? "", audit: run?.audit ?? [],
     taskPreferencesUnchanged: JSON.stringify(preferencesBefore)
       === JSON.stringify(await invoke(main, "get_ai_task_preferences")),
@@ -240,6 +251,7 @@ async function runTurn(project, scenario, turn, profile, repetition, turnIndex) 
     "Blocking failure: proposed draft edits during discussion-only turn.");
   if (values.loopback) entry.localRegression = assertLoopbackRegression(entry, {
     expectInputLimit: values["loopback-expect-input-limit"],
+    expectLateExpansion: values["loopback-expect-late-expansion"],
   });
   console.log(`${scenario.id} turn ${turnIndex + 1}: ${entry.status}; ${requests.length} requests; ${entry.elapsedMs.toFixed(0)}ms`);
   return entry;

@@ -552,6 +552,13 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         unavailable_reason: None,
     },
     FeatureDescriptor {
+        id: "coauthor_local_source_followup",
+        display_name: "共创弱词面候选的有限本地补查",
+        stage: "COAUTHOR-N2",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
         id: "r5_1_unified_metadata",
         display_name: "R5.1 统一候选元数据",
         stage: "R5.1",

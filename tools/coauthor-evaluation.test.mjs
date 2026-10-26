@@ -137,6 +137,96 @@ test("fixed scenes cover all goals, workload types and valid relevance identitie
   assert.deepEqual(new Set(fixture.cases.map((c) => c.workload)), new Set(["discussion", "localEdit", "fullCheck"]));
 });
 
+test("N2 freezes renamed retrieval variants and V1-V8 paired boundary rubrics without grading prose", async () => {
+  const fixture = JSON.parse(await readFile(join(workspace, "tools/fixtures/coauthor-n2-regression.json"), "utf8"));
+  assert.equal(fixture.version, "coauthor-n2-v1");
+  assert.match(fixture.privacy, /not a blind holdout/);
+  assert.deepEqual(fixture.boundaries.map((entry) => entry.id),
+    ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8"]);
+  for (const entry of fixture.boundaries) {
+    assert(entry.source && (entry.request || entry.requests?.length) && entry.rubric.length >= 2);
+    assert(!Object.hasOwn(entry, "score"));
+  }
+  assert.equal(fixture.boundaries.find((entry) => entry.id === "V4").requests.length, 2);
+  assert.equal(fixture.boundaries.find((entry) => entry.id === "V8").requests.length, 3);
+  const ids = new Set(fixture.retrieval.sources.map((entry) => entry.id));
+  for (const entry of fixture.retrieval.cases) {
+    assert([...entry.expectedInitial, ...entry.expectedFollowup].every((id) => ids.has(id)));
+  }
+  assert(fixture.retrieval.cases.some((entry) => entry.prefixRepeat > 0));
+  assert(fixture.retrieval.cases.some((entry) => entry.expectedFollowup.length === 0));
+});
+
+test("followup coverage and latency never overwrite the initial retrieval baseline", () => {
+  const fixture = { scales: [{ name: "small" }], cases: [{ id: "a" }],
+    thresholds: { recallAt12Min: 0.9, noiseAt12Max: 0.3, falseEmptyRateMax: 0,
+      warmP95MsMax: 20, warmSamplesMin: 20 } };
+  const rows = [{ type: "coldIndex", scale: { name: "small" }, elapsedMs: 1, passes: 1 },
+    ...Array.from({ length: 30 }, (_, sample) => ({
+      type: "query", scale: "small", caseId: "a", sample, elapsedMs: 1,
+      expectedKeys: ["a", "b"], hits: [{ key: "a", chars: 10 }], pending: 0, hasMore: false,
+      followupElapsedMs: 21, followupHits: [{ key: "b", chars: 10 }],
+    }))];
+  const report = summarizeBaseline(rows, fixture);
+  const result = report.results[0];
+  assert.equal(result.recallAt12, 0.5);
+  assert.equal(result.localFollowup.candidateRecallAt12, 1);
+  assert.equal(result.cases[0].recallAt12, 0.5);
+  assert.equal(result.latencyMs.p95, 1);
+  assert.equal(result.localFollowup.combinedLatencyMs.p95, 22);
+  assert.equal(result.gates.recall, false);
+  assert.equal(result.gates.combinedWarmP95, false);
+  assert.equal(report.gatesPassed, false);
+  assert.throws(() => summarizeBaseline(rows.map((row, i) => i === 1
+    ? { ...row, followupElapsedMs: undefined } : row), fixture), /Incomplete followup/);
+});
+
+test("weak-match loopback requires an exact candidate pointer and original restrictions in the later request", () => {
+  const candidate = { key: "ENTITY:cost", revision: "r2", title: "突破代价规则",
+    navigationOnly: true, sourceTextRetained: false };
+  const messages = [{ role: "user", content: JSON.stringify({
+    contextOnly: true, navigationCompacted: true, sourcePointers: [candidate],
+  }) }, { role: "user", content: "那套靠遗忘换力量的阶梯，下一层能怎样设计？只聊。" }];
+  const turn = coauthorLoopbackTurn({ messages });
+  const args = JSON.parse(turn.tool_calls[0].function.arguments);
+  assert.equal(args.key, candidate.key);
+  assert.equal(args.revision, candidate.revision);
+  const deliver = (value) => [...messages, turn, {
+    role: "tool", tool_call_id: turn.tool_calls[0].id, content: JSON.stringify(value),
+  }];
+  assert.throws(() => coauthorLoopbackTurn({ messages: deliver({ ...candidate, content: "只有候选片段" }) }));
+  assert.match(coauthorLoopbackTurn({ messages: deliver({
+    ...candidate, content: "不可凭普通术法恢复。不得无条件恢复全部记忆。",
+  }) }).content, /不用于创作质量评分/);
+  assert.throws(() => coauthorLoopbackTurn({ messages: [
+    { role: "user", content: JSON.stringify({ contextOnly: true }) }, messages[1],
+  ] }));
+});
+
+test("weak-match audit needs both a versioned read and acknowledged delivery, not just candidate coverage", () => {
+  const candidate = { key: "ENTITY:cost", revision: "r2", title: "突破代价规则" };
+  const primary = { key: "ENTITY:realms", revision: "r1" };
+  const audit = [
+    { kind: "initial_search", result: { hits: [primary] } },
+    { kind: "local_source_followup", result: { result: { hits: [candidate] } } },
+    { kind: "tool", name: "read_source", result: {
+      ...candidate, content: "不可凭普通术法恢复。不得无条件恢复全部记忆。",
+    } },
+    { kind: "tool", name: "read_source", result: { ...primary, content: "不消耗寿元。灯芯只能用一次。" } },
+    { kind: "source_delivery", transportAcknowledged: true, understandingVerified: false,
+      sources: [{ ...candidate, chars: 28 }, { ...primary, chars: 4 }] },
+  ];
+  const entry = { caseId: "semantic-paraphrase", status: "COMPLETED", audit };
+  assert.equal(assertLoopbackRegression(entry).qualityVerified, false);
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: audit.slice(0, 4) }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [
+    ...audit.slice(0, 2), { ...audit[2], result: { ...audit[2].result, revision: "wrong" } }, ...audit.slice(3),
+  ] }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [
+    ...audit.slice(0, 4), { ...audit[4], transportAcknowledged: false },
+  ] }));
+});
+
 test("nearest-rank percentiles do not mutate samples or imply sufficient n", () => {
   const values = [4, 1, 3, 2];
   assert.equal(percentile(values, 0.5), 2);
@@ -204,6 +294,37 @@ test("expected-limit regression mode cannot bypass cloud authorization", () => {
     assert.match(result.stderr, /requires --loopback and --loopback-input-tokens/);
     assert.doesNotMatch(result.stdout, /Desktop launched/);
   }
+});
+
+test("late-expansion mode cannot run cloud, unselected cases or mutually exclusive limits", () => {
+  for (const args of [
+    ["--loopback-expect-late-expansion"],
+    ["--loopback", "--loopback-input-tokens", "13312", "--loopback-expect-late-expansion"],
+    ["--loopback", "--case", "full-source-check", "--loopback-input-tokens", "13312",
+      "--loopback-expect-late-expansion", "--loopback-expect-input-limit"],
+  ]) {
+    const result = spawnSync(process.execPath, [join(workspace, "tools/coauthor-model-evaluation.mjs"), ...args],
+      { encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Late expansion requires/);
+    assert.doesNotMatch(result.stdout, /Desktop launched/);
+  }
+});
+
+test("late-expansion assertion rejects a first-request expansion even if the task completes", () => {
+  const setup = { kind: "input_budget", initialInputTokenBudget: 13312, maxInputTokenBudget: 26624 };
+  const first = { kind: "model_request", inputTokenBudget: 13312, initialInputTokenBudget: 13312,
+    inputBudgetExpanded: false, estimatedInputTokens: 12385 };
+  const started = { kind: "tool", name: "start_source_check", result: { check: { id: "check" } } };
+  const expansion = { kind: "input_budget_expansion", previousInputTokenBudget: 13312,
+    inputTokenBudget: 26624, configurationPersisted: false, taskRestarted: false };
+  const second = { ...first, inputTokenBudget: 26624, inputBudgetExpanded: true, estimatedInputTokens: 13419 };
+  const entry = { status: "COMPLETED", audit: [setup, first, started, expansion, second] };
+  assert(assertLoopbackRegression(entry, { expectLateExpansion: true }).lateExpansionVerified);
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [setup, expansion, second] },
+    { expectLateExpansion: true }), /already sent/);
+  assert.throws(() => assertLoopbackRegression({ ...entry, audit: [setup, first, expansion, second] },
+    { expectLateExpansion: true }), /already established/);
 });
 
 test("cost reserve includes ten requests per turn and rejects unknown or unsafe profiles", () => {

@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
-pub(super) const PROMPT_VERSION: &str = "coauthor-v20";
+pub(super) const PROMPT_VERSION: &str = "coauthor-v21";
 
 pub(super) fn source_provenance(result: &mut Value) {
     if let Some(hits) = result.get_mut("hits").and_then(Value::as_array_mut) {
@@ -91,10 +91,10 @@ pub(super) fn search_summary(receipts: &[Value]) -> String {
         let _ = writeln!(summary, "仅列最近 12 次，另 {omitted} 次见本轮审计。");
     }
     for receipt in receipts.iter().skip(omitted) {
-        let method = if receipt["method"] == "SEMANTIC" {
-            "语义"
-        } else {
-            "关键词"
+        let method = match receipt["method"].as_str() {
+            Some("SEMANTIC") => "语义",
+            Some("LEXICAL_FOLLOWUP") => "词面补查",
+            _ => "关键词",
         };
         let query = receipt["query"].to_string();
         let scope = if receipt["scope"] == "CURRENT_BRANCH_HISTORY" {
@@ -127,7 +127,7 @@ pub(super) fn search_summary(receipts: &[Value]) -> String {
         } else {
             summary.push_str("未取得有效结果，不能记为 0 命中");
         }
-        if receipt["method"] == "KEYWORD"
+        if matches!(receipt["method"].as_str(), Some("KEYWORD" | "LEXICAL_FOLLOWUP"))
             && let Some(pending) = receipt["indexStatus"]["pendingUpdates"]
                 .as_u64()
                 .filter(|pending| *pending > 0)
@@ -487,10 +487,22 @@ pub(super) fn compact_navigation(messages: &mut [Value]) -> bool {
         if navigation["contextOnly"] != true || navigation["navigationCompacted"] == true {
             continue;
         }
+        if let Some(hits) = navigation["supplementalSources"]["result"]["hits"].as_array() {
+            let seed = navigation["relevantSources"]["hits"].as_array().into_iter().flatten()
+                .find(|hit| hit["key"] == navigation["supplementalSources"]["seedKey"]
+                    && hit["revision"] == navigation["supplementalSources"]["seedRevision"]);
+            let pointers = hits.iter().take(1).chain(seed).map(|hit| json!({
+                "key":hit["key"],"revision":hit["revision"],"title":hit["title"],
+                "navigationOnly":true,"sourceTextRetained":false,
+            })).collect::<Vec<_>>();
+            if !pointers.is_empty() {
+                navigation["sourcePointers"] = json!(pointers);
+            }
+        }
         let Some(object) = navigation.as_object_mut() else {
             continue;
         };
-        for key in ["historicalMessages", "relevantSources", "semanticSources"] {
+        for key in ["historicalMessages", "relevantSources", "semanticSources", "supplementalSources"] {
             object.remove(key);
         }
         object.insert("navigationCompacted".into(), json!(true));
@@ -507,6 +519,22 @@ struct ToolExchange {
     id: String,
     name: String,
     result: Value,
+}
+
+pub(super) fn source_delivery_receipts(messages: &[Value]) -> Vec<Value> {
+    tool_exchanges(messages).into_iter().filter_map(|exchange| {
+        let result = exchange.result;
+        if exchange.name != "read_source" || result["executed"] == false
+            || result.get("error").is_some() {
+            return None;
+        }
+        let key = result["key"].as_str()?;
+        let revision = result["revision"].as_str()?;
+        let content = result["content"].as_str()?;
+        let offset = result["offset"].as_u64()?;
+        Some(json!({"toolCallId":exchange.id,"key":key,"revision":revision,
+            "offset":offset,"chars":content.chars().count(),"hasMore":result["hasMore"]}))
+    }).collect()
 }
 
 fn tool_exchanges(messages: &[Value]) -> Vec<ToolExchange> {

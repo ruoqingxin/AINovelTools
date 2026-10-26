@@ -1,5 +1,7 @@
 use super::*;
 use std::collections::BTreeSet;
+mod followup;
+pub use followup::CoauthorSourceFollowup;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]

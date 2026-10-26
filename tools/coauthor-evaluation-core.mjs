@@ -52,6 +52,10 @@ const mean = (values) => values.length ? values.reduce((a, b) => a + b, 0) / val
 
 export function summarizeBaseline(rows, fixture) {
   const queries = rows.filter((r) => r.type === "query");
+  if (queries.some((r) => Object.hasOwn(r, "followupHits") || Object.hasOwn(r, "followupElapsedMs"))) {
+    assert(queries.every((r) => Array.isArray(r.followupHits) && Number.isFinite(r.followupElapsedMs)
+      && r.followupElapsedMs >= 0), "Incomplete followup measurements");
+  }
   const results = fixture.scales.map((scale) => {
     const selected = queries.filter((r) => r.scale === scale.name);
     assert.equal(selected.length, fixture.cases.length * 30, "Incomplete baseline samples");
@@ -60,13 +64,24 @@ export function summarizeBaseline(rows, fixture) {
       assert.equal(new Set(samples.map((s) => s.sample)).size, 30, "Missing or duplicate samples");
       assert(samples.every((s) => s.pending === 0), "Incomplete index cannot be a warm baseline");
       const scores = samples.map((s) => retrievalScore(s.expectedKeys, s.hits));
+      const followup = samples.every((s) => Array.isArray(s.followupHits) && Number.isFinite(s.followupElapsedMs)
+        && s.followupElapsedMs >= 0) ? (() => {
+          const combined = samples.map((s) => retrievalScore(s.expectedKeys, [...s.hits, ...s.followupHits]));
+          return {
+            latencyMs: distribution(samples.map((s) => s.followupElapsedMs), fixture.thresholds.warmSamplesMin),
+            combinedLatencyMs: distribution(samples.map((s) => s.elapsedMs + s.followupElapsedMs), fixture.thresholds.warmSamplesMin),
+            candidateRecallAt12: mean(combined.map((s) => s.recallAt12).filter((s) => s !== null)),
+            candidateNoiseAt12: mean(combined.map((s) => s.noiseAt12)),
+            falseEmptyRate: mean(combined.map((s) => Number(s.falseEmpty))),
+          };
+        })() : null;
       return { caseId: c.id, latencyMs: distribution(samples.map((s) => s.elapsedMs), fixture.thresholds.warmSamplesMin),
         recallAt12: mean(scores.map((s) => s.recallAt12).filter((s) => s !== null)),
         noiseAt12: mean(scores.map((s) => s.noiseAt12)),
         falseEmptyRate: mean(scores.map((s) => Number(s.falseEmpty))),
         mrr: mean(scores.map((s) => s.reciprocalRank).filter((s) => s !== null)),
         returnedExcerptChars: distribution(samples.map((s) => s.hits.reduce((n, h) => n + h.chars, 0))),
-        hasMore: samples.some((s) => s.hasMore) };
+        hasMore: samples.some((s) => s.hasMore), localFollowup: followup };
     });
     const cold = rows.filter((r) => r.type === "coldIndex" && r.scale.name === scale.name);
     assert.equal(cold.length, 1, "Missing cold build");
@@ -74,19 +89,35 @@ export function summarizeBaseline(rows, fixture) {
     const noise = mean(cases.map((c) => c.noiseAt12));
     const falseEmpty = mean(cases.filter((c) => c.recallAt12 !== null).map((c) => c.falseEmptyRate));
     const latency = distribution(selected.map((r) => r.elapsedMs));
+    const followup = cases.every((c) => c.localFollowup) ? {
+      candidateRecallAt12: mean(cases.map((c) => c.localFollowup.candidateRecallAt12).filter((v) => v !== null)),
+      candidateNoiseAt12: mean(cases.map((c) => c.localFollowup.candidateNoiseAt12)),
+      falseEmptyRate: mean(cases.filter((c) => c.recallAt12 !== null).map((c) => c.localFollowup.falseEmptyRate)),
+      latencyMs: distribution(selected.map((r) => r.followupElapsedMs)),
+      combinedLatencyMs: distribution(selected.map((r) => r.elapsedMs + r.followupElapsedMs)),
+    } : null;
     return { scale, coldIndex: { elapsedMs: cold[0].elapsedMs, n: 1, passes: cold[0].passes },
       latencyMs: latency, recallAt12: recall, noiseAt12: noise, falseEmptyRate: falseEmpty, cases,
+      localFollowup: followup,
       gates: {
         recall: recall >= fixture.thresholds.recallAt12Min,
         noise: noise <= fixture.thresholds.noiseAt12Max,
         falseEmpty: falseEmpty <= fixture.thresholds.falseEmptyRateMax,
         warmP95: cases.every((c) => c.latencyMs.sufficient && c.latencyMs.p95 <= fixture.thresholds.warmP95MsMax),
+        ...(followup ? {
+          followupRecall: followup.candidateRecallAt12 >= fixture.thresholds.recallAt12Min,
+          followupNoise: followup.candidateNoiseAt12 <= fixture.thresholds.noiseAt12Max,
+          followupFalseEmpty: followup.falseEmptyRate <= fixture.thresholds.falseEmptyRateMax,
+          combinedWarmP95: cases.every((c) => c.localFollowup.combinedLatencyMs.sufficient
+            && c.localFollowup.combinedLatencyMs.p95 <= fixture.thresholds.warmP95MsMax),
+        } : {}),
       } };
   });
   return { mode: "localRetrieval", modelRequests: 0, results,
     gatesPassed: results.every((r) => Object.values(r.gates).every(Boolean)),
     limitations: [
-      "Synthetic labeled corpus, keyword retrieval only; not real-model acceptance or a real long-novel SLA.",
+      "Synthetic labeled corpus, keyword retrieval and optional bounded lexical followup; not real-model acceptance or a real long-novel SLA.",
+      "Initial and followup candidate coverage are separate; discovered candidates are not original-text delivery or understanding.",
       "Cold index measured once per scale; no cold P50/P95 or OS cache-flush claim.",
       "Excerpt characters measure returned payload, not internal database reads, sent tokens or citation correctness.",
       "No old/new semantic-quality comparison is claimed. Relevant labels and thresholds are reviewable targets.",
@@ -189,6 +220,15 @@ export async function writeReport(directory, report) {
       lines.push(`| ${r.scale.name} | ${r.coldIndex.elapsedMs.toFixed(2)} | ${r.latencyMs.n} | ${r.latencyMs.p50.toFixed(2)} | ${r.latencyMs.p95.toFixed(2)} | ${r.recallAt12.toFixed(3)} | ${r.noiseAt12.toFixed(3)} | ${r.falseEmptyRate.toFixed(3)} |`);
     }
     lines.push("", `Local target gates: ${report.gatesPassed ? "PASS" : "FAIL"}. Not model acceptance.`);
+    if (report.results.some((r) => r.localFollowup)) {
+      lines.push("", "| Scale | Followup P95 ms | Combined P95 ms | Candidate Recall@12 | Candidate Noise@12 |",
+        "| --- | ---: | ---: | ---: | ---: |");
+      for (const r of report.results.filter((r) => r.localFollowup)) {
+        const f = r.localFollowup;
+        lines.push(`| ${r.scale.name} | ${f.latencyMs.p95.toFixed(2)} | ${f.combinedLatencyMs.p95.toFixed(2)} | ${f.candidateRecallAt12.toFixed(3)} | ${f.candidateNoiseAt12.toFixed(3)} |`);
+      }
+      lines.push("", "Candidate coverage is not original-text delivery or semantic acceptance; initial metrics above are unchanged.");
+    }
     for (const r of report.results) {
       const failures = r.cases.filter((c) => c.recallAt12 !== null && c.recallAt12 < 1);
       lines.push("", `${r.scale.name} incomplete recall: ${failures.map((c) => `${c.caseId}=${c.recallAt12.toFixed(3)}`).join(", ") || "none"}`);

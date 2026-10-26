@@ -84,7 +84,8 @@ export function coauthorLoopbackTurn(body) {
     assert.equal(context.relevantDecisions.decisionScope.updatesFormalSources, false);
     assert.equal(context.relevantDecisions.decisionScope.impliesFormalSyncRequired, false);
   }
-  for (const hit of [...(context.relevantSources?.hits ?? []), ...(context.semanticSources?.hits ?? [])]) {
+  for (const hit of [...(context.relevantSources?.hits ?? []), ...(context.semanticSources?.hits ?? []),
+    ...(context.supplementalSources?.result?.hits ?? [])]) {
     if (body.tools || hit.provenance) {
       assert.equal(hit.provenance.origin, hit.kind === "MESSAGE" ? "CURRENT_BRANCH_HISTORY" : "PROJECT_SHARED");
       assert.equal(hit.provenance.isDiscussionDecision, false);
@@ -116,6 +117,29 @@ export function coauthorLoopbackTurn(body) {
     // Deliberately wrong prose must never become the persisted edit receipt.
     return text("归灯境之后为归灯境。第一句已改好，采用后会自动同步设定卡。");
   }
+  if (request.includes("那套靠遗忘换力量的阶梯")) {
+    const candidate = (context.supplementalSources?.result?.hits ?? context.sourcePointers ?? [])
+      .find((source) => source.title === "突破代价规则");
+    assert(candidate?.key && candidate?.revision, "Weak-match regression must retain the cost candidate identity.");
+    if (context.navigationCompacted) {
+      assert.equal(candidate.navigationOnly, true);
+      assert.equal(candidate.sourceTextRetained, false);
+      assert(!Object.hasOwn(candidate, "content"));
+    }
+    const read = prior.find((result) => result.name === "read_source"
+      && result.value.key === candidate.key && result.value.revision === candidate.revision);
+    if (!read) {
+      const sources = [candidate, ...(context.relevantSources?.hits ?? context.sourcePointers ?? [])
+        .filter((source) => source.title === "九曜境界体系")];
+      return tools(sources.map((source, i) => call("read_source", {
+        key: source.key, revision: source.revision, offset: 0, limit: 4000,
+      }, i)));
+    }
+    assert.notEqual(read.value.executed, false);
+    assert(read.value.content?.includes("普通术法") && read.value.content.includes("不得无条件恢复全部记忆"),
+      "Candidate navigation cannot stand in for delivery of the exact original restrictions.");
+    return text();
+  }
   const source = context.relevantSources?.hits.find((s) => s.title === "九曜境界体系");
   if (!prior.length && source) return tools([call("read_source", {
     key: source.key, revision: source.revision, offset: 0, limit: 2000,
@@ -123,8 +147,8 @@ export function coauthorLoopbackTurn(body) {
   return text();
 }
 
-export function assertLoopbackRegression(entry, { expectInputLimit = false } = {}) {
-  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v20"));
+export function assertLoopbackRegression(entry, { expectInputLimit = false, expectLateExpansion = false } = {}) {
+  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v21"));
   const setup = entry.audit?.find((a) => a.kind === "input_budget");
   let currentBudget = setup?.initialInputTokenBudget;
   let expanded = false;
@@ -136,6 +160,15 @@ export function assertLoopbackRegression(entry, { expectInputLimit = false } = {
     }
   }
   assert(expansions.length <= 1, "A run may expand its input budget only once.");
+  if (expectLateExpansion) {
+    assert.equal(expansions.length, 1);
+    const before = entry.audit.slice(0, entry.audit.findIndex((event) => event.kind === "input_budget_expansion"));
+    assert(before.some((event) => event.kind === "model_request"),
+      "Late expansion must follow an already sent model request.");
+    assert(before.some((event) => event.kind === "tool" && event.name === "start_source_check"
+      && event.result?.check?.id && event.result.executed !== false),
+    "Late expansion must preserve an already established native check.");
+  }
   for (const request of entry.audit ?? []) {
     if (request.kind === "input_budget_expansion") {
       assert(setup, "Expansion must retain the initial budget policy.");
@@ -173,6 +206,27 @@ export function assertLoopbackRegression(entry, { expectInputLimit = false } = {
     return { scriptedNativeRegression: true, qualityVerified: false, expectedInputLimit: true };
   }
   assert.equal(entry.status, "COMPLETED", "Scripted native regression must finish.");
+  if (entry.caseId === "semantic-paraphrase") {
+    const primary = entry.audit.find((event) => event.kind === "initial_search")?.result;
+    const supplemental = entry.audit.find((event) => event.kind === "local_source_followup")?.result;
+    assert.equal(primary?.hits?.length, 1, "Initial retrieval must not be silently replaced with combined coverage.");
+    assert.equal(supplemental?.result?.hits?.length, 1);
+    const candidate = supplemental.result.hits[0];
+    assert.equal(candidate.title, "突破代价规则");
+    for (const source of [primary.hits[0], candidate]) {
+      const readIndex = entry.audit.findIndex((event) => event.kind === "tool" && event.name === "read_source"
+        && event.result.key === source.key && event.result.revision === source.revision
+        && event.result.executed !== false && typeof event.result.content === "string"
+        && (source === candidate
+          ? event.result.content.includes("不得无条件恢复全部记忆") && event.result.content.includes("普通术法")
+          : event.result.content.includes("灯芯只能用一次") && event.result.content.includes("不消耗寿元")));
+      assert(readIndex >= 0, "Both key sources must actually be read at the exact revision.");
+      assert(entry.audit.slice(readIndex + 1).some((event) => event.kind === "source_delivery"
+        && event.transportAcknowledged === true && event.understandingVerified === false
+        && event.sources.some((delivered) => delivered.key === source.key && delivered.revision === source.revision
+          && delivered.chars > 0)), "A tool read without subsequent acknowledged delivery is not sufficient.");
+    }
+  }
   if (entry.caseId === "extend-confirmed" && entry.turnIndex === 1) {
     assert(entry.output.includes("结曜之后为归灯境。守灯人例外仍然有效。"));
     assert(!entry.output.includes("归灯境之后为归灯境"));
@@ -217,5 +271,6 @@ export function assertLoopbackRegression(entry, { expectInputLimit = false } = {
     assert(entry.output.includes("关键词 \"契约 交易 代价 术法\"（项目资料，offset=0）：实际返回 4 条"));
     assert(entry.output.includes("关键词 \"砂\"（项目资料，offset=0）：未形成有效查询，不能记为 0 命中"));
   }
-  return { scriptedNativeRegression: true, qualityVerified: false };
+  return { scriptedNativeRegression: true, qualityVerified: false,
+    ...(expectLateExpansion ? { lateExpansionVerified: true } : {}) };
 }

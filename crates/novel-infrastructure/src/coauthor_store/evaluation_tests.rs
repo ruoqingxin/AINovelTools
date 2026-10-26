@@ -86,6 +86,21 @@ fn emit(value: Value) {
 }
 
 #[test]
+fn paraphrase_regression_requires_the_companion_cost_rule() {
+    let (mut manager, root, scope) = tests::project();
+    let keys = seed_sources(&mut manager, &scope);
+    let page = manager.search_coauthor_sources(&scope, "靠遗忘换力量的阶梯", false, 0).unwrap();
+    assert!(page.hits.iter().any(|hit| hit.key == keys["realms"]));
+    assert!(!page.hits.iter().any(|hit| hit.key == keys["cost"]));
+    let followup = manager.coauthor_source_followup(&scope, "靠遗忘换力量的阶梯", &page).unwrap().unwrap();
+    assert_eq!(followup.result.hits.len(), 1);
+    assert_eq!(followup.result.hits[0].key, keys["cost"]);
+    assert!(followup.result.hits[0].content.contains("普通术法"));
+    drop(manager);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn evaluation_fixture_has_unique_cases_and_valid_relevance_labels() {
     let data = fixture();
     let sources = data["sources"]
@@ -150,13 +165,21 @@ fn measure_retrieval_baseline() {
                     .search_coauthor_sources(&scope, query, false, 0)
                     .unwrap();
                 let ms = elapsed_ms(start);
+                let followup_start = Instant::now();
+                let followup = manager.coauthor_source_followup(&scope, query, &page).unwrap();
+                let followup_ms = elapsed_ms(followup_start);
+                let followup_hits = followup.as_ref().map(|value| value.result.hits.as_slice()).unwrap_or(&[]);
                 emit(
                     serde_json::json!({"type":"query","scale":scale["name"],"caseId":case["id"],
                     "sample":sample,"elapsedMs":ms,"expectedKeys":relevant,
                     "hits":page.hits.iter().map(|hit|serde_json::json!({
                         "key":hit.key,"chars":hit.content.chars().count(),
                         "utf8Bytes":hit.content.len()
-                    })).collect::<Vec<_>>(),"pending":page.pending_index_updates,"hasMore":page.has_more}),
+                    })).collect::<Vec<_>>(),"pending":page.pending_index_updates,"hasMore":page.has_more,
+                    "followupElapsedMs":followup_ms,
+                    "followupHits":followup_hits.iter().map(|hit|serde_json::json!({
+                        "key":hit.key,"chars":hit.content.chars().count()
+                    })).collect::<Vec<_>>()}),
                 );
             }
         }

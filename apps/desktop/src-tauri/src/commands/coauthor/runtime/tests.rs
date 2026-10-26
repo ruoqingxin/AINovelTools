@@ -316,6 +316,83 @@ fn navigation_compaction_cannot_rewrite_a_current_request_that_looks_like_contex
 }
 
 #[test]
+fn compacted_followup_keeps_only_one_exact_pointer_without_source_text_or_read_credit() {
+    let context = json!({"contextOnly":true,"supplementalSources":{"result":{"hits":[
+        {"key":"ENTITY:cost","revision":"r2","title":"代价","content":"不可凭普通术法恢复"},
+        {"key":"ENTITY:other","revision":"r3","title":"其他","content":"不应保留"}
+    ]}}});
+    let mut messages = vec![
+        json!({"role":"user","content":context.to_string()}),
+        json!({"role":"user","content":"只讨论，不改稿"}),
+    ];
+    assert!(compact_navigation(&mut messages));
+    let compact: Value = serde_json::from_str(messages[0]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(compact["sourcePointers"], json!([{
+        "key":"ENTITY:cost","revision":"r2","title":"代价",
+        "navigationOnly":true,"sourceTextRetained":false
+    }]));
+    assert!(compact.get("supplementalSources").is_none());
+    assert!(!messages[0].to_string().contains("普通术法"));
+    assert!(source_delivery_receipts(&messages).is_empty());
+}
+
+#[test]
+fn delivery_receipts_only_describe_successful_original_reads_in_the_actual_payload() {
+    let mut messages = vec![];
+    for (id, name, result) in [
+        ("ok", "read_source", json!({"key":"ENTITY:cost","revision":"r2",
+            "offset":10,"content":"真实条件","hasMore":true})),
+        ("failed", "read_source", json!({"key":"ENTITY:cost","revision":"r1",
+            "offset":0,"content":"错误","executed":false})),
+        ("search", "search_sources", json!({"hits":[{"key":"ENTITY:cost","content":"仅候选"}]})),
+        ("malformed", "read_source", json!({"key":"ENTITY:cost","revision":"r2","offset":0})),
+    ] {
+        messages.push(json!({"role":"assistant","tool_calls":[{
+            "id":id,"function":{"name":name,"arguments":"{}"}
+        }]}));
+        messages.push(json!({"role":"tool","tool_call_id":id,"content":result.to_string()}));
+    }
+    assert_eq!(source_delivery_receipts(&messages), vec![json!({
+        "toolCallId":"ok","key":"ENTITY:cost","revision":"r2",
+        "offset":10,"chars":4,"hasMore":true
+    })]);
+}
+
+#[test]
+fn compacted_followup_retains_its_exact_seed_but_not_unrelated_primary_candidates() {
+    let context = json!({"contextOnly":true,"supplementalSources":{
+        "seedKey":"ENTITY:seed","seedRevision":"r1","result":{"hits":[
+            {"key":"ENTITY:cost","revision":"r2","title":"代价","content":"候选原文"}
+        ]}},
+        "relevantSources":{"hits":[
+            {"key":"ENTITY:seed","revision":"r1","title":"体系","content":"体系原文"},
+            {"key":"ENTITY:noise","revision":"r3","title":"无关","content":"无关原文"}
+        ]}});
+    let mut messages = vec![json!({"role":"user","content":context.to_string()})];
+    assert!(compact_navigation(&mut messages));
+    let compact: Value = serde_json::from_str(messages[0]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(compact["sourcePointers"].as_array().unwrap().len(), 2);
+    assert_eq!(compact["sourcePointers"][1]["key"], "ENTITY:seed");
+    assert_eq!(compact["sourcePointers"][1]["revision"], "r1");
+    assert!(!messages[0].to_string().contains("原文"));
+    assert!(source_delivery_receipts(&messages).is_empty());
+}
+
+#[test]
+fn followup_receipts_keep_candidate_count_pending_and_failures_separate() {
+    let receipt = retrieval_receipt("LEXICAL_FOLLOWUP", "共有词", 0, false,
+        &json!({"execution":"RETURNED_PAGE","hits":[{}],"hasMore":false,"pendingIndexUpdates":1}));
+    assert_eq!(receipt["returned"], 1);
+    let summary = search_summary(&[receipt]);
+    assert!(summary.contains("词面补查"));
+    assert!(summary.contains("关键词索引待更新 1 项"));
+    let failed = retrieval_receipt("LEXICAL_FOLLOWUP", "共有词", 0, false,
+        &json!({"executed":false,"error":"来源版本变化"}));
+    assert_eq!(failed["status"], "UNAVAILABLE");
+    assert_eq!(failed["returned"], Value::Null);
+}
+
+#[test]
 fn check_checkpoint_retires_only_successful_pairs_and_keeps_failed_source_and_exact_audit_inputs() {
     let mut messages = vec![
         json!({"role":"user","content":json!({"contextOnly":true,"relevantDecisions":[decision()]}).to_string()}),
@@ -522,13 +599,13 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
             "missing prompt rule: {instruction}"
         );
     }
-    assert_eq!(PROMPT_VERSION, "coauthor-v20");
+    assert_eq!(PROMPT_VERSION, "coauthor-v21");
 }
 
 #[test]
 fn prompt_keeps_negative_scope_source_identity_and_sync_authority_explicit() {
     for instruction in [
-        "限定词约束整段回复",
+        "回复前逐段核对后续建议、括号、总结与决定记录",
         "REJECTED只否定决定内容的准确命题",
         "不等于禁止有条件、部分恢复或特殊机制",
         "不能只给“接后面/插中间”",
