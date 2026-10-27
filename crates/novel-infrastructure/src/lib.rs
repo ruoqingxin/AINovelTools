@@ -573,6 +573,13 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
         unavailable_reason: None,
     },
     FeatureDescriptor {
+        id: "coauthor_content_review",
+        display_name: "高风险候选回复同模型复核、证据引句校验与一次定向修订",
+        stage: "COAUTHOR-N2",
+        status: FeatureStatus::Implemented,
+        unavailable_reason: None,
+    },
+    FeatureDescriptor {
         id: "r5_1_unified_metadata",
         display_name: "R5.1 统一候选元数据",
         stage: "R5.1",

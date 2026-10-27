@@ -204,7 +204,25 @@ function scriptedTurn(body, { scenario } = {}) {
   return text();
 }
 
+export function coauthorReviewTurn(body) {
+  if (!body.tools?.some((tool) => tool.function.name === "review_reply")) return null;
+  assert.deepEqual(body.tools.map((tool) => tool.function.name), ["review_reply"]);
+  assert.equal(body.tool_choice, "required");
+  assert.equal(body.messages.length, 2);
+  assert.equal(body.messages[0].role, "system");
+  assert.equal(body.messages[1].role, "user");
+  const packet = JSON.parse(body.messages[1].content);
+  assert.equal(packet.contentReview, true);
+  assert.equal(packet.version, "coauthor-review-v1");
+  assert(packet.candidate && packet.bases.some((basis) => basis.id === "request"));
+  assert(!body.messages.some((message) => message.tool_calls || message.role === "tool"));
+  return tools([call("review_reply", { decision: "PASS", issues: [],
+    summary: "本机固定通过只验证复核协议，不作为语义质量证据。" })]);
+}
+
 export function coauthorLoopbackTurn(body, options = {}) {
+  const review = coauthorReviewTurn(body);
+  if (review) return review;
   const message = scriptedTurn(body, options);
   const readsByReference = body.tools?.some((tool) => tool.function.name === "read_source"
     && tool.function.parameters.required.includes("reference"));
@@ -237,7 +255,7 @@ export function coauthorLoopbackTurn(body, options = {}) {
 }
 
 export function assertLoopbackRegression(entry, { expectInputLimit = false, expectLateExpansion = false } = {}) {
-  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v28"));
+  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v29"));
   const setup = entry.audit?.find((a) => a.kind === "input_budget");
   let currentBudget = setup?.initialInputTokenBudget;
   let expanded = false;

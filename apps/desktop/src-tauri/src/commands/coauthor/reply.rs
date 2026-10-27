@@ -44,6 +44,10 @@ pub(super) struct RuleChange {
 }
 
 impl Reply {
+    pub(super) fn is_continuation(&self) -> bool {
+        matches!(self.mode, ReplyMode::Continuation)
+    }
+
     pub(super) fn continuation_id(
         &self,
         messages: &[Value],

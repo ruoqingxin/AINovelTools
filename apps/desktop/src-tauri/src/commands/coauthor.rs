@@ -29,6 +29,7 @@ pub(crate) use semantic::*;
 mod runtime;
 mod reply;
 mod source;
+mod review;
 
 use crate::errors::ApiError;
 use crate::state::{CoauthorProgress, ProjectState};
@@ -1535,16 +1536,29 @@ pub(crate) async fn run_coauthor(
     let mut recovery_notice = None;
     let mut delivery_failures = 0;
     let mut prepared_changes = Vec::new();
+    let mut pending_review: Option<review::Pending> = None;
+    let mut content_revision_used = false;
+    let mut review_count = 0;
     'requests: for round in 0..10 {
         if cancelled.load(Ordering::Relaxed) {
             status = "CANCELLED";
             break;
         }
+        let reviewing = pending_review.is_some();
         let program_receipt = document != initial || structured_check || !prepared_changes.is_empty();
-        let mut tool_definitions = runtime::request_tools(&tool_definitions, program_receipt);
+        let mut tool_definitions = if reviewing {
+            review::tools()
+        } else {
+            runtime::request_tools(&tool_definitions, program_receipt)
+        };
+        if content_revision_used && !reviewing {
+            tool_definitions.retain(|tool| tool["function"]["name"] == "deliver_reply");
+        }
         reply::constrain_tools(&mut tool_definitions, required_reply_mode);
+        let mut request_messages = pending_review.as_ref().map_or_else(|| messages.clone(), review::Pending::messages);
         let previous_budget = budget.current;
-        let estimate = runtime::prepare_request(&mut messages, &tool_definitions, &mut budget, &mut audit);
+        let estimate = runtime::prepare_request(&mut request_messages, &tool_definitions, &mut budget, &mut audit);
+        if !reviewing { messages.clone_from(&request_messages); }
         if budget.current != previous_budget {
             let outcome = if estimate.tokens <= budget.current {
                 "继续核对当前任务。"
@@ -1566,6 +1580,11 @@ pub(crate) async fn run_coauthor(
                 "maxInputTokenBudget":budget.maximum,
                 "modelRequestsSent":round}));
             break;
+        }
+        if reviewing {
+            audit.push(json!({"kind":"content_review_input","attempt":review_count,
+                "packet":serde_json::from_str::<Value>(request_messages[1]["content"].as_str().unwrap_or("")).ok(),
+                "sameProfile":true,"toolsCanWrite":false,"outputTokenLimit":max_output_tokens.min(1024)}));
         }
         let usage_id = {
             let mut manager = state
@@ -1596,7 +1615,9 @@ pub(crate) async fn run_coauthor(
                 run_id: input.run_id,
                 session_id: input.scope.session_id,
                 kind: "status".into(),
-                content: if budget.expanded {
+                content: if reviewing {
+                    "正在核对候选回答…".into()
+                } else if budget.expanded {
                     format!("继续核对与创作… 本轮输入预算已临时扩至 {} tokens（仅一次）。", budget.current)
                 } else if round == 0 {
                     "正在推敲…".into()
@@ -1611,30 +1632,38 @@ pub(crate) async fn run_coauthor(
             "inputChars":estimate.chars,"estimatedInputTokens":estimate.tokens,
             "inputTokenBudget":budget.current,"initialInputTokenBudget":budget.initial,
             "inputBudgetExpanded":budget.expanded,
-            "toolChoice":if program_receipt { "auto" } else { "required" },
+            "purpose":if reviewing { "CONTENT_REVIEW" } else if content_revision_used { "CONTENT_REVISION" } else { "GENERATION" },
+            "toolChoice":if !reviewing && program_receipt { "auto" } else { "required" },
             "tokenEstimateMethod":"mixed-text-v1+20%+protocol"}),
         );
         // Calls within the same model turn cannot depend on results that have
         // not yet been sent back to the provider.
-        for evidence in seen.values_mut() {
-            evidence.sent_fragments = evidence.fragments.len();
+        if !reviewing {
+            for evidence in seen.values_mut() {
+                evidence.sent_fragments = evidence.fragments.len();
+            }
         }
+        let request_options = if reviewing {
+            novel_infrastructure::GenerationOptions {
+                temperature: Some(0.0), max_output_tokens: Some(max_output_tokens.min(1024)),
+            }
+        } else { options };
         let result = state
             .gateway
             .generate_tool_turn(
                 &profile,
                 &secret,
-                &messages,
+                &request_messages,
                 &tool_definitions,
-                options,
-                !program_receipt,
+                request_options,
+                reviewing || !program_receipt,
                 Arc::clone(&cancelled),
-                |chunk| model_output.push_str(chunk),
+                |chunk| if !reviewing { model_output.push_str(chunk); },
             )
             .await;
         match result {
             Ok(turn) => {
-                let delivered = runtime::source_delivery_receipts(&messages);
+                let delivered = if reviewing { Vec::new() } else { runtime::source_delivery_receipts(&messages) };
                 if !delivered.is_empty() {
                     audit.push(json!({"kind":"source_delivery","round":round+1,
                         "sources":delivered,"transportAcknowledged":true,
@@ -1657,16 +1686,65 @@ pub(crate) async fn run_coauthor(
                         status = "CANCELLED";
                         break;
                     }
-                    manager.acknowledge_coauthor_check_reads(&input.scope,input.run_id,&pending_check_reads)?;
-                    manager.acknowledge_coauthor_evidence_reads(&input.scope,input.run_id,&pending_evidence_reads)?;
-                    if !pending_check_reads.is_empty() {
-                        audit.push(json!({"kind":"check_delivery","readIds":pending_check_reads}));
+                    if !reviewing {
+                        manager.acknowledge_coauthor_check_reads(&input.scope,input.run_id,&pending_check_reads)?;
+                        manager.acknowledge_coauthor_evidence_reads(&input.scope,input.run_id,&pending_evidence_reads)?;
+                        if !pending_check_reads.is_empty() {
+                            audit.push(json!({"kind":"check_delivery","readIds":pending_check_reads}));
+                        }
+                        pending_check_reads.clear();
+                        if !pending_evidence_reads.is_empty() {
+                            audit.push(json!({"kind":"knowledge_evidence_delivery","readIds":pending_evidence_reads}));
+                        }
+                        pending_evidence_reads.clear();
                     }
-                    pending_check_reads.clear();
-                    if !pending_evidence_reads.is_empty() {
-                        audit.push(json!({"kind":"knowledge_evidence_delivery","readIds":pending_evidence_reads}));
+                }
+                if let Some(candidate) = pending_review.take() {
+                    match candidate.verdict(&turn) {
+                        Ok(verdict) => {
+                            audit.push(json!({"kind":"content_review","attempt":review_count,
+                                "result":verdict,"displayed":false,"judgmentVerified":false}));
+                            match verdict.decision {
+                                review::Decision::Pass => {
+                                    if cancelled.load(Ordering::Relaxed) { status = "CANCELLED"; break; }
+                                    output = candidate.content;
+                                    status = "COMPLETED";
+                                    audit.push(json!({"kind":"reply_delivery","method":"REVIEWED_DELIVER_REPLY",
+                                        "contentReviewPassed":true,"semanticVerified":false,"formalCommit":false}));
+                                    let _ = app.emit("coauthor-progress", CoauthorProgress {
+                                        run_id:input.run_id,session_id:input.scope.session_id,
+                                        kind:"text".into(),content:output.clone(),
+                                    });
+                                    break;
+                                }
+                                review::Decision::Revise if !content_revision_used => {
+                                    content_revision_used = true;
+                                    messages.push(review::revision_message(&verdict));
+                                    let _ = app.emit("coauthor-progress", CoauthorProgress {
+                                        run_id:input.run_id,session_id:input.scope.session_id,
+                                        kind:"status".into(),content:"正在针对偏离处修订回答…".into(),
+                                    });
+                                    continue;
+                                }
+                                review::Decision::Revise | review::Decision::NeedContext => {
+                                    status = "FAILED";
+                                    recovery_notice = Some(if verdict.decision == review::Decision::NeedContext {
+                                        "本轮未完成：复核依据不足，不能确认候选回答符合要求；候选未展示。请补充相关规则或明确选定方案后继续。"
+                                    } else {
+                                        "本轮未完成：一次内容修订后仍发现重大偏离，已停止；候选未展示，未自动采用。"
+                                    }.into());
+                                    break;
+                                }
+                            }
+                        }
+                        Err(failure_stage) => {
+                            status = "FAILED";
+                            audit.push(json!({"kind":"content_review_error","stage":failure_stage,
+                                "attempt":review_count,"displayed":false,"retried":false}));
+                            recovery_notice = Some("本轮未完成：回复复核未取得有效结论；候选未展示，未按审核通过处理。".into());
+                            break;
+                        }
                     }
-                    pending_evidence_reads.clear();
                 }
                 messages.push(turn.message());
                 if turn.calls.is_empty() {
@@ -1679,9 +1757,13 @@ pub(crate) async fn run_coauthor(
                     delivery_failures += 1;
                     audit.push(json!({"kind":"reply_delivery_rejected","reason":"MISSING_DELIVERY",
                         "content":turn.content,"displayed":false,"attempt":delivery_failures}));
-                    if delivery_failures >= 3 {
+                    if content_revision_used || delivery_failures >= 3 {
                         status = "FAILED";
-                        recovery_notice = Some("本轮未完成：连续交付校验未通过，已停止；未合格回复仅保留在审计中，未修改稿件或正式资料。请明确续写或全文整合范围后继续。".into());
+                        recovery_notice = Some(if content_revision_used {
+                            "本轮未完成：一次内容修订未提交有效交付，已停止；候选未展示，未自动采用。"
+                        } else {
+                            "本轮未完成：连续交付校验未通过，已停止；未合格回复仅保留在审计中，未修改稿件或正式资料。请明确续写或全文整合范围后继续。"
+                        }.into());
                         break;
                     }
                     messages.push(json!({"role":"system","content":"本轮尚未交付：请调用deliver_reply提交最终回复，不要再用自由文本结束。续写必须交新增正文及真实承接点，不以询问是否继续代替；与其他工具分开调用。"}));
@@ -1710,6 +1792,8 @@ pub(crate) async fn run_coauthor(
                     let mut delivered_reply = None;
                     let mut value = if delivery_batch && !delivery_only {
                         json!({"error":"deliver_reply须单独调用；本批全部未执行。先完成其他操作，收到结果后再交付。","executed":false})
+                    } else if content_revision_used && call.function.name != "deliver_reply" {
+                        json!({"error":"本轮内容修订只允许交付回复，不重新执行或准备操作。","executed":false})
                     } else if call.function.name == "deliver_reply" {
                         let result = (|| -> Result<String, CoauthorError> {
                             if program_receipt {
@@ -1744,8 +1828,19 @@ pub(crate) async fn run_coauthor(
                         })();
                         match result {
                             Ok(content) => {
-                                delivered_reply = Some(content);
-                                json!({"delivered":true,"semanticVerified":false,"formalCommit":false})
+                                let args: reply::Reply = arguments(&call)?;
+                                pending_review = review::Pending::new(content.clone(), &args, &input.message,
+                                    required_reply_mode, content_revision_used, &messages, &seen);
+                                if let Some(candidate) = &pending_review {
+                                    review_count += 1;
+                                    audit.push(json!({"kind":"reply_candidate","content":content,
+                                        "riskReasons":candidate.reasons,"displayed":false,"reviewAttempt":review_count}));
+                                    json!({"delivered":false,"reviewPending":true,"formalCommit":false})
+                                } else {
+                                    delivered_reply = Some(content);
+                                    audit.push(json!({"kind":"content_review_skipped","reason":"NO_HIGH_RISK_BASIS"}));
+                                    json!({"delivered":true,"semanticVerified":false,"formalCommit":false})
+                                }
                             }
                             Err(error) => json!({"error":error.to_string(),"executed":false}),
                         }
@@ -1859,11 +1954,20 @@ pub(crate) async fn run_coauthor(
                         delivery_failures += 1;
                         audit.push(json!({"kind":"reply_delivery_rejected","reason":"INVALID_DELIVERY",
                             "displayed":false,"attempt":delivery_failures,"error":value["error"]}));
-                        if delivery_failures >= 3 {
+                        if content_revision_used || delivery_failures >= 3 {
                             status = "FAILED";
-                            recovery_notice = Some("本轮未完成：3次交付校验未通过，已停止修正并保留审计；未合格回复没有作为已完成内容展示，未自动采用。".into());
+                            recovery_notice = Some(if content_revision_used {
+                                "本轮未完成：一次内容修订未通过交付校验，已停止；候选未展示，未自动采用。"
+                            } else {
+                                "本轮未完成：3次交付校验未通过，已停止修正并保留审计；未合格回复没有作为已完成内容展示，未自动采用。"
+                            }.into());
                             break 'requests;
                         }
+                    }
+                    if content_revision_used && call.function.name != "deliver_reply" {
+                        status = "FAILED";
+                        recovery_notice = Some("本轮未完成：内容修订试图执行额外操作，已拒绝并停止；候选未展示。".into());
+                        break 'requests;
                     }
                     let repeated_failure = if call.function.name == "read_source" {
                         let args = resolved_source.as_ref().and_then(|result| result.as_ref().ok())
@@ -1944,6 +2048,11 @@ pub(crate) async fn run_coauthor(
                 break;
             }
         }
+    }
+    if pending_review.is_some() || (content_revision_used && output.is_empty()) {
+        audit.push(json!({"kind":"content_review_stopped","status":status,
+            "candidateDisplayed":false,"reviewAttempts":review_count,"revisionUsed":content_revision_used}));
+        recovery_notice.get_or_insert_with(|| "候选回答尚未完成复核，未作为最终回复展示；请检查停止原因后继续。".into());
     }
     if document != initial {
         let receipt = runtime::draft_reply(&initial, &document);

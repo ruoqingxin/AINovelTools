@@ -599,7 +599,7 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
             "missing prompt rule: {instruction}"
         );
     }
-    assert_eq!(PROMPT_VERSION, "coauthor-v28");
+    assert_eq!(PROMPT_VERSION, "coauthor-v29");
 }
 
 #[test]

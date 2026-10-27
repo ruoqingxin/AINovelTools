@@ -7,19 +7,20 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createDesktopHarness, invoke, until, workspace } from "./desktop-smoke-runtime.mjs";
 import { runNative } from "./coauthor-evaluation.mjs";
-import { loopbackContext } from "./coauthor-runtime-loopback.mjs";
+import { loopbackContext, coauthorReviewTurn } from "./coauthor-runtime-loopback.mjs";
 
 // Isolated localhost protocol probes, not DeepSeek quality evidence.
 assert.equal(process.argv.length, 2, "This local-only smoke test accepts no cloud/profile options.");
 const harness = await createDesktopHarness("coauthor-delivery");
 const report = { status: "running", realModelRequests: 0, httpRequests: 0, turns: [], qualityVerified: false };
-let main, server, profile, scope, project, probe, requests, seedMessage, ruleSource;
+let main, server, profile, scope, project, probe, requests, reviewRequests, seedMessage, ruleSource;
 const oldStory = "她将铜匣推回桌角。门外的脚步停了。\n\n"
   + "她等那脚步走远，才伸手把灯拨亮一点。铜匣的盖子被她掀开过一次，又合上。"
   + "她试着想一想那个人，想他站在门口的样子，想他说过的最后一句话。想得起来，画面清楚，声音也清楚。"
   + "只是心里没有动静。\n\n她把手指按在胸口，按了一会儿，像在确认一处不再疼的旧伤。"
   + "灯还亮着。她坐着，没有起身。";
 const newStory = "她将铜匣推回桌角。窗纸上多了一道影子。她把门闩压紧，听见外面的人叫了一个陌生的名字。";
+const deviatedStory = "她将铜匣推回桌角。她又从铜匣中取回了全部记忆，这依然完全符合原来的规则。";
 const call = (name, args, index = 0) => ({ id: `delivery-${requests}-${index}`, type: "function",
   function: { name, arguments: JSON.stringify(args) } });
 const tools = (...calls) => ({ role: "assistant", content: "", tool_calls: calls });
@@ -63,6 +64,26 @@ function response(body) {
   const schema = body.tools.find((tool) => tool.function.name === "deliver_reply").function.parameters;
   for (const field of ["requestQuote", "continuation", "ruleChanges"]) assert(schema.required.includes(field));
   if (probe === "seed") return deliver({ mode: "DISCUSSION", content: oldStory });
+  if (probe.startsWith("review-")) {
+    if (probe === "review-request-limit" && requests < 10) return tools(call("get_decisions", { query: "境界" }));
+    if (probe === "review-revision-tool" && requests === 2) {
+      assert.deepEqual(body.tools.map((tool) => tool.function.name), ["deliver_reply"]);
+      return tools(call("prepare_changeset", { title: "不应执行" }));
+    }
+    if (probe === "review-revision-free" && requests === 2) return plain(newStory);
+    const original = context.historicalMessages.find((message) => message.id === seedMessage.id);
+    assert(original?.continuationReference);
+    let content = ["review-pass", "review-cancel", "review-creative"].includes(probe) ? newStory : deviatedStory;
+    if (requests === 2 && probe === "review-revise") {
+      assert.deepEqual(body.tools.map((tool) => tool.function.name), ["deliver_reply"]);
+      assert(body.messages.some((message) => message.role === "system" && message.content.includes("只修复这些问题")));
+      content = newStory;
+    }
+    if (probe === "review-creative") content += "她决定提出一种新机制，只作为尚未确认的大胆提案。";
+    if (probe === "review-input-limit") content = "她将铜匣推回桌角。" + "窗外的人等待着回应。".repeat(3200);
+    return deliver({ mode: "CONTINUATION", content, requestQuote: "继续写",
+      continuation: { reference: original.continuationReference, preservedQuotes: ["她将铜匣推回桌角。"] } });
+  }
   if (["mode-bypass", "mode-repair", "discussion-reuse"].includes(probe)) {
     const schema = body.tools.find((tool) => tool.function.name === "deliver_reply").function.parameters;
     if (probe === "discussion-reuse") return deliver({ mode: "DISCUSSION", content: oldStory });
@@ -230,6 +251,28 @@ function response(body) {
   throw new Error(`Unknown probe: ${probe}`);
 }
 
+function reviewResponse(body) {
+  const passing = coauthorReviewTurn(body);
+  if (!passing) return null;
+  if (!probe.startsWith("review-")) return passing;
+  const packet = JSON.parse(body.messages[1].content);
+  assert(packet.riskReasons.includes("CONTINUATION"));
+  if (["review-pass", "review-cancel", "review-creative"].includes(probe)
+    || (probe === "review-revise" && reviewRequests === 2)) return passing;
+  if (probe === "review-wrong-tool") return tools(call("prepare_changeset", { title: "审核者不得写入" }));
+  if (probe === "review-unknown") return tools(call("review_reply", {
+    decision: "NEED_CONTEXT", issues: [], summary: "承接依据仍不够，不能断言作者设定错误。",
+  }));
+  const basis = packet.bases.find((basis) => basis.id === "request");
+  assert(basis.text.includes("不要重新取回记忆"));
+  assert(packet.candidate.includes("她又从铜匣中取回了全部记忆"));
+  return tools(call("review_reply", { decision: "REVISE", summary: "违反本轮明确要求。", issues: [{
+    kind: "EXPLICIT_CONSTRAINT", candidateQuote: "她又从铜匣中取回了全部记忆",
+    basisId: probe === "review-fake-evidence" ? "not-issued" : "request",
+    basisQuote: "不要重新取回记忆", reason: "作者不要求重新取回记忆，候选却重新取回。",
+  }] }));
+}
+
 function snapshot() {
   const db = new DatabaseSync(join(project.root, "project.sqlite"), { readOnly: true });
   try {
@@ -242,6 +285,7 @@ function snapshot() {
 async function run(name, message, expectedStatus, expectedRequests) {
   probe = name;
   requests = 0;
+  reviewRequests = 0;
   const before = await invoke(main, "get_coauthor_state", { scope });
   const original = snapshot();
   const preferences = await invoke(main, "get_ai_task_preferences");
@@ -261,8 +305,9 @@ async function run(name, message, expectedStatus, expectedRequests) {
       scope, runId, profileId: profile.id, message, expectedDocumentVersion: before.document.version,
       selection: null, allowDraftEdits: name.startsWith("prepare-"), temperature: 0.2, maxOutputTokens: 2048,
     } });
-    if (name === "cancel") {
-      await until(() => Promise.resolve(requests), (count) => count === 1, "in-flight buffered delivery");
+    if (name === "cancel" || name === "review-cancel") {
+      await until(() => Promise.resolve(name === "cancel" ? requests : reviewRequests),
+        (count) => count === 1, "in-flight buffered delivery or review");
       await invoke(main, "cancel_coauthor_run", { scope, runId });
     }
     result = await task;
@@ -275,12 +320,15 @@ async function run(name, message, expectedStatus, expectedRequests) {
   }
   const events = await main.page.evaluate(() => window.__deliveryEvents);
   const run = result.run;
-  report.turns.push({ probe: name, requests, run, events });
+  report.turns.push({ probe: name, requests: requests + reviewRequests, generationRequests: requests, reviewRequests, run, events });
   await writeFile(join(harness.artifacts, "report.json"), JSON.stringify(report, null, 2));
   assert.equal(run.status, expectedStatus);
   assert.equal(requests, expectedRequests);
-  assert.equal(run.audit.filter((event) => event.kind === "model_request").length, requests);
-  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v28"));
+  assert.equal(run.audit.filter((event) => event.kind === "model_request").length, requests + reviewRequests);
+  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v29"));
+  assert.equal(run.audit.filter((event) => event.kind === "model_request" && event.purpose === "CONTENT_REVIEW").length, reviewRequests);
+  assert(requests + reviewRequests <= 10);
+  assert(reviewRequests <= 2);
   assert.deepEqual((await invoke(main, "get_coauthor_state", { scope })).document, before.document);
   assert.equal(snapshot(), original, "Delivery must not alter formal content or decisions.");
   assert.deepEqual(await invoke(main, "get_ai_task_preferences"), preferences);
@@ -293,7 +341,7 @@ async function run(name, message, expectedStatus, expectedRequests) {
     assert.equal(textEvents.length, 0, "Rejected text must not stream before validation.");
     assert(!run.output.includes("要不要继续"));
   }
-  console.log(`${name}: ${run.status}, ${requests} localhost requests`);
+  console.log(`${name}: ${run.status}, ${requests + reviewRequests} localhost requests (${reviewRequests} reviews)`);
   return run;
 }
 
@@ -301,16 +349,20 @@ try {
   main = await harness.launch("isolated-state");
   server = createServer(async (request, res) => {
     report.httpRequests++;
-    requests++;
     try {
       assert.equal(request.url, "/v1/chat/completions");
       let raw = "";
       for await (const chunk of request) raw += chunk;
-      if (probe === "cancel") return;
-      const message = response(JSON.parse(raw));
+      const body = JSON.parse(raw);
+      const reviewing = body.tools.some((tool) => tool.function.name === "review_reply");
+      if (reviewing) reviewRequests++;
+      else requests++;
+      if (probe === "cancel" || (probe === "review-cancel" && reviewing)) return;
+      if (reviewing && probe === "review-network") return res.writeHead(500).end();
+      const message = reviewing ? reviewResponse(body) : response(body);
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
         choices: [{ message, finish_reason: message.tool_calls ? "tool_calls" : "stop" }],
-        ...(probe === "seed" ? {} : { usage: {
+        ...(probe === "seed" && !reviewing ? {} : { usage: {
           prompt_tokens: probe.startsWith("prepare-") && probe.endsWith("error") && requests >= 3 ? 13039 : 100,
           completion_tokens: probe.startsWith("prepare-") && probe.endsWith("error") && requests >= 3 ? 459 : 30,
         } }),
@@ -463,6 +515,59 @@ try {
     }
   }
   await run("cancel", "继续写。", "CANCELLED", 1);
+  for (const [name, status, count, expectedReviews] of [
+    ["review-pass", "COMPLETED", 1, 1], ["review-creative", "COMPLETED", 1, 1],
+    ["review-revise", "COMPLETED", 2, 2], ["review-repeat", "FAILED", 2, 2],
+    ["review-unknown", "FAILED", 1, 1], ["review-fake-evidence", "FAILED", 1, 1],
+    ["review-wrong-tool", "FAILED", 1, 1], ["review-network", "FAILED", 1, 1],
+    ["review-cancel", "CANCELLED", 1, 1], ["review-revision-tool", "FAILED", 2, 1],
+    ["review-revision-free", "FAILED", 2, 1],
+    ["review-request-limit", "LIMIT_REACHED", 10, 0], ["review-input-limit", "LIMIT_REACHED", 1, 0],
+  ]) {
+    const session = await invoke(main, "create_discussion_session", {
+      title: name, scopeKind: "PROJECT", scopeId: null, scopeText: null, topicKind: null, linkedEntityId: null,
+    });
+    scope = { ...scope, sessionId: session.id };
+    await run("seed", "请给出短方案，只在回复中试写。", "COMPLETED", 1);
+    seedMessage = (await invoke(main, "list_discussion_messages", { sessionId: scope.sessionId, limit: 16 }))
+      .find((message) => message.role === "ASSISTANT" && message.content === oldStory);
+    const savedPreferences = await invoke(main, "get_ai_task_preferences");
+    if (name === "review-input-limit") {
+      await invoke(main, "save_ai_task_preferences", { preferences: { ...savedPreferences,
+        discussion: { ...savedPreferences.discussion, prompt: { context: { inputTokenBudget: 16384 } } } } });
+    }
+    const result = await run(name,
+      "继续写，保留她将铜匣推回桌角这句，只写门外来人的后续，不要重新取回记忆，不改稿或正式资料。"
+      + (name === "review-creative" ? "可以提出新的大胆机制，但保持提案身份。" : ""),
+      status, count);
+    assert.equal(reviewRequests, expectedReviews);
+    if (name === "review-input-limit") {
+      const expansions = result.audit.filter((event) => event.kind === "input_budget_expansion");
+      assert.equal(expansions.length, 1);
+      assert.equal(expansions[0].previousInputTokenBudget, 16384);
+      assert.equal(expansions[0].inputTokenBudget, 32768);
+      assert.equal(result.audit.find((event) => event.kind === "budget_limit").modelRequestsSent, 1);
+    }
+    if (name === "review-input-limit") await invoke(main, "save_ai_task_preferences", { preferences: savedPreferences });
+    const candidates = result.audit.filter((event) => event.kind === "reply_candidate");
+    assert(candidates.length >= 1);
+    assert(candidates.every((candidate) => candidate.displayed === false));
+    assert(result.audit.filter((event) => event.kind === "content_review_input").every((event) =>
+      event.sameProfile === true && event.toolsCanWrite === false && event.packet.candidate));
+    if (name === "review-revise") {
+      assert.equal(candidates[0].content, deviatedStory);
+      assert.equal(result.output, newStory);
+      assert.equal(result.audit.filter((event) => event.kind === "content_review").length, 2);
+    }
+    if (status !== "COMPLETED") {
+      assert(!result.output.includes("她又从铜匣中取回了全部记忆"));
+      const history = await invoke(main, "list_discussion_messages", { sessionId: scope.sessionId, limit: 16 });
+      assert(!history.some((message) => message.content.includes("她又从铜匣中取回了全部记忆")));
+    }
+    if (name === "review-wrong-tool" || name === "review-revision-tool") {
+      assert(!result.audit.some((event) => event.name === "prepare_changeset" && event.result?.prepared));
+    }
+  }
   assert.equal(report.httpRequests, report.turns.reduce((count, turn) => count + turn.requests, 0));
   assert.equal(main.pageErrors.length, 0);
   report.status = "localProtocolVerifiedNotQuality";

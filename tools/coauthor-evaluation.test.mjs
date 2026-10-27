@@ -8,7 +8,7 @@ import { assessReview, distribution, loadFixture, loadModelFixture, nativeRows, 
   retrievalScore, reviewTemplate, summarizeBaseline, validateCloudOptions, writeReport } from "./coauthor-evaluation-core.mjs";
 import { workspace } from "./desktop-smoke-runtime.mjs";
 import { createBudgetLedger, createBudgetRelay, responseUsage } from "./coauthor-evaluation-budget.mjs";
-import { loopbackContext, coauthorLoopbackTurn, assertLoopbackRegression } from "./coauthor-runtime-loopback.mjs";
+import { loopbackContext, coauthorLoopbackTurn, coauthorReviewTurn, assertLoopbackRegression } from "./coauthor-runtime-loopback.mjs";
 import { assertReviewEvidence, inspectReviewEvidence, renderReviewPacket } from "./coauthor-review-evidence.mjs";
 
 const cloudProfile = { capability: "CHAT", privacy_level: "ALLOW_CLOUD", secret_ref: "synthetic",
@@ -875,6 +875,22 @@ test("current native protocol delivers final discussion without an extra simulat
     "Draft completion must remain a program receipt, not a second final delivery.");
 });
 
+test("local content-review adapter uses the isolated read-only contract without pretending to grade quality", () => {
+  const body = { tool_choice: "required", tools: [{ function: { name: "review_reply" } }],
+    messages: [{ role: "system", content: "仅复核" }, { role: "user", content: JSON.stringify({
+      contentReview: true, version: "coauthor-review-v1", candidate: "候选",
+      bases: [{ id: "request", text: "作者本轮要求" }],
+    }) }] };
+  const message = coauthorLoopbackTurn(body);
+  assert.equal(message.tool_calls[0].function.name, "review_reply");
+  const result = JSON.parse(message.tool_calls[0].function.arguments);
+  assert.equal(result.decision, "PASS");
+  assert.match(result.summary, /不作为语义质量证据/);
+  assert.deepEqual(coauthorReviewTurn(body), message);
+  assert.throws(() => coauthorReviewTurn({ ...body, tools: [...body.tools, { function: { name: "prepare_changeset" } }] }));
+  assert.throws(() => coauthorReviewTurn({ ...body, messages: [...body.messages, { role: "tool", content: "{}" }] }));
+});
+
 test("native source reads copy only program references and cannot substitute a fixture identity", () => {
   const source = { key: "ENTITY:realm", revision: "382f1b21-38a9-4319-b93a-d919781f6329:1:hash",
     title: "九曜境界体系", sourceReference: "source-0-1",
@@ -986,9 +1002,9 @@ test("native regression uses estimated tokens including overhead, not serialized
     kind: "model_request", inputChars: 50_000, estimatedInputTokens: 15_800, inputTokenBudget: 16_384,
   }] };
   assert.equal(assertLoopbackRegression(entry).scriptedNativeRegression, true);
-  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v28"] }).scriptedNativeRegression, true);
+  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v29"] }).scriptedNativeRegression, true);
   assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v21"] }));
-  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v28", "coauthor-v27"] }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v29", "coauthor-v28"] }));
   assert.throws(() => assertLoopbackRegression({ ...entry, audit: [{
     ...entry.audit[0], estimatedInputTokens: 16_385,
   }] }));

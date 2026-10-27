@@ -11,7 +11,7 @@ import { runNative } from "./coauthor-evaluation.mjs";
 import { distribution, environment, loadModelFixture, priorReplyReuse, reserveCost, reviewTemplate,
   retrievalScore, validateCloudOptions, writeReport } from "./coauthor-evaluation-core.mjs";
 import { createBudgetRelay } from "./coauthor-evaluation-budget.mjs";
-import { coauthorLoopbackTurn, assertLoopbackRegression } from "./coauthor-runtime-loopback.mjs";
+import { coauthorLoopbackTurn, coauthorReviewTurn, assertLoopbackRegression } from "./coauthor-runtime-loopback.mjs";
 
 const { values } = parseArgs({ options: {
   suite: { type: "string", default: "fixed" },
@@ -156,11 +156,12 @@ async function configureLoopback() {
       let raw = "";
       for await (const chunk of request) raw += chunk;
       const body = JSON.parse(raw);
+      const review = coauthorReviewTurn(body);
       const programReceipt = body.messages.some((message) => message.role === "system"
         && message.content.startsWith("本轮改稿/查证/准备方案由程序生成准确回执"));
       assert.equal(body.tool_choice, programReceipt ? "auto" : "required");
-      assert.equal(body.tools.some((tool) => tool.function.name === "deliver_reply"), !programReceipt);
-      const message = coauthorLoopbackTurn(body, { scenario: activeScenario });
+      assert.equal(body.tools.some((tool) => tool.function.name === "deliver_reply"), !programReceipt && !review);
+      const message = review ?? coauthorLoopbackTurn(body, { scenario: activeScenario });
       response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
         choices: [{ message, finish_reason: message.tool_calls ? "tool_calls" : "stop" }],
         usage: { prompt_tokens: 100, completion_tokens: 30 },
