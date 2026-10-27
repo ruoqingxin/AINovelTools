@@ -8,7 +8,11 @@ const { values } = parseArgs({ options: {
   url: { type: "string", default: "http://127.0.0.1:1436" },
   playwright: { type: "string" },
   artifacts: { type: "string", default: ".tmp/coauthor-browser" },
+  width: { type: "string" },
 } });
+const viewports = [{ width: 1440, height: 1000 }, { width: 960, height: 640 }, { width: 390, height: 844 }];
+const selectedViewports = values.width ? viewports.filter(viewport => String(viewport.width) === values.width) : viewports;
+if (!selectedViewports.length) throw new Error("--width must be 1440, 960 or 390");
 const { chromium } = await import(values.playwright ? pathToFileURL(values.playwright).href : "playwright");
 const artifacts = resolve(values.artifacts);
 await mkdir(artifacts, { recursive: true });
@@ -16,7 +20,7 @@ const browser = await chromium.launch({ headless: true, channel: "chromium" });
 const errors = [];
 const reports = [];
 try {
-  for (const viewport of [{ width: 1440, height: 1000 }, { width: 960, height: 640 }, { width: 390, height: 844 }]) {
+  for (const viewport of selectedViewports) {
     const context = await browser.newContext({ viewport });
     const page = await context.newPage();
     page.on("pageerror", (error) => errors.push(error.message));
@@ -433,7 +437,8 @@ try {
     await page.getByLabel("讨论输入", { exact: true }).waitFor();
     await page.getByText("照夜行", { exact: true }).waitFor();
     await page.getByRole("heading", { name: "讨论区", exact: true }).waitFor();
-    await page.getByRole("button", { name: "查证范围", exact: true }).waitFor();
+    await page.getByRole("button", { name: "依据与运行记录", exact: true }).waitFor();
+    assert.equal(await page.getByRole("group", { name: "讨论工具", exact: true }).getByRole("button").count(), 2);
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-discussion.png`), fullPage: true });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
     assert.equal(overflow, false, `Horizontal overflow at ${viewport.width}px`);
@@ -448,6 +453,9 @@ try {
     assert.equal(await historicalReply.getByRole("button", { name: "核对这条回复", exact: true }).count(), 0);
     await historicalReply.getByRole("button", { name: "查看本轮记录", exact: true }).click();
     const sourcesPanel = page.getByRole("dialog", { name: "依据与运行记录" });
+    for (const recordTab of await sourcesPanel.getByRole("tablist", { name: "运行记录分类" }).getByRole("tab").all()) {
+      assert.ok((await recordTab.boundingBox()).height <= 42, `Record tab label wrapped at ${viewport.width}px`);
+    }
     await sourcesPanel.getByText("记录中没有可核实的内容复核结论。", { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("run_coauthor")), false);
     assert.equal(await historicalReply.evaluate(el => el.scrollWidth > el.clientWidth), false);
@@ -458,7 +466,7 @@ try {
     assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("run_coauthor")), false);
     await page.getByLabel("讨论输入", { exact: true }).fill("");
     await historicalReply.getByRole("button", { name: "查看本轮记录", exact: true }).click();
-    await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).waitFor();
+    await sourcesPanel.getByRole("tab", { name: "改稿建议", exact: true }).waitFor();
     assert.equal(await sourcesPanel.getByText(/实际返回 1 条/).count(), 0);
     await sourcesPanel.getByRole("tab", { name: "检索回执", exact: true }).click();
     await sourcesPanel.getByText(/实际返回 1 条/).waitFor();
@@ -535,25 +543,27 @@ try {
     await sourcesPanel.getByLabel("查看运行", { exact: true }).selectOption("historical-run-01");
     await sourcesPanel.getByText("基础稿件", { exact: false }).waitFor();
     await sourcesPanel.getByLabel("查看运行", { exact: true }).selectOption("historical-run-00");
-    await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).waitFor();
+    await sourcesPanel.getByRole("tab", { name: "改稿建议", exact: true }).waitFor();
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-run-directory.png`), fullPage: true });
     assert.equal(await sourcesPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
     await sourcesPanel.getByRole("button", { name: "较新运行", exact: true }).click();
     await sourcesPanel.getByRole("navigation", { name: "运行目录分页" }).getByText("第 1 页", { exact: true }).waitFor();
-    await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).click();
-    const oldProposal = page.getByRole("dialog", { name: "改稿差异", exact: true });
+    await sourcesPanel.getByRole("tab", { name: "改稿建议", exact: true }).click();
+    const oldProposal = sourcesPanel;
     await oldProposal.getByLabel("AI 建议稿", { exact: true }).waitFor();
     assert.equal(await oldProposal.getByLabel("AI 建议稿", { exact: true }).inputValue(), "旧建议：突破消耗寿元。");
     assert.equal(await oldProposal.getByRole("button", { name: "采用整份工作稿修改", exact: true }).isDisabled(), true);
     assert.equal(await oldProposal.evaluate((el) => el.scrollWidth > el.clientWidth), false);
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-historical-proposal.png`), fullPage: true });
-    await oldProposal.getByRole("button", { name: "关闭改稿差异", exact: true }).click();
+    assert.equal(await oldProposal.getByRole("button", { name: "仅采用选中文字", exact: true }).isDisabled(), true);
+    await oldProposal.getByRole("button", { name: "关闭依据与运行记录", exact: true }).click();
     assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("run_coauthor")), false,
       "Historical comparison must not start a model");
     assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("get_coauthor_semantic_status")), false,
       "Closed semantic panel must not fetch configuration");
-    await page.getByRole("button", { name: "语义索引", exact: true }).click();
-    const semanticPanel = page.getByRole("dialog", { name: "语义索引与外发授权" });
+    await page.getByRole("button", { name: "依据与运行记录", exact: true }).click();
+    const semanticPanel = sourcesPanel;
+    await semanticPanel.getByRole("tab", { name: "检索设置", exact: true }).click();
     await semanticPanel.getByText("项目语义检索未启用", { exact: true }).waitFor();
     await semanticPanel.getByLabel("向量模型", { exact: true }).selectOption("embedding");
     await semanticPanel.getByRole("checkbox", { name: "正文", exact: true }).check();
@@ -574,7 +584,7 @@ try {
     assert.equal(await page.evaluate(() => window.__coauthorCalls.filter(name => name === "build_coauthor_semantic_batch").length), 1);
     await semanticPanel.getByRole("button", { name: "撤销授权", exact: true }).click();
     await semanticPanel.getByText("项目语义检索未启用", { exact: true }).waitFor();
-    await semanticPanel.getByRole("button", { name: "关闭语义索引与外发授权", exact: true }).click();
+    await semanticPanel.getByRole("button", { name: "关闭依据与运行记录", exact: true }).click();
     await page.getByLabel("讨论输入", { exact: true }).fill("前半段保留，最后一句再克制一点。");
     await page.getByLabel("允许改工作稿", { exact: true }).check();
     await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -744,8 +754,9 @@ try {
     await reversalPanel.getByRole("heading", { name: "撤销采用", exact: true }).evaluate((el) => el.scrollIntoView({ block: "start" }));
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-reversal-receipt.png`), fullPage: true });
     await changesPanel.getByRole("button", { name: "关闭关联变更与影响", exact: true }).click();
-    await page.getByRole("button", { name: "查证范围", exact: true }).click();
-    const checksPanel = page.getByRole("dialog", { name: "查证范围与进度" });
+    await page.getByRole("button", { name: "依据与运行记录", exact: true }).click();
+    const checksPanel = sourcesPanel;
+    await checksPanel.getByRole("tab", { name: "查证清单", exact: true }).click();
     await checksPanel.getByText("范围查证尚未完成。", { exact: true }).waitFor();
     await checksPanel.getByText("1 项原依据失效 · 1 项新增资料 · 0 项索引待更新", { exact: true }).waitFor();
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-checks.png`), fullPage: true });
@@ -765,6 +776,10 @@ try {
     await checksPanel.getByText("新建查证清单", { exact: true }).click();
     await checksPanel.getByLabel("清单标题").fill("核对新范围");
     await checksPanel.getByLabel("查证问题").fill("核对全部突破情节和相关设定");
+    await checksPanel.getByRole("tab", { name: "本轮记录", exact: true }).click();
+    await checksPanel.getByRole("tab", { name: "查证清单", exact: true }).click();
+    assert.equal(await checksPanel.getByLabel("清单标题").inputValue(), "核对新范围");
+    assert.equal(await checksPanel.getByLabel("查证问题").inputValue(), "核对全部突破情节和相关设定");
     await checksPanel.getByLabel("有效设定卡").check();
     await checksPanel.getByLabel("已审核事实", { exact: true }).check();
     await checksPanel.getByLabel("关系记录", { exact: true }).check();
@@ -793,6 +808,7 @@ try {
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-decision-history.png`), fullPage: true });
     assert.equal(await decisionsPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
     await decisionsPanel.getByRole("button", { name: "关闭讨论决定", exact: true }).click();
+    await page.getByRole("tab", { name: "工作稿", exact: true }).click();
     await page.getByRole("button", { name: "关联变更", exact: true }).click();
     await changesPanel.getByText("准备新的变更集", { exact: true }).click();
     await changesPanel.getByRole("checkbox", { name: "同时新建设定", exact: true }).check();
@@ -913,7 +929,7 @@ try {
   }
   assert.deepEqual(errors, [], "No browser application errors");
   await writeFile(resolve(artifacts, "report.json"), JSON.stringify({ mode: "mock-ipc-no-cloud", reports, errors }, null, 2));
-  console.log(`Coauthor browser smoke passed, desktop and mobile. Artifacts: ${artifacts}`);
+  console.log(`Coauthor browser smoke passed, widths: ${selectedViewports.map(viewport => viewport.width).join(", ")}. Artifacts: ${artifacts}`);
 } finally {
   await browser.close();
 }

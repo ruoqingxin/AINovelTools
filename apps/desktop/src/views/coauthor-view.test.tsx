@@ -112,7 +112,8 @@ describe("coauthor workspace", () => {
     expect(screen.getByLabelText("工作稿内容")).not.toBeVisible();
     expect(screen.getByText("当前讨论", { exact: true })).toBeVisible();
     const tools = screen.getByRole("group", { name: "讨论工具" });
-    expect(within(tools).getByRole("button", { name: "查证范围" })).toHaveTextContent("查证范围");
+    expect(within(tools).getAllByRole("button")).toHaveLength(2);
+    expect(within(tools).getByRole("button", { name: /讨论决定/ })).toBeVisible();
     expect(within(tools).getByRole("button", { name: "依据与运行记录" })).toBeVisible();
     fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "尚未发送的问题" } });
     fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
@@ -121,6 +122,7 @@ describe("coauthor workspace", () => {
     const draftTools = screen.getByRole("group", { name: "工作稿工具" });
     expect(within(draftTools).getByRole("button", { name: "另开分支" })).toHaveTextContent("另开分支");
     expect(within(draftTools).getByRole("button", { name: "工作稿版本" })).toHaveTextContent("工作稿版本");
+    expect(within(draftTools).getByRole("button", { name: "关联变更" })).toBeVisible();
     expect(screen.getByRole("button", { name: "保存工作稿" })).toHaveTextContent("保存工作稿");
     fireEvent.change(screen.getByLabelText("工作稿内容"), { target: { value: "尚未采用的工作稿" } });
     fireEvent.click(screen.getByRole("tab", { name: "讨论" }));
@@ -511,13 +513,18 @@ describe("coauthor workspace", () => {
     expect(mocks.invoke.mock.calls.some(([name]) => name === "get_coauthor_run" || name === "list_coauthor_runs")).toBe(false);
     fireEvent.click(screen.getByRole("tab", { name: "讨论" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看本轮记录" }));
-    expect(await screen.findByText("运行完成 · 基础稿件 v1")).toBeVisible();
+    expect(await screen.findByText("运行完成 · 基础稿件 v1 · 历史轮次")).toBeVisible();
     expect(mocks.invoke).toHaveBeenCalledWith("get_coauthor_run", { scope: { projectId: "p1", sessionId: "s1" }, id: "historical" });
-    fireEvent.click(within(screen.getByRole("dialog", { name: "依据与运行记录" })).getByRole("button", { name: "查看改稿差异" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "依据与运行记录" })).getByRole("tab", { name: "改稿建议" }));
     expect(await screen.findByLabelText("AI 建议稿")).toHaveValue("旧建议正文");
     expect(screen.getByRole("button", { name: "采用整份工作稿修改" })).toBeDisabled();
     expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
     expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor" || name === "apply_coauthor_proposal")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "关闭依据与运行记录" }));
+    fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看改稿建议" }));
+    await waitFor(() => expect(screen.getByLabelText("查看运行")).toHaveValue("latest"));
+    expect(await screen.findByText("此运行没有保存工作稿修改建议。")).toBeVisible();
   });
 
   it("shows exact-run errors without inventing a missing-history conclusion or clearing author input", async () => {
@@ -545,13 +552,18 @@ describe("coauthor workspace", () => {
     const original = mocks.invoke.getMockImplementation()!;
     mocks.invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => command === "get_coauthor_run"
       ? Promise.reject(new Error("详情暂不可用")) : original(command, args));
-    fireEvent.click(screen.getByRole("button", { name: "刷新运行记录" }));
+    const directoryReads = mocks.invoke.mock.calls.filter(([name]) => name === "list_coauthor_runs").length;
+    const suggestion = screen.getByLabelText("AI 建议稿");
+    fireEvent.select(suggestion, { target: { selectionStart: 0, selectionEnd: 2 } });
+    expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "刷新目录与当前记录" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("详情暂不可用");
     expect(screen.getByText("以下为上次读取的运行记录，当前状态尚未核实。")).toBeVisible();
     expect(screen.getByLabelText("AI 建议稿")).toHaveValue("缓存建议");
     expect(screen.getByRole("button", { name: "采用整份工作稿修改" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeDisabled();
     expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === "list_coauthor_runs")).toHaveLength(directoryReads + 1);
   });
 
   it("clears the prior proposal selection when switching between historical runs", async () => {
@@ -563,22 +575,24 @@ describe("coauthor workspace", () => {
     await screen.findByLabelText("工作稿内容");
     fireEvent.click(screen.getByRole("button", { name: "依据与运行记录" }));
     const sources = await screen.findByRole("dialog", { name: "依据与运行记录" });
-    fireEvent.click(await within(sources).findByRole("button", { name: "查看改稿差异" }));
+    fireEvent.click(within(sources).getByRole("tab", { name: "改稿建议" }));
     const first = await screen.findByLabelText("AI 建议稿");
-    await waitFor(() => expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeDisabled();
     fireEvent.select(first, { target: { selectionStart: 0, selectionEnd: 2 } });
-    fireEvent.click(screen.getByRole("button", { name: "关闭改稿差异" }));
-    fireEvent.click(screen.getByRole("button", { name: "依据与运行记录" }));
-    const reopened = await screen.findByRole("dialog", { name: "依据与运行记录" });
-    await waitFor(() => expect(within(reopened).getByLabelText("查看运行")).toBeEnabled());
-    fireEvent.change(within(reopened).getByLabelText("查看运行"), { target: { value: "earlier" } });
-    await waitFor(() => expect(within(reopened).getByRole("button", { name: "查看改稿差异" })).toBeEnabled());
-    fireEvent.click(within(reopened).getByRole("button", { name: "查看改稿差异" }));
+    expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeEnabled();
+    await waitFor(() => expect(within(sources).getByLabelText("查看运行")).toBeEnabled());
+    fireEvent.change(within(sources).getByLabelText("查看运行"), { target: { value: "earlier" } });
+    fireEvent.click(within(sources).getByRole("tab", { name: "改稿建议" }));
     await waitFor(() => expect(screen.getByLabelText("AI 建议稿")).toHaveValue("建议 earlier"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "仅采用选中文字" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("请先在 AI 建议稿中选择要采用的文字。");
+    expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeDisabled();
     expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    fireEvent.select(screen.getByLabelText("AI 建议稿"), { target: { selectionStart: 0, selectionEnd: 2 } });
+    fireEvent.click(screen.getByRole("button", { name: "仅采用选中文字" }));
+    expect(within(sources).getByText("仅采用选中文字到工作稿，相关规则与其余建议未自动采用。")).toBeVisible();
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(`${baseline.content}建议`);
+    expect(screen.getByRole("button", { name: "仅采用选中文字" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "仅采用选中文字" }));
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(`${baseline.content}建议`);
   });
 
   it("corrects a decision by stable identity and expected version without rewriting the manuscript", async () => {
@@ -619,7 +633,8 @@ describe("coauthor workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "纠正" }));
     fireEvent.change(screen.getByLabelText("决定内容"), { target: { value: "保留作者新输入" } });
     fireEvent.click(screen.getByRole("button", { name: "保存纠正" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("决定版本已变化");
+    const panel = screen.getByRole("dialog", { name: "讨论决定" });
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("决定版本已变化");
     expect(screen.getByLabelText("决定内容")).toHaveValue("保留作者新输入");
     expect(mocks.invoke.mock.calls.filter(([name]) => name === "correct_coauthor_decision")).toHaveLength(1);
   });
@@ -646,7 +661,8 @@ describe("coauthor workspace", () => {
     expect(screen.getByLabelText("工作稿内容")).toHaveValue("作者自己写的结尾。");
     expect(mocks.invoke.mock.calls.some(([name]) => name === "apply_coauthor_proposal")).toBe(false);
     expect(await screen.findByText("已保留 AI 改稿建议，当前编辑未被覆盖。")).toBeVisible();
-    fireEvent.click(screen.getByText("查看改稿差异"));
+    fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看改稿建议" }));
     expect(await screen.findByLabelText("AI 建议稿")).toHaveValue("他忘了母亲的声音。");
     expect(screen.getByText("采用整份工作稿修改")).toBeDisabled();
   });
@@ -782,7 +798,13 @@ describe("coauthor workspace", () => {
     renderWorkspace();
     await screen.findByLabelText("工作稿内容");
     fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "保留我刚才的条件。" } });
-    fireEvent.click(screen.getByRole("button", { name: "查证范围" }));
+    fireEvent.click(screen.getByRole("button", { name: "依据与运行记录" }));
+    fireEvent.click(screen.getByRole("tab", { name: "查证清单" }));
+    fireEvent.click(await screen.findByText("新建查证清单"));
+    fireEvent.change(screen.getByLabelText("清单标题"), { target: { value: "未提交清单" } });
+    fireEvent.click(screen.getByRole("tab", { name: "本轮记录" }));
+    fireEvent.click(screen.getByRole("tab", { name: "查证清单" }));
+    expect(screen.getByLabelText("清单标题")).toHaveValue("未提交清单");
     fireEvent.click(await screen.findByRole("button", { name: "继续查证" }));
     expect((screen.getByLabelText("讨论输入") as HTMLTextAreaElement).value).toContain("保留我刚才的条件。\n\n继续查证清单 check-1");
     expect(pending).toHaveLength(0);

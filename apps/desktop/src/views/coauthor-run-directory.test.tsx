@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CoauthorRunDirectory } from "./coauthor-run-directory";
-import type { CoauthorRunsPage } from "../lib/tauri-client";
+import type { CoauthorRunsPage, DiscussionMessage } from "../lib/tauri-client";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("../lib/ipc-transport", () => mocks);
@@ -12,8 +12,8 @@ const select = vi.fn();
 const page: CoauthorRunsPage = { runs: Array.from({ length: 20 }, (_, i) => ({
   id: `run-${30-i}`, sessionId: "s", userMessageId: `message-${i}`, status: "COMPLETED", documentVersion: i,
 })), hasMore: true };
-function tree(sessionId = "s") {
-  return <CoauthorRunDirectory key={sessionId} scope={{ ...scope, sessionId }} selected="old-run" onSelect={select} />;
+function tree(sessionId = "s", messages?: DiscussionMessage[]) {
+  return <CoauthorRunDirectory key={sessionId} scope={{ ...scope, sessionId }} selected="old-run" onSelect={select} messages={messages} />;
 }
 function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -24,12 +24,18 @@ beforeEach(() => { vi.clearAllMocks(); mocks.invoke.mockResolvedValue(structured
 afterEach(cleanup);
 
 it("loads a lightweight directory without fetching details or changing the selected historical run", async () => {
-  mount();
+  const { client, view } = mount();
   expect(await screen.findByRole("option", { name: "运行完成 · run-30 · 稿件 v0" })).toBeInTheDocument();
   expect(screen.getByLabelText("查看运行")).toHaveValue("old-run");
   expect(mocks.invoke).toHaveBeenCalledWith("list_coauthor_runs", { scope, beforeRunId: null });
   expect(mocks.invoke).toHaveBeenCalledTimes(1);
   expect(select).not.toHaveBeenCalled();
+  view.rerender(<QueryClientProvider client={client}>{tree("s", [{
+    id: "message-0", sessionId: "s", role: "USER", content: "核对突破\n  前后的代价",
+    contextSummary: null, contextVersion: null, createdAt: "", profileId: null,
+  }])}</QueryClientProvider>);
+  expect(screen.getByRole("option", { name: "运行完成 · 核对突破 前后的代价 · 稿件 v0" })).toHaveValue("run-30");
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
   fireEvent.change(screen.getByLabelText("查看运行"), { target: { value: "run-30" } });
   expect(select).toHaveBeenCalledWith("run-30");
 });

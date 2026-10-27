@@ -40,9 +40,12 @@
 .coauthor-toolbar { gap: 8px 12px; }
 .coauthor-toolbar .coauthor-tools { flex: 1; }
 .coauthor-workspace button.coauthor-delete { color: var(--danger, #bf4545); white-space: nowrap; }
-.coauthor-record-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--border); margin: 14px 0; }
-.coauthor-workspace .coauthor-record-tabs button { margin: 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; min-height: 38px; padding: 6px 2px; }
-.coauthor-workspace .coauthor-record-tabs button[aria-selected="true"] { color: var(--accent-strong); border-bottom-color: var(--accent); background: var(--surface-subtle); }
+.coauthor-record-sections { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 16px; }
+.coauthor-record-sections button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex: 1; min-width: 0; }
+.coauthor-workspace .coauthor-record-sections button[aria-selected="true"] { color: var(--accent-strong); border-color: var(--accent); background: var(--surface-subtle); }
+.coauthor-record-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-bottom: 1px solid var(--border); margin: 14px 0; }
+.coauthor-workspace .workspace-panel .coauthor-record-tabs button { margin: 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; min-height: 38px; padding: 6px 2px; }
+.coauthor-workspace .workspace-panel .coauthor-record-tabs button[aria-selected="true"] { color: var(--accent-strong); border-bottom-color: var(--accent); background: var(--surface-subtle); }
 .coauthor-record-content { min-width: 0; }
 .coauthor-record-content > button { display: inline-flex; align-items: center; gap: 6px; }
 .coauthor-run-status { padding: 10px 0; margin: 0; border-bottom: 1px solid var(--border); font-size: 13px; }
@@ -222,6 +225,8 @@
   .coauthor-chat, .coauthor-draft { flex: 1; padding: 0; border-left: 0; }
   .coauthor-columns[data-tab="chat"] .coauthor-draft, .coauthor-columns[data-tab="draft"] .coauthor-chat { display: none; }
   .coauthor-diff { grid-template-columns: 1fr; }
+  .coauthor-diff pre { height: auto; min-height: 72px; max-height: 240px; }
+  .coauthor-diff textarea { height: 200px; }
 }
 @media (max-width: 520px) {
   .coauthor-workspace { height: calc(100dvh - 116px); }
