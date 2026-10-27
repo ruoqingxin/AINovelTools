@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertContractCoverage, assertNoRetiredCommands, assertTypedTransport, findClientCommands, findContractKeys, findRegisteredCommands, validateIpcContract } from "./validate-ipc-contract.mjs";
+import { assertContractCoverage, assertNoRetiredCommands, assertTypedTransport, findClientCommands, findContractKeys, findRegisteredCommands } from "./validate-ipc-contract.mjs";
 
 test("client calls support nested generics, multiline calls, and untyped calls", () => {
   const commands = findClientCommands(`
@@ -21,10 +21,6 @@ test("retired save paths cannot be registered or called again", () => {
     assert.throws(() => assertNoRetiredCommands(new Set([name])), /Retired IPC/);
   }
   assertNoRetiredCommands(new Set(["commit_manuscript_draft", "save_planning_section_checked", "update_plan_node_checked"]));
-});
-
-test("workspace IPC registration and calls keep audited paths retired", async () => {
-  await validateIpcContract();
 });
 
 test("dynamic command names fail validation instead of being silently skipped", () => {

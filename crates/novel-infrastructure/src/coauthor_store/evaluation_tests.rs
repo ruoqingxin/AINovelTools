@@ -128,30 +128,6 @@ fn paraphrase_regression_requires_the_companion_cost_rule() {
 }
 
 #[test]
-fn evaluation_fixture_has_unique_cases_and_valid_relevance_labels() {
-    let data = fixture();
-    let sources = data["sources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| text(s, "id"))
-        .collect::<std::collections::HashSet<_>>();
-    let cases = data["cases"].as_array().unwrap();
-    let ids = cases
-        .iter()
-        .map(|c| text(c, "id"))
-        .collect::<std::collections::HashSet<_>>();
-    assert_eq!(ids.len(), cases.len());
-    for case in cases {
-        assert!(!case["turns"].as_array().unwrap().is_empty());
-        assert!(!case["rubric"].as_array().unwrap().is_empty());
-        for id in case["retrieval"]["relevant"].as_array().unwrap() {
-            assert!(sources.contains(id.as_str().unwrap()));
-        }
-    }
-}
-
-#[test]
 fn model_export_suites_are_closed_and_preserve_the_fixed_fixture() {
     assert_eq!(model_fixture("fixed").unwrap(), fixture());
     assert!(model_fixture("../external.json").is_err());

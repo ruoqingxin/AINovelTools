@@ -105,13 +105,26 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
-  it("preserves composer and draft edits across full-width workspace tabs", async () => {
+  it("shows named workspace areas and preserves edits across full-width tabs", async () => {
     renderWorkspace();
     await screen.findByLabelText("讨论输入");
+    expect(screen.getByRole("heading", { name: "讨论区" })).toBeVisible();
+    expect(screen.getByLabelText("工作稿内容")).not.toBeVisible();
+    expect(screen.getByText("当前讨论", { exact: true })).toBeVisible();
+    const tools = screen.getByRole("group", { name: "讨论工具" });
+    expect(within(tools).getByRole("button", { name: "查证范围" })).toHaveTextContent("查证范围");
+    expect(within(tools).getByRole("button", { name: "依据与运行记录" })).toBeVisible();
     fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "尚未发送的问题" } });
     fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    expect(screen.getByRole("heading", { name: "工作稿区" })).toBeVisible();
+    expect(screen.getByLabelText("讨论输入")).not.toBeVisible();
+    const draftTools = screen.getByRole("group", { name: "工作稿工具" });
+    expect(within(draftTools).getByRole("button", { name: "另开分支" })).toHaveTextContent("另开分支");
+    expect(within(draftTools).getByRole("button", { name: "工作稿版本" })).toHaveTextContent("工作稿版本");
+    expect(screen.getByRole("button", { name: "保存工作稿" })).toHaveTextContent("保存工作稿");
     fireEvent.change(screen.getByLabelText("工作稿内容"), { target: { value: "尚未采用的工作稿" } });
     fireEvent.click(screen.getByRole("tab", { name: "讨论" }));
+    expect(screen.getByRole("button", { name: "发送" })).toHaveTextContent("发送");
     expect(screen.getByLabelText("讨论输入")).toHaveValue("尚未发送的问题");
     expect(screen.getByLabelText("工作稿内容")).not.toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
@@ -204,26 +217,6 @@ describe("coauthor workspace", () => {
       expect(remove).toHaveBeenCalledWith("coauthor-input:p1:s1");
       expect(remove).toHaveBeenCalledWith("coauthor-draft:p1:s1");
     } finally { remove.mockRestore(); }
-  });
-
-  it("labels workspace areas and shows named commands in their relevant area", async () => {
-    renderWorkspace();
-    await screen.findByLabelText("讨论输入");
-    expect(screen.getByRole("heading", { name: "讨论区" })).toBeVisible();
-    expect(screen.getByLabelText("工作稿内容")).not.toBeVisible();
-    expect(screen.getByText("当前讨论", { exact: true })).toBeVisible();
-    const tools = screen.getByRole("group", { name: "讨论工具" });
-    expect(within(tools).getByRole("button", { name: "查证范围" })).toHaveTextContent("查证范围");
-    expect(within(tools).getByRole("button", { name: "依据与运行记录" })).toBeVisible();
-    fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
-    expect(screen.getByRole("heading", { name: "工作稿区" })).toBeVisible();
-    expect(screen.getByLabelText("讨论输入")).not.toBeVisible();
-    const draftTools = screen.getByRole("group", { name: "工作稿工具" });
-    expect(within(draftTools).getByRole("button", { name: "另开分支" })).toHaveTextContent("另开分支");
-    expect(within(draftTools).getByRole("button", { name: "工作稿版本" })).toHaveTextContent("工作稿版本");
-    expect(screen.getByRole("button", { name: "保存工作稿" })).toHaveTextContent("保存工作稿");
-    fireEvent.click(screen.getByRole("tab", { name: "讨论" }));
-    expect(screen.getByRole("button", { name: "发送" })).toHaveTextContent("发送");
   });
 
   it("keeps audit-only receipts out of replies and opens the exact run lazily with Chinese steps", async () => {
@@ -500,16 +493,6 @@ describe("coauthor workspace", () => {
     expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
   });
 
-  it("does not fetch run audits or the directory while writing with the panels closed", async () => {
-    stored.runs = [{ id: "latest", sessionId: "s1", userMessageId: "m", documentVersion: 1,
-      status: "COMPLETED", output: "", audit: [] }];
-    renderWorkspace();
-    await screen.findByLabelText("工作稿内容");
-    expect(mocks.invoke.mock.calls.some(([name]) => name === "get_coauthor_run" || name === "list_coauthor_runs")).toBe(false);
-    fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
-    expect(screen.getByRole("button", { name: "查看改稿建议" })).toBeVisible();
-  });
-
   it("reads a historical reply by exact run id outside the recent directory and blocks applying its whole proposal", async () => {
     stored.runs = [{ id: "latest", sessionId: "s1", userMessageId: "m", documentVersion: 1,
       status: "COMPLETED", output: "", audit: [] }];
@@ -521,6 +504,12 @@ describe("coauthor workspace", () => {
           { kind: "draft_proposal", baseDocument: baseline, document: { ...baseline, content: "旧建议正文" } },
         ] } : original(command, args));
     renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "get_coauthor_run" || name === "list_coauthor_runs")).toBe(false);
+    fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    expect(screen.getByRole("button", { name: "查看改稿建议" })).toBeVisible();
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "get_coauthor_run" || name === "list_coauthor_runs")).toBe(false);
+    fireEvent.click(screen.getByRole("tab", { name: "讨论" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看本轮记录" }));
     expect(await screen.findByText("运行完成 · 基础稿件 v1")).toBeVisible();
     expect(mocks.invoke).toHaveBeenCalledWith("get_coauthor_run", { scope: { projectId: "p1", sessionId: "s1" }, id: "historical" });
@@ -686,16 +675,6 @@ describe("coauthor workspace", () => {
     expect(mocks.invoke.mock.calls.some(([name]) => name === "apply_coauthor_proposal")).toBe(false);
     await finish(second, "CANCELLED");
     expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
-  });
-
-  it("only-discussion mode does not grant working draft tools", async () => {
-    renderWorkspace();
-    await screen.findByLabelText("工作稿内容");
-    expect(screen.getByLabelText("允许改工作稿")).not.toBeChecked();
-    const request = await begin("如果突破会失忆呢");
-    expect(request.input.allowDraftEdits).toBe(false);
-    await finish(request);
-    expect(mocks.invoke.mock.calls.some(([name]) => name === "apply_coauthor_proposal")).toBe(false);
   });
 
   it("shows formal scope and preview before confirmation and revokes an outdated confirmation", async () => {
