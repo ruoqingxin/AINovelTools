@@ -232,7 +232,7 @@ impl ProjectManager {
             .prepare(
                 "SELECT m.id, s.title, m.content FROM discussion_messages m
              JOIN discussion_sessions s ON s.id = m.session_id
-             WHERE s.project_id = ?1 AND m.role = 'USER' ORDER BY m.rowid DESC",
+             WHERE s.project_id = ?1 AND s.deleted_at IS NULL AND m.role = 'USER' ORDER BY m.rowid DESC",
             )
             .map_err(source_error)?;
         let rows = statement

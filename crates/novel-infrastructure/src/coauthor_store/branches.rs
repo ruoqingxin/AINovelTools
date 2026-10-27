@@ -119,7 +119,7 @@ impl ProjectManager {
             "SELECT s.id,s.title,CASE WHEN b.session_id=?1 THEN 'PARENT' ELSE 'CHILD' END
              FROM coauthor_branches b JOIN discussion_sessions s ON
                 s.id=CASE WHEN b.session_id=?1 THEN b.parent_session_id ELSE b.session_id END
-             WHERE (b.session_id=?1 OR b.parent_session_id=?1) AND s.project_id=?2
+             WHERE (b.session_id=?1 OR b.parent_session_id=?1) AND s.project_id=?2 AND s.deleted_at IS NULL
              ORDER BY s.rowid DESC LIMIT 21 OFFSET ?3",
         )?;
         let mut branches = stmt.query_map(

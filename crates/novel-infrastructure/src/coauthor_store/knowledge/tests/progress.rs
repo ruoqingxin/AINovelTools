@@ -312,6 +312,8 @@ fn migration_62_failure_is_atomic_retryable_and_never_backfills_unconfirmed_hist
     f.db().migrate_coauthor_branch_merges().unwrap();
     f.db().migrate_coauthor_branch_decisions().unwrap();
     f.db().migrate_coauthor_decision_consumers().unwrap();
+    f.db().connection.execute_batch("ALTER TABLE discussion_sessions DROP COLUMN deleted_at").unwrap();
+    f.db().migrate_discussion_session_deletion().unwrap();
     assert_eq!(f.db().health().unwrap().schema_version,CURRENT_SCHEMA_VERSION);
     assert_eq!(f.manager.current_manuscript(f.chapter).unwrap().unwrap(),f.revision);
     assert!(f.evidence_progress(&f.fact()).id.is_none());

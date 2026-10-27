@@ -418,8 +418,9 @@ export function assertLoopbackRegression(entry, { expectInputLimit = false, expe
       "Valid empty and nonempty pages must retain separate counts.");
     assert(invalid?.status === "INVALID_QUERY" && invalid.returned === null,
       "An invalid query must not be counted as an executed zero-hit page.");
-    assert(entry.output.includes("关键词 \"契约 交易 代价 术法\"（项目资料，offset=0）：实际返回 4 条"));
-    assert(entry.output.includes("关键词 \"砂\"（项目资料，offset=0）：未形成有效查询，不能记为 0 命中"));
+    assert(receipt.displayText?.includes("关键词 \"契约 交易 代价 术法\"（项目资料，offset=0）：实际返回 4 条"));
+    assert(receipt.displayText?.includes("关键词 \"砂\"（项目资料，offset=0）：未形成有效查询，不能记为 0 命中"));
+    assert(!entry.output.includes("检索操作回执（程序记录"), "Program search receipts belong to audit, not the reply.");
   }
   return { scriptedNativeRegression: true, qualityVerified: false,
     ...(expectLateExpansion ? { lateExpansionVerified: true } : {}) };

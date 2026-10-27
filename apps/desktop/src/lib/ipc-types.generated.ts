@@ -133,6 +133,7 @@ export type IpcErrors = {
     current_project: string;
     decide_ai_proposal: ApiError;
     decide_extraction_item: ApiError;
+    delete_discussion_session: ApiError;
     delete_model_secret: ApiError;
     detect_candidate_conflicts: ApiError;
     discard_coauthor_changeset: ApiError;
@@ -352,6 +353,7 @@ export type IpcRequests = {
     current_project: InputArgsCurrentProject;
     decide_ai_proposal: InputArgsDecideAiProposal;
     decide_extraction_item: InputArgsDecideExtractionItem;
+    delete_discussion_session: InputArgsDeleteDiscussionSession;
     delete_model_secret: InputArgsDeleteModelSecret;
     detect_candidate_conflicts: InputArgsDetectCandidateConflicts;
     discard_coauthor_changeset: InputArgsDiscardCoauthorChangeset;
@@ -811,6 +813,9 @@ export type InputArgsDecideAiProposal = {
 export type InputArgsDecideExtractionItem = {
     decision: InputExtractionItemStatus;
     target: InputExtractionItemTarget;
+};
+export type InputArgsDeleteDiscussionSession = {
+    scope: InputCoauthorScope;
 };
 export type InputArgsDeleteModelSecret = {
     profileId: string;
@@ -1655,6 +1660,7 @@ export type IpcResponses = {
     current_project: ProjectManifest | null;
     decide_ai_proposal: AiProposal;
     decide_extraction_item: ChapterExtractionItem;
+    delete_discussion_session: null;
     delete_model_secret: ModelProfile;
     detect_candidate_conflicts: KnowledgeConflict[];
     discard_coauthor_changeset: CoauthorChangeSet;

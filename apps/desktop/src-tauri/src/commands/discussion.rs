@@ -36,6 +36,16 @@ pub(crate) fn list_discussion_sessions(
 }
 
 #[tauri::command]
+pub(crate) fn delete_discussion_session(
+    state: tauri::State<'_, ProjectState>,
+    scope: novel_infrastructure::CoauthorScope,
+) -> Result<(), ApiError> {
+    state.manager.lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .delete_discussion_session(&scope).map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn create_discussion_session(
     state: tauri::State<'_, ProjectState>,
     title: String,

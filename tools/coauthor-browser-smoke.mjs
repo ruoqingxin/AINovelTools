@@ -16,7 +16,7 @@ const browser = await chromium.launch({ headless: true, channel: "chromium" });
 const errors = [];
 const reports = [];
 try {
-  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 960, height: 640 }, { width: 390, height: 844 }]) {
     const context = await browser.newContext({ viewport });
     const page = await context.newPage();
     page.on("pageerror", (error) => errors.push(error.message));
@@ -31,12 +31,16 @@ try {
           targetKey:null,targetRevision:null,narrativePosition:"金丹突破之夜 · 陆沉限知视角"};
         let state={document:doc,decisions:[{id:"d1",topic:"突破代价",content:"金丹之后的突破，以失去一段记忆为代价。",
           status:"CHOSEN",sourceMessageId:"m1",version:2}],runs:[]};
+        let deleted=false;
         let semanticStatus={settings:{version:0,profileId:null,fingerprint:"",kinds:[]},
           totalChunks:0,indexedChunks:0,pendingSourceUpdates:4};
+        const receipt="检索操作回执（程序记录；计数为当次返回页，不是相关条数或全库总数）：\\n"
+          +'- 关键词 "突破代价"（项目资料，offset=0）：实际返回 1 条。\\n'
+          +"未检索到不等于不存在；未形成有效查询、未授权或索引不完整均不能证明查全。";
         const messages=[
           {id:"m1",sessionId:"s1",role:"USER",content:"我想在金丹后面增加一个新境界，突破的代价改为失去记忆。"},
           {id:"m2",sessionId:"s1",role:"ASSISTANT",content:"《修炼体系》里已有炼气、筑基、金丹三个阶段，原本的突破代价是寿元。\\n\\n可以沿着已有体系扩展，在金丹后加一层“照魂境”。你已选择失忆代价，我会把它作为当前分支的方向，原设定暂不替换。"},
-          {id:"m-old",sessionId:"s1",role:"ASSISTANT",content:"早期试写仍使用寿元代价，保留作为历史对照。",contextVersion:"coauthor:historical-run-00"},
+          {id:"m-old",sessionId:"s1",role:"ASSISTANT",content:"早期试写仍使用寿元代价，保留作为历史对照。\\n\\n"+receipt,contextVersion:"coauthor:historical-run-00"},
           {id:"m3",sessionId:"s1",role:"USER",content:"先拿主角突破写一段。他忘了母亲的声音，压抑一点。"}
         ];
         const fact={key:"FACT:one",kind:"FACT",title:"陆沉 · 掌握 · 魂灯",revision:"fact1",
@@ -55,6 +59,9 @@ try {
           id:"historical-run-"+String(24-index).padStart(2,"0"),sessionId:"s1",userMessageId:"old-message-"+index,
           status:"COMPLETED",documentVersion:1,output:"历史试写 "+index,
           audit:index===24?[{kind:"initial_search",result:{hits:[fact],hasMore:false,pendingIndexUpdates:0,coverage:"仅关键词命中"}},
+            {kind:"initial_decisions"},{kind:"context_assembly"},
+            {kind:"tool",name:"search_sources",result:{error:"模拟检索失败"}},
+            {kind:"retrieval_summary",displayText:receipt,receipts:[]},
             {kind:"draft_proposal",baseDocument:structuredClone(doc),
             document:{...doc,content:"旧建议：突破消耗寿元。"}}]:[]
         }));
@@ -148,7 +155,7 @@ try {
         export async function invoke(command,args={}){
           window.__coauthorCalls??=[];window.__coauthorCalls.push(command);
           if(command==="current_project")return {projectId:"p1",name:"照夜行",root:"fixture",formatVersion:1};
-          if(command==="health_query")return {schemaVersion:65};
+          if(command==="health_query")return {schemaVersion:66};
           if(command==="get_coauthor_semantic_status")return structuredClone(semanticStatus);
           if(command==="save_coauthor_semantic_settings"){
             if(args.expectedVersion!==semanticStatus.settings.version)throw new Error("Semantic permission conflict");
@@ -167,7 +174,11 @@ try {
           }
           if(command==="bootstrap_status")return {};
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
-          if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
+          if(command==="list_discussion_sessions")return deleted?[]:[{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
+          if(command==="delete_discussion_session"){
+            if(args.scope.projectId!=="p1"||args.scope.sessionId!=="s1")throw new Error("Incorrect deletion scope");
+            deleted=true;return null;
+          }
           if(command==="get_coauthor_state")return lightState();
           if(command==="list_coauthor_branch_decisions")return {memories:[structuredClone(sourceDecision)],offset:args.offset,hasMore:false};
           if(command==="search_coauthor_decisions")return {memories:state.decisions.map(decision=>({
@@ -421,6 +432,8 @@ try {
     await page.goto(`${values.url}/discussion`);
     await page.getByLabel("讨论输入", { exact: true }).waitFor();
     await page.getByText("照夜行", { exact: true }).waitFor();
+    await page.getByRole("heading", { name: "讨论区", exact: true }).waitFor();
+    await page.getByRole("button", { name: "查证范围", exact: true }).waitFor();
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-discussion.png`), fullPage: true });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
     assert.equal(overflow, false, `Horizontal overflow at ${viewport.width}px`);
@@ -428,20 +441,34 @@ try {
       name === "get_coauthor_run" || name === "list_coauthor_runs")), false,
     "Opening the workspace must not load historical audits or the run directory");
     assert.equal(await page.getByLabel("允许改工作稿", { exact: true }).isChecked(), false);
+    assert.equal(await page.getByLabel("工作稿内容", { exact: true }).isVisible(), false);
     const historicalReply = page.locator(".coauthor-message").filter({ hasText: "早期试写仍使用寿元代价" });
-    await historicalReply.getByText("内容与运行状态待核实", { exact: true }).click();
-    await historicalReply.getByText("记录中没有可核实的内容复核结论。", { exact: true }).waitFor();
+    assert.equal(await historicalReply.locator(":scope > div").first().innerText(), "早期试写仍使用寿元代价，保留作为历史对照。");
+    assert.equal(await historicalReply.locator("details, footer").count(), 0);
+    assert.equal(await historicalReply.getByRole("button", { name: "核对这条回复", exact: true }).count(), 0);
+    await historicalReply.getByRole("button", { name: "查看本轮记录", exact: true }).click();
+    const sourcesPanel = page.getByRole("dialog", { name: "依据与运行记录" });
+    await sourcesPanel.getByText("记录中没有可核实的内容复核结论。", { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("run_coauthor")), false);
     assert.equal(await historicalReply.evaluate(el => el.scrollWidth > el.clientWidth), false);
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-reply-feedback.png`), fullPage: true });
-    await historicalReply.getByRole("button", { name: "核对这条回复", exact: true }).click();
+    await sourcesPanel.getByRole("button", { name: "核对这条回复", exact: true }).click();
     assert.ok((await page.getByLabel("讨论输入", { exact: true }).inputValue()).includes('"messageId": "m-old"'));
     assert.equal(await page.getByLabel("讨论输入", { exact: true }).evaluate(el => el === document.activeElement), true);
     assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("run_coauthor")), false);
     await page.getByLabel("讨论输入", { exact: true }).fill("");
-    await page.getByRole("button", { name: "依据与记录", exact: true }).click();
-    const sourcesPanel = page.getByRole("dialog", { name: "依据与运行记录" });
+    await historicalReply.getByRole("button", { name: "查看本轮记录", exact: true }).click();
     await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).waitFor();
+    assert.equal(await sourcesPanel.getByText(/实际返回 1 条/).count(), 0);
+    await sourcesPanel.getByRole("tab", { name: "检索回执", exact: true }).click();
+    await sourcesPanel.getByText(/实际返回 1 条/).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-retrieval-receipt.png`), fullPage: true });
+    await sourcesPanel.getByRole("tab", { name: "运行步骤", exact: true }).click();
+    await sourcesPanel.getByText("读取当前讨论的决定与约束", { exact: true }).waitFor();
+    await sourcesPanel.getByText("按关键词检索资料 · 未成功执行", { exact: true }).waitFor();
+    assert.equal(await sourcesPanel.getByText("initial_decisions", { exact: true }).count(), 0);
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-retrieval-steps.png`), fullPage: true });
+    await sourcesPanel.getByRole("tab", { name: "参考资料", exact: true }).click();
     await sourcesPanel.getByText("已审核事实记录 · v1", { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__coauthorCalls.some(name =>
       name === "read_coauthor_knowledge_evidence" || name === "list_coauthor_related_knowledge"
@@ -500,6 +527,7 @@ try {
     await sourcesPanel.getByRole("button", { name: "终点事实 · 苏瑶 · 守在 · 门外", exact: true }).click();
     await sourcesPanel.getByRole("heading", { name: "苏瑶 · 守在 · 门外", exact: true }).waitFor();
     assert.equal(await sourcesPanel.evaluate((el) => el.scrollWidth > el.clientWidth), false);
+    await sourcesPanel.getByRole("tab", { name: "本轮概览", exact: true }).click();
     await sourcesPanel.getByText("保留的回复", { exact: true }).click();
     await sourcesPanel.getByText("历史试写 24", { exact: true }).waitFor({ state: "visible" });
     await sourcesPanel.getByRole("button", { name: "更早运行", exact: true }).click();
@@ -552,7 +580,7 @@ try {
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await page.getByText("我保留前半段，只推敲最后一句。", { exact: true }).first().waitFor();
     await page.waitForTimeout(450);
-    if (viewport.width < 981) await page.getByRole("tab", { name: "工作稿" }).click();
+    await page.getByRole("tab", { name: "工作稿", exact: true }).click();
     const draft = page.getByLabel("工作稿内容", { exact: true });
     await draft.waitFor({ state: "visible" });
     await draft.fill(`${await draft.inputValue()}\n\n作者继续写下去。`);
@@ -867,6 +895,19 @@ try {
     await reviewInput.evaluate(el => el.scrollIntoView({ block: "center" }));
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-decision-review-composer.png`), fullPage: true });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.getByRole("button", { name: "删除当前讨论", exact: true }).click();
+    const deletion = page.getByRole("alertdialog", { name: "删除当前讨论", exact: true });
+    await deletion.getByText(/已正式采用的内容和其他分支不变/).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-delete-confirmation.png`), fullPage: true });
+    await deletion.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("delete_discussion_session")), false);
+    assert.equal(await reviewInput.inputValue(), reviewText);
+    await page.getByRole("button", { name: "删除当前讨论", exact: true }).click();
+    await deletion.getByRole("button", { name: "删除讨论", exact: true }).click();
+    await page.getByRole("heading", { name: "从一个想法开始", exact: true }).waitFor();
+    assert.equal(await page.getByLabel("当前讨论", { exact: true }).inputValue(), "");
+    assert.equal(await page.evaluate(() => localStorage.getItem("coauthor-input:p1:s1")), null);
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-deleted.png`), fullPage: true });
     reports.push({ viewport, overflow, panelOverflow, boxes, commands: await page.evaluate(() => window.__coauthorCalls) });
     await context.close();
   }

@@ -960,23 +960,26 @@ test("scripted search distinguishes valid zero hits, four candidates and an inva
   const receipts = [{ method: "KEYWORD", query: "星砂契约", status: "RETURNED_PAGE", returned: 0 },
     { method: "KEYWORD", query: "契约 交易 代价 术法", status: "RETURNED_PAGE", returned: 4 },
     { method: "KEYWORD", query: "砂", status: "INVALID_QUERY", returned: null }];
+  const displayText = '关键词 "契约 交易 代价 术法"（项目资料，offset=0）：实际返回 4 条\n'
+    + '关键词 "砂"（项目资料，offset=0）：未形成有效查询，不能记为 0 命中';
   const entry = { status: "COMPLETED", caseId: "absent-not-absolute",
-    output: '关键词 "契约 交易 代价 术法"（项目资料，offset=0）：实际返回 4 条\n'
-      + '关键词 "砂"（项目资料，offset=0）：未形成有效查询，不能记为 0 命中',
-    audit: [{ kind: "retrieval_summary", receipts }] };
+    output: "未找到直接设定，不能据此断言不存在。",
+    audit: [{ kind: "retrieval_summary", receipts, displayText }] };
   assert(assertLoopbackRegression(entry).scriptedNativeRegression);
-  assert.throws(() => assertLoopbackRegression({ ...entry, output: "两个搜索均0命中" }));
   assert.throws(() => assertLoopbackRegression({ ...entry,
-    audit: [{ kind: "retrieval_summary", receipts: [receipts[0], { ...receipts[1], returned: 0 }] }] }));
+    output: `${entry.output}\n\n检索操作回执（程序记录；…）` }));
   assert.throws(() => assertLoopbackRegression({ ...entry,
-    audit: [{ kind: "retrieval_summary", receipts: receipts.slice(0, 2) }] }));
+    audit: [{ kind: "retrieval_summary", displayText, receipts: [receipts[0], { ...receipts[1], returned: 0 }] }] }));
+  assert.throws(() => assertLoopbackRegression({ ...entry,
+    audit: [{ kind: "retrieval_summary", displayText, receipts: receipts.slice(0, 2) }] }));
   for (const invalid of [{ ...receipts[2], returned: 0 },
     { ...receipts[2], status: "RETURNED_PAGE", returned: 0 }]) {
     assert.throws(() => assertLoopbackRegression({ ...entry,
-      audit: [{ kind: "retrieval_summary", receipts: [...receipts.slice(0, 2), invalid] }] }));
+      audit: [{ kind: "retrieval_summary", displayText, receipts: [...receipts.slice(0, 2), invalid] }] }));
   }
   assert.throws(() => assertLoopbackRegression({ ...entry,
-    output: '关键词 "契约 交易 代价 术法"（项目资料，offset=0）：实际返回 4 条' }));
+    audit: [{ kind: "retrieval_summary", receipts,
+      displayText: '关键词 "契约 交易 代价 术法"（项目资料，offset=0）：实际返回 4 条' }] }));
 });
 
 test("scripted check retains malicious final wording only to test the native receipt boundary", () => {

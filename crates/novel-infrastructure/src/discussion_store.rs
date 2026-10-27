@@ -195,6 +195,16 @@ pub enum DiscussionStoreError {
 }
 
 impl Database {
+    pub(crate) fn migrate_discussion_session_deletion(&self) -> Result<(), DatabaseError> {
+        let tx = self.connection.unchecked_transaction()?;
+        tx.execute_batch(
+            "ALTER TABLE discussion_sessions ADD COLUMN deleted_at TEXT;
+             INSERT INTO schema_migrations (version, name) VALUES (66, 'discussion_session_deletion');",
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub(super) fn create_discussion_session(
         &self,
         session: &DiscussionSession,
@@ -222,7 +232,7 @@ impl Database {
     ) -> Result<Vec<DiscussionSession>, DatabaseError> {
         let mut statement = self.connection.prepare(
             "SELECT id, project_id, title, scope_kind, scope_id, scope_text, summary, created_at, updated_at
-             FROM discussion_sessions WHERE project_id = ?1
+             FROM discussion_sessions WHERE project_id = ?1 AND deleted_at IS NULL
              ORDER BY updated_at DESC, id DESC",
         )?;
         let rows = statement.query_map([project_id.to_string()], map_discussion_session)?;
@@ -237,7 +247,7 @@ impl Database {
         self.connection
             .query_row(
                 "SELECT id, project_id, title, scope_kind, scope_id, scope_text, summary, created_at, updated_at
-                 FROM discussion_sessions WHERE id = ?1",
+                 FROM discussion_sessions WHERE id = ?1 AND deleted_at IS NULL",
                 [id.to_string()],
                 map_discussion_session,
             )
@@ -970,7 +980,7 @@ fn insert_discussion_message(
     message: &DiscussionMessage,
 ) -> rusqlite::Result<()> {
     let exists: i64 = tx.query_row(
-        "SELECT count(*) FROM discussion_sessions WHERE id = ?1",
+        "SELECT count(*) FROM discussion_sessions WHERE id = ?1 AND deleted_at IS NULL",
         [message.session_id.to_string()],
         |row| row.get(0),
     )?;

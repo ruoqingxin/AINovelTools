@@ -55,7 +55,7 @@ use commands::coauthor::{
 };
 use commands::discussion::{
     ask_project_discussion, confirm_discussion_design, create_discussion_candidate,
-    create_discussion_session, dismiss_discussion_candidate, get_discussion_source,
+    create_discussion_session, delete_discussion_session, dismiss_discussion_candidate, get_discussion_source,
     get_discussion_workspace, list_author_settings, list_discussion_candidates,
     list_discussion_design_proposals, list_discussion_draft_revisions, list_discussion_messages,
     list_discussion_sessions, list_planning_discussion_sources, promote_discussion_candidate,
@@ -248,6 +248,7 @@ pub fn run() {
             assemble_context_with_project_knowledge,
             list_discussion_sessions,
             create_discussion_session,
+            delete_discussion_session,
             list_discussion_messages,
             list_discussion_candidates,
             create_discussion_candidate,

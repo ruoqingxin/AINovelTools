@@ -404,6 +404,8 @@ fn migration_failure_rolls_back_and_retry_keeps_author_text() {
     db.migrate_coauthor_branch_merges().unwrap();
     db.migrate_coauthor_branch_decisions().unwrap();
     db.migrate_coauthor_decision_consumers().unwrap();
+    db.connection.execute_batch("ALTER TABLE discussion_sessions DROP COLUMN deleted_at").unwrap();
+    db.migrate_discussion_session_deletion().unwrap();
     assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         db.coauthor_source(&f.key).unwrap().unwrap().content,

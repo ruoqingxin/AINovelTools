@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Check, ClipboardList, DatabaseZap, FileText, GitBranch, GitCompareArrows, History, ListChecks, MessageSquareText, Plus, RefreshCw, Save, Send, Square, X } from "lucide-react";
+import { BookOpen, Check, ClipboardList, DatabaseZap, FileText, GitBranch, GitCompareArrows, History, ListChecks, MessageSquareText, Plus, RefreshCw, Save, Send, Square, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "../lib/ipc-transport";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
-  applyCoauthorProposal, cancelCoauthorRun, correctCoauthorDecision, createDiscussionSession, errorMessage,
+  applyCoauthorProposal, cancelCoauthorRun, correctCoauthorDecision, createDiscussionSession, deleteDiscussionSession, errorMessage,
   forkCoauthorSession, getCoauthorState, getCoauthorRun, getCurrentProject, getProjectAiTaskOverrides,
   listCoauthorDocumentHistory, listDiscussionMessages, listDiscussionSessions, listModelProfiles,
   publishCoauthorDocument, readCoauthorSource, runCoauthor, saveCoauthorDocument,
@@ -24,8 +24,9 @@ import { CoauthorRunDirectory } from "./coauthor-run-directory";
 import { CoauthorKnowledge } from "./coauthor-knowledge";
 import { CoauthorSemanticPanel } from "./coauthor-semantic-panel";
 import { CoauthorBranchesPanel } from "./coauthor-branches-panel";
-import { CoauthorReplyFeedback, CoauthorRunFeedback } from "./coauthor-reply-feedback";
+import { CoauthorRunFeedback } from "./coauthor-reply-feedback";
 import { replyReviewRequest } from "./coauthor-reply-diagnostics";
+import { coauthorStepLabel, coauthorToolLabel, retrievalDisplay, splitLegacyRetrieval } from "./coauthor-run-presentation";
 import "./coauthor-workspace.css";
 
 const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
@@ -88,12 +89,12 @@ export function CoauthorView() {
   const available = sessions.data?.filter((entry) => entry.projectId === projectId) ?? [];
   const session = available.find((entry) => entry.id === selected) ?? (!selected ? available[0] : undefined);
   const wrongTarget = Boolean(target.get("targetProject") && target.get("targetProject") !== projectId);
-  function select(id: string) {
+  function select(id: string | null) {
     setSelected(id);
     const url = new URL(window.location.href);
     url.searchParams.delete("targetSession");
     url.searchParams.delete("targetProject");
-    url.hash = id;
+    url.hash = id ?? "";
     window.history.replaceState(null, "", url);
   }
   async function create() {
@@ -112,15 +113,25 @@ export function CoauthorView() {
   return <section className="coauthor-workspace">
     <header className="coauthor-heading">
       <h1>共创讨论</h1>
-      <select aria-label="当前讨论" value={session?.id ?? ""} onChange={(event) => select(event.target.value)}>
+      <label className="coauthor-session-picker">当前讨论<select aria-label="当前讨论" value={session?.id ?? ""} onChange={(event) => select(event.target.value)}>
         {!session && <option value="">选择讨论</option>}
         {available.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}
-      </select>
-      <button className="icon-command" type="button" title="新建讨论" aria-label="新建讨论" disabled={creating || !projectId} onClick={() => void create()}><Plus size={18} /></button>
+      </select></label>
+      <button className="secondary-action" type="button" title="创建独立讨论，不复制当前工作稿" disabled={creating || !projectId} onClick={() => void create()}><Plus size={16} />新建讨论</button>
     </header>
     {(error || sessions.error || project.error) && <p className="project-error" role="alert">{error ?? errorMessage(sessions.error ?? project.error)}</p>}
     {wrongTarget ? <p role="alert">讨论链接不属于当前项目，未读取或修改该讨论。</p>
       : session && projectId ? <CoauthorLoader key={`${projectId}:${session.id}`} scope={{ projectId, sessionId: session.id }}
+        sessionTitle={session.title} onDeleted={(warning) => {
+          const remaining = client.getQueryData<DiscussionSession[]>(["discussion-sessions"])?.filter((entry) => entry.id !== session.id) ?? [];
+          client.setQueryData(["discussion-sessions"], remaining);
+          client.removeQueries({ queryKey: ["discussion-messages", session.id] });
+          client.removeQueries({ predicate: (query) => query.queryKey.includes(projectId) && query.queryKey.includes(session.id) });
+          if (client.getQueryData<{ projectId: string }>(["current-project"])?.projectId === projectId) {
+            select(remaining.find((entry) => entry.projectId === projectId)?.id ?? null);
+            setError(warning ?? null);
+          }
+        }}
         onFork={(created) => {
           client.setQueryData<DiscussionSession[]>(["discussion-sessions"], (entries) => [created, ...(entries ?? [])]);
           select(created.id);
@@ -132,7 +143,9 @@ export function CoauthorView() {
   </section>;
 }
 
-function CoauthorLoader({ scope, onFork }: { scope: CoauthorScope; onFork: (session: DiscussionSession) => void }) {
+function CoauthorLoader({ scope, sessionTitle, onFork, onDeleted }: {
+  scope: CoauthorScope; sessionTitle: string; onFork: (session: DiscussionSession) => void; onDeleted: (warning?: string) => void;
+}) {
   const [state, setState] = useState<CoauthorState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -146,11 +159,11 @@ function CoauthorLoader({ scope, onFork }: { scope: CoauthorScope; onFork: (sess
   }, [scope.projectId, scope.sessionId, attempt]);
   if (error) return <p role="alert" className="project-error">{error}<button onClick={() => setAttempt((value) => value + 1)}>重试</button></p>;
   if (!state) return <p role="status">正在读取工作稿…</p>;
-  return <CoauthorSession scope={scope} initial={state} onFork={onFork} />;
+  return <CoauthorSession scope={scope} initial={state} sessionTitle={sessionTitle} onFork={onFork} onDeleted={onDeleted} />;
 }
 
-function CoauthorSession({ scope, initial, onFork }: {
-  scope: CoauthorScope; initial: CoauthorState; onFork: (session: DiscussionSession) => void;
+function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
+  scope: CoauthorScope; initial: CoauthorState; sessionTitle: string; onFork: (session: DiscussionSession) => void; onDeleted: (warning?: string) => void;
 }) {
   const client = useQueryClient();
   const confirm = useConfirmAction();
@@ -173,6 +186,8 @@ function CoauthorSession({ scope, initial, onFork }: {
   const [panel, setPanel] = useState<"sources" | "semantic" | "checks" | "decisions" | "history" | "proposal" | "publish" | "changes" | "branches" | null>(null);
   const [publication, setPublication] = useState<{ document: CoauthorDocument; before: string } | null>(null);
   const [runId, setRunId] = useState(initial.runs[0]?.id ?? "");
+  const [recordTab, setRecordTab] = useState<"overview" | "retrieval" | "sources" | "steps">("overview");
+  const [recordMessageId, setRecordMessageId] = useState<string | null>(null);
   const [history, setHistory] = useState<CoauthorDocument[]>([]);
   const [changeSetId, setChangeSetId] = useState<string | null>(null);
   const [older, setOlder] = useState<DiscussionMessage[]>([]);
@@ -219,6 +234,10 @@ function CoauthorSession({ scope, initial, onFork }: {
   const canApply = runVerified && run?.status === "COMPLETED" && proposal && state.runs[0]?.id === run.id
     && draft.document.version === proposal.baseDocument.version && sameDraft(draft.document, proposal.baseDocument);
   const visible = [...new Map([...older, ...(messages.data ?? [])].map((message) => [message.id, message])).values()];
+  const recordReply = visible.find((message) => message.id === recordMessageId)
+    ?? visible.find((message) => message.role === "ASSISTANT" && message.contextVersion === `coauthor:${runId}`);
+  const legacyReceipt = recordReply?.contextVersion?.startsWith("coauthor:") ? splitLegacyRetrieval(recordReply.content).receipt : null;
+  const receiptText = (run ? retrievalDisplay(run) : null) ?? legacyReceipt;
   const canSend = Boolean(profile?.hasSecret && preferences.isSuccess && overrides.isSuccess && messages.isSuccess
     && !busy && !draft.conflict && !draft.backup && input.trim() && [...input].length <= 20_000);
 
@@ -253,6 +272,7 @@ function CoauthorSession({ scope, initial, onFork }: {
     const next = inputRef.current.trim() ? `${inputRef.current}\n\n${request}` : request;
     if ([...next].length > 20_000) {
       setError("这条回复与当前输入合计超过 20000 字，未截断或覆盖。请在输入框粘贴需核对的原句并补充问题。");
+      setPanel(null); setTab("chat"); focusReview.current = true;
       return;
     }
     changeInput(next);
@@ -261,6 +281,30 @@ function CoauthorSession({ scope, initial, onFork }: {
     setSelection("");
     setPanel(null); setTab("chat"); focusReview.current = true;
     setNotice("已将指定回复带入输入框，尚未发送；本轮已关闭工作稿修改授权。");
+  }
+  function openRecords(message?: DiscussionMessage, id?: string) {
+    setRecordMessageId(message?.id ?? null);
+    setRunId(id ?? (message ? (message.contextVersion?.startsWith("coauthor:") ? message.contextVersion.slice(9) : "")
+      : runId || state.runs[0]?.id || ""));
+    setRecordTab("overview"); setSource(null); setPanel("sources");
+  }
+  async function removeDiscussion() {
+    if (activeRef.current || busyRef.current || draft.saving) return;
+    await act(async () => {
+      if (!await confirm({
+        title: "删除当前讨论",
+        message: `删除「${sessionTitle}」？讨论及工作稿将从列表移除，当前输入和本地备份会清除，不能在此恢复。已正式采用的内容和其他分支不变；历史记录仍保留用于来源追溯。`,
+        confirmLabel: "删除讨论",
+      })) return;
+      if (!mounted.current || activeRef.current) return;
+      await deleteDiscussionSession(scope);
+      let warning: string | undefined;
+      for (const key of [composerKey, `coauthor-draft:${scope.projectId}:${scope.sessionId}`]) {
+        try { localStorage.removeItem(key); }
+        catch { warning = "讨论已从列表移除，但本机输入或工作稿备份未能完全清除；历史来源记录仍保留。"; }
+      }
+      if (mounted.current) onDeleted(warning);
+    });
   }
   async function refresh() {
     const epoch = ++stateEpoch.current;
@@ -312,7 +356,7 @@ function CoauthorSession({ scope, initial, onFork }: {
         if (!mounted.current || activeRef.current !== started || payload.runId !== started || payload.sessionId !== scope.sessionId) return;
         acknowledge();
         if (payload.kind === "text") setStream((value) => value + payload.content);
-        else setProgress(payload.kind === "tool" ? `正在查证 / ${payload.content}` : payload.content);
+        else setProgress(payload.kind === "tool" ? `正在${coauthorToolLabel(payload.content)}` : payload.content);
       });
       subscriptions.current.add(unlisten);
       if (!mounted.current || activeRef.current !== started) return;
@@ -425,20 +469,21 @@ function CoauthorSession({ scope, initial, onFork }: {
   }
   return <div className="coauthor-session">
     <nav className="coauthor-toolbar" aria-label="工作区">
-      <div className="coauthor-tabs" role="tablist">
-        <button role="tab" aria-selected={tab === "chat"} onClick={() => setTab("chat")}><MessageSquareText size={15} />讨论</button>
-        <button role="tab" aria-selected={tab === "draft"} onClick={() => setTab("draft")}><FileText size={15} />工作稿</button>
+      <div className="coauthor-tabs" role="tablist" aria-label="共创页签">
+        <button id="coauthor-chat-tab" role="tab" aria-controls="coauthor-chat-panel" aria-selected={tab === "chat"} onClick={() => setTab("chat")}><MessageSquareText size={15} />讨论</button>
+        <button id="coauthor-draft-tab" role="tab" aria-controls="coauthor-draft-panel" aria-selected={tab === "draft"} onClick={() => setTab("draft")}><FileText size={15} />工作稿</button>
       </div>
-      <div className="coauthor-tools">
-        <button onClick={() => setPanel("sources")}><BookOpen size={15} />依据</button>
-        <button onClick={() => setPanel("semantic")}><DatabaseZap size={15} />语义索引</button>
-        <button className="icon-command" title="查证范围" aria-label="查证范围" onClick={() => setPanel("checks")}><ListChecks size={17} /></button>
-        <button onClick={() => setPanel("decisions")}>决定 <span>{state.decisions.length}</span></button>
-        <button onClick={() => { setChangeSetId(null); setPanel("changes"); }}><ClipboardList size={15} />关联变更</button>
-        <button className="icon-command" title="工作稿版本" aria-label="工作稿版本" onClick={() => void showHistory()} disabled={busy}><History size={17} /></button>
-        <button className="icon-command" title="另开分支" aria-label="另开分支" onClick={() => void fork()} disabled={busy || Boolean(active) || draft.conflict}><GitBranch size={17} /></button>
-        <button className="icon-command" title="分支比较与合并" aria-label="分支比较与合并" onClick={() => setPanel("branches")}><GitCompareArrows size={17} /></button>
+      <div className="coauthor-tools" role="group" aria-label="讨论工具">
+        <small className="coauthor-group-label">讨论工具</small>
+        <button title="查看每轮的检索回执、运行步骤与问题记录" onClick={() => openRecords()}><BookOpen size={15} />依据与运行记录</button>
+        <button title="设置语义检索模型、索引及外发授权" onClick={() => setPanel("semantic")}><DatabaseZap size={15} />语义索引</button>
+        <button title="查看查证清单、覆盖范围与进度" onClick={() => setPanel("checks")}><ListChecks size={15} />查证范围</button>
+        <button title="查看和纠正当前讨论的决定" onClick={() => setPanel("decisions")}>决定 <span>{state.decisions.length}</span></button>
+        <button title="准备、核对和采用涉及正式内容的关联修改" onClick={() => { setChangeSetId(null); setPanel("changes"); }}><ClipboardList size={15} />关联变更</button>
       </div>
+      <button className="coauthor-delete" title={active ? "请先停止生成并等待运行结束" : "删除当前讨论，已采用的正式内容不变"}
+        disabled={busy || Boolean(active) || draft.saving || transitioning || state.runs.some((entry) => entry.status === "RUNNING")}
+        onClick={() => void removeDiscussion()}><Trash2 size={15} />删除当前讨论</button>
     </nav>
     {(error || draft.error || messages.error || profiles.error || preferences.error || overrides.error) && <p role="alert" className="project-error">
       {error ?? draft.error ?? errorMessage(messages.error ?? profiles.error ?? preferences.error ?? overrides.error)}</p>}
@@ -461,11 +506,12 @@ function CoauthorSession({ scope, initial, onFork }: {
       })}>读取此版本</button></>}
     </div>}
     <div className="coauthor-columns" data-tab={tab}>
-      <section className="coauthor-chat" aria-label="共创对话">
+      <section id="coauthor-chat-panel" className="coauthor-chat" role="tabpanel" aria-label="讨论" hidden={tab !== "chat"}>
+        <header className="coauthor-area-heading"><h2><MessageSquareText size={17} />讨论区</h2></header>
         <p className="coauthor-reliability-note"><strong>AI 内容仍需核对</strong> 条件范围、新旧规则与前文承接仍可能出错；生成完成不代表内容可靠。</p>
         {state.runs[0] && state.runs[0].status !== "COMPLETED" && state.runs[0].id !== active && <div className="coauthor-incomplete" role="status">
           <span>最近一轮：{statuses[state.runs[0].status] ?? "状态待核实"}，不代表已完成你的要求。</span>
-          <button type="button" onClick={() => { setRunId(state.runs[0].id); setPanel("sources"); }}>查看原因与保留结果</button>
+          <button type="button" onClick={() => openRecords(undefined, state.runs[0].id)}>查看原因与保留结果</button>
         </div>}
         <div className="coauthor-thread" ref={thread}>
           {visible.length >= 100 && moreHistory && <button disabled={busy} onClick={() => void act(async () => {
@@ -474,22 +520,17 @@ function CoauthorSession({ scope, initial, onFork }: {
           })}>更早的讨论</button>}
           {messages.isPending && <p role="status">正在读取讨论记录…</p>}
           {messages.isSuccess && !visible.length && !active && <p className="coauthor-placeholder">今天想推敲哪一部分？</p>}
-          {visible.map((message) => <article key={message.id} className={`coauthor-message ${message.role === "USER" ? "is-author" : ""}`}>
+          {visible.map((message) => {
+            const display = message.role === "ASSISTANT" && message.contextVersion?.startsWith("coauthor:")
+              ? splitLegacyRetrieval(message.content) : { reply: message.content, receipt: null };
+            return <article key={message.id} className={`coauthor-message ${message.role === "USER" ? "is-author" : ""}`}>
             <header><strong>{message.role === "USER" ? "作者" : "共创伙伴"}</strong>
-              {message.contextVersion?.startsWith("coauthor:") && <button onClick={() => {
-                setRunId(message.contextVersion!.slice(9)); setPanel("sources");
-              }}><BookOpen size={13} />依据与记录</button>}
-              {message.contextVersion?.startsWith("coauthor:") && <small>{statuses[state.runs.find((entry) =>
-                entry.id === message.contextVersion!.slice(9))?.status
-                  ?? (run?.id === message.contextVersion.slice(9) ? run.status : "")]}</small>}
+              {message.role === "ASSISTANT" && <button onClick={() => openRecords(message)}
+                title="查看这条回复的依据与运行记录、问题说明及核对操作"><BookOpen size={13} />查看本轮记录</button>}
             </header>
-            <div>{message.content}</div>
-            {message.role === "ASSISTANT" && <CoauthorReplyFeedback scope={scope}
-              runId={message.contextVersion?.startsWith("coauthor:") ? message.contextVersion.slice(9) : undefined}
-              status={state.runs.find((entry) => `coauthor:${entry.id}` === message.contextVersion)?.status}
-              disabled={Boolean(active) || busy}
-              onReview={() => reviewReply(message)} />}
-          </article>)}
+            <div>{display.reply}</div>
+          </article>;
+          })}
           {(active || stream) && <article className="coauthor-message"><header><strong>共创伙伴</strong><small>{active ? progress : "未完成的输出"}</small></header><div>{stream}</div></article>}
         </div>
         <form className="coauthor-composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
@@ -500,39 +541,46 @@ function CoauthorSession({ scope, initial, onFork }: {
           <div className="coauthor-composer-actions">
             <label><input type="checkbox" checked={allowEdits} onChange={(event) => setAllowEdits(event.target.checked)} />允许改工作稿</label>
             <small>{profile?.name ?? "未选择模型"}</small>
-            {active && <button type="button" className="icon-command" title="停止生成" aria-label="停止生成" onClick={() => void stop().catch((cause) => setError(errorMessage(cause)))}><Square size={16} /></button>}
+            {active && <button type="button" className="secondary-action" title="停止生成" aria-label="停止生成" onClick={() => void stop().catch((cause) => setError(errorMessage(cause)))}><Square size={16} />停止生成</button>}
             <button type="submit" className="primary-action" disabled={!canSend} title={active ? "停止旧任务并发送补充指令" : "发送"}
-              aria-label={active ? "发送补充指令" : "发送"}><Send size={16} /></button>
+              aria-label={active ? "发送补充指令" : "发送"}><Send size={16} />{active ? "发送补充" : "发送"}</button>
           </div>
           {input && <button className="coauthor-clear-input" type="button" onClick={() => changeInput("")}>清空输入</button>}
           {[...input].length > 20_000 && <p role="alert" className="project-error">本轮输入超过 20000 字，请分轮讨论；原文未被截断。</p>}
         </form>
       </section>
-      <section className="coauthor-draft" aria-label="当前工作稿">
+      <section id="coauthor-draft-panel" className="coauthor-draft" role="tabpanel" aria-label="工作稿" hidden={tab !== "draft"}>
+        <header className="coauthor-area-heading"><h2><FileText size={17} />工作稿区</h2><small>独立保存，正式采用需确认</small></header>
+        <div className="coauthor-tools coauthor-draft-tools" role="group" aria-label="工作稿工具">
+          <button title="查看或恢复工作稿的历史版本" onClick={() => void showHistory()} disabled={busy}><History size={15} />工作稿版本</button>
+          <button title="复制当前工作稿和讨论决定，尝试另一方向" onClick={() => void fork()} disabled={busy || Boolean(active) || draft.conflict}><GitBranch size={15} />另开分支</button>
+          <button onClick={() => setPanel("branches")}><GitCompareArrows size={15} />分支比较与合并</button>
+        </div>
         <div className="coauthor-draft-toolbar">
-          <select aria-label="稿件类型" value={draft.document.kind} onChange={(event) => draft.change({
+          <label>稿件类型 <select aria-label="稿件类型" value={draft.document.kind} onChange={(event) => draft.change({
             kind: event.target.value as CoauthorDocument["kind"], targetKey: null, targetRevision: null,
-          })}>{Object.entries(kinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+          })}>{Object.entries(kinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <small>{draft.saving ? "保存中…" : draft.dirty ? "待保存" : `已保存 v${draft.document.version}`}</small>
-          <button className="icon-command" title="保存工作稿" aria-label="保存工作稿" disabled={draft.saving || busy || draft.conflict}
-            onClick={() => void act(async () => { await draft.save(); })}><Save size={16} /></button>
-          <button className="secondary-action" disabled={busy || Boolean(active) || draft.conflict || Boolean(draft.backup) || !draft.document.content.trim()
+          <button className="secondary-action" title="仅保存工作稿，不改变正式内容" aria-label="保存工作稿" disabled={draft.saving || busy || draft.conflict}
+            onClick={() => void act(async () => { await draft.save(); })}><Save size={16} />保存工作稿</button>
+          <button className="secondary-action" title="预览并确认写入正式内容" disabled={busy || Boolean(active) || draft.conflict || Boolean(draft.backup) || !draft.document.content.trim()
             || Boolean(draft.document.targetKey && draft.document.kind !== "SETTING")} onClick={() => void publish()}><Check size={15} />正式采用</button>
         </div>
-        <input className="coauthor-title" aria-label="稿件标题" maxLength={200} value={draft.document.title} onChange={(event) => draft.change({ title: event.target.value })} />
-        <input className="coauthor-position" aria-label="叙事位置与视角" placeholder="叙事位置 / 视角" value={draft.document.narrativePosition}
-          onChange={(event) => draft.change({ narrativePosition: event.target.value })} />
+        <label className="coauthor-field">稿件标题<input className="coauthor-title" aria-label="稿件标题" maxLength={200} value={draft.document.title} onChange={(event) => draft.change({ title: event.target.value })} /></label>
+        <label className="coauthor-field">叙事位置与视角<input className="coauthor-position" aria-label="叙事位置与视角" placeholder="尚未填写" value={draft.document.narrativePosition}
+          onChange={(event) => draft.change({ narrativePosition: event.target.value })} /></label>
         {draft.document.targetKey && <div className="coauthor-target"><span>关联：{draft.document.targetKey}</span>
           <button title="解除关联，下一次采用将创建新条目" onClick={() => draft.change({ targetKey: null, targetRevision: null })}>解除关联</button></div>}
         {draft.document.targetKey && draft.document.kind !== "SETTING" && <p className="coauthor-notice">已关联的正文与大纲暂不支持在此覆盖；正式修订请进入对应编辑器。</p>}
-        <textarea ref={editor} className="coauthor-manuscript" aria-label="工作稿内容" value={draft.document.content}
+        <label className="coauthor-field" htmlFor="coauthor-manuscript">工作稿内容</label>
+        <textarea id="coauthor-manuscript" ref={editor} className="coauthor-manuscript" aria-label="工作稿内容" placeholder="暂无工作稿内容" value={draft.document.content}
           onChange={(event) => { draft.change({ content: event.target.value }); setSelection(""); }}
           onSelect={(event) => {
             const el = event.currentTarget;
             if (el.selectionEnd > el.selectionStart) setSelection(el.value.slice(el.selectionStart, el.selectionEnd));
           }} />
         <footer><small>{[...draft.document.content].length} 字 · 工作稿</small>
-          {runId && <button onClick={() => setPanel("proposal")}>{proposal ? "查看改稿差异" : "查看运行结果"}</button>}</footer>
+          {runId && <button onClick={() => setPanel("proposal")}>{proposal ? "查看改稿差异" : "查看改稿建议"}</button>}</footer>
       </section>
     </div>
     <WorkspacePanel open={panel !== null} title={panel === "branches" ? "分支比较与合并" : panel === "semantic" ? "语义索引与外发授权" : panel === "checks" ? "查证范围与进度" : panel === "changes" ? "关联变更与影响" : panel === "sources" ? "依据与运行记录" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : panel === "publish" ? "正式采用预览" : "改稿差异"}
@@ -562,13 +610,33 @@ function CoauthorSession({ scope, initial, onFork }: {
         }} />}
       {panel === "sources" && <>
         <CoauthorRunDirectory key={`${scope.projectId}:${scope.sessionId}`} scope={scope} selected={runId}
-          onSelect={(id) => { setRunId(id); setSource(null); }} />
-        {run && <><p>{statuses[run.status]} · 基础稿件 v{run.documentVersion}</p><CoauthorRunFeedback run={run} /></>}
-        {run?.output && <details><summary>{run.status === "COMPLETED" ? "保留的回复" : "保留的回复（未完成）"}</summary><pre>{run.output}</pre></details>}
+          onSelect={(id) => { setRunId(id); setRecordMessageId(null); setRecordTab("overview"); setSource(null); }} />
+        {run && <p className="coauthor-run-status">{statuses[run.status]} · 基础稿件 v{run.documentVersion}</p>}
+        <div className="coauthor-record-tabs" role="tablist" aria-label="运行记录分类">
+          {([["overview", "本轮概览"], ["retrieval", "检索回执"], ["sources", "参考资料"], ["steps", "运行步骤"]] as const).map(([value, label]) =>
+            <button key={value} id={`coauthor-record-tab-${value}`} role="tab" aria-selected={recordTab === value}
+              aria-controls="coauthor-record-content" onClick={() => setRecordTab(value)}>{label}</button>)}
+        </div>
+        <section id="coauthor-record-content" className="coauthor-record-content" role="tabpanel" aria-labelledby={`coauthor-record-tab-${recordTab}`}>
+        {recordTab === "overview" && <>
+          {run && <CoauthorRunFeedback run={run} />}
+          {!runId && recordReply && <p>此回复没有关联的运行记录，无法核实是否复核过；内容仍需对照原文确认。</p>}
+          {(run?.output || recordReply) && <details><summary>{run && run.status !== "COMPLETED" ? "保留的回复（未完成）" : "保留的回复"}</summary>
+            <pre>{splitLegacyRetrieval(run?.output || recordReply!.content).reply}</pre></details>}
+          {recordReply && <button type="button" disabled={Boolean(active) || busy}
+            title={active || busy ? "请先等待当前操作结束，或停止生成" : "将这条回复带入输入框，尚不发送"}
+            onClick={() => reviewReply(recordReply)}><MessageSquareText size={14} />核对这条回复</button>}
+          {proposal && <button disabled={!runVerified} onClick={() => setPanel("proposal")}>查看改稿差异</button>}
+        </>}
+        {recordTab === "retrieval" && (receiptText
+          ? <section className="coauthor-retrieval-record" aria-label="检索操作回执"><pre>{receiptText}</pre></section>
+          : <p>没有可展示的检索回执，不能据此认定未检索、没有命中或已经查全。</p>)}
+        {recordTab === "steps" && (run ? <ol className="coauthor-run-steps">{run.audit.map((raw, index) => <li key={index}>{coauthorStepLabel(raw)}</li>)}</ol>
+          : <p>没有可核实的运行步骤。</p>)}
         {run?.status === "RUNNING" && <button disabled={busy || !runVerified} onClick={() => void act(async () => {
           await cancelCoauthorRun({ scope, runId: run.id }); await refresh();
         })}>停止此运行</button>}
-        {run?.audit.map((raw, index) => {
+        {recordTab === "sources" && run?.audit.map((raw, index) => {
           const step = raw as { kind?: string; name?: string; result?: { coverage?: string; error?: string; sentChars?: number } };
           if (step.kind !== "initial_semantic_search" && step.name !== "search_semantic_sources") return null;
           return <details key={`semantic:${index}`}><summary>语义检索覆盖 · {index + 1}</summary>
@@ -577,7 +645,8 @@ function CoauthorSession({ scope, initial, onFork }: {
             {step.result?.sentChars !== undefined && <small>查询外发 {step.result.sentChars} 字符</small>}
           </details>;
         })}
-        {sourcesFor(run).map((hit) => <article className="coauthor-source" key={`${hit.key}:${hit.revision}`}>
+        {recordTab === "sources" && !sourcesFor(run).length && <p>本轮没有保留可展示的参考资料，不代表没有相关内容。</p>}
+        {recordTab === "sources" && sourcesFor(run).map((hit) => <article className="coauthor-source" key={`${hit.key}:${hit.revision}`}>
           <strong>{hit.title}</strong><small>{hit.kind} · {hit.semantic ? "语义相似候选 · " : ""}{hit.read ? (hit.knowledgeContext ? "已读取记录" : "已读取原文片段") : "检索命中"} · {hit.sent ? "已随请求发送" : "尚未随请求发送"}</small><p>{hit.content}</p>
           {hit.semantic && <small>来源文本字符 {hit.offset} 至 {hit.offset + [...hit.content].length}，不等于正文块内范围。</small>}
           <DecisionContext context={hit.decisionContext} />
@@ -588,9 +657,8 @@ function CoauthorSession({ scope, initial, onFork }: {
             setSource(await readCoauthorSource({ scope, key: hit.key, revision: hit.revision, offset: hit.offset }));
           })}>查看匹配段</button>}
         </article>)}
-        {!runId && <p>选择一份运行记录。</p>}
-        {proposal && <button disabled={!runVerified} onClick={() => setPanel("proposal")}>查看改稿差异</button>}
-        {source && <section className="coauthor-source-text"><h3>{source.title}</h3><small>修订 {source.revision}</small><pre>{source.content}</pre>
+        {!runId && !recordReply && <p>当前没有选中的运行记录。</p>}
+        {recordTab === "sources" && source && <section className="coauthor-source-text"><h3>{source.title}</h3><small>修订 {source.revision}</small><pre>{source.content}</pre>
           <DecisionContext context={source.decisionContext} />
           <CoauthorKnowledge key={`${scope.projectId}:${scope.sessionId}:${source.key}:${source.revision}`} scope={scope} source={source}
             onRead={(key, revision) => void act(async () => { setSource(await readCoauthorSource({ scope, key, revision, offset: 0 })); })} />
@@ -598,16 +666,11 @@ function CoauthorSession({ scope, initial, onFork }: {
             const next = await readCoauthorSource({ scope, key: source.key, revision: source.revision, offset: source.offset + [...source.content].length });
             if (mounted.current) setSource(next);
           })}>下一段</button>}</section>}
-        {run && <details><summary>运行步骤</summary><ol>{run.audit.map((raw, index) => {
-          const step = raw as { kind?: string; name?: string; round?: number; inputChars?: number; message?: string };
-          return <li key={index}>{step.kind === "model_request" ? `模型请求 ${step.round} · 输入估算 ${step.inputChars} 字符`
-            : step.kind === "tool" ? `工具：${step.name}` : step.kind === "initial_search" ? "自动检索候选" : step.kind === "initial_semantic_search" ? "语义召回（以当次授权与索引覆盖为准）"
-              : step.kind === "draft_proposal" ? "准备工作稿修改，未正式提交" : step.message ?? step.kind}</li>;
-        })}</ol></details>}
+        </section>
       </>}
       {(panel === "sources" || panel === "proposal") && runId && <>
         {runQuery.isPending && <p role="status">正在读取本次运行记录…</p>}
-        {runQuery.error && <p role="alert" className="project-error">运行记录无法核实：{errorMessage(runQuery.error)}</p>}
+        {runQuery.error && <p role="alert" className="project-error">运行记录无法核实：{errorMessage(runQuery.error)}。不能据此认定回答没有问题。</p>}
         {run && !runVerified && <p role="status">以下为上次读取的运行记录，当前状态尚未核实。</p>}
         <button type="button" className="icon-command" title="刷新运行记录" aria-label="刷新运行记录"
           disabled={runQuery.isFetching} onClick={() => void runQuery.refetch()}><RefreshCw size={16} /></button>

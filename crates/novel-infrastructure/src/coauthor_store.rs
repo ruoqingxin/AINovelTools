@@ -29,6 +29,8 @@ pub use branches::*;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod deletion_tests;
+#[cfg(test)]
 mod changes_tests;
 #[cfg(test)]
 mod evaluation_tests;
@@ -138,6 +140,27 @@ pub(crate) fn encode<T: Serialize>(value: &T) -> Result<String, CoauthorError> {
 }
 
 impl ProjectManager {
+    pub fn delete_discussion_session(&mut self, scope: &CoauthorScope) -> Result<(), CoauthorError> {
+        let db = &self.current.as_ref().ok_or(CoauthorError::WrongProject)?.database;
+        let tx = db.connection.unchecked_transaction()?;
+        self.validate_coauthor_scope(scope)?;
+        let running: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM coauthor_runs WHERE session_id=?1 AND status='RUNNING')",
+            [scope.session_id.to_string()], |row| row.get(0),
+        )?;
+        if running {
+            return Err(CoauthorError::Invalid("此讨论仍在生成，请停止并等待运行结束后再删除。".into()));
+        }
+        // Keep immutable provenance and branch snapshots; deleting a discussion must not undo publication.
+        tx.execute(
+            "UPDATE discussion_sessions SET deleted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id=?1 AND project_id=?2 AND deleted_at IS NULL",
+            rusqlite::params![scope.session_id.to_string(), scope.project_id.to_string()],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn validate_coauthor_scope(&self, scope: &CoauthorScope) -> Result<(), CoauthorError> {
         let project = self.current.as_ref().ok_or(CoauthorError::WrongProject)?;
         if project.manifest.project_id != scope.project_id {

@@ -167,7 +167,7 @@ fn migration_65_backfills_exact_receipts_and_unknown_legacy_coverage_atomically_
         .query_map([],|row|row.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
     f.db().connection.execute_batch(
         "DROP TABLE coauthor_decision_consumers; DROP TABLE coauthor_changeset_dependency_coverage;
-         DELETE FROM schema_migrations WHERE version=65;
+         DELETE FROM schema_migrations WHERE version>=65;
          CREATE TRIGGER fail65 BEFORE INSERT ON schema_migrations WHEN NEW.version=65
          BEGIN SELECT RAISE(ABORT,'late migration failure'); END;",
     ).unwrap();
@@ -178,6 +178,8 @@ fn migration_65_backfills_exact_receipts_and_unknown_legacy_coverage_atomically_
         [],|row|row.get::<_,i64>(0)).unwrap(),0);
     f.db().connection.execute_batch("DROP TRIGGER fail65").unwrap();
     f.db().migrate_coauthor_decision_consumers().unwrap();
+    f.db().connection.execute_batch("ALTER TABLE discussion_sessions DROP COLUMN deleted_at").unwrap();
+    f.db().migrate_discussion_session_deletion().unwrap();
     assert_eq!(f.db().health().unwrap().schema_version,CURRENT_SCHEMA_VERSION);
     assert_eq!(f.page(false,0).unknown_change_sets,1);
     assert_eq!(f.page(false,0).entries.len(),2);

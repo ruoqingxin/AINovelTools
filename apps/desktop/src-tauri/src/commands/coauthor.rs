@@ -2122,9 +2122,9 @@ pub(crate) async fn run_coauthor(
         output.push_str("\n\n");
         output.push_str(&notice);
     }
-    if has_checks || retrieval_receipts.len() > 2 {
-        output.push_str(&runtime::search_summary(&retrieval_receipts));
-        audit.push(json!({"kind":"retrieval_summary","receipts":retrieval_receipts}));
+    if !retrieval_receipts.is_empty() {
+        audit.push(json!({"kind":"retrieval_summary",
+            "displayText":runtime::search_summary(&retrieval_receipts),"receipts":retrieval_receipts}));
     }
     manager.finish_coauthor_run(&input.scope, input.run_id, status, &output, &audit)?;
     Ok(CoauthorResult {

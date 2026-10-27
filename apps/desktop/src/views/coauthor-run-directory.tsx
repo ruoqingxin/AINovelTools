@@ -19,7 +19,7 @@ export function CoauthorRunDirectory({ scope, selected, onSelect }: {
   });
   return <section className="coauthor-run-directory" aria-label="运行目录">
     <div className="coauthor-run-picker">
-      <select aria-label="查看运行" value={selected} disabled={!page.data || page.isFetching || page.isError}
+      <label className="coauthor-run-label">讨论轮次<select aria-label="查看运行" value={selected} disabled={!page.data || page.isFetching || page.isError}
         onChange={(event) => onSelect(event.target.value)}>
         <option value="">选择运行</option>
         {selected && !page.data?.runs.some((run) => run.id === selected)
@@ -27,7 +27,7 @@ export function CoauthorRunDirectory({ scope, selected, onSelect }: {
         {page.data?.runs.map((run) => <option key={run.id} value={run.id}>
           {statuses[run.status] ?? run.status} · {run.id.slice(0, 8)} · 稿件 v{run.documentVersion}
         </option>)}
-      </select>
+      </select></label>
       <button type="button" className="icon-command" title="刷新运行目录" aria-label="刷新运行目录"
         disabled={page.isFetching} onClick={() => void page.refetch()}><RefreshCw size={16} /></button>
     </div>

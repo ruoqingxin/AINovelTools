@@ -65,7 +65,7 @@ impl ProjectManager {
                 UNION ALL
                 SELECT 'DISCUSSION_DESIGN', s.id, s.title, COUNT(*), 0, MAX(p.created_at)
                 FROM discussion_design_proposals p JOIN discussion_sessions s ON s.id=p.session_id
-                WHERE s.project_id=?1 AND p.status='PENDING'
+                WHERE s.project_id=?1 AND s.deleted_at IS NULL AND p.status='PENDING'
                 GROUP BY s.id
                 UNION ALL
                 SELECT 'RECOVERY', n.id, n.title, COUNT(*), 0, MAX(r.created_at)

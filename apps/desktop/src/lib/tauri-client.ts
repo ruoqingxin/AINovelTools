@@ -102,7 +102,11 @@ export function listDiscussionSessions() {
 }
 
 export function createDiscussionSession(input: IpcRequests["create_discussion_session"]) {
-  return invoke("create_discussion_session", input);
+    return invoke("create_discussion_session", input);
+}
+
+export function deleteDiscussionSession(scope: CoauthorScope) {
+  return invoke("delete_discussion_session", { scope });
 }
 
 export function listDiscussionMessages(sessionId: string, limit = 100, beforeMessageId?: string) {
