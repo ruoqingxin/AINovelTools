@@ -1584,7 +1584,7 @@ pub(crate) async fn run_coauthor(
         if reviewing {
             audit.push(json!({"kind":"content_review_input","attempt":review_count,
                 "packet":serde_json::from_str::<Value>(request_messages[1]["content"].as_str().unwrap_or("")).ok(),
-                "sameProfile":true,"toolsCanWrite":false,"outputTokenLimit":max_output_tokens.min(1024)}));
+                "sameProfile":true,"toolsCanWrite":false,"outputTokenLimit":max_output_tokens.min(2048)}));
         }
         let usage_id = {
             let mut manager = state
@@ -1645,7 +1645,7 @@ pub(crate) async fn run_coauthor(
         }
         let request_options = if reviewing {
             novel_infrastructure::GenerationOptions {
-                temperature: Some(0.0), max_output_tokens: Some(max_output_tokens.min(1024)),
+                temperature: Some(0.0), max_output_tokens: Some(max_output_tokens.min(2048)),
             }
         } else { options };
         let result = state
@@ -1702,8 +1702,12 @@ pub(crate) async fn run_coauthor(
                 if let Some(candidate) = pending_review.take() {
                     match candidate.verdict(&turn) {
                         Ok(verdict) => {
+                            let model_verdict = verdict;
+                            let verdict = candidate.effective_verdict(&model_verdict);
                             audit.push(json!({"kind":"content_review","attempt":review_count,
-                                "result":verdict,"displayed":false,"judgmentVerified":false}));
+                                "modelResult":model_verdict,"result":verdict,
+                                "nativeOverride":model_verdict.decision != verdict.decision,
+                                "displayed":false,"judgmentVerified":false}));
                             match verdict.decision {
                                 review::Decision::Pass => {
                                     if cancelled.load(Ordering::Relaxed) { status = "CANCELLED"; break; }
@@ -1828,12 +1832,33 @@ pub(crate) async fn run_coauthor(
                         })();
                         match result {
                             Ok(content) => {
-                                let args: reply::Reply = arguments(&call)?;
+                                let mut args: reply::Reply = arguments(&call)?;
                                 pending_review = review::Pending::new(content.clone(), &args, &input.message,
                                     required_reply_mode, content_revision_used, &messages, &seen);
+                                if content_revision_used
+                                    && let Some((repaired, patch)) = pending_review.as_ref()
+                                        .and_then(|candidate| candidate.local_repair(&args))
+                                {
+                                    let repaired_args = args.with_content(repaired);
+                                    let previous = recent.iter()
+                                        .filter(|message| message.role == novel_infrastructure::DiscussionMessageRole::Assistant)
+                                        .map(|message| message.content.as_str()).collect::<Vec<_>>();
+                                    match reply::validate(&repaired_args, &input.message, &messages, &seen, &previous) {
+                                        Ok(checked) => {
+                                            args = repaired_args;
+                                            pending_review = review::Pending::new(checked.clone(), &args, &input.message,
+                                                required_reply_mode, true, &messages, &seen);
+                                            audit.push(json!({"kind":"content_local_repair","patch":patch,
+                                                "originalCandidate":content,"repairedCandidate":checked,
+                                                "hardValidationPassed":true,"displayed":false,"formalCommit":false}));
+                                        }
+                                        Err(error) => audit.push(json!({"kind":"content_local_repair_rejected",
+                                            "reason":error.to_string(),"displayed":false})),
+                                    }
+                                }
                                 if let Some(candidate) = &pending_review {
                                     review_count += 1;
-                                    audit.push(json!({"kind":"reply_candidate","content":content,
+                                    audit.push(json!({"kind":"reply_candidate","content":candidate.content,
                                         "riskReasons":candidate.reasons,"displayed":false,"reviewAttempt":review_count}));
                                     json!({"delivered":false,"reviewPending":true,"formalCommit":false})
                                 } else {

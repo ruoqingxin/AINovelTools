@@ -1,0 +1,21 @@
+{
+  "version": "coauthor-v30-local-counterexamples",
+  "provenance": "Minimized exact excerpts of v29 real reports; not new model calls or human quality scores.",
+  "cases": [
+    {
+      "id": "v29-rejected-not-revived",
+      "candidate": "- 任何形式的「想起来」——包括托梦、幻境重逢、临死回闪里把内容说清楚。可以写角色梦到轮廓、醒来只剩情绪，但不能让信息真的回到他脑子里。",
+      "source": "不得无条件恢复全部记忆。"
+    },
+    {
+      "id": "v29-renamed-short",
+      "candidate": "- \"不得无条件还原全部情绪\"——我把它读成：可以有条件地、部分地、通过特殊机制取回，但不能白给、不能一次全还。据此我提一个**可选**的例外（提案，可弃）。",
+      "source": "不得无条件还原全部情绪。"
+    },
+    {
+      "id": "v29-exact-alias",
+      "candidate": "铜匣的位置也就自然了——它是唯一能把割掉的那块存起来的东西，且只能启用一次，等于一生只有一次「取回自己」的机会。",
+      "source": "储存在铜匣中的情绪可以保留，但铜匣仅能启用一次。"
+    }
+  ]
+}

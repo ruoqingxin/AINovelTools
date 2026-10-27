@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
-pub(super) const PROMPT_VERSION: &str = "coauthor-v29";
+pub(super) const PROMPT_VERSION: &str = "coauthor-v30";
 
 pub(super) fn prepared_receipt(results: &[Value]) -> String {
     let mut receipt = String::new();

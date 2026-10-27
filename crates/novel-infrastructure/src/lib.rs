@@ -574,7 +574,7 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
     },
     FeatureDescriptor {
         id: "coauthor_content_review",
-        display_name: "高风险候选回复同模型复核、证据引句校验与一次定向修订",
+        display_name: "高风险候选逐项引文复核、窄范围偏离检查、一次修订与受限原文修补",
         stage: "COAUTHOR-N2",
         status: FeatureStatus::Implemented,
         unavailable_reason: None,

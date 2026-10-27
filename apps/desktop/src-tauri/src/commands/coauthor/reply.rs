@@ -6,7 +6,7 @@ use std::fmt::Write;
 mod intent;
 pub(super) use intent::required_mode;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ReplyMode {
     Discussion,
@@ -14,7 +14,7 @@ enum ReplyMode {
     Reprint,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Reply {
     mode: ReplyMode,
@@ -24,7 +24,7 @@ pub(super) struct Reply {
     pub rule_changes: Vec<RuleChange>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Continuation {
     reference: Option<String>,
@@ -34,7 +34,7 @@ struct Continuation {
     preserved_quotes: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct RuleChange {
     pub key: String,
@@ -44,6 +44,32 @@ pub(super) struct RuleChange {
 }
 
 impl Reply {
+    pub(super) fn with_content(&self, content: String) -> Self {
+        Self { content, ..self.clone() }
+    }
+
+    pub(super) fn allows_local_repair(&self) -> bool {
+        matches!(self.mode, ReplyMode::Discussion) && self.rule_changes.is_empty()
+    }
+
+    pub(super) fn continuation_basis(&self, messages: &[Value]) -> Option<Value> {
+        let continuation = self.continuation.as_ref()?;
+        let (id, _) = resolve_continuation(continuation, messages).ok()?;
+        let (reference, _, text) = references(messages).into_iter().find(|(_, candidate, _)| *candidate == id)?;
+        let truncated = messages.iter().filter(|message| message["role"] == "user")
+            .take(1)
+            .filter_map(|message| serde_json::from_str::<Value>(message["content"].as_str()?).ok())
+            .filter(|context| context["contextOnly"] == true)
+            .find_map(|context| context["historicalMessages"].as_array()?.iter()
+                .find(|entry| entry["id"].as_str() == Some(&id.to_string()))
+                .and_then(|entry| entry["truncated"].as_bool()));
+        Some(json!({"reference":reference,"messageId":id,"text":text,
+            "truncated":truncated,
+            "preservedQuotes":continuation.preserved_quotes,
+            "selectionAuthority":"CURRENT_REQUEST_ONLY_NOT_PRESERVED_QUOTE",
+            "coverage":"DELIVERED_MESSAGE_ONLY_NOT_AUTOMATICALLY_SELECTED_PLAN"}))
+    }
+
     pub(super) fn is_continuation(&self) -> bool {
         matches!(self.mode, ReplyMode::Continuation)
     }
