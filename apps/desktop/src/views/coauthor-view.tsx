@@ -24,12 +24,14 @@ import { CoauthorRunDirectory } from "./coauthor-run-directory";
 import { CoauthorKnowledge } from "./coauthor-knowledge";
 import { CoauthorSemanticPanel } from "./coauthor-semantic-panel";
 import { CoauthorBranchesPanel } from "./coauthor-branches-panel";
+import { CoauthorReplyFeedback, CoauthorRunFeedback } from "./coauthor-reply-feedback";
+import { replyReviewRequest } from "./coauthor-reply-diagnostics";
 import "./coauthor-workspace.css";
 
 const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
 const statuses: Record<string, string> = {
-  RUNNING: "进行中", COMPLETED: "已完成", FAILED: "失败，保留结果", CANCELLED: "已停止",
-  SUPERSEDED: "已被新指令替代", INTERRUPTED: "中断，可继续讨论", LIMIT_REACHED: "达到本轮预算",
+  RUNNING: "进行中", COMPLETED: "运行完成", FAILED: "本轮失败", CANCELLED: "已停止",
+  SUPERSEDED: "已被新指令替代", INTERRUPTED: "中断，可继续讨论", LIMIT_REACHED: "达到本轮上限",
   CHOSEN: "已选择", REJECTED: "已否定", OPEN: "待定", WITHDRAWN: "已撤回",
 };
 type Proposal = { document: CoauthorDocument; baseDocument: CoauthorDocument };
@@ -158,7 +160,7 @@ function CoauthorSession({ scope, initial, onFork }: {
   const composerKey = `coauthor-input:${scope.projectId}:${scope.sessionId}`;
   const [input, setInput] = useState(() => { try { return localStorage.getItem(composerKey) ?? ""; } catch { return ""; } });
   const inputRef = useRef(input);
-  const [allowEdits, setAllowEdits] = useState(true);
+  const [allowEdits, setAllowEdits] = useState(false);
   const [selection, setSelection] = useState("");
   const [active, setActive] = useState<string | null>(null);
   const activeRef = useRef<string | null>(null);
@@ -244,6 +246,21 @@ function CoauthorSession({ scope, initial, onFork }: {
     setInput(value);
     try { if (value) localStorage.setItem(composerKey, value); else localStorage.removeItem(composerKey); }
     catch { setError("讨论输入备份失败，请暂时不要离开。"); }
+  }
+  function reviewReply(message: DiscussionMessage) {
+    if (activeRef.current || busyRef.current) return;
+    const request = replyReviewRequest(message);
+    const next = inputRef.current.trim() ? `${inputRef.current}\n\n${request}` : request;
+    if ([...next].length > 20_000) {
+      setError("这条回复与当前输入合计超过 20000 字，未截断或覆盖。请在输入框粘贴需核对的原句并补充问题。");
+      return;
+    }
+    changeInput(next);
+    // Reviewing a reply must not carry a prior permission to edit the draft.
+    setAllowEdits(false);
+    setSelection("");
+    setPanel(null); setTab("chat"); focusReview.current = true;
+    setNotice("已将指定回复带入输入框，尚未发送；本轮已关闭工作稿修改授权。");
   }
   async function refresh() {
     const epoch = ++stateEpoch.current;
@@ -445,12 +462,18 @@ function CoauthorSession({ scope, initial, onFork }: {
     </div>}
     <div className="coauthor-columns" data-tab={tab}>
       <section className="coauthor-chat" aria-label="共创对话">
+        <p className="coauthor-reliability-note"><strong>AI 内容仍需核对</strong> 条件范围、新旧规则与前文承接仍可能出错；生成完成不代表内容可靠。</p>
+        {state.runs[0] && state.runs[0].status !== "COMPLETED" && state.runs[0].id !== active && <div className="coauthor-incomplete" role="status">
+          <span>最近一轮：{statuses[state.runs[0].status] ?? "状态待核实"}，不代表已完成你的要求。</span>
+          <button type="button" onClick={() => { setRunId(state.runs[0].id); setPanel("sources"); }}>查看原因与保留结果</button>
+        </div>}
         <div className="coauthor-thread" ref={thread}>
           {visible.length >= 100 && moreHistory && <button disabled={busy} onClick={() => void act(async () => {
             const page = await listDiscussionMessages(scope.sessionId, 100, visible[0]?.id);
             if (mounted.current) { setOlder((entries) => [...page, ...entries]); setMoreHistory(page.length === 100); }
           })}>更早的讨论</button>}
-          {!visible.length && !active && <p className="coauthor-placeholder">今天想推敲哪一部分？</p>}
+          {messages.isPending && <p role="status">正在读取讨论记录…</p>}
+          {messages.isSuccess && !visible.length && !active && <p className="coauthor-placeholder">今天想推敲哪一部分？</p>}
           {visible.map((message) => <article key={message.id} className={`coauthor-message ${message.role === "USER" ? "is-author" : ""}`}>
             <header><strong>{message.role === "USER" ? "作者" : "共创伙伴"}</strong>
               {message.contextVersion?.startsWith("coauthor:") && <button onClick={() => {
@@ -461,6 +484,11 @@ function CoauthorSession({ scope, initial, onFork }: {
                   ?? (run?.id === message.contextVersion.slice(9) ? run.status : "")]}</small>}
             </header>
             <div>{message.content}</div>
+            {message.role === "ASSISTANT" && <CoauthorReplyFeedback scope={scope}
+              runId={message.contextVersion?.startsWith("coauthor:") ? message.contextVersion.slice(9) : undefined}
+              status={state.runs.find((entry) => `coauthor:${entry.id}` === message.contextVersion)?.status}
+              disabled={Boolean(active) || busy}
+              onReview={() => reviewReply(message)} />}
           </article>)}
           {(active || stream) && <article className="coauthor-message"><header><strong>共创伙伴</strong><small>{active ? progress : "未完成的输出"}</small></header><div>{stream}</div></article>}
         </div>
@@ -535,7 +563,7 @@ function CoauthorSession({ scope, initial, onFork }: {
       {panel === "sources" && <>
         <CoauthorRunDirectory key={`${scope.projectId}:${scope.sessionId}`} scope={scope} selected={runId}
           onSelect={(id) => { setRunId(id); setSource(null); }} />
-        {run && <p>{statuses[run.status]} · 基础稿件 v{run.documentVersion}</p>}
+        {run && <><p>{statuses[run.status]} · 基础稿件 v{run.documentVersion}</p><CoauthorRunFeedback run={run} /></>}
         {run?.output && <details><summary>{run.status === "COMPLETED" ? "保留的回复" : "保留的回复（未完成）"}</summary><pre>{run.output}</pre></details>}
         {run?.status === "RUNNING" && <button disabled={busy || !runVerified} onClick={() => void act(async () => {
           await cancelCoauthorRun({ scope, runId: run.id }); await refresh();

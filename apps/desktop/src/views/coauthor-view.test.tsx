@@ -30,8 +30,9 @@ function renderWorkspace() {
 function emit(runId: string, kind = "status", content = "正在推敲…") {
   act(() => handlers.forEach((handler) => handler({ payload: { runId, sessionId: "s1", kind, content } })));
 }
-async function begin(text = "写一个失忆版") {
+async function begin(text = "写一个失忆版", allowEdits = false) {
   await screen.findByLabelText("工作稿内容");
+  if (allowEdits) fireEvent.click(screen.getByLabelText("允许改工作稿"));
   fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: text } });
   const send = screen.getByRole("button", { name: "发送" });
   await waitFor(() => expect(send).toBeEnabled());
@@ -98,6 +99,101 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it("keeps known quality limits visible and defaults to discussion without draft edits", async () => {
+    renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    expect(screen.getByText(/生成完成不代表内容可靠/)).toBeVisible();
+    expect(screen.getByLabelText("允许改工作稿")).not.toBeChecked();
+    const request = await begin();
+    expect(request.input.allowDraftEdits).toBe(false);
+    await finish(request);
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "apply_coauthor_proposal")).toBe(false);
+  });
+
+  it("shows completed replies as unverified and reads issue records only when expanded", async () => {
+    stored.runs = [{ id: "exact", sessionId: "s1", userMessageId: "u", documentVersion: 1, status: "COMPLETED", output: "试写",
+      audit: [{ kind: "content_review", result: { decision: "PASS", issues: [] } }] }];
+    posted = [{ id: "answer", sessionId: "s1", role: "ASSISTANT", content: "试写", contextVersion: "coauthor:exact" }];
+    renderWorkspace();
+    const summary = await screen.findByText("已生成 · 内容待核对");
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "get_coauthor_run")).toBe(false);
+    fireEvent.click(summary);
+    expect(await screen.findByText(/同一模型复核未发现重大偏离/)).toBeVisible();
+    expect(mocks.invoke).toHaveBeenCalledWith("get_coauthor_run", { scope: { projectId: "p1", sessionId: "s1" }, id: "exact" });
+    expect(pending).toHaveLength(0);
+  });
+
+  it("keeps the last failure visible after remount even when there is no assistant reply", async () => {
+    stored.runs = [{ id: "failed", sessionId: "s1", userMessageId: "u", documentVersion: 1, status: "FAILED", output: "",
+      audit: [{ kind: "content_review_error" }, { kind: "error", message: "服务连接失败" }] }];
+    const first = renderWorkspace();
+    await screen.findByRole("button", { name: "查看原因与保留结果" });
+    first.unmount();
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: "查看原因与保留结果" }));
+    const panel = await screen.findByRole("dialog", { name: "依据与运行记录" });
+    const feedback = await within(panel).findByRole("region", { name: "本轮问题与局限" });
+    expect(within(feedback).getByText("服务连接失败")).toBeVisible();
+    expect(within(panel).getByText(/复核返回的格式或引用未通过校验/)).toBeVisible();
+    expect(pending).toHaveLength(0);
+  });
+
+  it("does not present unreadable issue records as a clean bill of health", async () => {
+    posted = [{ id: "answer", sessionId: "s1", role: "ASSISTANT", content: "旧回答", contextVersion: "coauthor:missing" }];
+    renderWorkspace();
+    fireEvent.click(await screen.findByText("内容与运行状态待核实"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("不能据此认定回答没有问题");
+    expect(pending).toHaveLength(0);
+  });
+
+  it("brings an exact historical reply to the composer without sending and revokes edit permission", async () => {
+    posted = [{ id: "exact-answer", sessionId: "s1", role: "ASSISTANT", content: "原句😀\n下一段。", contextVersion: "coauthor:old" }];
+    renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "保留我的补充。" } });
+    fireEvent.click(screen.getByLabelText("允许改工作稿"));
+    expect(screen.getByLabelText("允许改工作稿")).toBeChecked();
+    fireEvent.click(await screen.findByRole("button", { name: "核对这条回复" }));
+    const input = screen.getByLabelText("讨论输入") as HTMLTextAreaElement;
+    expect(input.value).toContain("保留我的补充。\n\n");
+    expect(input.value).toContain('"messageId": "exact-answer"');
+    expect(input.value).toContain(JSON.stringify("原句😀\n下一段。"));
+    expect(input).toHaveFocus();
+    expect(screen.getByLabelText("允许改工作稿")).not.toBeChecked();
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    expect(mocks.invoke.mock.calls.some(([name]) => ["run_coauthor", "save_coauthor_document", "get_coauthor_run"].includes(name))).toBe(false);
+  });
+
+  it("refuses an overlong review request without truncating or overwriting author input", async () => {
+    posted = [{ id: "long", sessionId: "s1", role: "ASSISTANT", content: "字".repeat(20_000) }];
+    renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "保留输入" } });
+    fireEvent.click(await screen.findByRole("button", { name: "核对这条回复" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("未截断或覆盖");
+    expect(screen.getByLabelText("讨论输入")).toHaveValue("保留输入");
+    expect(pending).toHaveLength(0);
+  });
+
+  it("does not imply that preparing a review has revoked an already-running task's authorization", async () => {
+    posted = [{ id: "old", sessionId: "s1", role: "ASSISTANT", content: "旧回答" }];
+    renderWorkspace();
+    const request = await begin("按授权试写", true);
+    const review = screen.getByRole("button", { name: "核对这条回复" });
+    expect(review).toBeDisabled();
+    fireEvent.click(review);
+    expect(screen.getByLabelText("允许改工作稿")).toBeChecked();
+    expect(screen.getByLabelText("讨论输入")).toHaveValue("");
+    fireEvent.click(screen.getByLabelText("停止生成"));
+    await waitFor(() => expect(review).toBeEnabled());
+    fireEvent.click(review);
+    expect(screen.getByLabelText("允许改工作稿")).not.toBeChecked();
+    await finish(request);
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "apply_coauthor_proposal")).toBe(false);
+  });
+
   it("brings the exact dependency review into the existing composer without sending, saving, or changing the draft", async () => {
     const decision = { id: "rule", version: 2, topic: "突破代价", content: "改用失忆", status: "CHOSEN", sourceMessageId: "author" };
     stored.decisions = [decision];
@@ -175,8 +271,9 @@ describe("coauthor workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "依据" }));
     const panel = await screen.findByRole("dialog", { name: "依据与运行记录" });
     expect(await within(panel).findByText("ENTITY · 语义相似候选 · 检索命中 · 尚未随请求发送")).toBeVisible();
-    fireEvent.click(within(panel).getByText("语义检索覆盖 · 1"));
-    expect(within(panel).getByText("索引只覆盖 8/17 个分块；不是全书查证。")).toBeVisible();
+    const semantic = within(panel).getByText("语义检索覆盖 · 1");
+    fireEvent.click(semantic);
+    expect(within(semantic.closest("details")!).getByText("索引只覆盖 8/17 个分块；不是全书查证。")).toBeVisible();
     fireEvent.click(within(panel).getByText("语义检索覆盖 · 2"));
     expect(within(panel).getByRole("alert")).toHaveTextContent("向量服务暂不可用");
     expect(mocks.invoke.mock.calls.some(([name]) => name === "run_coauthor" || name === "build_coauthor_semantic_batch")).toBe(false);
@@ -234,7 +331,7 @@ describe("coauthor workspace", () => {
         ] } : original(command, args));
     renderWorkspace();
     fireEvent.click(await screen.findByRole("button", { name: "依据与记录" }));
-    expect(await screen.findByText("已完成 · 基础稿件 v1")).toBeVisible();
+    expect(await screen.findByText("运行完成 · 基础稿件 v1")).toBeVisible();
     expect(mocks.invoke).toHaveBeenCalledWith("get_coauthor_run", { scope: { projectId: "p1", sessionId: "s1" }, id: "historical" });
     fireEvent.click(within(screen.getByRole("dialog", { name: "依据与运行记录" })).getByRole("button", { name: "查看改稿差异" }));
     expect(await screen.findByLabelText("AI 建议稿")).toHaveValue("旧建议正文");
@@ -248,7 +345,7 @@ describe("coauthor workspace", () => {
     renderWorkspace();
     await screen.findByLabelText("讨论输入");
     fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "保留我的输入" } });
-    fireEvent.click(screen.getByRole("button", { name: "依据与记录" }));
+    fireEvent.click(await screen.findByRole("button", { name: "依据与记录" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("运行记录无法核实");
     expect(screen.getByLabelText("讨论输入")).toHaveValue("保留我的输入");
     expect(screen.queryByText("此记录不在最近的运行列表中，原始讨论仍保留。")).not.toBeInTheDocument();
@@ -348,7 +445,7 @@ describe("coauthor workspace", () => {
 
   it("uses real run IPC and applies authorized working edits without formal publication", async () => {
     renderWorkspace();
-    const request = await begin();
+    const request = await begin("写一个失忆版", true);
     expect(screen.getByLabelText("讨论输入")).toHaveValue("");
     expect(screen.getByLabelText("讨论输入")).not.toBeDisabled();
     emit(request.input.runId, "text", "正在写入失忆版本");
@@ -362,7 +459,7 @@ describe("coauthor workspace", () => {
 
   it("preserves author typing during generation and keeps the model edit for comparison", async () => {
     renderWorkspace();
-    const request = await begin();
+    const request = await begin("写一个失忆版", true);
     fireEvent.change(screen.getByLabelText("工作稿内容"), { target: { value: "作者自己写的结尾。" } });
     await finish(request);
     expect(screen.getByLabelText("工作稿内容")).toHaveValue("作者自己写的结尾。");
@@ -375,7 +472,7 @@ describe("coauthor workspace", () => {
 
   it("cancellation invalidates automatic application before a late completed response", async () => {
     renderWorkspace();
-    const request = await begin();
+    const request = await begin("写一个失忆版", true);
     fireEvent.click(screen.getByLabelText("停止生成"));
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("cancel_coauthor_run", { scope: { projectId: "p1", sessionId: "s1" }, runId: request.input.runId }));
     await finish(request);
@@ -402,7 +499,7 @@ describe("coauthor workspace", () => {
   it("only-discussion mode does not grant working draft tools", async () => {
     renderWorkspace();
     await screen.findByLabelText("工作稿内容");
-    fireEvent.click(screen.getByLabelText("允许改工作稿"));
+    expect(screen.getByLabelText("允许改工作稿")).not.toBeChecked();
     const request = await begin("如果突破会失忆呢");
     expect(request.input.allowDraftEdits).toBe(false);
     await finish(request);
@@ -450,7 +547,7 @@ describe("coauthor workspace", () => {
 
   it("unsubscribes immediately on unmount and a late result cannot be applied", async () => {
     const view = renderWorkspace();
-    const request = await begin();
+    const request = await begin("写一个失忆版", true);
     view.unmount();
     expect(mocks.unlisten).toHaveBeenCalled();
     await finish(request);

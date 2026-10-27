@@ -4,8 +4,8 @@ import { useState } from "react";
 import { errorMessage, listCoauthorRuns, type CoauthorScope } from "../lib/tauri-client";
 
 const statuses: Record<string, string> = {
-  RUNNING: "进行中", COMPLETED: "已完成", CANCELLED: "已停止", SUPERSEDED: "已替代",
-  INTERRUPTED: "已中断", FAILED: "失败", LIMIT_REACHED: "达到预算",
+  RUNNING: "进行中", COMPLETED: "运行完成", CANCELLED: "已停止", SUPERSEDED: "已替代",
+  INTERRUPTED: "已中断", FAILED: "失败", LIMIT_REACHED: "达到本轮上限",
 };
 
 export function CoauthorRunDirectory({ scope, selected, onSelect }: {

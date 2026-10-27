@@ -25,7 +25,7 @@ afterEach(cleanup);
 
 it("loads a lightweight directory without fetching details or changing the selected historical run", async () => {
   mount();
-  expect(await screen.findByRole("option", { name: "已完成 · run-30 · 稿件 v0" })).toBeInTheDocument();
+  expect(await screen.findByRole("option", { name: "运行完成 · run-30 · 稿件 v0" })).toBeInTheDocument();
   expect(screen.getByLabelText("查看运行")).toHaveValue("old-run");
   expect(mocks.invoke).toHaveBeenCalledWith("list_coauthor_runs", { scope, beforeRunId: null });
   expect(mocks.invoke).toHaveBeenCalledTimes(1);
@@ -38,19 +38,19 @@ it("pages by the exact last run identity and can return to newer runs", async ()
   mocks.invoke.mockImplementation(async (_command, args: { beforeRunId: string | null }) => args.beforeRunId
     ? { runs: [{ ...page.runs[0], id: "run-10" }], hasMore: false } : structuredClone(page));
   mount();
-  await screen.findByRole("option", { name: "已完成 · run-30 · 稿件 v0" });
+  await screen.findByRole("option", { name: "运行完成 · run-30 · 稿件 v0" });
   fireEvent.click(screen.getByLabelText("更早运行"));
-  expect(await screen.findByRole("option", { name: "已完成 · run-10 · 稿件 v0" })).toBeInTheDocument();
+  expect(await screen.findByRole("option", { name: "运行完成 · run-10 · 稿件 v0" })).toBeInTheDocument();
   expect(mocks.invoke).toHaveBeenCalledWith("list_coauthor_runs", { scope, beforeRunId: "run-11" });
   expect(screen.getByLabelText("更早运行")).toBeDisabled();
   fireEvent.click(screen.getByLabelText("较新运行"));
-  expect(await screen.findByRole("option", { name: "已完成 · run-30 · 稿件 v0" })).toBeInTheDocument();
+  expect(await screen.findByRole("option", { name: "运行完成 · run-30 · 稿件 v0" })).toBeInTheDocument();
   expect(screen.getByLabelText("查看运行")).toHaveValue("old-run");
 });
 
 it("keeps cached directory marked unverified after a refresh failure and permits an explicit retry", async () => {
   mount();
-  await screen.findByRole("option", { name: "已完成 · run-30 · 稿件 v0" });
+  await screen.findByRole("option", { name: "运行完成 · run-30 · 稿件 v0" });
   mocks.invoke.mockRejectedValue(new Error("读取失败"));
   fireEvent.click(screen.getByLabelText("刷新运行目录"));
   expect(await screen.findByRole("alert")).toHaveTextContent("读取失败");
@@ -76,7 +76,7 @@ it("does not let a late directory response replace another branch", async () => 
     : Promise.resolve({ runs: [{ ...page.runs[0], id: "other" }], hasMore: false }));
   const { client, view } = mount();
   view.rerender(<QueryClientProvider client={client}>{tree("other-branch")}</QueryClientProvider>);
-  await screen.findByRole("option", { name: "已完成 · other · 稿件 v0" });
+  await screen.findByRole("option", { name: "运行完成 · other · 稿件 v0" });
   await act(async () => resolve(page));
-  expect(screen.queryByRole("option", { name: "已完成 · run-30 · 稿件 v0" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "运行完成 · run-30 · 稿件 v0" })).not.toBeInTheDocument();
 });

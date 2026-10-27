@@ -427,6 +427,18 @@ try {
     assert.equal(await page.evaluate(() => window.__coauthorCalls.some((name) =>
       name === "get_coauthor_run" || name === "list_coauthor_runs")), false,
     "Opening the workspace must not load historical audits or the run directory");
+    assert.equal(await page.getByLabel("允许改工作稿", { exact: true }).isChecked(), false);
+    const historicalReply = page.locator(".coauthor-message").filter({ hasText: "早期试写仍使用寿元代价" });
+    await historicalReply.getByText("内容与运行状态待核实", { exact: true }).click();
+    await historicalReply.getByText("记录中没有可核实的内容复核结论。", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("run_coauthor")), false);
+    assert.equal(await historicalReply.evaluate(el => el.scrollWidth > el.clientWidth), false);
+    await page.screenshot({ path: resolve(artifacts, `${viewport.width}-reply-feedback.png`), fullPage: true });
+    await historicalReply.getByRole("button", { name: "核对这条回复", exact: true }).click();
+    assert.ok((await page.getByLabel("讨论输入", { exact: true }).inputValue()).includes('"messageId": "m-old"'));
+    assert.equal(await page.getByLabel("讨论输入", { exact: true }).evaluate(el => el === document.activeElement), true);
+    assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("run_coauthor")), false);
+    await page.getByLabel("讨论输入", { exact: true }).fill("");
     await page.getByRole("button", { name: "依据与记录", exact: true }).click();
     const sourcesPanel = page.getByRole("dialog", { name: "依据与运行记录" });
     await sourcesPanel.getByRole("button", { name: "查看改稿差异", exact: true }).waitFor();
@@ -536,6 +548,7 @@ try {
     await semanticPanel.getByText("项目语义检索未启用", { exact: true }).waitFor();
     await semanticPanel.getByRole("button", { name: "关闭语义索引与外发授权", exact: true }).click();
     await page.getByLabel("讨论输入", { exact: true }).fill("前半段保留，最后一句再克制一点。");
+    await page.getByLabel("允许改工作稿", { exact: true }).check();
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await page.getByText("我保留前半段，只推敲最后一句。", { exact: true }).first().waitFor();
     await page.waitForTimeout(450);
