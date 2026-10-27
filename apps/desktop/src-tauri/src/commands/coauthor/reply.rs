@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 mod intent;
-pub(super) use intent::required_mode;
+pub(super) use intent::{required_mode, requested_review};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -44,14 +44,6 @@ pub(super) struct RuleChange {
 }
 
 impl Reply {
-    pub(super) fn with_content(&self, content: String) -> Self {
-        Self { content, ..self.clone() }
-    }
-
-    pub(super) fn allows_local_repair(&self) -> bool {
-        matches!(self.mode, ReplyMode::Discussion) && self.rule_changes.is_empty()
-    }
-
     pub(super) fn continuation_basis(&self, messages: &[Value]) -> Option<Value> {
         let continuation = self.continuation.as_ref()?;
         let (id, _) = resolve_continuation(continuation, messages).ok()?;

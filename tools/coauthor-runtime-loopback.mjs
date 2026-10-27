@@ -213,19 +213,12 @@ export function coauthorReviewTurn(body) {
   assert.equal(body.messages[1].role, "user");
   const packet = JSON.parse(body.messages[1].content);
   assert.equal(packet.contentReview, true);
-  assert.equal(packet.version, "coauthor-review-v2");
+  assert.equal(packet.version, "coauthor-review-v3");
   assert(packet.candidate && packet.bases.some((basis) => basis.id === "request"));
   assert(!body.messages.some((message) => message.tool_calls || message.role === "tool"));
-  assert(packet.obligations.length >= 2 && packet.obligations.length <= 5);
-  const checks = packet.obligations.map((obligation) => {
-    const basis = packet.bases.find((basis) => basis.id === obligation.basisIds[0]);
-    assert(basis?.text);
-    return { aspect: obligation.aspect, finding: "SUPPORTED",
-      candidateQuote: [...packet.candidate].slice(0, 20).join(""),
-      basisId: basis.id, basisQuote: [...basis.text].slice(0, 20).join(""),
-      reason: "本机逐项合成核对，不代表模型理解或语义质量。" };
-  });
-  return tools([call("review_reply", { decision: "PASS", issues: [], checks,
+  assert(packet.riskReasons.includes("AUTHOR_REQUESTED"));
+  assert(!Object.hasOwn(packet, "obligations") && !Object.hasOwn(packet, "localFindings"));
+  return tools([call("review_reply", { decision: "PASS", issues: [],
     summary: "本机固定通过只验证复核协议，不作为语义质量证据。" })]);
 }
 
@@ -264,7 +257,7 @@ export function coauthorLoopbackTurn(body, options = {}) {
 }
 
 export function assertLoopbackRegression(entry, { expectInputLimit = false, expectLateExpansion = false } = {}) {
-  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v30"));
+  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v31"));
   const setup = entry.audit?.find((a) => a.kind === "input_budget");
   let currentBudget = setup?.initialInputTokenBudget;
   let expanded = false;

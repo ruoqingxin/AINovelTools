@@ -878,16 +878,16 @@ test("current native protocol delivers final discussion without an extra simulat
 test("local content-review adapter uses the isolated read-only contract without pretending to grade quality", () => {
   const body = { tool_choice: "required", tools: [{ function: { name: "review_reply" } }],
     messages: [{ role: "system", content: "仅复核" }, { role: "user", content: JSON.stringify({
-      contentReview: true, version: "coauthor-review-v2", candidate: "候选",
+      contentReview: true, version: "coauthor-review-v3", candidate: "候选",
       bases: [{ id: "request", text: "作者本轮要求" }],
-      obligations: [{ aspect: "TASK", basisIds: ["request"] }, { aspect: "CLAIM_STATUS", basisIds: ["request"] }],
+      riskReasons: ["AUTHOR_REQUESTED"],
     }) }] };
   const message = coauthorLoopbackTurn(body);
   assert.equal(message.tool_calls[0].function.name, "review_reply");
   const result = JSON.parse(message.tool_calls[0].function.arguments);
   assert.equal(result.decision, "PASS");
-  assert.deepEqual(result.checks.map((check) => check.aspect), ["TASK", "CLAIM_STATUS"]);
-  assert(result.checks.every((check) => check.basisId === "request" && check.candidateQuote === "候选"));
+  assert.deepEqual(result.issues, []);
+  assert(!Object.hasOwn(result, "checks"));
   assert.match(result.summary, /不作为语义质量证据/);
   assert.deepEqual(coauthorReviewTurn(body), message);
   assert.throws(() => coauthorReviewTurn({ ...body, tools: [...body.tools, { function: { name: "prepare_changeset" } }] }));
@@ -1005,9 +1005,9 @@ test("native regression uses estimated tokens including overhead, not serialized
     kind: "model_request", inputChars: 50_000, estimatedInputTokens: 15_800, inputTokenBudget: 16_384,
   }] };
   assert.equal(assertLoopbackRegression(entry).scriptedNativeRegression, true);
-  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v30"] }).scriptedNativeRegression, true);
+  assert.equal(assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v31"] }).scriptedNativeRegression, true);
   assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v21"] }));
-  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v30", "coauthor-v29"] }));
+  assert.throws(() => assertLoopbackRegression({ ...entry, promptVersions: ["coauthor-v31", "coauthor-v30"] }));
   assert.throws(() => assertLoopbackRegression({ ...entry, audit: [{
     ...entry.audit[0], estimatedInputTokens: 16_385,
   }] }));

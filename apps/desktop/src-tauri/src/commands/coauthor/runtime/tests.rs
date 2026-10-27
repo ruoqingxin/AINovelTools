@@ -584,14 +584,12 @@ fn completed_check_does_not_claim_semantic_correctness_or_formal_repair() {
 fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priority() {
     for instruction in [
         "最后一条用户消息才是本轮请求",
-        "先get_decisions回查",
+        "get_decisions回查",
         "沿用延伸、局部调整、全面重构",
-        "继承只是可选提案",
-        "不能当作新体系的硬约束",
-        "保留依据的限定词和未决状态",
-        "不能升级为",
-        "不能扩大为",
-        "不能推导整个地域",
+        "旧规则仅作对照",
+        "不把旧机制偷偷加回新体系的前提",
+        "保持条件、否定范围、主体、次数、例外和未决状态",
+        "未检索到不等于不存在",
         "版本参数不匹配本身不证明资料真实变化",
     ] {
         assert!(
@@ -599,7 +597,7 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
             "missing prompt rule: {instruction}"
         );
     }
-    assert_eq!(PROMPT_VERSION, "coauthor-v30");
+    assert_eq!(PROMPT_VERSION, "coauthor-v31");
 }
 
 #[test]
@@ -610,7 +608,7 @@ fn program_receipts_hide_discussion_delivery_without_removing_other_tools() {
     assert_eq!(receipt.len(), definitions.len() - 1);
     assert!(!receipt.iter().any(|tool| tool["function"]["name"] == "deliver_reply"));
     assert!(receipt.iter().any(|tool| tool["function"]["name"] == "record_check_result"));
-    for instruction in ["更不能总结为“只能部分、不能全部”", "已明确全面重构或将旧规则仅作对照时", "旧代价重新加为已选新代价的前置",
+    for instruction in ["不扩大为未写出的禁令或永久效果", "重构时旧规则仅作对照", "不把旧机制偷偷加回新体系的前提",
         "未读原文不能断言该来源没写某条规则"] {
         assert!(PROMPT.contains(instruction));
     }
@@ -680,8 +678,7 @@ fn only_successful_reading_of_the_same_source_resets_its_failure_counter() {
 
 #[test]
 fn prompt_preserves_object_scopes_proposal_provenance_and_selected_story_continuity() {
-    for rule in ["单件物品仅启用一次不等于每个人终身一次", "储存能保留不自动等于能够取回",
-        "没有写可逆不推出永久不可逆", "介绍、情节及总结均保持为本次提案",
+    for rule in ["不把储存推成取回", "不扩大为未写出的禁令或永久效果", "正文及结尾也须保持这一地位",
         "不混入未选方案独有细节", "先读取相关规则的准确版本再给结论",
         "prepare_changeset每次必须显式传includeDraft"] {
         assert!(PROMPT.contains(rule), "{rule}");
@@ -691,14 +688,10 @@ fn prompt_preserves_object_scopes_proposal_provenance_and_selected_story_continu
 #[test]
 fn composition_contract_tracks_consumed_actions_and_discloses_rule_changes_through_the_ending() {
     for rule in [
-        "按情节先后核对主体、动作、触发条件、次数与例外",
-        "已耗尽的一次机会不能在后文再次使用",
-        "将一次启用改成多次借用或持续通道也是新机制",
-        "不能只改名为“租借、非普通”就声称未改规则",
-        "下一阶不再付该代价属于局部改规则提案",
-        "商品颜色尺寸不推出能力",
-        "个人偏好的避坑建议不冒充原规则禁令",
-        "总结须如实说明沿用什么、新增什么、改变什么",
+        "保持条件、否定范围、主体、次数、例外和未决状态",
+        "改变现行规则须明确为提案",
+        "区分沿用、新增、改变",
+        "不自称完全兼容",
     ] {
         assert!(PROMPT.contains(rule), "{rule}");
     }
@@ -737,10 +730,10 @@ fn historical_assistant_outputs_cannot_establish_rules_or_author_decisions() {
 #[test]
 fn generation_strategy_distinguishes_exact_boundaries_new_effects_and_recovery() {
     for rule in [
-        "解释现行限制优先引完整原句",
-        "不能断言项目里没有其他支持资料",
-        "先定新效果是临时还是永久",
-        "不靠“我建议”后再声称“不用改规则、完全兼容”",
+        "解释现行限制优先引用完整原句",
+        "未查全只说已读范围",
+        "不扩大为未写出的禁令或永久效果",
+        "不靠开头免责声明代替一致性",
         "不手填UUID/anchor",
         "REGENERATE_CONTENT必须重写正文",
     ] {
@@ -751,11 +744,10 @@ fn generation_strategy_distinguishes_exact_boundaries_new_effects_and_recovery()
 #[test]
 fn prompt_keeps_negative_scope_source_identity_and_sync_authority_explicit() {
     for instruction in [
-        "回复前逐段核对后续建议、括号、总结与决定记录",
-        "REJECTED只否定决定内容的准确命题",
-        "不等于禁止有条件、部分恢复或特殊机制",
-        "不能只给“接后面/插中间”",
-        "不说明正式资料过时、漏同步或必须更新",
+        "正文及结尾也须保持这一地位",
+        "保持条件、否定范围、主体、次数、例外和未决状态",
+        "方向未选时开放沿用延伸、局部调整、全面重构",
+        "不同不说明资料过时或必须同步",
         "PROJECT_SHARED是项目共享资料，不是其他分支方案",
         "没有其他分支的身份与原话依据",
         "失败不是0命中",

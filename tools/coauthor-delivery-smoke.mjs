@@ -21,6 +21,12 @@ const oldStory = "她将铜匣推回桌角。门外的脚步停了。\n\n"
   + "灯还亮着。她坐着，没有起身。";
 const newStory = "她将铜匣推回桌角。窗纸上多了一道影子。她把门闩压紧，听见外面的人叫了一个陌生的名字。";
 const deviatedStory = "她将铜匣推回桌角。她又从铜匣中取回了全部记忆，这依然完全符合原来的规则。";
+const defaultCandidates = {
+  "default-sourced-plain": "原规则禁止恢复记忆，不能白给、不能一次全还。",
+  "default-sourced-proposal": "提案：新增一人一生一次的限制，尚未采用。",
+  "default-sourced-quoted": "这句待讨论：“不能白给、不能一次全还。”",
+  "default-sourced-belief": "角色以为任何形式的恢复都不可能，但这只是他的信念。",
+};
 const call = (name, args, index = 0) => ({ id: `delivery-${requests}-${index}`, type: "function",
   function: { name, arguments: JSON.stringify(args) } });
 const tools = (...calls) => ({ role: "assistant", content: "", tool_calls: calls });
@@ -64,18 +70,18 @@ function response(body) {
   const schema = body.tools.find((tool) => tool.function.name === "deliver_reply").function.parameters;
   for (const field of ["requestQuote", "continuation", "ruleChanges"]) assert(schema.required.includes(field));
   if (probe === "seed") return deliver({ mode: "DISCUSSION", content: oldStory });
-  if (probe.startsWith("local-repair-")) {
+  if (Object.hasOwn(defaultCandidates, probe)) {
     const source = context.relevantSources.hits.find((source) => source.title === "突破代价规则");
     assert(source?.sourceReference);
     if (requests === 1) return tools(call("read_source", { reference: source.sourceReference }));
-    let content = "原规则禁止恢复记忆，不能白给、不能一次全还。";
-    if (probe === "local-repair-unsafe") content += "\n因此下一层必须失去全部记忆。";
-    if (probe === "local-repair-model-fixes" && requests === 3) {
-      content = "原规则只禁止无条件恢复全部记忆，不把有条件的部分恢复一概禁止。";
-    }
-    return deliver({ mode: "DISCUSSION", content });
+    return deliver({ mode: "DISCUSSION", content: defaultCandidates[probe] });
   }
   if (probe.startsWith("review-")) {
+    if (probe === "review-source-invalid" && requests === 1) {
+      ruleSource = context.relevantSources.hits.find((source) => source.title === "突破代价规则");
+      assert(ruleSource?.sourceReference);
+      return tools(call("read_source", { reference: ruleSource.sourceReference }));
+    }
     if (probe === "review-request-limit" && requests < 10) return tools(call("get_decisions", { query: "境界" }));
     if (probe === "review-revision-tool" && requests === 2) {
       assert.deepEqual(body.tools.map((tool) => tool.function.name), ["deliver_reply"]);
@@ -265,31 +271,17 @@ function response(body) {
 function reviewResponse(body) {
   const passing = coauthorReviewTurn(body);
   if (!passing) return null;
-  if (probe.startsWith("local-repair-")) {
-    const packet = JSON.parse(body.messages[1].content);
-    if (reviewRequests === 1) assert.equal(packet.localFindings.length, 1);
-    if (probe === "local-repair-pass" && reviewRequests === 2) {
-      assert(packet.candidate.startsWith("已读规则原文："));
-      assert.equal(packet.localFindings.length, 0);
-    }
-    if (probe === "local-repair-final-reject" && reviewRequests === 2) {
-      const args = JSON.parse(passing.tool_calls[0].function.arguments);
-      args.decision = "NEED_CONTEXT";
-      args.checks.forEach((check) => { check.finding = "UNVERIFIED"; });
-      return tools(call("review_reply", args));
-    }
-    return passing;
-  }
+  assert(!Object.hasOwn(defaultCandidates, probe), "Default sourced discussion must not invoke review.");
   if (!probe.startsWith("review-")) return passing;
   const packet = JSON.parse(body.messages[1].content);
-  const checked = JSON.parse(passing.tool_calls[0].function.arguments).checks;
   assert(packet.riskReasons.includes("CONTINUATION"));
   if (["review-pass", "review-cancel", "review-creative"].includes(probe)
     || (probe === "review-revise" && reviewRequests === 2)) return passing;
-  if (probe === "review-wrong-tool") return tools(call("prepare_changeset", { title: "审核者不得写入" }));
+  if (["review-wrong-tool","review-source-invalid"].includes(probe)) {
+    return tools(call("prepare_changeset", { title: "审核者不得写入" }));
+  }
   if (probe === "review-unknown") return tools(call("review_reply", {
     decision: "NEED_CONTEXT", issues: [], summary: "承接依据仍不够，不能断言作者设定错误。",
-    checks: checked.map((check) => ({ ...check, finding: "UNVERIFIED" })),
   }));
   const basis = packet.bases.find((basis) => basis.id === "request");
   assert(basis.text.includes("不要重新取回记忆"));
@@ -299,9 +291,7 @@ function reviewResponse(body) {
     basisId: probe === "review-fake-evidence" ? "not-issued" : "request",
     basisQuote: "不要重新取回记忆", reason: "作者不要求重新取回记忆，候选却重新取回。",
   };
-  return tools(call("review_reply", { decision: "REVISE", summary: "违反本轮明确要求。", issues: [issue],
-    checks: checked.map((check) => check.aspect === "TASK" ? { ...issue, kind: undefined,
-      aspect: check.aspect, finding: "CONFLICT" } : check) }));
+  return tools(call("review_reply", { decision: "REVISE", summary: "违反本轮明确要求。", issues: [issue] }));
 }
 
 function snapshot() {
@@ -356,7 +346,7 @@ async function run(name, message, expectedStatus, expectedRequests) {
   assert.equal(run.status, expectedStatus);
   assert.equal(requests, expectedRequests);
   assert.equal(run.audit.filter((event) => event.kind === "model_request").length, requests + reviewRequests);
-  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v30"));
+  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v31"));
   assert.equal(run.audit.filter((event) => event.kind === "model_request" && event.purpose === "CONTENT_REVIEW").length, reviewRequests);
   assert(requests + reviewRequests <= 10);
   assert(reviewRequests <= 2);
@@ -546,33 +536,24 @@ try {
     }
   }
   await run("cancel", "继续写。", "CANCELLED", 1);
-  for (const [name, status, patches] of [
-    ["local-repair-pass", "COMPLETED", 1], ["local-repair-model-fixes", "COMPLETED", 0],
-    ["local-repair-unsafe", "FAILED", 0], ["local-repair-final-reject", "FAILED", 1],
-  ]) {
+  for (const name of Object.keys(defaultCandidates)) {
     const session = await invoke(main, "create_discussion_session", {
       title: name, scopeKind: "PROJECT", scopeId: null, scopeText: null, topicKind: null, linkedEntityId: null,
     });
     scope = { ...scope, sessionId: session.id };
-    const result = await run(name, "核对突破代价规则，依据当前原文讨论恢复限制。只讨论。", status, 3);
-    assert.equal(reviewRequests, 2);
-    const reviews = result.audit.filter((event) => event.kind === "content_review");
-    assert.equal(reviews[0].modelResult.decision, "PASS", "A synthetic model miss must not bypass native evidence.");
-    assert.equal(reviews[0].result.decision, "REVISE");
-    assert.equal(reviews[0].nativeOverride, true);
-    assert.equal(result.audit.filter((event) => event.kind === "content_local_repair").length, patches);
-    if (status === "COMPLETED") {
-      assert(!result.output.includes("不能白给、不能一次全还"));
-      assert.equal(report.turns.at(-1).events.filter((event) => event.kind === "text").length, 1);
-    } else {
-      assert.equal(report.turns.at(-1).events.filter((event) => event.kind === "text").length, 0);
-    }
+    const result = await run(name, "核对突破代价规则，依据当前原文讨论恢复限制。只讨论。", "COMPLETED", 2);
+    assert.equal(reviewRequests, 0);
+    assert(!result.audit.some((event) => ["content_review","content_local_repair"].includes(event.kind)));
+    assert(result.audit.some((event) => event.kind === "content_review_skipped" && event.reason === "NOT_REQUESTED"));
+    assert.equal(result.output, defaultCandidates[name], "No semantic guarantee or silent rewriting.");
+    assert.equal(report.turns.at(-1).events.filter((event) => event.kind === "text").length, 1);
   }
   for (const [name, status, count, expectedReviews] of [
     ["review-pass", "COMPLETED", 1, 1], ["review-creative", "COMPLETED", 1, 1],
     ["review-revise", "COMPLETED", 2, 2], ["review-repeat", "FAILED", 2, 2],
     ["review-unknown", "FAILED", 1, 1], ["review-fake-evidence", "FAILED", 1, 1],
     ["review-wrong-tool", "FAILED", 1, 1], ["review-network", "FAILED", 1, 1],
+    ["review-source-invalid", "FAILED", 2, 1],
     ["review-cancel", "CANCELLED", 1, 1], ["review-revision-tool", "FAILED", 2, 1],
     ["review-revision-free", "FAILED", 2, 1],
     ["review-request-limit", "LIMIT_REACHED", 10, 0], ["review-input-limit", "LIMIT_REACHED", 1, 0],
@@ -590,7 +571,8 @@ try {
         discussion: { ...savedPreferences.discussion, prompt: { context: { inputTokenBudget: 16384 } } } } });
     }
     const result = await run(name,
-      "继续写，保留她将铜匣推回桌角这句，只写门外来人的后续，不要重新取回记忆，不改稿或正式资料。"
+      "继续写，保留她将铜匣推回桌角这句，只写门外来人的后续，不要重新取回记忆，不改稿或正式资料。严格复核。"
+      + (name === "review-source-invalid" ? "核对突破代价规则。" : "")
       + (name === "review-creative" ? "可以提出新的大胆机制，但保持提案身份。" : ""),
       status, count);
     assert.equal(reviewRequests, expectedReviews);
@@ -611,6 +593,12 @@ try {
       assert.equal(candidates[0].content, deviatedStory);
       assert.equal(result.output, newStory);
       assert.equal(result.audit.filter((event) => event.kind === "content_review").length, 2);
+    }
+    if (name === "review-source-invalid") {
+      const read = result.audit.find((event) => event.name === "read_source" && event.result?.content);
+      assert(read);
+      assert(result.output.includes([...read.result.content].slice(0, 240).join("")));
+      assert(result.output.includes("不是完整回答") && result.output.includes(read.result.revision));
     }
     if (status !== "COMPLETED") {
       assert(!result.output.includes("她又从铜匣中取回了全部记忆"));

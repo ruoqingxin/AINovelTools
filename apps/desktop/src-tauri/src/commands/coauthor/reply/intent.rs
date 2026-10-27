@@ -1,5 +1,15 @@
 // Deliberately narrow: only direct, unquoted writing commands establish a program
 // requirement. Questions, examples and hypothetical instructions remain discussion.
+pub(in super::super) fn requested_review(request: &str) -> bool {
+    let verbs = ["复核你的回答", "复核本次回答", "检查回复的一致性", "先审核再展示", "严格复核"];
+    let mut requested = false;
+    for clause in command_clauses(request) {
+        if cancelled_command(&clause, &verbs) { requested = false; }
+        requested |= direct_command(&clause, &verbs);
+    }
+    requested
+}
+
 pub(in super::super) fn required_mode(request: &str, has_previous: bool) -> Option<&'static str> {
     let clauses = command_clauses(request);
     let reprint_verbs = ["重贴整合全文", "重贴全文", "整合全文", "重发全文", "完整重贴", "全文重贴"];
@@ -96,6 +106,20 @@ fn command_clauses(request: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extra_review_requires_an_explicit_unquoted_current_command() {
+        for request in ["请复核你的回答。", "继续写，先审核再展示。", "请严格复核。"] {
+            assert!(requested_review(request), "{request}");
+        }
+        for request in ["先核对原文再讨论。", "继续写。", "不要严格复核。",
+            "如果严格复核会怎样？", "请解释“先审核再展示”的意思。",
+            "> 严格复核\n仅讨论。", "```text\n严格复核\n```",
+            "严格复核，请不要严格复核。"] {
+            assert!(!requested_review(request), "{request}");
+        }
+        assert!(requested_review("不必严格复核。现在严格复核。"));
+    }
 
     #[test]
     fn direct_commands_are_not_inferred_from_discussion_negation_quotes_or_questions() {

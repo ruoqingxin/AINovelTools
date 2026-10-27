@@ -190,6 +190,9 @@ async function runTurn(project, scenario, turn, profile, repetition, turnIndex) 
   const before = await invoke(main, "get_coauthor_state", { scope: project.scope });
   const preferencesBefore = await invoke(main, "get_ai_task_preferences");
   const feeBudgetBefore = await invoke(main, "get_ai_budget_settings");
+  report.activeTurn = { caseId: scenario.id, repetition, turnIndex, runId,
+    projectRoot: project.root, startedAt: new Date().toISOString() };
+  await writeFile(join(directory, "active-turn.json"), JSON.stringify(report.activeTurn, null, 2));
   // Listen on the actual native event, not mocked browser IPC.
   await main.page.evaluate(async ({ scope, runId }) => {
     const start = performance.now();
@@ -232,6 +235,8 @@ async function runTurn(project, scenario, turn, profile, repetition, turnIndex) 
       await window.__TAURI_INTERNALS__.invoke("plugin:event|unlisten",
         { event: "coauthor-progress", eventId: state.listener });
       window.__TAURI_INTERNALS__.unregisterCallback(state.callback);
+    }).catch((error) => {
+      report.listenerCleanupFailure = String(error.message ?? error);
     });
   }
   const run = state.result?.run ?? await invoke(main, "get_coauthor_run", { scope: project.scope, id: runId }).catch(() => null);
@@ -286,6 +291,8 @@ async function runTurn(project, scenario, turn, profile, repetition, turnIndex) 
   }
   report.turns.push(entry);
   report.modelRequests += requests.length;
+  delete report.activeTurn;
+  await writeFile(join(directory, "active-turn.json"), "null\n");
   if (relay) {
     report.budget = relay.snapshot();
     await writeFile(join(directory, "budget.json"), JSON.stringify(report.budget, null, 2));
@@ -377,6 +384,10 @@ try {
 } catch (error) {
   report.status = "failed";
   report.failure = String(error.message ?? error);
+  if (report.activeTurn) {
+    report.interruptedTurn = { ...report.activeTurn, outcome: "UNKNOWN_INTERRUPTED",
+      finalSafetySnapshotsVerified: false, includedInRecordedTurns: false };
+  }
   process.exitCode = 1;
 } finally {
   const cleanupFailures = [];
@@ -398,6 +409,13 @@ try {
     try {
       await relay.close();
       report.budget = relay.snapshot();
+      report.requestAccounting = {
+        recordedTurnRequests: report.modelRequests,
+        relayReservedRequests: report.budget.records.length,
+        unassignedReservations: Math.max(0, report.budget.records.length - report.modelRequests),
+        recordedRequestsWithoutReservation: Math.max(0, report.modelRequests - report.budget.records.length),
+        note: "Relay reservations conservatively cover interrupted/unknown requests; recorded turns are not the full ledger.",
+      };
       await writeFile(join(directory, "budget.json"), JSON.stringify(report.budget, null, 2));
     } catch { cleanupFailures.push("Budget relay cleanup or ledger persistence failed."); }
   }
