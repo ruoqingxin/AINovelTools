@@ -145,6 +145,10 @@ struct TurnAccumulator {
 }
 
 impl TurnAccumulator {
+    fn invalid(&self, stage: &'static str) -> AiError {
+        AiError::InvalidToolResponse { stage, usage: self.usage.clone() }
+    }
+
     fn push(&mut self, value: &Value) -> Result<String, AiError> {
         if let Some(reason) = value
             .pointer("/choices/0/finish_reason")
@@ -152,20 +156,8 @@ impl TurnAccumulator {
         {
             self.finish = Some(reason.into());
         }
-        if let (Some(input), Some(output)) = (
-            value
-                .pointer("/usage/prompt_tokens")
-                .and_then(Value::as_u64),
-            value
-                .pointer("/usage/completion_tokens")
-                .and_then(Value::as_u64),
-        ) {
-            self.usage = Some(GenerationUsage {
-                input_tokens: input.min(u64::from(u32::MAX)) as u32,
-                output_tokens: output.min(u64::from(u32::MAX)) as u32,
-                input_cache_hit_tokens: None,
-                input_cache_miss_tokens: None,
-            });
+        if let Some(usage) = gateway::response_usage(value) {
+            self.usage = Some(usage);
         }
         let delta = value
             .pointer("/choices/0/delta")
@@ -185,7 +177,7 @@ impl TurnAccumulator {
                     .and_then(Value::as_u64)
                     .unwrap_or(position as u64);
                 if index > 31 {
-                    return Err(AiError::InvalidResponse);
+                    return Err(self.invalid("TOOL_INDEX_LIMIT"));
                 }
                 let accumulated = self.calls.entry(index).or_insert_with(|| ModelToolCall {
                     id: String::new(),
@@ -203,7 +195,7 @@ impl TurnAccumulator {
                     .and_then(Value::as_str)
                     .is_some_and(|s| s != "function")
                 {
-                    return Err(AiError::InvalidResponse);
+                    return Err(self.invalid("TOOL_TYPE"));
                 }
                 if let Some(name) = call.pointer("/function/name").and_then(Value::as_str) {
                     accumulated.function.name.push_str(name);
@@ -213,47 +205,51 @@ impl TurnAccumulator {
                     accumulated.function.arguments.push_str(arguments);
                 }
                 if accumulated.function.arguments.len() > 2_000_000 {
-                    return Err(AiError::InvalidResponse);
+                    return Err(self.invalid("TOOL_ARGUMENT_SIZE_LIMIT"));
                 }
             }
         }
         if self.content.len() > 2_000_000 {
-            return Err(AiError::InvalidResponse);
+            return Err(self.invalid("CONTENT_SIZE_LIMIT"));
         }
         Ok(text.into())
     }
 
     fn finish(self) -> Result<ModelToolTurn, AiError> {
-        let finish = self.finish.ok_or(AiError::StreamInterrupted)?;
+        let finish = self.finish.as_deref().ok_or(AiError::StreamInterrupted)?;
         if finish == "length" {
             return Err(AiError::OutputLengthLimit);
         }
         if finish == "content_filter" {
             return Err(AiError::ContentFiltered);
         }
-        if !["stop", "tool_calls"].contains(&finish.as_str()) {
+        if !["stop", "tool_calls"].contains(&finish) {
             return Err(AiError::StreamInterrupted);
         }
-        let calls = self.calls.into_values().collect::<Vec<_>>();
+        let calls = self.calls.values().collect::<Vec<_>>();
         let ids = calls
             .iter()
             .map(|c| &c.id)
             .collect::<std::collections::HashSet<_>>();
-        if ids.len() != calls.len()
-            || calls.iter().any(|c| {
-                c.id.is_empty()
-                    || c.function.name.is_empty()
-                    || serde_json::from_str::<Value>(&c.function.arguments).is_err()
-            })
-            || (calls.is_empty() && self.content.trim().is_empty())
-        {
-            return Err(AiError::InvalidResponse);
+        let invalid = if ids.len() != calls.len() {
+            Some("DUPLICATE_TOOL_IDS")
+        } else if calls.iter().any(|c| c.id.is_empty() || c.function.name.is_empty()) {
+            Some("MISSING_TOOL_IDENTITY")
+        } else if calls.iter().any(|c| serde_json::from_str::<Value>(&c.function.arguments).is_err()) {
+            Some("TOOL_ARGUMENT_JSON")
+        } else if calls.is_empty() && self.content.trim().is_empty() {
+            Some("EMPTY_MESSAGE")
+        } else {
+            None
+        };
+        if let Some(stage) = invalid {
+            return Err(self.invalid(stage));
         }
         Ok(ModelToolTurn {
             content: self.content,
-            calls,
+            calls: self.calls.into_values().collect(),
             usage: self.usage,
-            finish_reason: finish,
+            finish_reason: finish.into(),
         })
     }
 }
@@ -279,7 +275,7 @@ async fn read_turn<F: FnMut(&str)>(
     if json_body {
         let mut bytes = prefix.into_iter().flatten().collect::<Vec<_>>();
         bytes.extend_from_slice(&response.bytes().await.map_err(|_| AiError::Network)?);
-        let value: Value = serde_json::from_slice(&bytes).map_err(|_| AiError::InvalidResponse)?;
+        let value: Value = serde_json::from_slice(&bytes).map_err(|_| accumulated.invalid("RESPONSE_JSON"))?;
         on_text(&accumulated.push(&value)?);
     } else {
         let bytes =
@@ -294,7 +290,7 @@ async fn read_turn<F: FnMut(&str)>(
                 continue;
             }
             let value: Value =
-                serde_json::from_str(&event.data).map_err(|_| AiError::InvalidResponse)?;
+                serde_json::from_str(&event.data).map_err(|_| accumulated.invalid("SSE_JSON"))?;
             on_text(&accumulated.push(&value)?);
         }
     }
@@ -330,6 +326,19 @@ mod tests {
             {"id":"same","function":{"name":"x","arguments":"{}"}}
         ]},"finish_reason":"tool_calls"}]}))
             .unwrap();
-        assert!(matches!(turn.finish(), Err(AiError::InvalidResponse)));
+        assert!(matches!(turn.finish(), Err(AiError::InvalidToolResponse { stage:"DUPLICATE_TOOL_IDS", .. })));
+    }
+
+    #[test]
+    fn invalid_tool_response_retains_usage_and_only_safe_diagnostic_fields() {
+        let mut turn = TurnAccumulator::default();
+        turn.push(&json!({"choices":[{"message":{"content":""},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":13039,"completion_tokens":459}})).unwrap();
+        let error = turn.finish().unwrap_err();
+        assert_eq!(error.code(), "PROVIDER_INVALID_RESPONSE");
+        assert!(error.to_string().contains("EMPTY_MESSAGE"));
+        let AiError::InvalidToolResponse { usage, .. } = error else { panic!("missing diagnostics"); };
+        let usage = usage.unwrap();
+        assert_eq!((usage.input_tokens, usage.output_tokens), (13039, 459));
     }
 }

@@ -580,3 +580,40 @@ fn literal_preservation_requirements_are_supplied_before_first_generation_but_no
     let context: Value = serde_json::from_str(messages[0]["content"].as_str().unwrap()).unwrap();
     assert!(context.get("requiredPreservedQuotes").is_none());
 }
+
+#[test]
+fn v27_explicit_continuation_cannot_bypass_validation_by_reporting_discussion_or_reprint() {
+    let id = uuid::Uuid::new_v4();
+    let old = format!("她将铜匣推回桌角。{}", "门外的脚步停了，她始终没有移开目光。".repeat(12));
+    let messages = referenced_context(id, &old);
+    let request = "换第二个方案继续写，但保留她将铜匣推回桌角这句，不重列路线，不改工作稿或正式资料。";
+    for mode in ["DISCUSSION", "REPRINT"] {
+        let value = reply(json!({"mode":mode,"content":old,"requestQuote":request,"continuation":null}));
+        assert!(validate(&value, request, &messages, &HashMap::new(), &[&old]).is_err(),
+            "{mode} must not bypass the author's explicit continuation request");
+        let feedback = recovery(Some(&value), request, &messages, &[&old]);
+        assert_eq!(feedback["action"], "REGENERATE_CONTENT");
+        assert_eq!(feedback["requiredMode"], "CONTINUATION");
+        assert_eq!(feedback["discardRejectedContent"], true);
+    }
+}
+
+#[test]
+fn an_accurate_request_quote_alone_does_not_authorize_reprinting() {
+    let value = reply(json!({"mode":"REPRINT","content":"旧正文","requestQuote":"解释一下"}));
+    assert!(validate(&value, "解释一下", &[], &HashMap::new(), &[]).is_err());
+}
+
+#[test]
+fn mode_requirements_are_in_the_tool_schema_and_cannot_mutate_base_definitions() {
+    let original = vec![definition()];
+    let mut tools = original.clone();
+    constrain_tools(&mut tools, Some("CONTINUATION"));
+    let properties = &tools[0]["function"]["parameters"]["properties"];
+    assert_eq!(properties["mode"]["enum"], json!(["CONTINUATION"]));
+    assert_eq!(properties["continuation"]["type"], "object");
+    assert_eq!(properties["requestQuote"]["type"], "string");
+    assert_eq!(original[0]["function"]["parameters"]["properties"]["mode"]["enum"].as_array().unwrap().len(), 3);
+    let draft = reply(json!({"mode":"DISCUSSION","content":"她将铜匣推回桌角。新的短片段。"}));
+    assert!(validate(&draft, "请续写一个短片段，只在回复中试写。", &[], &HashMap::new(), &[]).is_ok());
+}

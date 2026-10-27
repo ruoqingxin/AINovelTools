@@ -99,6 +99,11 @@ pub enum AiError {
     Cancelled,
     #[error("AI provider returned an invalid response")]
     InvalidResponse,
+    #[error("AI provider returned an invalid response ({stage})")]
+    InvalidToolResponse {
+        stage: &'static str,
+        usage: Option<GenerationUsage>,
+    },
     #[error("AI provider stopped at the output length limit")]
     OutputLengthLimit,
     #[error("AI provider filtered the generated content")]
@@ -131,7 +136,7 @@ impl AiError {
             Self::RateLimited => "PROVIDER_RATE_LIMITED",
             Self::Timeout => "PROVIDER_TIMEOUT",
             Self::Cancelled => "TASK_CANCELLED",
-            Self::InvalidResponse => "PROVIDER_INVALID_RESPONSE",
+            Self::InvalidResponse | Self::InvalidToolResponse { .. } => "PROVIDER_INVALID_RESPONSE",
             Self::OutputLengthLimit => "AI_OUTPUT_LENGTH_LIMIT",
             Self::ContentFiltered => "AI_CONTENT_FILTERED",
             Self::StreamInterrupted => "AI_STREAM_INTERRUPTED",

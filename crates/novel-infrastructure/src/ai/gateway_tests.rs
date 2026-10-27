@@ -183,6 +183,36 @@ async fn native_tool_cancellation_interrupts_a_provider_without_a_final_event() 
 }
 
 #[tokio::test]
+async fn invalid_tool_json_and_sse_retain_received_usage_without_exposing_provider_fields() {
+    for streaming in [false, true] {
+        let (url, thread) = server(move |mut socket| {
+            let value = serde_json::json!({"choices":[{"message":{"tool_calls":[{
+                "id":"invalid","type":"function","function":{"name":"read_source",
+                    "arguments":"raw-private-provider-content-not-json"}
+            }]},"finish_reason":"tool_calls"}],
+                "usage":{"prompt_tokens":13039,"completion_tokens":459}});
+            if streaming {
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").unwrap();
+                write!(socket, "data: {value}\n\ndata: [DONE]\n\n").unwrap();
+            } else {
+                let body = value.to_string();
+                write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+            }
+        });
+        let mut displayed = String::new();
+        let error = ModelGateway::default().generate_tool_turn(
+            &profile(url), "local-test", &[], &[], GenerationOptions::default(), false,
+            Arc::new(AtomicBool::new(false)), |chunk| displayed.push_str(chunk),
+        ).await.unwrap_err();
+        thread.join().unwrap();
+        assert!(displayed.is_empty());
+        assert!(!error.to_string().contains("raw-private"));
+        assert!(matches!(error, AiError::InvalidToolResponse { stage:"TOOL_ARGUMENT_JSON",
+            usage:Some(GenerationUsage{input_tokens:13039,output_tokens:459,..}) }));
+    }
+}
+
+#[tokio::test]
 async fn stream_delivers_a_complete_event_before_the_response_ends() {
     let (release, held) = mpsc::channel();
     let (url, thread) = server(move |mut socket| {

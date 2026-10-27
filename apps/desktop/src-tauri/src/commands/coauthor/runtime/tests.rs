@@ -599,7 +599,7 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
             "missing prompt rule: {instruction}"
         );
     }
-    assert_eq!(PROMPT_VERSION, "coauthor-v27");
+    assert_eq!(PROMPT_VERSION, "coauthor-v28");
 }
 
 #[test]
@@ -613,6 +613,26 @@ fn program_receipts_hide_discussion_delivery_without_removing_other_tools() {
     for instruction in ["更不能总结为“只能部分、不能全部”", "已明确全面重构或将旧规则仅作对照时", "旧代价重新加为已选新代价的前置",
         "未读原文不能断言该来源没写某条规则"] {
         assert!(PROMPT.contains(instruction));
+    }
+}
+
+#[test]
+fn preparation_receipts_require_successful_persisted_identity_and_never_claim_adoption() {
+    let prepared = json!({"prepared":true,"formalCommit":false,"changeSetId":uuid::Uuid::new_v4(),
+        "title":"晋升代价","itemCount":1,"impactCount":1});
+    let receipt = prepared_receipt(std::slice::from_ref(&prepared));
+    assert!(receipt.contains("尚未正式采用"));
+    assert!(receipt.contains(prepared["changeSetId"].as_str().unwrap()));
+    assert!(receipt.contains("变更项：1"));
+    let mut rejected = prepared;
+    rejected["executed"] = json!(false);
+    assert!(prepared_receipt(&[rejected]).is_empty());
+    for value in [
+        json!({"prepared":true,"formalCommit":false,"changeSetId":"forged"}),
+        json!({"prepared":false,"formalCommit":false,"changeSetId":uuid::Uuid::new_v4()}),
+        json!({"prepared":true,"formalCommit":true,"changeSetId":uuid::Uuid::new_v4()}),
+    ] {
+        assert!(prepared_receipt(&[value]).is_empty());
     }
 }
 #[test]

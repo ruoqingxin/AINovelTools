@@ -157,7 +157,7 @@ async function configureLoopback() {
       for await (const chunk of request) raw += chunk;
       const body = JSON.parse(raw);
       const programReceipt = body.messages.some((message) => message.role === "system"
-        && message.content.startsWith("本轮改稿/查证由程序生成准确回执"));
+        && message.content.startsWith("本轮改稿/查证/准备方案由程序生成准确回执"));
       assert.equal(body.tool_choice, programReceipt ? "auto" : "required");
       assert.equal(body.tools.some((tool) => tool.function.name === "deliver_reply"), !programReceipt);
       const message = coauthorLoopbackTurn(body, { scenario: activeScenario });

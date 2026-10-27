@@ -538,7 +538,7 @@ fn stream_delta_content(value: &serde_json::Value) -> Option<String> {
     content_text(value.pointer("/choices/0/delta/content")?)
 }
 
-fn response_usage(value: &serde_json::Value) -> Option<GenerationUsage> {
+pub(super) fn response_usage(value: &serde_json::Value) -> Option<GenerationUsage> {
     let input_tokens = u32::try_from(value.pointer("/usage/prompt_tokens")?.as_u64()?).ok()?;
     let output_tokens = u32::try_from(value.pointer("/usage/completion_tokens")?.as_u64()?).ok()?;
     let token = |name: &str| {

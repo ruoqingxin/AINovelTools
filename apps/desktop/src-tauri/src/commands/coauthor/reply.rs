@@ -3,6 +3,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
+mod intent;
+pub(super) use intent::required_mode;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -74,6 +76,17 @@ pub(super) fn definition() -> Value {
                     },"required":["key","revision","quote","proposal"]}}
             },"required":["mode","content","requestQuote","continuation","ruleChanges"]}
     }})
+}
+
+pub(super) fn constrain_tools(tools: &mut [Value], required: Option<&str>) {
+    let Some(mode) = required else { return; };
+    for tool in tools.iter_mut().filter(|tool| tool["function"]["name"] == "deliver_reply") {
+        tool["function"]["parameters"]["properties"]["mode"]["enum"] = json!([mode]);
+        tool["function"]["parameters"]["properties"]["requestQuote"]["type"] = json!("string");
+        if mode == "CONTINUATION" {
+            tool["function"]["parameters"]["properties"]["continuation"]["type"] = json!("object");
+        }
+    }
 }
 
 fn invalid(message: &str) -> CoauthorError {
@@ -320,6 +333,13 @@ pub(super) fn validate(
     previous_assistant: &[&str],
 ) -> Result<String, CoauthorError> {
     let mut errors = Vec::new();
+    let required = required_mode(request, !previous_assistant.is_empty() || !references(messages).is_empty());
+    if required == Some("CONTINUATION") && !matches!(reply.mode, ReplyMode::Continuation) {
+        errors.push("本轮明确要求续写，须使用CONTINUATION及真实承接引用；不能用DISCUSSION或REPRINT跳过续写校验。");
+    }
+    if matches!(reply.mode, ReplyMode::Reprint) && required != Some("REPRINT") {
+        errors.push("REPRINT须由本轮作者明确要求重贴或整合全文；准确requestQuote本身不是重贴授权。");
+    }
     if reply.content.trim().is_empty() || reply.content.chars().count() > 50_000 {
         errors.push("交付正文须非空且不超过50000字。");
     }
@@ -444,6 +464,9 @@ pub(super) fn recovery(
     let fragments = available.iter().map(|(_, _, content)| content.clone()).collect::<Vec<_>>();
     let previous = previous_assistant.iter().copied().chain(fragments.iter().map(String::as_str))
         .collect::<Vec<_>>();
+    let required = required_mode(request, !previous.is_empty());
+    let continuing = required == Some("CONTINUATION")
+        || args.is_some_and(|args| matches!(args.mode, ReplyMode::Continuation));
     let mut quotes = requested_quotes(request, &fragments);
     if let Some(continuation) = args.and_then(|args| args.continuation.as_ref()) {
         for quote in &continuation.preserved_quotes {
@@ -455,15 +478,16 @@ pub(super) fn recovery(
             }
         }
     }
-    let repeated = args.filter(|args| matches!(args.mode, ReplyMode::Continuation)).and_then(|args| {
+    let repeated = args.filter(|_| continuing).and_then(|args| {
         without_quotes(&args.content, &quotes).into_iter().find_map(|segment| {
             previous.iter().find_map(|previous| repeated_excerpt(previous, segment))
         })
     });
-    let missing = args.filter(|args| matches!(args.mode, ReplyMode::Continuation))
+    let missing = args.filter(|_| continuing)
         .map(|args| canonical_quotes(&quotes.iter().filter(|quote| !args.content.contains(*quote))
             .cloned().collect::<Vec<_>>(), &fragments)).unwrap_or_default();
     json!({
+        "requiredMode":required,
         "action":if repeated.is_some() { "REGENERATE_CONTENT" } else if missing.is_empty() { "REPAIR_ARGUMENTS" } else { "REPAIR_CONTENT" },
         "contentMustChange":repeated.is_some() || !missing.is_empty(),
         "discardRejectedContent":repeated.is_some(),

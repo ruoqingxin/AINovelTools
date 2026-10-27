@@ -35,11 +35,49 @@ const continuation = (content) => ({
 
 function response(body) {
   const { context } = loopbackContext(body.messages);
+  if (probe.startsWith("prepare-")) {
+    const prior = body.messages.filter((message) => message.role === "tool").map((message) => JSON.parse(message.content));
+    const prepared = prior.find((result) => result.prepared === true && result.changeSetId);
+    assert.equal(body.tool_choice, prepared ? "auto" : "required");
+    assert.equal(body.tools.some((tool) => tool.function.name === "deliver_reply"), !prepared);
+    if (prepared) {
+      if (probe === "prepare-followup" && requests === 3) return tools(call("get_decisions", { query: "境界" }));
+      if (probe.startsWith("prepare-check") && requests === 3) return tools(call("start_source_check", {
+        title: "准备后建立清单", query: "境界", kinds: ["ENTITY"],
+      }));
+      return plain(probe.endsWith("error") ? "" : "模型自称已正式采用，但这段不能成为程序回执。");
+    }
+    const source = context.relevantSources.hits.find((source) => source.title === "九曜境界体系");
+    assert(source?.sourceReference);
+    const read = prior.find((result) => result.key === source.key && typeof result.content === "string");
+    if (!read) return tools(call("read_source", { reference: source.sourceReference }));
+    return tools(call("prepare_changeset", { title: "本机收尾保护", includeDraft: false,
+      items: [{ id: "realm", kind: "SETTING", title: read.title,
+        content: read.content.replace("结曜之后尚未确定", "结曜之后为归灯境"),
+        targetKey: read.key, targetRevision: read.revision, dependsOn: [] }],
+      draftDependsOn: [], decisionDependencies: [], impacts: [], coverage: "仅本机准确原文替换，不作语义验收。",
+    }));
+  }
   assert(body.tools.some((tool) => tool.function.name === "deliver_reply"));
   assert.equal(body.tool_choice, "required");
   const schema = body.tools.find((tool) => tool.function.name === "deliver_reply").function.parameters;
   for (const field of ["requestQuote", "continuation", "ruleChanges"]) assert(schema.required.includes(field));
   if (probe === "seed") return deliver({ mode: "DISCUSSION", content: oldStory });
+  if (["mode-bypass", "mode-repair", "discussion-reuse"].includes(probe)) {
+    const schema = body.tools.find((tool) => tool.function.name === "deliver_reply").function.parameters;
+    if (probe === "discussion-reuse") return deliver({ mode: "DISCUSSION", content: oldStory });
+    assert.deepEqual(schema.properties.mode.enum, ["CONTINUATION"]);
+    if (probe === "mode-bypass" || requests === 1) {
+      return deliver({ mode: requests === 2 ? "REPRINT" : "DISCUSSION", content: oldStory,
+        requestQuote: "继续写" });
+    }
+    const rejected = JSON.parse(body.messages.filter((message) => message.role === "tool").at(-1).content);
+    assert.equal(rejected.recovery.requiredMode, "CONTINUATION");
+    assert.equal(rejected.recovery.action, "REGENERATE_CONTENT");
+    const original = context.historicalMessages.find((message) => message.id === seedMessage.id);
+    return deliver({ mode: "CONTINUATION", content: newStory, requestQuote: "继续写",
+      continuation: { reference: original.continuationReference, preservedQuotes: ["她将铜匣推回桌角。"] } });
+  }
   if (["program-reference", "v25-metadata-recovery", "v25-unchanged-retry"].includes(probe)) {
     const original = context.historicalMessages.find((message) => message.id === seedMessage.id);
     assert(original?.continuationReference, "The actual supplied AI entry must carry a program reference.");
@@ -221,7 +259,7 @@ async function run(name, message, expectedStatus, expectedRequests) {
   try {
     const task = invoke(main, "run_coauthor", { input: {
       scope, runId, profileId: profile.id, message, expectedDocumentVersion: before.document.version,
-      selection: null, allowDraftEdits: false, temperature: 0.2, maxOutputTokens: 2048,
+      selection: null, allowDraftEdits: name.startsWith("prepare-"), temperature: 0.2, maxOutputTokens: 2048,
     } });
     if (name === "cancel") {
       await until(() => Promise.resolve(requests), (count) => count === 1, "in-flight buffered delivery");
@@ -242,13 +280,13 @@ async function run(name, message, expectedStatus, expectedRequests) {
   assert.equal(run.status, expectedStatus);
   assert.equal(requests, expectedRequests);
   assert.equal(run.audit.filter((event) => event.kind === "model_request").length, requests);
-  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v27"));
+  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v28"));
   assert.deepEqual((await invoke(main, "get_coauthor_state", { scope })).document, before.document);
   assert.equal(snapshot(), original, "Delivery must not alter formal content or decisions.");
   assert.deepEqual(await invoke(main, "get_ai_task_preferences"), preferences);
   assert.deepEqual(await invoke(main, "get_ai_budget_settings"), feeBudget);
   const textEvents = events.filter((event) => event.kind === "text");
-  if (expectedStatus === "COMPLETED") {
+  if (expectedStatus === "COMPLETED" && !name.startsWith("prepare-")) {
     assert.equal(textEvents.length, 1, "Only accepted final content may be published.");
     assert(run.output.startsWith(textEvents[0].content));
   } else {
@@ -272,7 +310,10 @@ try {
       const message = response(JSON.parse(raw));
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
         choices: [{ message, finish_reason: message.tool_calls ? "tool_calls" : "stop" }],
-        ...(probe === "seed" ? {} : { usage: { prompt_tokens: 100, completion_tokens: 30 } }),
+        ...(probe === "seed" ? {} : { usage: {
+          prompt_tokens: probe.startsWith("prepare-") && probe.endsWith("error") && requests >= 3 ? 13039 : 100,
+          completion_tokens: probe.startsWith("prepare-") && probe.endsWith("error") && requests >= 3 ? 459 : 30,
+        } }),
       }));
     } catch (error) {
       console.error(error);
@@ -349,6 +390,55 @@ try {
   }
   await run("read-reference", "继续写，保留她将铜匣推回桌角这句，只给新增情节。", "COMPLETED", 3);
   await run("unknown-reference", "继续写。", "FAILED", 3);
+  const modeSession = await invoke(main, "create_discussion_session", {
+    title: "v27-mode-regression", scopeKind: "PROJECT", scopeId: null, scopeText: null,
+    topicKind: null, linkedEntityId: null,
+  });
+  scope = { ...scope, sessionId: modeSession.id };
+  await run("seed", "请给出短方案，只在回复中试写。", "COMPLETED", 1);
+  seedMessage = (await invoke(main, "list_discussion_messages", { sessionId: scope.sessionId, limit: 16 }))
+    .find((message) => message.role === "ASSISTANT" && message.content === oldStory);
+  assert(seedMessage);
+  await run("discussion-reuse", "讨论如何续写，先不要写正文；引用旧段解释即可。", "COMPLETED", 1);
+  await run("mode-bypass", "换第二个方案继续写，但保留她将铜匣推回桌角这句，不重列路线，不改工作稿或正式资料。", "FAILED", 3);
+  const modeRepaired = await run("mode-repair", "换第二个方案继续写，但保留她将铜匣推回桌角这句，不重列路线，不改工作稿或正式资料。", "COMPLETED", 2);
+  assert.equal(report.turns.at(-1).events.find((event) => event.kind === "text").content, newStory);
+  assert(modeRepaired.audit.some((event) => event.kind === "reply_delivery_rejected"));
+  for (const [name, status, count] of [
+    ["prepare-complete", "COMPLETED", 3], ["prepare-followup", "COMPLETED", 4], ["prepare-error", "FAILED", 3],
+    ["prepare-check", "COMPLETED", 4], ["prepare-check-error", "FAILED", 4],
+  ]) {
+    const result = await run(name, "核对九曜境界体系，将结曜之后改为归灯境，请实际准备差异但不正式采用。"
+      + (name.startsWith("prepare-check") ? "准备后建立境界实体查证清单，暂不逐项判断。" : ""), status, count);
+    assert(result.output.includes("尚未正式采用"));
+    assert(!result.output.includes("模型自称"));
+    assert(!result.output.includes("当前运行尚未结束"));
+    if (name.startsWith("prepare-check")) {
+      assert(result.audit.some((event) => event.kind === "check_summary"));
+      assert(result.output.includes("未读"));
+    }
+    const prepared = result.audit.filter((event) => event.name === "prepare_changeset" && event.result.prepared);
+    assert.equal(prepared.length, 1, "Prepared operations must not be replayed.");
+    assert(result.output.includes(prepared[0].result.changeSetId));
+    const db = new DatabaseSync(join(project.root, "project.sqlite"), { readOnly: true });
+    try {
+      assert.equal(db.prepare("SELECT status FROM coauthor_changesets WHERE id=?").get(prepared[0].result.changeSetId).status, "PENDING");
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM coauthor_publications").get().count, 0);
+    } finally { db.close(); }
+    if (name.endsWith("error")) {
+      assert(result.output.startsWith("本轮未完成（FAILED）"));
+      const diagnosis = result.audit.find((event) => event.kind === "provider_response_error");
+      assert.equal(diagnosis.stage, "EMPTY_MESSAGE");
+      assert.deepEqual(diagnosis.usage, { inputTokens: 13039, outputTokens: 459 });
+      const usageId = result.audit.filter((event) => event.kind === "model_request").at(-1).usageId;
+      const usage = (await invoke(main, "list_ai_runs", { limit: 100 })).find((run) => run.id === usageId);
+      assert.equal(usage.status, "FAILED");
+      assert.equal(usage.errorCode, "PROVIDER_INVALID_RESPONSE");
+      assert.equal(usage.attemptCount, 1);
+      assert.equal(usage.estimatedInputTokens, 13039);
+      assert.equal(usage.estimatedOutputTokens, 459);
+    }
+  }
   for (const [name, status, count] of [
     ["source-reference", "COMPLETED", 2], ["source-version-recovery", "COMPLETED", 3],
     ["source-no-progress", "FAILED", 5], ["unknown-source-reference", "FAILED", 3],

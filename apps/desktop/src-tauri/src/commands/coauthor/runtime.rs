@@ -8,7 +8,24 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
-pub(super) const PROMPT_VERSION: &str = "coauthor-v27";
+pub(super) const PROMPT_VERSION: &str = "coauthor-v28";
+
+pub(super) fn prepared_receipt(results: &[Value]) -> String {
+    let mut receipt = String::new();
+    for result in results {
+        if result["prepared"] != true || result["formalCommit"] != false
+            || result["executed"] == false || result["error"].is_string()
+            || result["changeSetId"].as_str().and_then(|id| id.parse::<uuid::Uuid>().ok()).is_none()
+        {
+            continue;
+        }
+        let _ = writeln!(receipt,
+            "\n关联变更「{}」已准备，尚未正式采用。\n方案：{}\n变更项：{}，影响提示：{}。请在「关联变更」面板核对差异、依赖与影响后确认。",
+            result["title"].as_str().unwrap_or("未命名方案"), result["changeSetId"].as_str().unwrap_or(""),
+            result["itemCount"], result["impactCount"]);
+    }
+    receipt
+}
 
 pub(super) fn request_tools(definitions: &[Value], program_receipt: bool) -> Vec<Value> {
     definitions

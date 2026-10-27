@@ -2165,6 +2165,44 @@ fn planning_ai_runs_are_recorded_with_fallback_and_cost_snapshot() {
 }
 
 #[test]
+fn invalid_tool_responses_record_received_usage_without_marking_runs_successful() {
+    let root = std::path::PathBuf::from("target")
+        .join(format!("ainovel-tool-error-usage-{}", uuid::Uuid::new_v4()));
+    let mut manager = super::ProjectManager::new();
+    manager.create(&root, "工具响应失败用量").unwrap();
+    let profile = manager.upsert_model_profile(super::ModelProfileInput {
+        id: None, name: "Local invalid response".into(),
+        provider: super::ModelProvider::OpenAiCompatible, capability: super::ModelCapability::Chat,
+        base_url: "http://127.0.0.1:1/v1".into(), model_id: "synthetic".into(),
+        context_window: 32768, max_output_tokens: 2048,
+        privacy_level: super::PrivacyLevel::AllowCloud, timeout_seconds: 10, retry_limit: 0,
+        input_price_micros_per_million: 2_000_000, output_price_micros_per_million: 8_000_000,
+        price_currency: "CNY".into(),
+    }).unwrap();
+    for usage in [
+        None,
+        Some(super::GenerationUsage { input_tokens:13039, output_tokens:459,
+            input_cache_hit_tokens:None, input_cache_miss_tokens:None }),
+    ] {
+        let id = manager.start_ai_run(super::AiRunStart {
+            task:super::AiTaskKind::Discussion, source:super::AiRunSource::Writing,
+            job_id:None, chapter_id:None, display_title:"失败用量", profile_id:profile.id,
+            prompt_version:"tool-error-test", estimated_input_tokens:18336,
+        }).unwrap();
+        manager.fail_ai_run(id, &super::AiError::InvalidToolResponse { stage:"EMPTY_MESSAGE", usage:usage.clone() }).unwrap();
+        let run = manager.list_ai_runs(None).unwrap().into_iter().find(|run|run.id == id).unwrap();
+        assert_eq!(run.status, "FAILED");
+        assert_eq!(run.error_code.as_deref(), Some("PROVIDER_INVALID_RESPONSE"));
+        assert_eq!(run.attempt_count, 1);
+        assert_eq!((run.estimated_input_tokens,run.estimated_output_tokens),
+            if usage.is_some() { (13039,459) } else { (18336,0) });
+        assert_eq!(run.estimated_cost_micros, Some(if usage.is_some() { 29750 } else { 36672 }));
+    }
+    drop(manager);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn ai_history_retains_stats_and_limits_request_snapshots_to_latest_hundred() {
     let root = std::path::PathBuf::from("target")
         .join(format!("ainovel-ai-run-retention-{}", uuid::Uuid::new_v4()));

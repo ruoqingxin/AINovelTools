@@ -567,7 +567,7 @@ pub const FEATURE_CATALOG: &[FeatureDescriptor] = &[
     },
     FeatureDescriptor {
         id: "coauthor_reply_delivery",
-        display_name: "共创交付、承接短引用、重复正文与保留句修复及改规则引文校验",
+        display_name: "共创明确续写校验、承接引用、正文恢复、改规则引文及准备方案回执",
         stage: "COAUTHOR-N2",
         status: FeatureStatus::Implemented,
         unavailable_reason: None,

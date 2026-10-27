@@ -517,6 +517,22 @@ impl ProjectManager {
 
     pub fn fail_ai_run(&mut self, run_id: Uuid, error: &AiError) -> Result<(), AiError> {
         let session = self.current.as_mut().ok_or(AiError::NoProject)?;
+        let usage = match error {
+            AiError::InvalidToolResponse { usage, .. } => usage.as_ref(),
+            _ => None,
+        };
+        let actual_cost = if let Some(usage) = usage {
+            let prices = session.database.connection.query_row(
+                "SELECT input_cache_hit_price_micros_per_million, input_price_micros_per_million,
+                    output_price_micros_per_million FROM ai_run_records WHERE id=?1",
+                [run_id.to_string()], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+            ).map_err(DatabaseError::from)?;
+            actual_run_cost_micros(usage, u64::try_from(prices.0.max(0)).unwrap_or(0),
+                u64::try_from(prices.1.max(0)).unwrap_or(0), u64::try_from(prices.2.max(0)).unwrap_or(0))
+                .map(|cost| i64::try_from(cost).unwrap_or(i64::MAX))
+        } else {
+            None
+        };
         let status = if matches!(error, AiError::Cancelled) {
             "CANCELLED"
         } else {
@@ -534,8 +550,13 @@ impl ProjectManager {
             .database
             .connection
             .execute(
-                "UPDATE ai_run_records SET status=?2, error_code=?3, finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1",
-                rusqlite::params![run_id.to_string(), status, error.code()],
+                "UPDATE ai_run_records SET status=?2, error_code=?3,
+                    estimated_input_tokens=COALESCE(?4,estimated_input_tokens),
+                    estimated_output_tokens=COALESCE(?5,estimated_output_tokens),
+                    actual_cost_micros=COALESCE(?6,actual_cost_micros),
+                    finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1",
+                rusqlite::params![run_id.to_string(), status, error.code(),
+                    usage.map(|usage|usage.input_tokens), usage.map(|usage|usage.output_tokens), actual_cost],
             )
             .map_err(DatabaseError::from)?;
         self.prune_ai_request_snapshots().map_err(AiError::from)?;
