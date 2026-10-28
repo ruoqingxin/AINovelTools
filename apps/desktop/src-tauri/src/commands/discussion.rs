@@ -36,6 +36,18 @@ pub(crate) fn list_discussion_sessions(
 }
 
 #[tauri::command]
+pub(crate) fn rename_discussion_session(
+    state: tauri::State<'_, ProjectState>,
+    scope: novel_infrastructure::CoauthorScope,
+    title: String,
+    expected_title: String,
+) -> Result<novel_infrastructure::DiscussionSession, ApiError> {
+    state.manager.lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .rename_discussion_session(&scope, title, expected_title).map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn delete_discussion_session(
     state: tauri::State<'_, ProjectState>,
     scope: novel_infrastructure::CoauthorScope,

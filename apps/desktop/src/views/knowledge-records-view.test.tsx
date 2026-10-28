@@ -1,8 +1,10 @@
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KnowledgeRecordsView } from "./knowledge-records-view";
+import { AiWorkspaceContext } from "./content-identity";
 vi.mock("./knowledge-section-nav", () => ({ KnowledgeSectionNav: () => null }));
 
 const mocks = vi.hoisted(() => ({
@@ -28,6 +30,7 @@ describe("KnowledgeRecordsView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    window.history.replaceState(null, "", "/knowledge/records");
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1", formatVersion: 1, name: "测试项目", createdAt: "" });
     mocks.listCurrentFacts.mockResolvedValue([
       { knowledgeId: "fact-1", subject: "林澈", predicate: "师从", object: "沈舟" },
@@ -41,6 +44,32 @@ describe("KnowledgeRecordsView", () => {
     mocks.listForeshadowings.mockResolvedValue([]);
     mocks.createRelation.mockResolvedValue({});
     mocks.updateRelation.mockResolvedValue({});
+  });
+
+  it("shows record type and evidence without edit controls outside AI", async () => {
+    mocks.listRelations.mockResolvedValue([{
+      id: "relation-1", projectId: "project-1", relationVersion: 1,
+      fromKnowledgeId: "fact-1", toKnowledgeId: "fact-2", relationType: "同盟",
+      evidenceAnchorIds: ["anchor-1"], lifecycleStatus: "ACTIVE",
+    }]);
+    render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={new QueryClient()}>
+      <KnowledgeRecordsView />
+    </QueryClientProvider></AiWorkspaceContext.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: /同盟/ }));
+    expect(screen.getByText("剧情记录 · 关系")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /新建记录|编辑记录/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "去构思处理此关系记录" })).toHaveAttribute("href",
+      "/discussion?work=records&targetProject=project-1&objectId=relation-1&tab=relations");
+    expect(mocks.createRelation).not.toHaveBeenCalled();
+    expect(mocks.updateRelation).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to another record for a missing exact target", async () => {
+    window.history.replaceState(null, "", "/discussion?work=records&targetProject=project-1&tab=events&objectId=missing");
+    mocks.listEvents.mockResolvedValue([{ id: "other", name: "另一事件", occurredAt: "", evidenceAnchorIds: [], eventVersion: 1, lifecycleStatus: "ACTIVE" }]);
+    render(<QueryClientProvider client={new QueryClient()}><KnowledgeRecordsView /></QueryClientProvider>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("未打开其他记录");
+    expect(screen.queryByRole("button", { name: "编辑记录" })).not.toBeInTheDocument();
   });
 
   it("creates a relation from current facts and an evidence anchor", async () => {

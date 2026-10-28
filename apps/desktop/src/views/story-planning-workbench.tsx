@@ -23,6 +23,9 @@ import { usePlanningDraft } from "./use-planning-draft";
 import { PlanningDiscussionSources } from "./planning-discussion-sources";
 import { FreePlanningEditor } from "./free-planning-editor";
 import { PlanningSectionDiscussion } from "./planning-section-discussion";
+import { identityLabel, planningSectionIdentity } from "../lib/content-taxonomy";
+import { getCurrentProject } from "../lib/tauri-client";
+import { ContentTypeLabel, FormalContent, useInAiWorkspace } from "./content-identity";
 
 type PlanningItem = { id: string; label: string; prompt: string; guidance: string };
 type PlanningGroup = { id: string; label: string; children: PlanningItem[] };
@@ -104,12 +107,36 @@ function planningJobInput(job: Job): PlanningAiJobInput | null {
   }
 }
 
-export function StoryPlanningWorkbench(props: {
+type StoryPlanningWorkbenchProps = {
   compact?: boolean;
   selectedSectionId?: string;
   onSelectSection?: (sectionId: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
-}) {
+};
+
+export function StoryPlanningWorkbench(props: StoryPlanningWorkbenchProps) {
+  const workspace = useInAiWorkspace();
+  if (props.selectedSectionId && !sectionIds.has(props.selectedSectionId)) return <p role="alert">准备节点不存在，未打开其他内容。</p>;
+  return workspace ? <EditableStoryPlanningWorkbench {...props} /> : <StoryPlanningContent {...props} />;
+}
+
+function StoryPlanningContent(props: StoryPlanningWorkbenchProps) {
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
+  const sections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
+  const id = props.selectedSectionId ?? "seed-tone";
+  const definition = sectionsDefinition(id);
+  const section = sections.data?.find((item) => item.id === id);
+  if (sections.isPending || project.isPending) return <p role="status">正在读取正式内容…</p>;
+  if (sections.isError || project.isError) return <p role="alert">{errorMessage(sections.error ?? project.error)}</p>;
+  if (!project.data) return null;
+  return <FormalContent title={definition?.label ?? id} identity={planningSectionIdentity(id)} content={section?.content ?? ""}
+    pending={Boolean(section?.pendingContent.trim())} status={section ? planningStoryStateLabels[section.storyState] : "尚未记录"}
+    target={{ projectId: project.data.projectId, workflow: "section", item: id }} />;
+}
+
+function sectionsDefinition(id: string) { return sections.find((section) => section.id === id); }
+
+function EditableStoryPlanningWorkbench(props: StoryPlanningWorkbenchProps) {
   const client = useQueryClient();
   const storedSections = useQuery({
     queryKey: ["planning-sections"],
@@ -167,9 +194,9 @@ export function StoryPlanningWorkbench(props: {
     : null;
   const existingFormalContext = useMemo(() => (storedSections.data ?? [])
     .filter((item) => sectionIds.has(item.id) && item.content.trim() && item.id !== selectedId)
-    .map((item) => `${item.id}: ${item.content}`)
+    .map((item) => `[${identityLabel(planningSectionIdentity(item.id))}] ${item.id}: ${item.content}`)
     .join("\n"), [storedSections.data, selectedId]);
-  const selectedAiPrompt = `当前节点“${selectedDefinition.label}”：${selectedDefinition.prompt}。填写参考：${selectedDefinition.guidance}`;
+  const selectedAiPrompt = `内容分类：${identityLabel(planningSectionIdentity(selectedId))}。未归类笔记不代表正式设定事实。当前节点“${selectedDefinition.label}”：${selectedDefinition.prompt}。填写参考：${selectedDefinition.guidance}`;
   useEffect(() => {
     setError(null);
     setNotice(null);
@@ -246,7 +273,7 @@ export function StoryPlanningWorkbench(props: {
       cacheSavedSection(saved);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
       setSettingMemoryNeedsRefresh(formalChanged);
-      setNotice(editorTab === "pending" ? "待定内容已保存" : formalChanged ? "正式设定已保存，后续 AI 会直接读取最新内容" : "正式设定已保存");
+      setNotice(editorTab === "pending" ? "待定内容已保存" : formalChanged ? "正式内容已保存，后续 AI 会读取最新内容" : "正式内容已保存");
       setPreviousForm(null);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -384,7 +411,7 @@ export function StoryPlanningWorkbench(props: {
       setShowEditor(true);
       await client.invalidateQueries({ queryKey: ["planning-sections"] });
       setSettingMemoryNeedsRefresh(true);
-      setNotice("已将候选内容设为正式设定，后续 AI 会直接读取最新内容");
+      setNotice("已将候选确认为当前节点的正式内容");
     } catch (cause) {
       setError(errorMessage(cause));
       void client.invalidateQueries({ queryKey: ["planning-sections"] });
@@ -437,7 +464,7 @@ export function StoryPlanningWorkbench(props: {
     }
   }
 
-  if (storedSections.isPending) return <p role="status">正在读取作品设定…</p>;
+  if (storedSections.isPending) return <p role="status">正在读取创作准备…</p>;
   if (storedSections.isError && !storedSections.data) return <p className="project-error" role="alert">{errorMessage(storedSections.error)}</p>;
 
   const discussion = <PlanningSectionDiscussion sectionId={selectedId} title={selectedDefinition.label}
@@ -454,6 +481,7 @@ export function StoryPlanningWorkbench(props: {
     }} />;
 
   if (selectedId === "seed-tone") return <section className="story-planning-workbench book-preferences-editor" aria-label="本书偏好">
+    <ContentTypeLabel identity={planningSectionIdentity(selectedId)} />
     {!props.compact ? <h2>本书偏好</h2> : null}
     {discussion}
     <FreePlanningEditor draft={planningDraft} label="篇幅、风格与边界" rows={4} stateLabels={planningStoryStateLabels}
@@ -470,6 +498,7 @@ export function StoryPlanningWorkbench(props: {
 
   return (
     <section className="story-planning-workbench compact-work-design" aria-label="作品定位">
+      <ContentTypeLabel identity={planningSectionIdentity(selectedId)} />
       <div className="story-planning-layout story-planning-layout-editor-only">
         <div className="story-planning-editor">
           <div className="story-planning-editor-heading">
@@ -514,7 +543,7 @@ export function StoryPlanningWorkbench(props: {
           <p className="compact-plan-status" role="status">{sectionStatus.label}</p>
           <PlanningDiscussionSources sectionId={selectedId} />
           {notice ? <p className="project-notice story-planning-status">{notice}</p> : null}
-          {settingMemoryNeedsRefresh ? <div className="story-planning-state"><strong>跨章节任务前建议更新设定记忆</strong><span>当前 AI 已会读取这次保存的正式设定；只有需要摘要导航或跨章节上下文时，才更新设定记忆。</span><button type="button" className="secondary-action" onClick={() => void refreshSettingMemory()} disabled={refreshingSettingMemory}>{refreshingSettingMemory ? "提交中…" : "更新设定记忆"}</button></div> : null}
+          {settingMemoryNeedsRefresh ? <div className="story-planning-state"><strong>辅助参考 · 设定概览待更新</strong><button type="button" className="secondary-action" onClick={() => void refreshSettingMemory()} disabled={refreshingSettingMemory}>{refreshingSettingMemory ? "提交中…" : "更新设定概览"}</button></div> : null}
           {error ? <p className="project-error story-planning-status" role="alert">{error}</p> : null}
           {planningDraft.remoteChanged ? <div className="story-planning-state" role="status"><strong>此规划已有新版本，本地修改仍保留</strong><button type="button" className="secondary-action" disabled={saving} onClick={() => { if (window.confirm("放弃本地未保存修改并读取最新规划吗？")) { planningDraft.reload(); setError(null); setPreviousForm(null); setNotice("已读取最新规划"); } }}><RotateCcw size={14} />读取最新规划</button></div> : null}
         </div>

@@ -82,6 +82,7 @@ impl Database {
                     "INSERT INTO coauthor_decision_consumers VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
                     rusqlite::params![changes.id.to_string(),dependency.decision.id.to_string(),dependency.decision.version,
                         id,item.document.title,match item.document.kind {
+                            CoauthorDocumentKind::Unclassified=>return Err(rusqlite::Error::InvalidQuery),
                             CoauthorDocumentKind::Setting=>"SETTING",CoauthorDocumentKind::Outline=>"OUTLINE",CoauthorDocumentKind::Manuscript=>"MANUSCRIPT",
                         },published.map(|entry|&entry.source_key),published.map(|entry|&entry.revision)],
                 )?;

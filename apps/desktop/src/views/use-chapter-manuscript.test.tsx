@@ -35,13 +35,13 @@ const emptyDraft = (chapterId = "chapter-1", version = 0): ManuscriptDraft => ({
 });
 let drafts: Map<string, ManuscriptDraft>;
 
-function setup(chapterId = "chapter-1", mode: "planning" | "writing" = "writing", initialTab: "candidate" | "manuscript" = "manuscript", customConfirmation = false) {
+function setup(chapterId = "chapter-1", mode: "planning" | "writing" = "writing", initialTab: "candidate" | "manuscript" = "manuscript", customConfirmation = false, readOnly = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const onError = vi.fn();
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>
     {customConfirmation ? <ConfirmActionProvider>{children}</ConfirmActionProvider> : children}</QueryClientProvider>;
   const hook = renderHook(({ chapterId, mode }) => useChapterManuscript({
-    chapterId, projectId: "project-1", mode, onError, initialTab,
+    chapterId, projectId: "project-1", mode, onError, initialTab, readOnly,
   }), { wrapper, initialProps: { chapterId, mode } });
   return { ...hook, client, onError };
 }
@@ -87,6 +87,32 @@ describe("useChapterManuscript", () => {
     expect(mocks.currentManuscript).not.toHaveBeenCalled();
     expect(mocks.listManuscriptRevisions).not.toHaveBeenCalled();
     expect(mocks.listRecoveryLogs).not.toHaveBeenCalled();
+  });
+
+  it("does not consume, autosave or adopt candidates while viewing the formal manuscript", async () => {
+    const transfer = JSON.stringify({
+      projectId: "project-1", chapterId: "chapter-1", documentJson: documentJson("transferred"),
+    });
+    window.sessionStorage.setItem("ainoveltools:writing-candidate-transfer", transfer);
+    const { result } = setup("chapter-1", "writing", "manuscript", false, true);
+    await waitFor(() => expect(result.current.draft).toBe(documentJson("saved")));
+    expect(window.sessionStorage.getItem("ainoveltools:writing-candidate-transfer")).toBe(transfer);
+    expect(mocks.currentManuscriptDraft).not.toHaveBeenCalled();
+    expect(mocks.listRecoveryLogs).not.toHaveBeenCalled();
+    await act(async () => {
+      result.current.setDraft(documentJson("candidate"));
+      await result.current.persistLocalDraft();
+      await result.current.saveDraft();
+      await result.current.discardLocalDraft();
+      await result.current.refreshChapterMemory();
+      await result.current.discardRecoveryLogs();
+    });
+    expect(result.current.chapterDirty).toBe(false);
+    expect(mocks.saveManuscriptDraft).not.toHaveBeenCalled();
+    expect(mocks.commitManuscriptDraft).not.toHaveBeenCalled();
+    expect(mocks.discardManuscriptDraft).not.toHaveBeenCalled();
+    expect(mocks.enqueueChapterSummaryRefresh).not.toHaveBeenCalled();
+    expect(mocks.clearRecoveryLogs).not.toHaveBeenCalled();
   });
 
   it("opens and changes chapters directly in the shared editing workspace", async () => {

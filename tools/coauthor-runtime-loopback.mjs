@@ -257,7 +257,7 @@ export function coauthorLoopbackTurn(body, options = {}) {
 }
 
 export function assertLoopbackRegression(entry, { expectInputLimit = false, expectLateExpansion = false } = {}) {
-  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v31"));
+  if (entry.promptVersions) assert(entry.promptVersions.every((version) => version === "coauthor-v32"));
   const setup = entry.audit?.find((a) => a.kind === "input_budget");
   let currentBudget = setup?.initialInputTokenBudget;
   let expanded = false;

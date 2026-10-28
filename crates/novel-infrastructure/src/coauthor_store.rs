@@ -31,6 +31,8 @@ mod tests;
 #[cfg(test)]
 mod deletion_tests;
 #[cfg(test)]
+mod rename_tests;
+#[cfg(test)]
 mod changes_tests;
 #[cfg(test)]
 mod evaluation_tests;
@@ -58,6 +60,7 @@ pub enum CoauthorError {
 )]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CoauthorDocumentKind {
+    Unclassified,
     #[default]
     Setting,
     Outline,
@@ -89,8 +92,8 @@ impl CoauthorDocument {
         Self {
             session_id,
             version: 0,
-            kind: CoauthorDocumentKind::Setting,
-            title: "未命名设定".into(),
+            kind: CoauthorDocumentKind::Unclassified,
+            title: "未命名工作稿".into(),
             content: String::new(),
             target_key: None,
             target_revision: None,
@@ -140,6 +143,29 @@ pub(crate) fn encode<T: Serialize>(value: &T) -> Result<String, CoauthorError> {
 }
 
 impl ProjectManager {
+    pub fn rename_discussion_session(
+        &mut self,
+        scope: &CoauthorScope,
+        title: String,
+        expected_title: String,
+    ) -> Result<DiscussionSession, CoauthorError> {
+        let title = title.trim();
+        if title.is_empty() || title.chars().count() > 200 {
+            return Err(CoauthorError::Invalid("讨论名须为 1 至 200 个字符。".into()));
+        }
+        self.validate_coauthor_scope(scope)?;
+        let db = &self.current.as_ref().ok_or(CoauthorError::WrongProject)?.database;
+        let changed = db.connection.execute(
+            "UPDATE discussion_sessions SET title=?1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id=?2 AND project_id=?3 AND title=?4 AND deleted_at IS NULL",
+            rusqlite::params![title, scope.session_id.to_string(), scope.project_id.to_string(), expected_title],
+        )?;
+        if changed != 1 {
+            return Err(CoauthorError::Conflict);
+        }
+        self.get_discussion_session(scope.session_id).map_err(Into::into)
+    }
+
     pub fn delete_discussion_session(&mut self, scope: &CoauthorScope) -> Result<(), CoauthorError> {
         let db = &self.current.as_ref().ok_or(CoauthorError::WrongProject)?.database;
         let tx = db.connection.unchecked_transaction()?;

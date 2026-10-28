@@ -9,7 +9,7 @@ import { decisionStatuses } from "./coauthor-decision-dependencies";
 const states: Record<string, string> = {
   PENDING: "待确认方案", ADOPTED: "已采用项目", NOT_ADOPTED: "本项未采用", DISCARDED: "方案已放弃", REVERSED: "采用已撤销",
 };
-const kinds = { MANUSCRIPT: "正文", SETTING: "设定", OUTLINE: "大纲" } as const;
+import { coauthorKindLabels as kinds } from "../lib/content-taxonomy";
 type Props = {
   scope: CoauthorScope; decision: CoauthorDecision; onOpenChangeSet: (id: string) => void;
   onDiscussItem: (decision: CoauthorDecision, item: CoauthorDecisionConsumer) => void;

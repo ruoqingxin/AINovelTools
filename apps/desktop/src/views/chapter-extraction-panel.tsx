@@ -22,6 +22,7 @@ import { manuscriptQuery } from "../lib/manuscript-query";
 import { useCandidateEdits, useCandidateEditGuard } from "./use-candidate-edits";
 import { manuscriptSourceHref } from "../lib/manuscript-source";
 import { evidenceSourceRequest } from "./evidence-source";
+import { ContentTypeLabel } from "./content-identity";
 
 const kindLabels = {
   ENTITY: "实体",
@@ -382,7 +383,7 @@ export function ChapterExtractionPanel(props: { chapterId: string; active?: bool
         const locked = busy === `adopt:${item.id}` || busy === `decide:${item.id}` || busy === `reload:${item.id}`;
         return <article className="chapter-extraction-item" data-status={item.status.toLowerCase()} key={item.id}>
           <div className="chapter-extraction-item-heading">
-            <div><span>{kindLabels[item.kind]}</span><strong>{itemTitle(item)}</strong></div>
+            <div><ContentTypeLabel identity={{ category: item.kind === "ENTITY" ? "SETTING" : "RECORD", subtype: kindLabels[item.kind] }} /><strong>{itemTitle(item)}</strong></div>
             <small>{statusLabels[item.status]}</small>
           </div>
           <fieldset disabled={locked} className="chapter-extraction-edit-fields">
@@ -402,7 +403,9 @@ export function ChapterExtractionPanel(props: { chapterId: string; active?: bool
           {dirty ? <div className="inspector-actions candidate-edit-status"><span>{editable ? "候选修改未保存" : "候选状态已变化，本地修改仍保留"}</span><button type="button" className="secondary-action" disabled={busy !== null} onClick={() => void reloadItem(item.id)}>放弃修改并重读</button></div> : null}
           <footer>
             <span>{anchor ? `${anchor.sourceVersion} · ${anchor.blockId}` : "证据待载入"}</span>
-            {anchor ? <a href={manuscriptSourceHref(evidenceSourceRequest(anchor), `/writing?tab=extraction#${encodeURIComponent(props.chapterId)}`)}><BookOpenText size={14} />定位原文</a> : null}
+            {anchor ? <a href={manuscriptSourceHref(evidenceSourceRequest(anchor), window.location.pathname === "/discussion"
+              ? `${window.location.pathname}${window.location.search}${window.location.hash}`
+              : `/writing?tab=extraction#${encodeURIComponent(props.chapterId)}`)}><BookOpenText size={14} />定位原文</a> : null}
             {props.onOpenManuscript
               ? <button type="button" className="secondary-action" onClick={props.onOpenManuscript}>查看已保存正文</button>
               : <a href={`/writing#${props.chapterId}`}>打开正文</a>}

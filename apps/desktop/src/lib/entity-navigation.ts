@@ -1,6 +1,6 @@
 import { sourceReturnTo } from "./manuscript-source";
 
-export const entityTypeLabels = { CHARACTER: "人物", LOCATION: "地点", FACTION: "阵营", ITEM: "物品", CONCEPT: "概念" } as const;
+export { entityTypeLabels } from "./content-taxonomy";
 
 export function entityHref(entityId: string, projectId: string, returnTo?: string) {
   const params = new URLSearchParams({ entity: entityId, targetProject: projectId });
@@ -10,8 +10,8 @@ export function entityHref(entityId: string, projectId: string, returnTo?: strin
 }
 
 export function entityChapterHref(chapterId: string, projectId: string, returnTo?: string) {
-  const params = new URLSearchParams({ referenceChapter: chapterId, targetProject: projectId, assistant: "plan" });
+  const params = new URLSearchParams({ referenceChapter: chapterId, targetProject: projectId, assistant: "plan", tab: "plan", work: "writing" });
   const safeReturn = sourceReturnTo(returnTo ?? null);
   if (safeReturn) params.set("returnTo", safeReturn);
-  return `/writing?${params}#${encodeURIComponent(chapterId)}`;
+  return `/discussion?${params}#${encodeURIComponent(chapterId)}`;
 }

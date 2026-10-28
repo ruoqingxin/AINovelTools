@@ -13,6 +13,7 @@ import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { AiModelNote } from "./ai-model-note";
 import "./planning-section-discussion.css";
 import "./discussion-source.css";
+import { AiWorkspaceLink, useInAiWorkspace } from "./content-identity";
 
 type Props = {
   sectionId: string;
@@ -27,8 +28,19 @@ type Props = {
 };
 
 export function PlanningSectionDiscussion(props: Props) {
+  const workspace = useInAiWorkspace();
   // A section change must never reuse another item's composer or in-flight operation.
-  return <SectionDiscussion key={props.sectionId} {...props} />;
+  return workspace ? <SectionDiscussion key={props.sectionId} {...props} /> : <SectionDiscussionEntry {...props} />;
+}
+
+function SectionDiscussionEntry({ sectionId, title }: Props) {
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
+  if (!project.data) return null;
+  const preparation = sectionId.startsWith("preparation:");
+  return <AiWorkspaceLink target={{ projectId: project.data.projectId,
+    workflow: preparation ? "preparation" : "section", item: preparation ? sectionId.slice("preparation:".length) : sectionId }}>
+    去构思讨论{title}
+  </AiWorkspaceLink>;
 }
 
 function SectionDiscussion(props: Props) {

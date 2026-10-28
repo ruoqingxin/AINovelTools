@@ -109,6 +109,10 @@ export function deleteDiscussionSession(scope: CoauthorScope) {
   return invoke("delete_discussion_session", { scope });
 }
 
+export function renameDiscussionSession(input: IpcRequests["rename_discussion_session"]) {
+  return invoke("rename_discussion_session", input);
+}
+
 export function listDiscussionMessages(sessionId: string, limit = 100, beforeMessageId?: string) {
   return invoke("list_discussion_messages", { sessionId, limit, beforeMessageId });
 }

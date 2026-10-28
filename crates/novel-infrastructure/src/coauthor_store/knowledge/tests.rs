@@ -659,6 +659,7 @@ fn evidence_tool_dependencies_are_durable_and_source_changes_block_pending_forma
         .save_coauthor_document(
             &f.scope,
             CoauthorDocument {
+                kind: CoauthorDocumentKind::Manuscript,
                 content: "基于魂灯事实试写。".into(),
                 ..draft
             },

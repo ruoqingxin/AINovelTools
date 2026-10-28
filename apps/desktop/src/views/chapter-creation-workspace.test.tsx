@@ -1,9 +1,11 @@
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChapterCreationWorkspace } from "./chapter-creation-workspace";
 import { ConfirmActionProvider } from "../shell/confirm-action-provider";
+import { AiWorkspaceContext } from "./content-identity";
 
 type WorkspaceProps = ComponentProps<typeof ChapterCreationWorkspace>;
 type ManuscriptState = WorkspaceProps["state"];
@@ -84,6 +86,24 @@ describe("ChapterCreationWorkspace", () => {
     vi.clearAllMocks();
     localStorage.clear();
     window.history.replaceState(null, "", "/writing");
+  });
+
+  it("shows only the saved manuscript and exact categorized workspace links outside AI", () => {
+    const props = makeProps();
+    render(<AiWorkspaceContext.Provider value={false}>
+      <ChapterCreationWorkspace {...props} projectId="project-1" />
+    </AiWorkspaceContext.Provider>);
+    expect(screen.getByText("正式版本")).toBeVisible();
+    expect(screen.getByText("正文 · 章节正文")).toBeVisible();
+    expect(screen.queryByText("共享编辑器")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /保存正文|检查正文|展开写作助手/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "去构思处理本章正文" })).toHaveAttribute("href",
+      "/discussion?work=writing&targetProject=project-1&planNode=chapter-1");
+    expect(screen.getByRole("link", { name: "大纲 · 本章计划" })).toHaveAttribute("href",
+      "/discussion?work=writing&targetProject=project-1&planNode=chapter-1&tab=plan&assistant=plan");
+    expect(panels.ai).not.toHaveBeenCalled();
+    expect(panels.extraction).not.toHaveBeenCalled();
+    expect(props.state.saveDraft).not.toHaveBeenCalled();
   });
 
   it("opens chapter-plan deep links in the existing assistant without activating AI creation", () => {

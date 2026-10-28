@@ -13,6 +13,7 @@ import {
   reviewKnowledgeCandidate,
   type CandidateStatus,
 } from "../lib/tauri-client";
+import { ContentTypeLabel } from "./content-identity";
 
 const candidateStatusLabels: Record<CandidateStatus, string> = {
   PENDING: "待审核",
@@ -56,7 +57,9 @@ export function KnowledgeReviewView(props: {
     enabled: active && Boolean(selectedChapterId),
   });
   const anchors = useQuery({ queryKey: ["evidence-anchors"], queryFn: listEvidenceAnchors, enabled: active && Boolean(selectedChapterId) });
-  const returnTo = props.onOpenManuscript
+  const returnTo = window.location.pathname === "/discussion"
+    ? `${window.location.pathname}${window.location.search}${window.location.hash}`
+    : props.onOpenManuscript
     ? `/writing?tab=extraction&knowledge=facts#${encodeURIComponent(selectedChapterId)}`
     : `/review?${new URLSearchParams({ tab: "facts", chapterId: selectedChapterId })}`;
   const [busy, setBusy] = useState<string | null>(null);
@@ -102,6 +105,7 @@ export function KnowledgeReviewView(props: {
 
   return (
     <section className={`${props.embedded ? "" : "story-bible-view "}knowledge-review-view`}>
+      <ContentTypeLabel identity={{ category: "RECORD", subtype: "正文事实" }} />
       {!props.embedded ? <div className="workspace-heading">
         <p className="eyebrow">内容审核</p>
         <h1>正文事实审核</h1>

@@ -763,6 +763,7 @@ fn legacy_receipts_other_linked_drafts_running_tasks_and_new_references_block_re
         .save_coauthor_document(
             &scope,
             CoauthorDocument {
+                kind: CoauthorDocumentKind::Setting,
                 target_key: Some(original.published[1].source_key.clone()),
                 target_revision: Some(original.published[1].revision.clone()),
                 ..doc

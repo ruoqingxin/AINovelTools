@@ -1,9 +1,11 @@
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EntityCard } from "../lib/tauri-client";
 import { StoryBibleView } from "./story-bible-view";
+import { AiWorkspaceContext } from "./content-identity";
 vi.mock("./knowledge-section-nav", () => ({ KnowledgeSectionNav: () => null }));
 
 const mocks = vi.hoisted(() => ({
@@ -71,6 +73,22 @@ describe("StoryBibleView", () => {
       createdAt: "",
       updatedAt: "",
     });
+  });
+
+  it("keeps the normal setting page read-only and links the exact typed target to AI", async () => {
+    window.history.replaceState(null, "", "/knowledge?entity=entity-1&targetProject=project-1");
+    mocks.listEntityCards.mockResolvedValue([card]);
+    const client = new QueryClient();
+    render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={client}>
+      <StoryBibleView />
+    </QueryClientProvider></AiWorkspaceContext.Provider>);
+    expect(await screen.findByRole("heading", { name: "沈砚" })).toBeVisible();
+    expect(screen.getByText("设定 · 人物")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /新建实体|导入|编辑实体|讨论/ })).not.toBeInTheDocument();
+    const link = screen.getByRole("link", { name: "去构思处理人物设定" });
+    expect(link).toHaveAttribute("href", "/discussion?work=entity&targetProject=project-1&entity=entity-1");
+    expect(mocks.upsertEntity).not.toHaveBeenCalled();
+    expect(mocks.extractEntitiesFromText).not.toHaveBeenCalled();
   });
 
   it("opens the exact entity and reads histories only for the selected entity", async () => {
@@ -229,7 +247,7 @@ describe("StoryBibleView", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByRole("heading", { name: "人物与世界" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "设定" })).toBeVisible();
     expect(screen.queryByLabelText("名称")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "章节审核" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "搜索实体" })).toBeVisible();

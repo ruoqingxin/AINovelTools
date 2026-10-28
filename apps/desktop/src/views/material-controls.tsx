@@ -6,12 +6,12 @@ import { enqueueChapterSummaryRefresh, enqueueProjectSettingSummaryRefresh, erro
   type SummaryMaterial, type WritingCard } from "../lib/tauri-client";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { useJobs } from "../lib/jobs-query";
+import { summaryIdentity } from "../lib/content-taxonomy";
+import { AiWorkspaceLink, useInAiWorkspace } from "./content-identity";
 
 export const automaticSummary = (item: SummaryMaterial) => item.generationMode.startsWith("EXTRACTIVE_AUTO");
 export function summaryLabel(item: SummaryMaterial) {
-  if (item.generationMode === "EXTRACTIVE_AUTO") return "章节记忆";
-  if (item.generationMode === "EXTRACTIVE_AUTO_PROJECT") return "作品概览";
-  if (item.generationMode === "EXTRACTIVE_AUTO_SETTINGS") return "设定概览";
+  if (automaticSummary(item)) return summaryIdentity(item).subtype;
   return `参考摘要 · ${{ CHAPTER: "章节", CHARACTER: "人物", SETTING: "设定" }[item.kind]}`;
 }
 export const summaryStatus = (item: SummaryMaterial) => item.lifecycleStatus === "ACTIVE" ? "有效"
@@ -114,6 +114,7 @@ export function MaterialEditor({ kind, projectId: initialProjectId, summary: ini
 }
 
 export function SummaryActions({ item, onBusyChange }: { item: SummaryMaterial; onBusyChange?: (busy: boolean) => void }) {
+  const aiWorkspace = useInAiWorkspace();
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +158,10 @@ export function SummaryActions({ item, onBusyChange }: { item: SummaryMaterial; 
   const refresh = item.generationMode === "EXTRACTIVE_AUTO" && item.sourceId
     ? () => enqueueChapterSummaryRefresh(item.sourceId!)
     : item.generationMode === "EXTRACTIVE_AUTO_SETTINGS" ? enqueueProjectSettingSummaryRefresh : null;
+  if (!aiWorkspace) return automatic ? <AiWorkspaceLink
+    target={{ projectId: item.projectId, workflow: "materials", targetId: item.id, materialKind: "SUMMARY" }}>
+    去构思更新{summaryLabel(item)}
+  </AiWorkspaceLink> : null;
   return <>
     <div className="library-actions">
       {automatic ? refresh ? <button type="button" className="secondary-action" disabled={busy || refreshPending}

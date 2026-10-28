@@ -5,6 +5,7 @@ import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import { entityHref } from "../lib/entity-navigation";
 import "./library-workspace.css";
 import { SearchField } from "./search-field";
+import { AiWorkspaceLink, ContentTypeLabel } from "./content-identity";
 
 export function AuthorSettingsView() {
   const settings = useQuery({ queryKey: ["author-settings"], queryFn: listAuthorSettings });
@@ -18,7 +19,7 @@ export function AuthorSettingsView() {
     && `${setting.entityName} ${setting.content}`.toLowerCase().includes(search.trim().toLowerCase()));
   const selected = settings.data?.find((setting) => setting.id === selectedId);
   return <section className="story-bible-view author-settings-view library-workspace">
-    <div className="workspace-heading"><h1>作者设定</h1></div>
+    <div className="workspace-heading"><h1>设定揭示状态</h1></div>
     <KnowledgeSectionNav />
     <div className="library-toolbar">
       <SearchField label="搜索作者设定" placeholder="搜索名称或设定"
@@ -42,9 +43,10 @@ export function AuthorSettingsView() {
         <small>{setting.visibility === "AUTHOR_ONLY" ? "尚未揭示" : "可揭示"}</small>
       </button>)}
     </div><div className="library-detail">
-      {selected ? <><h2>{selected.entityName}</h2><p className="library-meta">作者确认 · {selected.visibility === "AUTHOR_ONLY" ? "尚未揭示" : "可向读者揭示"}</p>
+      {selected ? <><ContentTypeLabel identity={{ category: "SETTING", subtype: "揭示状态" }} /><h2>{selected.entityName}</h2><p className="library-meta">作者确认 · {selected.visibility === "AUTHOR_ONLY" ? "尚未揭示" : "可向读者揭示"}</p>
         <p className="library-content">{selected.content}</p>
         <div className="library-actions"><a className="secondary-action" href={`/discussion#${encodeURIComponent(selected.sessionId)}`}>来源讨论</a>
+          {project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "entity", targetId: selected.entityId }}>去构思核对关联设定</AiWorkspaceLink>}
           {project.data ? <a className="secondary-action" href={entityHref(selected.entityId, project.data.projectId, "/knowledge/settings")}>关联人物或世界资料</a> : null}
         </div><details className="library-advanced"><summary>来源信息</summary><p>来源修订 <code>{selected.entityRevisionId}</code></p><p>整理结果 <code>{selected.sourceProposalId}</code></p></details>
       </> : <div className="library-empty"><p>{settings.isPending ? "正在加载设定…" : settings.isError ? "设定暂不可用"

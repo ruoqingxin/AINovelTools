@@ -15,6 +15,8 @@ import { assembleOutline, buildOutlineSteps, outlineSourcesChanged, withOutlineS
 import { openingReviewChecks, outlineReviewChecks, planningReviewChanges, planningReviewIsCurrent, readPlanningReview, withPlanningReview } from "./planning-review";
 import { PlanningSectionDiscussion } from "./planning-section-discussion";
 import "./creation-preparation.css";
+import { identityLabel, planningSectionIdentity } from "../lib/content-taxonomy";
+import { ContentTypeLabel, FormalContent, useInAiWorkspace } from "./content-identity";
 
 function jobSection(job: Job) {
   if (job.jobType !== "AI_PLANNING_GENERATE") return null;
@@ -89,6 +91,7 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
     <p role="alert" className="project-error">无法读取创作准备：{errorMessage(project.error ?? nodes.error ?? sections.error)}</p>
     <button type="button" className="secondary-action" onClick={() => void Promise.all([project.refetch(), nodes.refetch(), sections.refetch()])}>重试</button>
   </section>;
+  if (initialItem && !items.some((item) => item.id === initialItem)) return <p role="alert">准备事项不存在，未打开其他内容。</p>;
 
   function advance() {
     const index = items.findIndex((item) => item.id === selected.id);
@@ -172,6 +175,21 @@ type PreparationEditorProps = {
 };
 
 export function PreparationEditor(props: PreparationEditorProps) {
+  const workspace = useInAiWorkspace();
+  return workspace ? <EditablePreparationEditor {...props} /> : <PreparationFormalContent {...props} />;
+}
+
+function PreparationFormalContent({ item, sections }: PreparationEditorProps) {
+  const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
+  const section = sections.find((entry) => entry.id === item.sectionId);
+  if (!project.data) return null;
+  return <FormalContent title={item.title} identity={planningSectionIdentity(item.sectionId ?? "")}
+    content={section?.content ?? ""} status={preparationStatusLabels[preparationStatus(section, sections)]}
+    pending={Boolean(section?.pendingContent.trim())}
+    target={{ projectId: project.data.projectId, workflow: "preparation", item: item.id }} />;
+}
+
+function EditablePreparationEditor(props: PreparationEditorProps) {
   return props.item.kind === "OUTLINE" ? <OutlinePreparationEditor {...props} /> : <SinglePreparationEditor {...props} />;
 }
 
@@ -256,6 +274,7 @@ function OutlinePreparationEditor(props: PreparationEditorProps) {
   }
 
   return <>
+    <ContentTypeLabel identity={planningSectionIdentity(item.sectionId ?? "")} />
     <nav className="outline-step-nav" aria-label="大纲情节">
       {steps.map((step, index) => {
         const done = !missing.some((entry) => entry.id === step.id);
@@ -410,9 +429,9 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
       if (generationBlocked.current) { setError("当前内容状态已变化，未提交推敲任务。"); return; }
       await enqueuePlanningAiJob({
         profileId: profile.id, mode: "GENERATE", sectionId: item.sectionId!, sectionTitle: item.title,
-        sectionPrompt: `${item.question}\n本次只处理“${item.title}”这一项，给出一份${item.kind === "OUTLINE_STEP" ? "具体、连贯的情节稿，交代行动缘由、人物选择与局面变化" : "简短、连贯的讨论稿"}。不扩展其他准备事项，不列填空清单，不提供多套方案。\n${item.guidance ?? item.placeholder}\n尊重已确认的创作依据，未知之处保留待定，不将推测写成作者已确认的事实。`,
+        sectionPrompt: `内容分类：${identityLabel(planningSectionIdentity(item.sectionId ?? ""))}。未归类笔记不代表正式设定事实。\n${item.question}\n本次只处理“${item.title}”这一项，给出一份${item.kind === "OUTLINE_STEP" ? "具体、连贯的情节稿，交代行动缘由、人物选择与局面变化" : "简短、连贯的讨论稿"}。不扩展其他准备事项，不列填空清单，不提供多套方案。\n${item.guidance ?? item.placeholder}\n尊重已确认的创作依据，未知之处保留待定，不将推测写成作者已确认的事实。`,
         existingContext: sections.filter((section) => section.id !== item.sectionId
-          && preparationStatus(section, sections) === "confirmed").map((section) => `${section.id}: ${section.content}`).join("\n\n"),
+          && preparationStatus(section, sections) === "confirmed").map((section) => `[${identityLabel(planningSectionIdentity(section.id))}] ${section.id}: ${section.content}`).join("\n\n"),
         referenceContent: [additionalContext ? `原主线大纲（细化参考）：\n${additionalContext}` : "", source.content, source.pendingContent].filter(Boolean).join("\n\n"),
         userGuidance: [item.kind === "OUTLINE_STEP" ? "只展开当前这一段的具体情节，不生成整份大纲，不直接写正文。输出供作者确认的情节稿，不代替作者定稿。" : "一次只推敲当前这一项，输出一份短稿，保留作者确认，不直接生成正文。",
           additionalContext ? `原大纲参考（不代表本段已确认内容）：\n${additionalContext}` : "",
@@ -455,6 +474,7 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
   return <>
     <div className="preparation-editor-heading"><span>{item.kind === "OUTLINE_STEP" ? "情节节点" : item.required ? "关键准备" : "可选准备"}</span><h2>{item.title}</h2>
       <p>{item.question}</p></div>
+    <ContentTypeLabel identity={planningSectionIdentity(item.sectionId ?? "")} />
     <PlanningSectionDiscussion sectionId={item.id === "outline" || item.id === "opening" ? `preparation:${item.id}` : item.sectionId!}
       title={item.title} question={item.question}
       draftContent={draft.form.pendingContent} disabled={!draft.ready || disabled || draft.saving || generating || unlocking || Boolean(activeJob)}
@@ -522,7 +542,7 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
             || (!alreadyConfirmed && !locked && !reviewComplete) || (!onContinue && (locked || alreadyConfirmed) && !draft.dirty)}
           onClick={() => locked || alreadyConfirmed && !draft.dirty ? onContinue?.() : void save("confirm")}>
           <Check size={14} />{locked || alreadyConfirmed && !draft.dirty ? onContinue ? "继续下一项" : "已确认"
-            : onContinue ? "确认并继续" : "确认为正式大纲"}</button>}
+            : onContinue ? "确认并继续" : item.kind === "OUTLINE" || item.kind === "OUTLINE_STEP" || item.kind === "CHAPTER" ? "确认为正式大纲" : "确认当前准备内容"}</button>}
       </div>
     </div>
     {draft.remoteChanged ? <div className="project-error" role="status">准备内容已有新版本，本地修改仍保留。

@@ -140,6 +140,22 @@ fn doc(content: &str) -> CoauthorDocument {
 }
 
 #[test]
+fn ai_cannot_classify_an_unclassified_draft_but_can_preserve_its_type_while_editing() {
+    let mut document = doc("尚未确定用途。");
+    document.kind = CoauthorDocumentKind::Unclassified;
+    let original = document.clone();
+    let args = |kind| EditArgs {
+        operation: "new".into(), before: String::new(), after: "待讨论内容。".into(),
+        title: Some("新想法".into()), document_kind: kind,
+    };
+    assert!(edit_document(&mut document, args(Some(CoauthorDocumentKind::Setting)), None).is_err());
+    assert_eq!(document, original);
+    edit_document(&mut document, args(None), None).unwrap();
+    assert_eq!(document.kind, CoauthorDocumentKind::Unclassified);
+    assert_eq!(document.content, "待讨论内容。");
+}
+
+#[test]
 fn draft_receipt_uses_actual_result_and_never_claims_adoption_or_automatic_sync() {
     let initial = doc("结曜之后尚未确定。守灯人例外仍然有效。");
     let mut document = initial.clone();
@@ -585,7 +601,7 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
     for instruction in [
         "最后一条用户消息才是本轮请求",
         "get_decisions回查",
-        "沿用延伸、局部调整、全面重构",
+        "方向未选时可贴着已有设定发展，也可按本轮需要自由重构",
         "旧规则仅作对照",
         "不把旧机制偷偷加回新体系的前提",
         "保持条件、否定范围、主体、次数、例外和未决状态",
@@ -597,7 +613,26 @@ fn prompt_preserves_uncertainty_reconstruction_choice_and_current_request_priori
             "missing prompt rule: {instruction}"
         );
     }
-    assert_eq!(PROMPT_VERSION, "coauthor-v31");
+    assert_eq!(PROMPT_VERSION, "coauthor-v32");
+}
+
+#[test]
+fn prompt_uses_task_driven_alternatives_instead_of_a_fixed_option_menu() {
+    for instruction in [
+        "默认围绕作者当前想法深入展开",
+        "仅在作者要求多个方案或存在值得比较的实质分歧时给备选",
+        "作者指定数量时遵从，未指定时按内容决定数量",
+        "不固定为三个，也不为凑数拆分相近想法",
+        "适合直接解释、建议或续写时直接展开",
+        "历史回复中的选项数量和排版不是本轮模板",
+        "不例行以“选哪个”收尾",
+        "不要求先选固定路线",
+        "已选方向直接推进",
+        "确有影响推进的歧义才简短澄清",
+    ] {
+        assert!(PROMPT.contains(instruction), "missing prompt rule: {instruction}");
+    }
+    assert!(!PROMPT.contains("方向未选时开放沿用延伸、局部调整、全面重构"));
 }
 
 #[test]
@@ -746,7 +781,7 @@ fn prompt_keeps_negative_scope_source_identity_and_sync_authority_explicit() {
     for instruction in [
         "正文及结尾也须保持这一地位",
         "保持条件、否定范围、主体、次数、例外和未决状态",
-        "方向未选时开放沿用延伸、局部调整、全面重构",
+        "方向未选时可贴着已有设定发展，也可按本轮需要自由重构",
         "不同不说明资料过时或必须同步",
         "PROJECT_SHARED是项目共享资料，不是其他分支方案",
         "没有其他分支的身份与原话依据",

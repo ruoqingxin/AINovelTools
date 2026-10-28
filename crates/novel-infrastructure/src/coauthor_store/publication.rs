@@ -47,6 +47,11 @@ impl Database {
         &self,
         document: &CoauthorDocument,
     ) -> Result<Option<CoauthorSource>, CoauthorError> {
+        if document.kind == CoauthorDocumentKind::Unclassified {
+            return Err(CoauthorError::Invalid(
+                "工作稿尚未归类，请先明确设定、大纲或正文；剧情记录与辅助参考须在对应分类中核对采用。".into(),
+            ));
+        }
         if document.title.trim().is_empty()
             || document.title.chars().count() > 200
             || document.content.trim().is_empty()
@@ -97,6 +102,7 @@ impl Database {
     ) -> Result<String, CoauthorError> {
         let source = self.validate_coauthor_publication(document)?;
         let key = match document.kind {
+            CoauthorDocumentKind::Unclassified => return Err(CoauthorError::Invalid("待归类工作稿不能正式采用。".into())),
             CoauthorDocumentKind::Setting => {
                 if source.as_ref().is_some_and(|s| s.kind != "ENTITY") {
                     return Err(CoauthorError::Invalid("设定稿只能关联概念资料。".into()));
@@ -203,6 +209,7 @@ impl Database {
             }
         };
         match document.kind {
+            CoauthorDocumentKind::Unclassified => return Err(CoauthorError::Invalid("待归类工作稿不能正式采用。".into())),
             CoauthorDocumentKind::Setting => {
                 let id = key.strip_prefix("ENTITY:").ok_or(CoauthorError::NotFound)?;
                 tx.execute(

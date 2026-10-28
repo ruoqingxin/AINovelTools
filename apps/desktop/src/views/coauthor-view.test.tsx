@@ -27,7 +27,7 @@ function lightState(): CoauthorState {
 function renderWorkspace() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const result = render(<QueryClientProvider client={client}><ConfirmActionProvider><CoauthorView /></ConfirmActionProvider></QueryClientProvider>);
-  return result;
+  return { ...result, client };
 }
 function emit(runId: string, kind = "status", content = "正在推敲…") {
   act(() => handlers.forEach((handler) => handler({ payload: { runId, sessionId: "s1", kind, content } })));
@@ -67,6 +67,18 @@ beforeEach(() => {
     switch (command) {
       case "current_project": return { projectId: "p1" };
       case "list_discussion_sessions": return [...listedSessions];
+      case "create_discussion_session": {
+        const session = { id: "created", projectId: "p1", title: args.title as string, scopeKind: "PROJECT" };
+        listedSessions = [session, ...listedSessions];
+        return session;
+      }
+      case "rename_discussion_session": {
+        const scope = args.scope as { sessionId: string };
+        const session = listedSessions.find((entry) => entry.id === scope.sessionId)!;
+        const renamed = { ...session, title: args.title as string };
+        listedSessions = listedSessions.map((entry) => entry.id === renamed.id ? renamed : entry);
+        return renamed;
+      }
       case "delete_discussion_session":
         listedSessions = listedSessions.filter((session) => session.id !== (args.scope as { sessionId: string }).sessionId);
         return null;
@@ -105,7 +117,158 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it("requires explicit confirmed classification before an unclear working draft can be adopted", async () => {
+    stored.document = { ...baseline, kind: "UNCLASSIFIED" };
+    renderWorkspace();
+    await screen.findByLabelText("工作稿内容");
+    fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    expect(screen.getByRole("button", { name: "正式采用" })).toBeDisabled();
+    expect(screen.getByText("采用目标：尚未确定")).toBeVisible();
+    fireEvent.change(screen.getByLabelText("稿件类型"), { target: { value: "OUTLINE" } });
+    let dialog = await screen.findByRole("alertdialog", { name: "更改工作稿类型" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.getByLabelText("稿件类型")).toBeEnabled());
+    expect(screen.getByLabelText("稿件类型")).toHaveValue("UNCLASSIFIED");
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    fireEvent.change(screen.getByLabelText("稿件类型"), { target: { value: "OUTLINE" } });
+    dialog = await screen.findByRole("alertdialog", { name: "更改工作稿类型" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认更改类型" }));
+    await waitFor(() => expect(screen.getByLabelText("稿件类型")).toHaveValue("OUTLINE"));
+    expect(screen.getByRole("button", { name: "正式采用" })).toBeEnabled();
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "publish_coauthor_document")).toBe(false);
+  });
+
+  it("distinguishes the setting discussion source from the manuscript working draft", async () => {
+    Object.assign(listedSessions[0]!, { scopeText: JSON.stringify({
+      kind: "content-target", category: "SETTING", subtype: "人物", projectId: "p1",
+      key: "ENTITY:person", title: "陆沉",
+    }) });
+    renderWorkspace();
+    expect(await screen.findByLabelText("讨论来源")).toHaveTextContent("设定 · 人物");
+    expect(await screen.findByLabelText("稿件类型")).toHaveValue("MANUSCRIPT");
+    fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    expect(screen.getByText("正文 · 工作稿")).toBeVisible();
+  });
+  it("creates a discussion with a trimmed custom name only after confirmation", async () => {
+    renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
+    const dialog = await screen.findByRole("dialog", { name: "新建讨论" });
+    const title = within(dialog).getByLabelText("讨论名");
+    expect(title).toHaveValue("共创讨论 2");
+    expect(title).toHaveAttribute("maxlength", "200");
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "create_discussion_session")).toBe(false);
+    fireEvent.change(title, { target: { value: "  主角身世推敲  " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建讨论" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建讨论" })).not.toBeInTheDocument());
+    expect(mocks.invoke).toHaveBeenCalledWith("create_discussion_session", {
+      title: "主角身世推敲", scopeKind: "PROJECT", scopeId: null, scopeText: null, topicKind: "FREE",
+    });
+    expect(screen.getByLabelText("当前讨论")).toHaveValue("created");
+    expect(screen.getByRole("option", { name: "主角身世推敲" })).toBeInTheDocument();
+  });
+
+  it("rejects blank names and cancels without creating or losing the current input", async () => {
+    renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "当前未发送的问题" } });
+    fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
+    const dialog = await screen.findByRole("dialog", { name: "新建讨论" });
+    fireEvent.change(within(dialog).getByLabelText("讨论名"), { target: { value: "   " } });
+    expect(within(dialog).getByRole("button", { name: "创建讨论" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.getByLabelText("当前讨论")).toHaveValue("s1");
+    expect(screen.getByLabelText("讨论输入")).toHaveValue("当前未发送的问题");
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "create_discussion_session")).toBe(false);
+  });
+
+  it("offers an unused default name and creates from the empty workspace", async () => {
+    listedSessions = [];
+    renderWorkspace();
+    const empty = await screen.findByRole("heading", { name: "从一个想法开始" });
+    fireEvent.click(within(empty.parentElement!).getByRole("button", { name: "新建讨论" }));
+    const dialog = await screen.findByRole("dialog", { name: "新建讨论" });
+    expect(within(dialog).getByLabelText("讨论名")).toHaveValue("共创讨论 1");
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建讨论" }));
+    await waitFor(() => expect(screen.getByLabelText("当前讨论")).toHaveValue("created"));
+  });
+
+  it("avoids reusing an existing numbered default after deletion", async () => {
+    listedSessions[0].title = "共创讨论 2";
+    renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    fireEvent.click(screen.getByRole("button", { name: "新建讨论" }));
+    expect(await screen.findByLabelText("讨论名")).toHaveValue("共创讨论 3");
+  });
+
+  it("renames the selected discussion without remounting its unsaved input or draft", async () => {
+    renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "未发送的问题" } });
+    fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    fireEvent.change(screen.getByLabelText("工作稿内容"), { target: { value: "未保存的稿件" } });
+    fireEvent.click(screen.getByRole("button", { name: "重命名讨论" }));
+    const dialog = await screen.findByRole("dialog", { name: "重命名讨论" });
+    expect(within(dialog).getByLabelText("讨论名")).toHaveValue("境界讨论");
+    fireEvent.change(within(dialog).getByLabelText("讨论名"), { target: { value: "  境界与代价  " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存名称" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "重命名讨论" })).not.toBeInTheDocument());
+    expect(mocks.invoke).toHaveBeenCalledWith("rename_discussion_session", {
+      scope: { projectId: "p1", sessionId: "s1" }, title: "境界与代价", expectedTitle: "境界讨论",
+    });
+    expect(screen.getByLabelText("当前讨论")).toHaveValue("s1");
+    expect(screen.getByRole("option", { name: "境界与代价" })).toBeInTheDocument();
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue("未保存的稿件");
+    fireEvent.click(screen.getByRole("tab", { name: "讨论" }));
+    expect(screen.getByLabelText("讨论输入")).toHaveValue("未发送的问题");
+    expect(mocks.invoke.mock.calls.some(([name]) => ["save_coauthor_document", "run_coauthor", "publish_coauthor_document"].includes(name))).toBe(false);
+  });
+
+  it.each(["create_discussion_session", "rename_discussion_session"])("preserves the name and allows retry after %s fails", async (command) => {
+    const original = mocks.invoke.getMockImplementation()!;
+    let fail = true;
+    mocks.invoke.mockImplementation(async (name, args) => name === command && fail
+      ? Promise.reject(new Error("名称保存失败")) : original(name, args));
+    renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    fireEvent.click(screen.getByRole("button", { name: command === "create_discussion_session" ? "新建讨论" : "重命名讨论" }));
+    const title = await screen.findByLabelText("讨论名");
+    fireEvent.change(title, { target: { value: "保留名称" } });
+    const submit = screen.getByRole("button", { name: command === "create_discussion_session" ? "创建讨论" : "保存名称" });
+    fireEvent.click(submit);
+    expect(await screen.findByRole("alert")).toHaveTextContent("名称保存失败");
+    expect(title).toHaveValue("保留名称");
+    expect(screen.getByLabelText("当前讨论")).toHaveValue("s1");
+    fail = false;
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryByLabelText("讨论名")).not.toBeInTheDocument());
+    expect(screen.getByRole("option", { name: "保留名称" })).toBeInTheDocument();
+  });
+
+  it.each(["create_discussion_session", "rename_discussion_session"])("ignores late %s results after a project switch", async (command) => {
+    const original = mocks.invoke.getMockImplementation()!;
+    let complete!: (value: unknown) => void;
+    mocks.invoke.mockImplementation(async (name, args) => name === command
+      ? new Promise((resolve) => { complete = resolve; }) : original(name, args));
+    const { client } = renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    fireEvent.click(screen.getByRole("button", { name: command === "create_discussion_session" ? "新建讨论" : "重命名讨论" }));
+    fireEvent.click(await screen.findByRole("button", { name: command === "create_discussion_session" ? "创建讨论" : "保存名称" }));
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    act(() => {
+      client.setQueryData(["current-project"], { projectId: "p2" });
+      client.setQueryData(["discussion-sessions"], []);
+    });
+    await waitFor(() => expect(screen.queryByLabelText("讨论名")).not.toBeInTheDocument());
+    await act(async () => complete({ id: "late", projectId: "p1", title: "迟到讨论" }));
+    expect(client.getQueryData(["discussion-sessions"])).toEqual([]);
+    expect(window.location.hash).toBe("");
+  });
+
   it("shows named workspace areas and preserves edits across full-width tabs", async () => {
+    stored.document.content = "";
+    posted = [{ id: "answer", sessionId: "s1", role: "ASSISTANT", content: "可编辑的试写" }];
     renderWorkspace();
     await screen.findByLabelText("讨论输入");
     expect(screen.getByRole("heading", { name: "讨论区" })).toBeVisible();
@@ -115,10 +278,19 @@ describe("coauthor workspace", () => {
     expect(within(tools).getAllByRole("button")).toHaveLength(2);
     expect(within(tools).getByRole("button", { name: /讨论决定/ })).toBeVisible();
     expect(within(tools).getByRole("button", { name: "依据与运行记录" })).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: "放入工作稿" }));
+    expect(await screen.findByText("回复已放入工作稿，尚未正式采用。")).toBeVisible();
+    expect(screen.getByRole("tab", { name: "工作稿" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue("可编辑的试写");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "讨论" }));
     fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "尚未发送的问题" } });
     fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
-    expect(screen.getByRole("heading", { name: "工作稿区" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "草稿编辑" })).toBeVisible();
     expect(screen.getByLabelText("讨论输入")).not.toBeVisible();
+    expect(screen.getByLabelText("叙事位置与视角")).not.toBeVisible();
+    expect(screen.getByRole("button", { name: "另开分支" })).not.toBeVisible();
+    fireEvent.click(screen.getByText("版本、分支与多处修改"));
     const draftTools = screen.getByRole("group", { name: "工作稿工具" });
     expect(within(draftTools).getByRole("button", { name: "另开分支" })).toHaveTextContent("另开分支");
     expect(within(draftTools).getByRole("button", { name: "工作稿版本" })).toHaveTextContent("工作稿版本");
@@ -262,6 +434,17 @@ describe("coauthor workspace", () => {
     const panel = await screen.findByRole("dialog", { name: "依据与运行记录" });
     fireEvent.click(within(panel).getByRole("tab", { name: "检索回执" }));
     expect(await within(panel).findByText(/实际返回 0 条/)).toBeVisible();
+    fireEvent.click(within(panel).getByRole("button", { name: "关闭依据与运行记录" }));
+    fireEvent.click(within(reply).getByRole("button", { name: "放入工作稿" }));
+    const confirmation = await screen.findByRole("alertdialog", { name: "追加回复到工作稿" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "取消" }));
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    await waitFor(() => expect(within(reply).getByRole("button", { name: "放入工作稿" })).toBeEnabled());
+    fireEvent.click(within(reply).getByRole("button", { name: "放入工作稿" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "追加到末尾" }));
+    await waitFor(() => expect(screen.getByLabelText("工作稿内容")).toHaveValue(`${baseline.content}\n\n旧回复正文。`));
+    expect(posted[0].content).toBe(content);
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "publish_coauthor_document" || name === "run_coauthor")).toBe(false);
   });
 
   it("uses a Chinese action for live tool progress", async () => {
@@ -836,6 +1019,7 @@ describe("coauthor workspace", () => {
     await screen.findByLabelText("工作稿内容");
     expect(mocks.invoke.mock.calls.some(([name]) => name === "list_coauthor_branches")).toBe(false);
     fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    fireEvent.click(screen.getByText("版本、分支与多处修改"));
     fireEvent.click(screen.getByRole("button", { name: "分支比较与合并" }));
     await screen.findByRole("option", { name: "子分支 · 失忆分支" });
     fireEvent.change(screen.getByLabelText("对照分支"), { target: { value: "s2" } });
@@ -876,6 +1060,7 @@ describe("coauthor workspace", () => {
     renderWorkspace();
     await screen.findByLabelText("工作稿内容");
     fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    fireEvent.click(screen.getByText("版本、分支与多处修改"));
     fireEvent.click(screen.getByRole("button", { name: "分支比较与合并" }));
     await screen.findByRole("option", { name: "子分支 · 失忆分支" });
     fireEvent.change(screen.getByLabelText("对照分支"), { target: { value: "s2" } });

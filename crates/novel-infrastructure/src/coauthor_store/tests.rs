@@ -32,6 +32,40 @@ pub(super) fn entity(manager: &mut ProjectManager, name: &str, description: &str
 }
 
 #[test]
+fn unclassified_drafts_survive_reopen_but_require_author_classification_before_adoption() {
+    let (mut manager, root, scope) = project();
+    let mut draft = manager.coauthor_document(&scope).unwrap();
+    assert_eq!(draft.kind, CoauthorDocumentKind::Unclassified);
+    draft.content = "可能是规则，也可能是后续情节，尚未决定。".into();
+    let saved = manager.save_coauthor_document(&scope, draft).unwrap();
+    assert!(matches!(manager.publish_coauthor_document(&scope, saved.version), Err(CoauthorError::Invalid(_))));
+    assert!(manager.prepare_coauthor_changeset(&scope, CoauthorChangeRequest {
+        expected_document_version: saved.version, title: "未归类内容".into(),
+        include_draft: true, draft_depends_on: vec![], items: vec![],
+        impacts: vec![], coverage: String::new(), decision_dependencies: vec![],
+    }, None).is_err());
+    assert!(manager.list_entities(false).unwrap().is_empty());
+    assert!(manager.list_plan_nodes().unwrap().is_empty());
+    drop(manager);
+    let mut manager = ProjectManager::new();
+    manager.open(&root).unwrap();
+    assert_eq!(manager.coauthor_document(&scope).unwrap(), saved);
+    let classified = manager.save_coauthor_document(&scope, CoauthorDocument {
+        kind: CoauthorDocumentKind::Setting, title: "明确的世界规则".into(), ..saved.clone()
+    }).unwrap();
+    manager.publish_coauthor_document(&scope, classified.version).unwrap();
+    assert_eq!(manager.list_entities(false).unwrap().len(), 1);
+    let history = manager.coauthor_document_history(&scope, None).unwrap();
+    assert!(history.contains(&saved));
+    for kind in [CoauthorDocumentKind::Setting, CoauthorDocumentKind::Outline, CoauthorDocumentKind::Manuscript] {
+        let legacy = CoauthorDocument { kind, ..saved.clone() };
+        assert_eq!(serde_json::from_value::<CoauthorDocument>(serde_json::to_value(&legacy).unwrap()).unwrap(), legacy);
+    }
+    drop(manager);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn document_versions_conflicts_history_and_reopen_preserve_originals() {
     let (mut manager, root, scope) = project();
     let mut document = manager.coauthor_state(&scope).unwrap().document;
@@ -323,6 +357,7 @@ fn unique_quote_replacement_preserves_non_targets_and_unicode() {
 fn publication_is_versioned_idempotent_and_refreshes_both_search_paths() {
     let (mut manager, root, scope) = project();
     let mut document = manager.coauthor_state(&scope).unwrap().document;
+    document.kind = CoauthorDocumentKind::Setting;
     document.title = "魂灯境界".into();
     document.content = "突破消耗记忆。".into();
     let saved = manager.save_coauthor_document(&scope, document).unwrap();
@@ -378,6 +413,7 @@ fn publication_search_failure_rolls_back_without_orphan_identity_or_receipt() {
         .save_coauthor_document(
             &scope,
             CoauthorDocument {
+                kind: CoauthorDocumentKind::Setting,
                 content: "金丹".into(),
                 ..document
             },

@@ -8,8 +8,11 @@ import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import "./material-detail-view.css";
 import "./library-workspace.css";
 import { automaticSummary, MaterialEditor, SummaryActions } from "./material-controls";
+import { summaryIdentity, writingCardTypeLabels } from "../lib/content-taxonomy";
+import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
 
 export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<typeof parseMaterialTarget>> }) {
+  const aiWorkspace = useInAiWorkspace();
   const [editing, setEditing] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -50,6 +53,7 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
       <button type="button" className="secondary-action" onClick={() => void (project.isError ? project.refetch() : result.refetch())}><RefreshCw size={15} />重试</button>
     </div> : null}
     {item && !result.isError ? <div className="material-detail-body">
+      <ContentTypeLabel identity={currentSummary ? summaryIdentity(currentSummary) : { category: "REFERENCE", subtype: currentCard ? writingCardTypeLabels[currentCard.cardType] : "参考摘要" }} />
       <h2>{currentCard?.title ?? (currentSummary?.generationMode === "EXTRACTIVE_AUTO" ? "章节记忆" : currentSummary?.generationMode === "EXTRACTIVE_AUTO_SETTINGS" ? "设定概览" : currentSummary?.generationMode === "EXTRACTIVE_AUTO_PROJECT" ? "项目概览" : "参考摘要")}</h2>
       {editing && project.data && target.kind ? <MaterialEditor key={item.id} kind={target.kind} projectId={project.data.projectId}
         summary={currentSummary ?? undefined} card={currentCard ?? undefined} onCancel={() => setEditing(false)}
@@ -65,8 +69,9 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
         {currentCard ? <div><dt>状态 / 范围</dt><dd>{currentCard.enabled ? "已启用" : "已停用"} · {currentCard.scope}</dd></div> : null}
       </dl></details>
       <p className="material-detail-content">{item.content}</p>
-      <div className="library-actions"><button type="button" className="secondary-action" disabled={actionBusy} onClick={() => { setEditing(true); setNotice(null); }}><Pencil size={15} />
-        {currentSummary && automaticSummary(currentSummary) ? "编辑参考副本" : "编辑资料"}</button></div>
+      <div className="library-actions">{aiWorkspace ? <button type="button" className="secondary-action" disabled={actionBusy} onClick={() => { setEditing(true); setNotice(null); }}><Pencil size={15} />
+        {currentSummary && automaticSummary(currentSummary) ? "编辑参考副本" : "编辑资料"}</button>
+        : target.kind && <AiWorkspaceLink target={{ projectId: target.projectId, workflow: "materials", targetId: target.id, materialKind: target.kind }}>去构思处理此参考</AiWorkspaceLink>}</div>
       {currentSummary ? <SummaryActions item={currentSummary} onBusyChange={setActionBusy} /> : null}
       {sourceHref ? <a className="secondary-action" href={sourceHref}><BookOpenText size={15} />查看摘要来源正文</a> : null}
       </>}

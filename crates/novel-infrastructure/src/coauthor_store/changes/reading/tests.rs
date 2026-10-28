@@ -12,6 +12,7 @@ impl Fixture {
     fn new() -> Self {
         let (mut manager, root, scope) = project();
         let mut document = manager.coauthor_document(&scope).unwrap();
+        document.kind = CoauthorDocumentKind::Manuscript;
         document.title = "突破试写".into();
         document.content = "甲😀乙\n".repeat(3_001);
         let document = manager.save_coauthor_document(&scope, document).unwrap();

@@ -16,6 +16,8 @@ export function ReviewCenterView() {
       : { assistant: "review", purpose: legacyTab === "admission" ? "admission" : "manuscript" }),
   });
   if (legacyChapter) legacyParams.set("referenceChapter", legacyChapter);
+  legacyParams.set("work", "writing");
+  if (queue.data?.projectId) legacyParams.set("targetProject", queue.data.projectId);
   const items = (queue.data?.items ?? []).filter((item) => kind === "ALL" || item.kind === kind);
 
   return <section className="author-todos activity-workspace">
@@ -25,7 +27,7 @@ export function ReviewCenterView() {
         disabled={queue.isFetching} onClick={() => void queue.refetch()}><RefreshCw size={16} /></button>
     </div>
     {legacyTab ? <div className="activity-legacy-entry">
-      <a href={`/writing?${legacyParams}${legacyChapter ? `#${encodeURIComponent(legacyChapter)}` : ""}`}>
+      <a href={`/discussion?${legacyParams}${legacyChapter ? `#${encodeURIComponent(legacyChapter)}` : ""}`}>
         {legacyTab === "facts" ? "打开本章事实审核" : legacyTab === "admission" ? "打开生成前检查" : "打开正文检查"}
       </a>
     </div> : null}

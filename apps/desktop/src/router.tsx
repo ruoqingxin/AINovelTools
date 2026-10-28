@@ -23,7 +23,7 @@ const MaterialsView = lazyRouteComponent(() => import("./views/materials-view"),
 const SearchView = lazyRouteComponent(() => import("./views/search-view"), "SearchView");
 const JobsView = lazyRouteComponent(() => import("./views/jobs-view"), "JobsView");
 const SettingsView = lazyRouteComponent(() => import("./views/settings-view"), "SettingsView");
-const DiscussionView = lazyRouteComponent(() => import("./views/coauthor-view"), "CoauthorView");
+const DiscussionView = lazyRouteComponent(() => import("./views/unified-ai-workspace"), "UnifiedAiWorkspace");
 const HistoricalDiscussionReview = lazyRouteComponent(() => import("./views/discussion-view"), "DiscussionView");
 const ReviewCenterView = lazyRouteComponent(() => import("./views/review-center-view"), "ReviewCenterView");
 const KnowledgeRecordsView = lazyRouteComponent(() => import("./views/knowledge-records-view"), "KnowledgeRecordsView");

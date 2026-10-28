@@ -41,11 +41,12 @@ export function todoHref(item: AuthorTodo, projectId: string) {
     return `/discussion?${params}#${encodeURIComponent(item.targetId)}`;
   }
   params.set("referenceChapter", item.targetId);
+  params.set("work", "writing");
   if (item.kind === "RECOVERY") params.set("tab", "versions");
   else if (item.kind === "WRITING_PROPOSAL") params.set("assistant", "ai");
   else {
     params.set("tab", "extraction");
     if (item.kind !== "EXTRACTION" && item.kind !== "EXTRACTION_DEFERRED") params.set("knowledge", "facts");
   }
-  return `/writing?${params}#${encodeURIComponent(item.targetId)}`;
+  return `/discussion?${params}#${encodeURIComponent(item.targetId)}`;
 }

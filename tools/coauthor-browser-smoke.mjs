@@ -9,6 +9,7 @@ const { values } = parseArgs({ options: {
   playwright: { type: "string" },
   artifacts: { type: "string", default: ".tmp/coauthor-browser" },
   width: { type: "string" },
+  "naming-only": { type: "boolean", default: false },
 } });
 const viewports = [{ width: 1440, height: 1000 }, { width: 960, height: 640 }, { width: 390, height: 844 }];
 const selectedViewports = values.width ? viewports.filter(viewport => String(viewport.width) === values.width) : viewports;
@@ -36,6 +37,7 @@ try {
         let state={document:doc,decisions:[{id:"d1",topic:"突破代价",content:"金丹之后的突破，以失去一段记忆为代价。",
           status:"CHOSEN",sourceMessageId:"m1",version:2}],runs:[]};
         let deleted=false;
+        let sessions=[{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
         let semanticStatus={settings:{version:0,profileId:null,fingerprint:"",kinds:[]},
           totalChunks:0,indexedChunks:0,pendingSourceUpdates:4};
         const receipt="检索操作回执（程序记录；计数为当次返回页，不是相关条数或全库总数）：\\n"
@@ -178,7 +180,19 @@ try {
           }
           if(command==="bootstrap_status")return {};
           if(command==="list_author_todos")return {pendingCount:0,items:[]};
-          if(command==="list_discussion_sessions")return deleted?[]:[{id:"s1",projectId:"p1",title:"照魂境 · 失忆版本",scopeKind:"PROJECT"}];
+          if(command==="list_discussion_sessions")return deleted?[]:structuredClone(sessions);
+          if(command==="create_discussion_session"){
+            const created={id:"s-new",projectId:"p1",title:args.title,scopeKind:"PROJECT"};
+            sessions=[created,...(deleted?[]:sessions)];deleted=false;
+            return structuredClone(created);
+          }
+          if(command==="rename_discussion_session"){
+            const session=sessions.find(entry=>entry.id===args.scope.sessionId);
+            if(args.scope.projectId!=="p1"||!session||session.title!==args.expectedTitle)
+              throw new Error("Incorrect rename identity");
+            session.title=args.title;
+            return structuredClone(session);
+          }
           if(command==="delete_discussion_session"){
             if(args.scope.projectId!=="p1"||args.scope.sessionId!=="s1")throw new Error("Incorrect deletion scope");
             deleted=true;return null;
@@ -447,6 +461,45 @@ try {
     "Opening the workspace must not load historical audits or the run directory");
     assert.equal(await page.getByLabel("允许改工作稿", { exact: true }).isChecked(), false);
     assert.equal(await page.getByLabel("工作稿内容", { exact: true }).isVisible(), false);
+    if (values["naming-only"]) {
+      const input = page.getByLabel("讨论输入", { exact: true });
+      await input.fill("命名时保留的未发送输入");
+      await page.getByRole("button", { name: "新建讨论", exact: true }).click();
+      const createDialog = page.getByRole("dialog", { name: "新建讨论", exact: true });
+      await createDialog.getByLabel("讨论名", { exact: true }).fill("   ");
+      assert.equal(await createDialog.getByRole("button", { name: "创建讨论", exact: true }).isDisabled(), true);
+      await createDialog.getByRole("button", { name: "取消", exact: true }).click();
+      assert.equal(await input.inputValue(), "命名时保留的未发送输入");
+      assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("create_discussion_session")), false);
+      await page.getByRole("button", { name: "重命名讨论", exact: true }).click();
+      const renameDialog = page.getByRole("dialog", { name: "重命名讨论", exact: true });
+      const nameInput = renameDialog.getByLabel("讨论名", { exact: true });
+      assert.equal(await nameInput.evaluate(el => document.activeElement === el), true);
+      await nameInput.fill("  主角的记忆与突破代价  ");
+      await page.screenshot({ path: resolve(artifacts, `${viewport.width}-rename.png`), fullPage: true });
+      await renameDialog.getByRole("button", { name: "保存名称", exact: true }).click();
+      await renameDialog.waitFor({ state: "hidden" });
+      assert.equal(await page.getByLabel("当前讨论", { exact: true }).inputValue(), "s1");
+      assert.equal(await page.getByLabel("当前讨论", { exact: true }).locator("option:checked").innerText(), "主角的记忆与突破代价");
+      assert.equal(await input.inputValue(), "命名时保留的未发送输入");
+      await page.getByRole("button", { name: "新建讨论", exact: true }).click();
+      await createDialog.getByLabel("讨论名", { exact: true }).fill("修炼体系讨论：照魂境的限制与角色记忆");
+      await page.screenshot({ path: resolve(artifacts, `${viewport.width}-create.png`), fullPage: true });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      const box = await createDialog.boundingBox();
+      assert.ok(box.x >= 0 && box.x + box.width <= viewport.width, "Naming dialog fits the viewport");
+      await createDialog.getByLabel("讨论名", { exact: true }).press("Enter");
+      await createDialog.waitFor({ state: "hidden" });
+      assert.equal(await page.getByLabel("当前讨论", { exact: true }).inputValue(), "s-new");
+      assert.equal(await page.getByLabel("当前讨论", { exact: true }).locator("option:checked").innerText(), "修炼体系讨论：照魂境的限制与角色记忆");
+      assert.equal(await page.evaluate(() => localStorage.getItem("coauthor-input:p1:s1")), "命名时保留的未发送输入");
+      assert.equal(await page.evaluate(() => window.__coauthorCalls.some(name =>
+        ["save_coauthor_document", "run_coauthor", "publish_coauthor_document"].includes(name))), false);
+      await page.screenshot({ path: resolve(artifacts, `${viewport.width}-named-discussion.png`), fullPage: true });
+      reports.push({ viewport, overflow, commands: await page.evaluate(() => window.__coauthorCalls) });
+      await context.close();
+      continue;
+    }
     const historicalReply = page.locator(".coauthor-message").filter({ hasText: "早期试写仍使用寿元代价" });
     assert.equal(await historicalReply.locator(":scope > div").first().innerText(), "早期试写仍使用寿元代价，保留作为历史对照。");
     assert.equal(await historicalReply.locator("details, footer").count(), 0);
@@ -596,6 +649,9 @@ try {
     await draft.fill(`${await draft.inputValue()}\n\n作者继续写下去。`);
     await page.getByText(/已保存 v2/).waitFor();
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-draft.png`), fullPage: true });
+    assert.ok((await draft.boundingBox()).height >= 200, "Draft editor must retain usable height");
+    assert.equal(await page.getByRole("button", { name: "另开分支", exact: true }).isVisible(), false);
+    await page.getByText("版本、分支与多处修改", { exact: true }).click();
     assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("list_coauthor_branches")), false,
       "Opening a workspace must not load branch drafts or the branch directory");
     await page.getByRole("button", { name: "分支比较与合并", exact: true }).click();

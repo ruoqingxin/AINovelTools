@@ -10,25 +10,28 @@ import { formatSavedAt } from "./project-workspace-utils";
 import { useWideWorkspace } from "./workspace-panel";
 import "./library-workspace.css";
 import { SearchField } from "./search-field";
+import { summaryIdentity, writingCardTypeLabels } from "../lib/content-taxonomy";
+import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
 
 export function MaterialsView() {
   const target = parseMaterialTarget(window.location.search);
   return target ? <MaterialDetailView target={target} /> : <MaterialsManager />;
 }
 function MaterialsManager() {
+  const aiWorkspace = useInAiWorkspace();
   const summaries = useQuery({ queryKey: ["summary-materials"], queryFn: listSummaryMaterials });
   const cards = useQuery({ queryKey: ["writing-cards"], queryFn: () => listWritingCards() });
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
-  const [kind, setKind] = useState<"SUMMARY" | "CARD">("SUMMARY");
+  const [kind, setKind] = useState<"SUMMARY" | "CARD">(() => new URLSearchParams(window.location.search).get("materialKind") === "CARD" ? "CARD" : "SUMMARY");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [editing, setEditing] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(aiWorkspace && new URLSearchParams(window.location.search).get("action") === "new");
+  const [creating, setCreating] = useState(editing);
   const [editorState, setEditorState] = useState({ dirty: false, busy: false });
   const [actionBusy, setActionBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const wide = useWideWorkspace(851);
-  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(editing);
   const [visibleCount, setVisibleCount] = useState(100);
   const list = useRef<HTMLElement>(null);
   const listPosition = useRef({ list: 0, workspace: 0 });
@@ -55,7 +58,7 @@ function MaterialsManager() {
   const card = kind === "CARD" ? cards.data?.find((item) => item.id === selectedId) : undefined;
   const query = kind === "SUMMARY" ? summaries : cards;
   const items = (kind === "SUMMARY" ? (summaries.data ?? []).map((item) => ({ id: item.id, title: materialTitle(item), content: item.content, state: materialState(item) }))
-    : (cards.data ?? []).map((item) => ({ id: item.id, title: item.title, content: item.content, state: `${item.enabled ? "已启用" : "已停用"} · ${item.cardType === "STYLE_RULE" ? "风格规则" : "写作技巧"}` })))
+    : (cards.data ?? []).map((item) => ({ id: item.id, title: item.title, content: item.content, state: `${item.enabled ? "已启用" : "已停用"} · ${writingCardTypeLabels[item.cardType]}` })))
     .filter((item) => `${item.title} ${item.content}`.toLowerCase().includes(search.trim().toLowerCase()));
   function leaveEditor() { return !actionBusy && !editorState.busy && (!editing || !editorState.dirty || window.confirm("放弃尚未保存的资料修改吗？")); }
   function choose(id: string | null) {
@@ -76,7 +79,7 @@ function MaterialsManager() {
     });
   }
   return <section className="materials-view library-workspace" data-mobile-detail={!wide && detailOpen}>
-    <div className="workspace-heading"><h1>参考资料</h1></div><KnowledgeSectionNav />
+    <div className="workspace-heading"><h1>辅助参考</h1></div><KnowledgeSectionNav />
     <div className="library-toolbar">
       <div className="creation-mode" role="group" aria-label="参考资料类型">{(["SUMMARY", "CARD"] as const).map((value) =>
         <button type="button" key={value} disabled={editorState.busy || actionBusy} aria-pressed={kind === value} onClick={() => {
@@ -84,12 +87,15 @@ function MaterialsManager() {
           setKind(value); setSelectedId(null); setDetailOpen(false); setEditing(false); setCreating(false); setNotice(null); setSearch(""); setEditorState({ dirty: false, busy: false });
         }}>{value === "SUMMARY" ? "摘要与记忆" : "写作卡片"}</button>)}</div>
       <SearchField label="搜索参考资料" value={search} onChange={setSearch} placeholder="搜索资料" />
-      <button type="button" className="primary-action" disabled={!project.data || creating || editorState.busy || actionBusy} onClick={() => {
+      {!aiWorkspace && project.data ? <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "materials", materialKind: kind, action: "new" }}>
+        {kind === "SUMMARY" ? "去构思新建参考摘要" : "去构思新建写作参考"}
+      </AiWorkspaceLink> : null}
+      {aiWorkspace && <button type="button" className="primary-action" disabled={!project.data || creating || editorState.busy || actionBusy} onClick={() => {
         if (!leaveEditor()) return;
         listPosition.current = { list: list.current?.scrollTop ?? 0, workspace: document.querySelector(".workspace")?.scrollTop ?? 0 };
         setDetailOpen(true);
         setSelectedId(null); setCreating(true); setEditing(true); setNotice(null);
-      }}><Plus size={15} />{kind === "SUMMARY" ? "新建参考摘要" : "新建卡片"}</button>
+      }}><Plus size={15} />{kind === "SUMMARY" ? "新建参考摘要" : "新建卡片"}</button>}
     </div>
     {project.isError ? <p role="alert" className="project-error">{errorMessage(project.error)}<button type="button" onClick={() => void project.refetch()}>重试</button></p> : null}
     <div className="library-layout"><aside ref={list} hidden={!wide && detailOpen} className="library-list" aria-label="参考资料列表">
@@ -111,9 +117,11 @@ function MaterialsManager() {
             setSelectedId(id); setCreating(false); setEditing(false); setEditorState({ dirty: false, busy: false });
           }} onCancel={() => { setEditing(false); setCreating(false); if (!selectedId) setDetailOpen(false); setEditorState({ dirty: false, busy: false }); }} />
       </> : summary || card ? <>
+        <ContentTypeLabel identity={summary ? summaryIdentity(summary) : { category: "REFERENCE", subtype: writingCardTypeLabels[card!.cardType] }} />
         <h2>{card?.title ?? materialTitle(summary!)}</h2><p className="library-meta">{summary ? materialState(summary) : card?.enabled ? "已启用" : "已停用"}</p>
         <p className="library-content">{summary?.content ?? card?.content}</p>
-        <button type="button" className="secondary-action" disabled={actionBusy} onClick={() => { setEditing(true); setNotice(null); }}><Pencil size={15} />{summary && automaticSummary(summary) ? "编辑参考副本" : "编辑资料"}</button>
+        {aiWorkspace ? <button type="button" className="secondary-action" disabled={actionBusy} onClick={() => { setEditing(true); setNotice(null); }}><Pencil size={15} />{summary && automaticSummary(summary) ? "编辑参考副本" : "编辑资料"}</button>
+          : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "materials", targetId: selectedId!, materialKind: kind }}>去构思处理{summary ? summaryLabel(summary) : writingCardTypeLabels[card!.cardType]}</AiWorkspaceLink>}
         {summary ? <SummaryActions key={summary.id} item={summary} onBusyChange={setActionBusy} /> : null}
         {summary && summaryManuscriptHref(summary, "/knowledge/materials") ? <div className="library-actions"><a className="secondary-action" href={summaryManuscriptHref(summary, "/knowledge/materials")!}>查看来源正文</a></div> : null}
         <details className="library-advanced"><summary>来源与高级信息</summary><p>来源 <code>{summary?.sourceVersion ?? card?.sourceVersion ?? "未指定"}</code></p>

@@ -31,6 +31,7 @@ import { useAiTaskStream } from "./use-ai-task-stream";
 import { useAiProposalActions } from "./use-ai-proposal-actions";
 import { AiConsistencyReviewList } from "./ai-consistency-review-list";
 import { discussionSourceHref } from "../lib/discussion-source";
+import { aiWorkspaceHref } from "../lib/content-taxonomy";
 
 function isChapterSummaryJobFor(job: Job, chapterId: string) {
   if (job.jobType !== "REFRESH_CHAPTER_SUMMARY") return false;
@@ -43,7 +44,7 @@ function isChapterSummaryJobFor(job: Job, chapterId: string) {
 
 export type AiWritingPanelMode = "readiness" | "create" | "review";
 
-export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: boolean; onPendingChange?: (pending: boolean) => void; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null; onOpenAdmissionReview?: () => void; onReturnToEditor?: () => void; onSelectText?: () => void; onOpenChapterPlan?: () => void }) {
+export function AiWritingPanel(props: { projectId?: string; mode?: AiWritingPanelMode; active?: boolean; onPendingChange?: (pending: boolean) => void; reviewPurpose?: "admission" | "manuscript"; chapterId: string; chapterTitle: string; chapterPlan: string; volumeId: string; volumePlan: string; draft: string; editor: Editor | null; onOpenAdmissionReview?: () => void; onReturnToEditor?: () => void; onSelectText?: () => void; onOpenChapterPlan?: () => void }) {
   const client = useQueryClient();
   const active = props.active !== false;
   const mode = props.mode ?? "create";
@@ -65,6 +66,13 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
   const writingParams = new URLSearchParams(window.location.search);
   const writingCandidateId = writingParams.get("writingCandidate");
   const writingProjectId = writingParams.get("targetProject");
+  function gapTargetHref(id: string, fallback: string) {
+    const projectId = props.projectId ?? writingProjectId;
+    if (!projectId) return id === "chapter-plan" ? `/writing?assistant=plan#${props.chapterId}` : fallback;
+    return aiWorkspaceHref(id === "character-card" ? { projectId, workflow: "entity" }
+      : id === "chapter-plan" ? { projectId, workflow: "writing", targetId: props.chapterId, tab: "plan" }
+        : { projectId, workflow: "section", item: id });
+  }
   const fragmentEnabled = active && isCreationMode && Boolean(writingCandidateId && writingProjectId)
     && writingParams.get("planNode") === props.chapterId;
   const writingFragment = useQuery({
@@ -367,7 +375,12 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
           <button type="button" disabled={feedbackBusyId !== null || decidingProposalId !== null} data-active={feedback?.rating === "HELPFUL" || undefined} onClick={() => void submitFeedback(proposal, "HELPFUL")} title="标记为有帮助"><ThumbsUp size={13} />有帮助</button>
           <button type="button" disabled={feedbackBusyId !== null || decidingProposalId !== null} data-active={feedback?.rating === "NOT_HELPFUL" || undefined} onClick={() => void submitFeedback(proposal, "NOT_HELPFUL")} title="标记为需改进"><ThumbsDown size={13} />需改进</button>
         </div></details> : null}
-        <div className="ai-actions">{needsInput ? <>{needsInputTargets.length ? needsInputTargets.map((target) => <a className="primary-action" href={target.id === "chapter-plan" ? `/writing?assistant=plan#${props.chapterId}` : target.href} key={target.id}>{target.label}</a>) : <a className="primary-action" href="/planning">打开作品规划</a>}<button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />不采用</button></> : <><button type="button" className="primary-action" onClick={() => void decide(proposal, "ACCEPTED")} disabled={decidingProposalId !== null} title={proposal.action === "DRAFT" && visibleDraftAvailable ? "采用后将替换当前正文草稿" : undefined}><Check size={14} />{decidingProposalId === proposal.id ? "处理中…" : proposal.action === "SUMMARIZE" ? "保留摘要" : proposal.action === "DRAFT" ? "替换整章" : proposal.action === "CONTINUE" ? "插入末尾" : "替换选区"}</button><button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />不采用</button></>}</div>
+        <div className="ai-actions">{needsInput ? <>
+          {needsInputTargets.length ? needsInputTargets.map((target) => <a className="primary-action"
+            href={gapTargetHref(target.id, target.href)} key={target.id}>{target.label}</a>)
+            : <a className="primary-action" href={props.projectId ? aiWorkspaceHref({ projectId: props.projectId, workflow: "preparation" }) : "/planning"}>打开作品规划</a>}
+          <button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />不采用</button>
+        </> : <><button type="button" className="primary-action" onClick={() => void decide(proposal, "ACCEPTED")} disabled={decidingProposalId !== null} title={proposal.action === "DRAFT" && visibleDraftAvailable ? "采用后将替换当前正文草稿" : undefined}><Check size={14} />{decidingProposalId === proposal.id ? "处理中…" : proposal.action === "SUMMARIZE" ? "保留摘要" : proposal.action === "DRAFT" ? "替换整章" : proposal.action === "CONTINUE" ? "插入末尾" : "替换选区"}</button><button type="button" className="secondary-action" onClick={() => void decide(proposal, "REJECTED")} disabled={decidingProposalId !== null}><Trash2 size={14} />不采用</button></>}</div>
       </article>;
       })}
       {compareReviews.length === 2 ? <section className="proposal-compare">
@@ -397,7 +410,7 @@ export function AiWritingPanel(props: { mode?: AiWritingPanelMode; active?: bool
       partialTexts={partialTexts} reviewPolicy={reviewPolicy} generationLocked={generationLocked}
       hasReviewSecret={Boolean(reviewProfile?.hasSecret)} canRunConsistencyCheck={canRunConsistencyCheck}
       decidingProposalId={decidingProposalId} chapterId={props.chapterId}
-      onReturnToEditor={props.onReturnToEditor} onOpenChapterPlan={props.onOpenChapterPlan}
+      onReturnToEditor={props.onReturnToEditor} onOpenChapterPlan={props.onOpenChapterPlan} gapTargetHref={gapTargetHref}
       onRunReview={() => void runAction("CONSISTENCY_CHECK")} onCloseReview={(proposal) => void decide(proposal, "REJECTED")}
     /> : null}
   </section>;

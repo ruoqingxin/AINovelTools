@@ -16,7 +16,7 @@ const labels: Record<string, string> = {
   PENDING: "待核对", COMMITTED: "已提交", DISCARDED: "已放弃", RESOLVED: "已处理",
   NOT_APPLICABLE: "不适用", ACCEPTED_DIFFERENCE: "保留差异",
 };
-const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
+import { coauthorKindLabels as kinds } from "../lib/content-taxonomy";
 const empty: CoauthorChangesPage = { changeSets: [], impacts: [], hasMoreChanges: false, hasMoreImpacts: false };
 type ImpactEdit = Pick<CoauthorImpact, "id" | "version" | "status" | "resolution">;
 function recoverForm(key: string) {

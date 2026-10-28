@@ -346,7 +346,7 @@ async function run(name, message, expectedStatus, expectedRequests) {
   assert.equal(run.status, expectedStatus);
   assert.equal(requests, expectedRequests);
   assert.equal(run.audit.filter((event) => event.kind === "model_request").length, requests + reviewRequests);
-  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v31"));
+  assert(run.audit.filter((event) => event.kind === "model_request").every((event) => event.promptVersion === "coauthor-v32"));
   assert.equal(run.audit.filter((event) => event.kind === "model_request" && event.purpose === "CONTENT_REVIEW").length, reviewRequests);
   assert(requests + reviewRequests <= 10);
   assert(reviewRequests <= 2);

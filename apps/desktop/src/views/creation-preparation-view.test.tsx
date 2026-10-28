@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { StrictMode, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlanNode, PlanningSection } from "../lib/tauri-client";
@@ -10,6 +11,7 @@ import { buildPreparationStages } from "./creation-preparation";
 import { emptyPlanningSection } from "./use-planning-draft";
 import { openingReviewChecks, outlineReviewChecks, readPlanningReview, withPlanningReview } from "./planning-review";
 import { assembleOutline, buildOutlineSteps, withOutlineSources } from "./outline-steps";
+import { AiWorkspaceContext } from "./content-identity";
 
 const mocks = vi.hoisted(() => ({
   getCurrentProject: vi.fn(), listPlanNodes: vi.fn(), listPlanningSections: vi.fn(),
@@ -68,6 +70,20 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("creation preparation workbench", () => {
+  it("keeps formal preparation separate from candidate editing outside the AI workspace", async () => {
+    stored = [{ ...confirmed("engine-protagonist"), pendingContent: "尚未采用的人物候选" }];
+    render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={new QueryClient()}>
+      <CreationPreparationView initialItem="protagonist" />
+    </QueryClientProvider></AiWorkspaceContext.Provider>);
+    expect(await screen.findByText("已决定：engine-protagonist")).toBeVisible();
+    expect(screen.getByText("待归类 · 创作准备")).toBeVisible();
+    expect(screen.queryByText("尚未采用的人物候选")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /AI 推敲|保存草稿|确认并继续/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /去构思处理主角/ })).toHaveAttribute("href",
+      "/discussion?work=preparation&targetProject=project&item=protagonist");
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
   it("can discuss the outline before prior decisions or an outline node exist", async () => {
     mocks.listModelProfiles.mockResolvedValue([{ id: "model", capability: "CHAT", hasSecret: true }]);
     mocks.createDiscussionSession.mockImplementation(async (input) => {
@@ -373,7 +389,7 @@ describe("creation preparation workbench", () => {
     fireEvent.click(button);
     await waitFor(() => expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledWith(expect.objectContaining({
       sectionId: "seed-premise", profileId: "chat", taskKey: "workDesign", mode: "GENERATE",
-      existingContext: `frame-setting: ${base.content}`,
+      existingContext: `[设定 · 世界规则与限制] frame-setting: ${base.content}`,
     })));
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
     expect(screen.getByText("关键准备 1 / 10")).toBeVisible();

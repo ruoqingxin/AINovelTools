@@ -12,7 +12,7 @@ function readBackup(key: string, document: CoauthorDocument): CoauthorDocument |
     const value = JSON.parse(localStorage.getItem(key) ?? "null") as CoauthorDocument | null;
     return value && value.sessionId === document.sessionId && typeof value.content === "string"
       && typeof value.title === "string" && typeof value.version === "number"
-      && ["SETTING", "OUTLINE", "MANUSCRIPT"].includes(value.kind)
+      && ["UNCLASSIFIED", "SETTING", "OUTLINE", "MANUSCRIPT"].includes(value.kind)
       && typeof value.narrativePosition === "string"
       && (value.targetKey === null || typeof value.targetKey === "string")
       && (value.targetRevision === null || typeof value.targetRevision === "string")

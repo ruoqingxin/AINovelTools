@@ -1,8 +1,10 @@
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MaterialsView } from "./materials-view";
+import { AiWorkspaceContext } from "./content-identity";
 vi.mock("./knowledge-section-nav", () => ({ KnowledgeSectionNav: () => null }));
 
 const mocks = vi.hoisted(() => ({
@@ -45,9 +47,23 @@ describe("MaterialsView", () => {
     mocks.upsertSummaryMaterial.mockImplementation(async (value) => value);
     mocks.upsertWritingCard.mockImplementation(async (value) => value);
   });
+  it("shows reference content outside AI without edit, adoption or generation controls", async () => {
+    mocks.listSummaryMaterials.mockResolvedValue([summary]);
+    const client = new QueryClient();
+    render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={client}>
+      <MaterialsView />
+    </QueryClientProvider></AiWorkspaceContext.Provider>);
+    await selectSummary();
+    expect(screen.getByText("辅助参考 · 章节记忆")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /新建参考摘要|编辑参考副本|重新生成|确认为有效/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "去构思处理章节记忆" })).toHaveAttribute("href",
+      "/discussion?work=materials&targetProject=project-1&summary=summary-1&materialKind=SUMMARY");
+    expect(mocks.rebuildSummaryMaterial).not.toHaveBeenCalled();
+    expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
+  });
   it("starts in list/detail mode and opens only the requested creation form", async () => {
     renderView();
-    expect(screen.getByRole("heading", { name: "参考资料" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "辅助参考" })).toBeVisible();
     expect(screen.queryByRole("textbox", { name: "摘要内容" })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "新建参考摘要" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "新建参考摘要" }));
@@ -125,6 +141,16 @@ describe("MaterialsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "写作卡片" }));
     fireEvent.click(screen.getByRole("button", { name: "新建卡片" }));
     expect(screen.getByLabelText("标题")).toHaveFocus();
+  });
+  it("opens the requested new reference form directly on mobile", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      matches: query.includes("max-width"), addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList));
+    window.history.replaceState(null, "", "/discussion?work=materials&targetProject=project-1&action=new");
+    renderView();
+    expect(await screen.findByRole("textbox", { name: "摘要内容" })).toBeVisible();
+    expect(document.querySelector(".library-list")).not.toBeVisible();
+    expect(document.querySelector(".library-detail")).toBeVisible();
   });
   it("renders large lists in batches while searching the full collection", async () => {
     mocks.listWritingCards.mockResolvedValue(Array.from({ length: 205 }, (_, index) => ({

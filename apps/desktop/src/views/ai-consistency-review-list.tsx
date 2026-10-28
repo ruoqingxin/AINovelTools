@@ -72,6 +72,7 @@ export function AiConsistencyReviewList(props: {
   partialTexts: Record<string, string>; reviewPolicy: WritingReviewPolicy; generationLocked: boolean;
   hasReviewSecret: boolean; canRunConsistencyCheck: boolean; decidingProposalId: string | null;
   chapterId: string; onReturnToEditor?: () => void; onOpenChapterPlan?: () => void;
+  gapTargetHref?: (id: string, fallback: string) => string;
   onRunReview: () => void; onCloseReview: (proposal: AiProposal) => void;
 }) {
   const { reviews: pendingReviews, active, reviewingManuscript, partialTexts, reviewPolicy,
@@ -115,7 +116,8 @@ export function AiConsistencyReviewList(props: {
             {!stale && needsInput && targets.length ? targets.map((target) =>
               target.id === "chapter-plan" && props.onOpenChapterPlan
                 ? <button type="button" className="primary-action" onClick={props.onOpenChapterPlan} key={target.id}>{target.label}</button>
-                : <a className="primary-action" href={target.id === "chapter-plan" ? `/writing?assistant=plan#${encodeURIComponent(props.chapterId)}` : target.href} key={target.id}>{target.label}</a>,
+                : <a className="primary-action" href={props.gapTargetHref?.(target.id, target.href)
+                  ?? (target.id === "chapter-plan" ? `/writing?assistant=plan#${encodeURIComponent(props.chapterId)}` : target.href)} key={target.id}>{target.label}</a>,
             ) : null}
             <button type="button" className="secondary-action" onClick={() => props.onCloseReview(proposal)} disabled={decidingProposalId !== null}><Trash2 size={14} />关闭审核</button>
           </div>

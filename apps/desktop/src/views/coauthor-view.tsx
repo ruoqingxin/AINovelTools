@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Check, ClipboardList, DatabaseZap, FileText, GitBranch, GitCompareArrows, History, ListChecks, MessageSquareText, Plus, Save, Send, Square, Trash2, X } from "lucide-react";
+import { BookOpen, Check, ClipboardList, DatabaseZap, FileInput, FileText, GitBranch, GitCompareArrows, History, ListChecks, MessageSquareText, Pencil, Plus, Save, Send, Square, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "../lib/ipc-transport";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
@@ -7,7 +7,7 @@ import {
   applyCoauthorProposal, cancelCoauthorRun, correctCoauthorDecision, createDiscussionSession, deleteDiscussionSession, errorMessage,
   forkCoauthorSession, getCoauthorState, getCoauthorRun, getCurrentProject, getProjectAiTaskOverrides,
   listCoauthorDocumentHistory, listDiscussionMessages, listDiscussionSessions, listModelProfiles,
-  publishCoauthorDocument, readCoauthorSource, runCoauthor, saveCoauthorDocument,
+  publishCoauthorDocument, readCoauthorSource, renameDiscussionSession, runCoauthor, saveCoauthorDocument,
   type CoauthorDecision, type CoauthorDocument, type CoauthorRun, type CoauthorScope, type CoauthorSource,
   type CoauthorState, type DiscussionMessage, type DiscussionSession,
 } from "../lib/tauri-client";
@@ -28,8 +28,9 @@ import { CoauthorRunFeedback } from "./coauthor-reply-feedback";
 import { replyReviewRequest } from "./coauthor-reply-diagnostics";
 import { coauthorStepLabel, coauthorToolLabel, retrievalDisplay, splitLegacyRetrieval } from "./coauthor-run-presentation";
 import "./coauthor-workspace.css";
+import { coauthorKindLabels as kinds, draftIdentity, parseContentOrigin } from "../lib/content-taxonomy";
+import { ContentTypeLabel } from "./content-identity";
 
-const kinds = { SETTING: "设定", OUTLINE: "大纲", MANUSCRIPT: "正文" } as const;
 const statuses: Record<string, string> = {
   RUNNING: "进行中", COMPLETED: "运行完成", FAILED: "本轮失败", CANCELLED: "已停止",
   SUPERSEDED: "已被新指令替代", INTERRUPTED: "中断，可继续讨论", LIMIT_REACHED: "达到本轮上限",
@@ -84,11 +85,13 @@ export function CoauthorView() {
   const target = new URLSearchParams(window.location.search);
   const [selected, setSelected] = useState<string | null>(() => target.get("targetSession") ?? (window.location.hash.slice(1) || null));
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [nameEditor, setNameEditor] = useState<{ projectId: string; session?: DiscussionSession; title: string } | null>(null);
   const projectId = project.data?.projectId;
+  useEffect(() => { setNameEditor(null); }, [projectId]);
   const available = sessions.data?.filter((entry) => entry.projectId === projectId) ?? [];
   const session = available.find((entry) => entry.id === selected) ?? (!selected ? available[0] : undefined);
   const wrongTarget = Boolean(target.get("targetProject") && target.get("targetProject") !== projectId);
+  const origin = parseContentOrigin(session?.scopeText, projectId);
   function select(id: string | null) {
     setSelected(id);
     const url = new URL(window.location.href);
@@ -97,18 +100,11 @@ export function CoauthorView() {
     url.hash = id ?? "";
     window.history.replaceState(null, "", url);
   }
-  async function create() {
-    if (creating || !projectId) return;
-    setCreating(true);
-    try {
-      const created = await createDiscussionSession({
-        title: `共创讨论 ${available.length + 1}`, scopeKind: "PROJECT", scopeId: null, scopeText: null, topicKind: "FREE",
-      });
-      if (created.projectId !== projectId) throw new Error("项目已切换，未打开新的讨论。");
-      client.setQueryData<DiscussionSession[]>(["discussion-sessions"], (entries) => [created, ...(entries ?? [])]);
-      select(created.id);
-    } catch (cause) { setError(errorMessage(cause)); }
-    finally { setCreating(false); }
+  function openCreate() {
+    if (!projectId || nameEditor) return;
+    let number = available.length + 1;
+    while (available.some((entry) => entry.title === `共创讨论 ${number}`)) number++;
+    setNameEditor({ projectId, title: `共创讨论 ${number}` });
   }
   return <section className="coauthor-workspace">
     <header className="coauthor-heading">
@@ -117,8 +113,14 @@ export function CoauthorView() {
         {!session && <option value="">选择讨论</option>}
         {available.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}
       </select></label>
-      <button className="secondary-action" type="button" title="创建独立讨论，不复制当前工作稿" disabled={creating || !projectId} onClick={() => void create()}><Plus size={16} />新建讨论</button>
+      <button className="icon-command" type="button" title="重命名讨论" aria-label="重命名讨论" disabled={Boolean(nameEditor) || !session}
+        onClick={() => { if (session && projectId) setNameEditor({ projectId, session, title: session.title }); }}><Pencil size={16} /></button>
+      <button className="secondary-action" type="button" title="创建独立讨论，不复制当前工作稿" disabled={Boolean(nameEditor) || !projectId} onClick={openCreate}><Plus size={16} />新建讨论</button>
     </header>
+    {origin && !wrongTarget && <div className="ai-workspace-identity" aria-label="讨论来源">
+      <div><ContentTypeLabel identity={origin} /><h2>{origin.title}</h2></div>
+      <dl><dt>讨论对象</dt><dd>{origin.title}（{origin.key}）</dd></dl>
+    </div>}
     {(error || sessions.error || project.error) && <p className="project-error" role="alert">{error ?? errorMessage(sessions.error ?? project.error)}</p>}
     {wrongTarget ? <p role="alert">讨论链接不属于当前项目，未读取或修改该讨论。</p>
       : session && projectId ? <CoauthorLoader key={`${projectId}:${session.id}`} scope={{ projectId, sessionId: session.id }}
@@ -139,8 +141,65 @@ export function CoauthorView() {
         : sessions.isPending ? <p role="status">正在读取讨论…</p>
           : selected ? <p role="alert">指定讨论不存在，请选择其他讨论。</p>
             : <div className="coauthor-empty"><MessageSquareText size={32} /><h2>从一个想法开始</h2>
-              <button className="primary-action" disabled={creating} onClick={() => void create()}><Plus size={16} />新建讨论</button></div>}
+              <button className="primary-action" disabled={Boolean(nameEditor) || !projectId} onClick={openCreate}><Plus size={16} />新建讨论</button></div>}
+    {nameEditor && nameEditor.projectId === projectId && <DiscussionNameDialog
+      key={`discussion-name:${nameEditor.projectId}:${nameEditor.session?.id ?? "new"}`} projectId={nameEditor.projectId}
+      session={nameEditor.session} initialTitle={nameEditor.title} onClose={() => setNameEditor(null)}
+      onSaved={(saved) => {
+        client.setQueryData<DiscussionSession[]>(["discussion-sessions"], (entries) => nameEditor.session
+          ? (entries ?? []).map((entry) => entry.id === saved.id ? saved : entry)
+          : [saved, ...(entries ?? []).filter((entry) => entry.id !== saved.id)]);
+        if (!nameEditor.session) select(saved.id);
+        setError(null);
+        setNameEditor(null);
+      }} />}
   </section>;
+}
+
+function DiscussionNameDialog({ projectId, session, initialTitle, onClose, onSaved }: {
+  projectId: string; session?: DiscussionSession; initialTitle: string; onClose: () => void;
+  onSaved: (session: DiscussionSession) => void;
+}) {
+  const client = useQueryClient();
+  const transitioning = useProjectTransition();
+  const [title, setTitle] = useState(initialTitle);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { input.current?.focus(); input.current?.select(); }, []);
+  useUnsavedChangesGuard(busy || title !== initialTitle, busy ? "讨论名正在保存。" : "讨论名尚未保存。");
+  async function submit() {
+    if (inFlight.current || transitioning || !title.trim()) return;
+    if (client.getQueryData<{ projectId: string }>(["current-project"])?.projectId !== projectId) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = session
+        ? await renameDiscussionSession({ scope: { projectId, sessionId: session.id }, title: title.trim(), expectedTitle: session.title })
+        : await createDiscussionSession({ title: title.trim(), scopeKind: "PROJECT", scopeId: null, scopeText: null, topicKind: "FREE" });
+      if (!mounted.current || client.getQueryData<{ projectId: string }>(["current-project"])?.projectId !== projectId) return;
+      if (saved.projectId !== projectId) throw new Error("项目已切换，未打开新的讨论。");
+      onSaved(saved);
+    } catch (cause) { if (mounted.current) setError(errorMessage(cause)); }
+    finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+  }
+  return <WorkspacePanel open title={session ? "重命名讨论" : "新建讨论"} className="coauthor-name-dialog"
+    onClose={() => { if (!inFlight.current) onClose(); }}>
+    <form className="coauthor-name-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <label>讨论名<input ref={input} autoFocus maxLength={200} value={title} disabled={busy}
+        onChange={(event) => setTitle(event.target.value)} /></label>
+      {error && <p className="project-error" role="alert">{error}</p>}
+      <div className="coauthor-name-actions">
+        <button className="secondary-action" type="button" disabled={busy} onClick={onClose}>取消</button>
+        <button className="primary-action" type="submit" disabled={busy || transitioning || !title.trim()}>
+          {session ? <Check size={16} /> : <Plus size={16} />}{busy ? "保存中…" : session ? "保存名称" : "创建讨论"}</button>
+      </div>
+    </form>
+  </WorkspacePanel>;
 }
 
 function CoauthorLoader({ scope, sessionTitle, onFork, onDeleted }: {
@@ -295,6 +354,24 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
     setProposalSelection(""); setRecordSections(["sources"]);
     setRecordTab(category); setSource(null); setPanel("sources");
   }
+  async function appendReply(message: DiscussionMessage) {
+    if (activeRef.current || busyRef.current || draft.conflict || draft.backup) return;
+    const text = message.contextVersion?.startsWith("coauthor:")
+      ? splitLegacyRetrieval(message.content).reply : message.content;
+    if (!text.trim()) return;
+    await act(async () => {
+      if (draft.current.current.content.trim() && !await confirm({
+        title: "追加回复到工作稿",
+        message: "将这条回复的正文追加到工作稿末尾，已有稿件和讨论原文保留，不写入正式内容。",
+        confirmLabel: "追加到末尾",
+      })) return;
+      if (!mounted.current || activeRef.current || draft.conflict || draft.backup) return;
+      const content = draft.current.current.content;
+      draft.change({ content: content.trim() ? `${content}\n\n${text}` : text });
+      setSelection(""); setTab("draft");
+      setNotice("回复已放入工作稿，尚未正式采用。");
+    });
+  }
   async function removeDiscussion() {
     if (activeRef.current || busyRef.current || draft.saving) return;
     await act(async () => {
@@ -434,6 +511,7 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
   }
   async function publish() {
     await act(async () => {
+      if (draft.current.current.kind === "UNCLASSIFIED") throw new Error("工作稿尚未归类，未提交正式采用。");
       const saved = await draft.save();
       if (!sameDraft(draft.current.current, saved)) throw new Error("工作稿仍在变化，请保存后重新核对。");
       let before = "";
@@ -447,6 +525,20 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
         } while (mounted.current);
       }
       if (mounted.current) { setPublication({ document: saved, before }); setPanel("publish"); }
+    });
+  }
+  async function changeKind(kind: CoauthorDocument["kind"]) {
+    if (kind === draft.current.current.kind || activeRef.current || busyRef.current) return;
+    const snapshot = { ...draft.current.current };
+    await act(async () => {
+      if ((snapshot.content.trim() || snapshot.targetKey) && !await confirm({
+        title: "更改工作稿类型", message: `将「${snapshot.title}」从${kinds[snapshot.kind]}改为${kinds[kind]}？内容保留，原采用目标将解除，正式内容不变。`,
+        confirmLabel: "确认更改类型",
+      })) return;
+      if (!mounted.current || !sameDraft(snapshot, draft.current.current) || activeRef.current) return;
+      const title = ["未命名工作稿", "未命名设定", "未命名大纲", "未命名正文"].includes(snapshot.title)
+        ? kind === "UNCLASSIFIED" ? "未命名工作稿" : `未命名${kinds[kind]}` : snapshot.title;
+      draft.change({ kind, title, targetKey: null, targetRevision: null });
     });
   }
   async function commitPublication() {
@@ -533,6 +625,10 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
             <header><strong>{message.role === "USER" ? "作者" : "共创伙伴"}</strong>
               {message.role === "ASSISTANT" && <button onClick={() => openRecords(message)}
                 title="查看这条回复的依据与运行记录、问题说明及核对操作"><BookOpen size={13} />查看本轮记录</button>}
+              {message.role === "ASSISTANT" && display.reply.trim() && <button
+                disabled={busy || Boolean(active) || draft.conflict || Boolean(draft.backup)}
+                title="将这条回复正文追加到工作稿；不自动采用为正式内容"
+                onClick={() => void appendReply(message)}><FileInput size={13} />放入工作稿</button>}
             </header>
             <div>{display.reply}</div>
           </article>;
@@ -558,29 +654,31 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
         </form>
       </section>
       <section id="coauthor-draft-panel" className="coauthor-draft" role="tabpanel" aria-label="工作稿" hidden={tab !== "draft"}>
-        <header className="coauthor-area-heading"><h2><FileText size={17} />工作稿区</h2><small>独立保存，正式采用需确认</small></header>
-        <div className="coauthor-tools coauthor-draft-tools" role="group" aria-label="工作稿工具">
-          <button title="查看或恢复工作稿的历史版本" onClick={() => void showHistory()} disabled={busy}><History size={15} />工作稿版本</button>
-          <button title="复制当前工作稿和讨论决定，尝试另一方向" onClick={() => void fork()} disabled={busy || Boolean(active) || draft.conflict}><GitBranch size={15} />另开分支</button>
-          <button onClick={() => setPanel("branches")}><GitCompareArrows size={15} />分支比较与合并</button>
-          <button title="核对并采用涉及多处正式内容的修改，与仅采用当前工作稿不同"
-            onClick={() => { setChangeSetId(null); setPanel("changes"); }}><ClipboardList size={15} />关联变更</button>
-        </div>
+        <ContentTypeLabel identity={draftIdentity(draft.document)} />
+        <header className="coauthor-area-heading"><h2><FileText size={17} />草稿编辑</h2>
+          <small><span>{draft.document.targetKey ? `已关联正式${kinds[draft.document.kind]}` : "仅保存在当前讨论"}</span>
+            {" · "}<span>{draft.saving ? "保存中…" : draft.dirty ? "待保存" : `已保存 v${draft.document.version}`}</span></small></header>
         <div className="coauthor-draft-toolbar">
-          <label>稿件类型 <select aria-label="稿件类型" value={draft.document.kind} onChange={(event) => draft.change({
-            kind: event.target.value as CoauthorDocument["kind"], targetKey: null, targetRevision: null,
-          })}>{Object.entries(kinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          <small>{draft.saving ? "保存中…" : draft.dirty ? "待保存" : `已保存 v${draft.document.version}`}</small>
+          <label className="coauthor-draft-kind">工作稿类型<select aria-label="稿件类型" value={draft.document.kind}
+            disabled={busy || Boolean(active) || draft.conflict || Boolean(draft.backup)}
+            onChange={(event) => void changeKind(event.target.value as CoauthorDocument["kind"])}>
+            {Object.entries(kinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <button className="secondary-action" title="仅保存工作稿，不改变正式内容" aria-label="保存工作稿" disabled={draft.saving || busy || draft.conflict}
             onClick={() => void act(async () => { await draft.save(); })}><Save size={16} />保存工作稿</button>
-          <button className="secondary-action" title="预览并确认仅将当前工作稿写入正式内容，其他章节与设定不变" disabled={busy || Boolean(active) || draft.conflict || Boolean(draft.backup) || !draft.document.content.trim()
+          <button className="secondary-action" title="预览并确认仅将当前工作稿写入正式内容，其他章节与设定不变" disabled={draft.document.kind === "UNCLASSIFIED" || busy || Boolean(active) || draft.conflict || Boolean(draft.backup) || !draft.document.content.trim()
             || Boolean(draft.document.targetKey && draft.document.kind !== "SETTING")} onClick={() => void publish()}><Check size={15} />正式采用</button>
         </div>
-        <label className="coauthor-field">稿件标题<input className="coauthor-title" aria-label="稿件标题" maxLength={200} value={draft.document.title} onChange={(event) => draft.change({ title: event.target.value })} /></label>
-        <label className="coauthor-field">叙事位置与视角<input className="coauthor-position" aria-label="叙事位置与视角" placeholder="尚未填写" value={draft.document.narrativePosition}
-          onChange={(event) => draft.change({ narrativePosition: event.target.value })} /></label>
-        {draft.document.targetKey && <div className="coauthor-target"><span>关联：{draft.document.targetKey}</span>
-          <button title="解除关联，下一次采用将创建新条目" onClick={() => draft.change({ targetKey: null, targetRevision: null })}>解除关联</button></div>}
+        <p className="coauthor-notice">采用目标：{draft.document.kind === "UNCLASSIFIED" ? "尚未确定"
+          : draft.document.targetKey ? `${kinds[draft.document.kind]} · ${draft.document.title}（${draft.document.targetKey}）`
+            : `新建${draft.document.kind === "SETTING" ? "世界规则与概念设定" : kinds[draft.document.kind]} · ${draft.document.title}`}</p>
+        <label className="coauthor-field coauthor-draft-title">稿件标题<input className="coauthor-title" aria-label="稿件标题" maxLength={200} value={draft.document.title} onChange={(event) => draft.change({ title: event.target.value })} /></label>
+        <details className="coauthor-draft-details">
+          <summary>叙事与关联信息</summary>
+          <label className="coauthor-field">叙事位置与视角<input className="coauthor-position" aria-label="叙事位置与视角" placeholder="尚未填写" value={draft.document.narrativePosition}
+            onChange={(event) => draft.change({ narrativePosition: event.target.value })} /></label>
+          {draft.document.targetKey && <div className="coauthor-target"><span>关联：{draft.document.targetKey}</span>
+            <button title="解除关联，下一次采用将创建新条目" onClick={() => draft.change({ targetKey: null, targetRevision: null })}>解除关联</button></div>}
+        </details>
         {draft.document.targetKey && draft.document.kind !== "SETTING" && <p className="coauthor-notice">已关联的正文与大纲暂不支持在此覆盖；正式修订请进入对应编辑器。</p>}
         <label className="coauthor-field" htmlFor="coauthor-manuscript">工作稿内容</label>
         <textarea id="coauthor-manuscript" ref={editor} className="coauthor-manuscript" aria-label="工作稿内容" placeholder="暂无工作稿内容" value={draft.document.content}
@@ -589,8 +687,18 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
             const el = event.currentTarget;
             if (el.selectionEnd > el.selectionStart) setSelection(el.value.slice(el.selectionStart, el.selectionEnd));
           }} />
-        <footer><small>{[...draft.document.content].length} 字 · 工作稿</small>
+        <footer><small>{[...draft.document.content].length} 字 · {selection ? `已选 ${[...selection].length} 字` : "工作稿"}</small>
           {state.runs[0] && <button title="查看最近一轮的改稿建议，不改变工作稿" onClick={() => openRecords(undefined, state.runs[0].id, "proposal")}><FileText size={14} />查看改稿建议</button>}</footer>
+        <details className="coauthor-draft-details coauthor-draft-advanced">
+          <summary>版本、分支与多处修改</summary>
+          <div className="coauthor-tools coauthor-draft-tools" role="group" aria-label="工作稿工具">
+            <button title="查看或恢复工作稿的历史版本" onClick={() => void showHistory()} disabled={busy}><History size={15} />工作稿版本</button>
+            <button title="复制当前工作稿和讨论决定，尝试另一方向" onClick={() => void fork()} disabled={busy || Boolean(active) || draft.conflict}><GitBranch size={15} />另开分支</button>
+            <button onClick={() => setPanel("branches")}><GitCompareArrows size={15} />分支比较与合并</button>
+            <button title="核对并采用涉及多处正式内容的修改，与仅采用当前工作稿不同"
+              onClick={() => { setChangeSetId(null); setPanel("changes"); }}><ClipboardList size={15} />关联变更</button>
+          </div>
+        </details>
       </section>
     </div>
     <WorkspacePanel open={panel !== null} title={recordsOpen ? "依据与运行记录" : panel === "branches" ? "分支比较与合并" : panel === "changes" ? "关联变更与影响" : panel === "decisions" ? "讨论决定" : panel === "history" ? "稿件版本" : "正式采用预览"}

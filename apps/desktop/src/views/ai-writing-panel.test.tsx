@@ -184,6 +184,23 @@ describe("AiWritingPanel consistency review", () => {
     expect(mocks.getDiscussionSource).toHaveBeenCalledWith({ candidateId: "fragment-1", projectId: "project-1" });
   });
 
+  it("keeps missing-setting and chapter-plan follow-ups inside the exact AI workspace", async () => {
+    mocks.listAiProposals.mockReset();
+    mocks.listAiProposals.mockResolvedValue([{
+      ...review, consistency: null, validation: { ...review.validation, status: "NEEDS_INPUT" },
+      proposal: { ...reviewProposal, action: "DRAFT", outputText: "请补人物卡和章节计划。" },
+    }]);
+    render(<QueryClientProvider client={new QueryClient()}>
+      <AiWritingPanel projectId="project-1" chapterId="chapter-1" chapterTitle="入城"
+        chapterPlan="" volumeId="" volumePlan="" draft="" editor={null} />
+    </QueryClientProvider>);
+    expect(await screen.findByRole("link", { name: "补人物卡" })).toHaveAttribute("href",
+      "/discussion?work=entity&targetProject=project-1");
+    expect(screen.getByRole("link", { name: "补章节执行卡" })).toHaveAttribute("href",
+      "/discussion?work=writing&targetProject=project-1&planNode=chapter-1&tab=plan&assistant=plan");
+    expect(mocks.generateAiProposal).not.toHaveBeenCalled();
+  });
+
   it("does not load a discussion fragment bound to another chapter", async () => {
     window.history.replaceState(null, "", "/writing?planNode=chapter-1&targetProject=project-1&writingCandidate=fragment-1");
     mocks.getDiscussionSource.mockResolvedValue({

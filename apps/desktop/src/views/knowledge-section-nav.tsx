@@ -2,10 +2,10 @@ import { BookMarked, Files, UsersRound } from "lucide-react";
 import { Link, useRouterState } from "@tanstack/react-router";
 
 const sections = [
-  { label: "人物与世界", href: "/knowledge", icon: UsersRound, exact: true },
-  { label: "作者设定", href: "/knowledge/settings", icon: BookMarked },
+  { label: "设定", href: "/knowledge", icon: UsersRound, exact: true },
+  { label: "设定揭示状态", href: "/knowledge/settings", icon: BookMarked },
   { label: "剧情记录", href: "/knowledge/records", icon: BookMarked },
-  { label: "参考资料", href: "/knowledge/materials", icon: Files },
+  { label: "辅助参考", href: "/knowledge/materials", icon: Files },
 ];
 
 export function KnowledgeSectionNav() {

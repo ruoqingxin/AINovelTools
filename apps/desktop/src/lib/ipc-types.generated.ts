@@ -22,7 +22,7 @@ export type InputManuscriptExportScope = {
     kind: "CHAPTER";
 };
 export type InputReviewPurpose = "ADMISSION" | "MANUSCRIPT";
-export type InputCoauthorDocumentKind = "SETTING" | "OUTLINE" | "MANUSCRIPT";
+export type InputCoauthorDocumentKind = "UNCLASSIFIED" | "SETTING" | "OUTLINE" | "MANUSCRIPT";
 export type InputAiProposalFeedbackRating = "HELPFUL" | "NOT_HELPFUL";
 export type InputAiTaskPreference = string | InputAiTaskPreferenceDetails | null;
 export type InputPrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
@@ -36,7 +36,7 @@ export type ExtractionItemKind = "ENTITY" | "FACT" | "RELATION" | "EVENT" | "FOR
 export type ExtractionItemStatus = "PENDING_REVIEW" | "ACCEPTED" | "DEFERRED" | "REJECTED";
 export type PlanNodeKind = "WORK_DESIGN" | "OUTLINE" | "VOLUME_MANAGER" | "VOLUME" | "CHAPTER" | "SCENE";
 export type PlanningStoryState = "UNSET" | "UNKNOWN" | "DEFERRED" | "AUTHOR_RESERVED" | "AI_SUGGESTED" | "CONFIRMED" | "LOCKED" | "RETIRED";
-export type CoauthorDocumentKind = "SETTING" | "OUTLINE" | "MANUSCRIPT";
+export type CoauthorDocumentKind = "UNCLASSIFIED" | "SETTING" | "OUTLINE" | "MANUSCRIPT";
 export type DiscussionMessageRole = "USER" | "ASSISTANT";
 export type AiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE" | "CONSISTENCY_CHECK";
 export type ContextAuthority = "PROJECT_SETTING" | "AUTHORITATIVE_FACT" | "TASK_MATERIAL" | "REFERENCE";
@@ -244,6 +244,7 @@ export type IpcErrors = {
     rebuild_summary_material: ApiError;
     rebuild_world_state: ApiError;
     remove_project_ai_task_override: ApiError;
+    rename_discussion_session: ApiError;
     retry_job: ApiError;
     review_knowledge_candidate: ApiError;
     run_coauthor: ApiError;
@@ -464,6 +465,7 @@ export type IpcRequests = {
     rebuild_summary_material: InputArgsRebuildSummaryMaterial;
     rebuild_world_state: InputArgsRebuildWorldState;
     remove_project_ai_task_override: InputArgsRemoveProjectAiTaskOverride;
+    rename_discussion_session: InputArgsRenameDiscussionSession;
     retry_job: InputArgsRetryJob;
     review_knowledge_candidate: InputArgsReviewKnowledgeCandidate;
     run_coauthor: InputArgsRunCoauthor;
@@ -1338,6 +1340,11 @@ export type InputArgsRebuildWorldState = {
 export type InputArgsRemoveProjectAiTaskOverride = {
     task: InputAiTaskKind;
 };
+export type InputArgsRenameDiscussionSession = {
+    expectedTitle: string;
+    scope: InputCoauthorScope;
+    title: string;
+};
 export type InputArgsRetryJob = {
     id: string;
 };
@@ -1771,6 +1778,7 @@ export type IpcResponses = {
     rebuild_summary_material: SummaryMaterial;
     rebuild_world_state: WorldState;
     remove_project_ai_task_override: ProjectAiTaskOverrides;
+    rename_discussion_session: DiscussionSession;
     retry_job: Job;
     review_knowledge_candidate: KnowledgeCandidate;
     run_coauthor: CoauthorResult;

@@ -14,6 +14,7 @@ import { candidateReviewTransferKey, documentToJson, writingCandidateTransferKey
 import { manuscriptQuery } from "../lib/manuscript-query";
 import { createChapterDraftWriter } from "../lib/chapter-draft-writer";
 import { useConfirmAction } from "../shell/confirm-action-provider";
+import { aiWorkspaceHref } from "../lib/content-taxonomy";
 
 type DraftSnapshot = {
   chapterId: string;
@@ -28,12 +29,14 @@ export function useChapterManuscript({
   mode,
   onError,
   initialTab = "manuscript",
+  readOnly = false,
 }: {
   chapterId: string | undefined;
   projectId: string | undefined;
   mode: "planning" | "chapters" | "writing";
   onError: (message: string | null) => void;
   initialTab?: ManuscriptWorkspaceTab;
+  readOnly?: boolean;
 }) {
   const client = useQueryClient();
   const confirmAction = useConfirmAction();
@@ -50,7 +53,7 @@ export function useChapterManuscript({
   const localDraft = useQuery({
     queryKey: ["manuscript-draft", projectId, chapterId],
     queryFn: () => currentManuscriptDraft(chapterId!),
-    enabled, refetchOnWindowFocus: false,
+    enabled: enabled && !readOnly, refetchOnWindowFocus: false,
   });
   const writer = useRef<ReturnType<typeof createChapterDraftWriter> | null>(null);
   const savingFormal = useRef(false);
@@ -65,7 +68,7 @@ export function useChapterManuscript({
   const recovery = useQuery({
     queryKey: ["recovery-logs", chapterId],
     queryFn: () => listRecoveryLogs(chapterId!),
-    enabled,
+    enabled: enabled && !readOnly,
   });
   const [snapshot, setSnapshot] = useState<DraftSnapshot>({
     chapterId: "", documentJson: "", baseDocumentJson: "", baseRevisionId: undefined,
@@ -73,7 +76,7 @@ export function useChapterManuscript({
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const draft = snapshot.chapterId === chapterId ? snapshot.documentJson : "";
-  const chapterDirty = enabled && snapshot.chapterId === chapterId && draft !== snapshot.baseDocumentJson;
+  const chapterDirty = !readOnly && enabled && snapshot.chapterId === chapterId && draft !== snapshot.baseDocumentJson;
   const draftReady = enabled && snapshot.chapterId === chapterId && writer.current !== null;
   const persisted = writer.current?.current();
   const draftNeedsPersistence = draftReady && Boolean(chapterDirty || persisted?.documentJson !== null)
@@ -93,6 +96,7 @@ export function useChapterManuscript({
   }, [chapterId]);
 
   const editor = useEditor({
+    editable: !readOnly,
     extensions: [StarterKit],
     content: documentToJson(""),
     shouldRerenderOnTransaction: false,
@@ -117,24 +121,24 @@ export function useChapterManuscript({
   }, [chapterId, projectId, initialTab]);
 
   useEffect(() => {
-    if (!enabled || !chapterId || !manuscript.isSuccess || !localDraft.isSuccess || !editor) return;
+    if (!enabled || !chapterId || !manuscript.isSuccess || (!readOnly && !localDraft.isSuccess) || !editor) return;
     const sameChapter = snapshot.chapterId === chapterId;
     // A refetch must not replace a local candidate or advance its conflict-check baseline.
     if (sameChapter && (chapterDirty || snapshot.baseRevisionId === manuscript.data?.id)) return;
-    if (!sameChapter) writer.current = createChapterDraftWriter(localDraft.data);
-    const hasLocalChanges = !sameChapter && localDraft.data.documentJson !== null
+    if (!sameChapter && !readOnly && localDraft.isSuccess) writer.current = createChapterDraftWriter(localDraft.data);
+    const hasLocalChanges = !readOnly && !sameChapter && localDraft.isSuccess && localDraft.data.documentJson !== null
       && localDraft.data.documentJson !== localDraft.data.baseDocumentJson;
-    const next = hasLocalChanges ? localDraft.data.documentJson! : manuscript.data?.documentJson ?? "";
+    const next = hasLocalChanges ? localDraft.data!.documentJson! : manuscript.data?.documentJson ?? "";
     setSnapshot({
       chapterId, documentJson: next,
-      baseDocumentJson: hasLocalChanges ? localDraft.data.baseDocumentJson : manuscript.data?.documentJson ?? "",
-      baseRevisionId: hasLocalChanges ? localDraft.data.baseRevisionId ?? undefined : manuscript.data?.id,
+      baseDocumentJson: hasLocalChanges ? localDraft.data!.baseDocumentJson : manuscript.data?.documentJson ?? "",
+      baseRevisionId: hasLocalChanges ? localDraft.data!.baseRevisionId ?? undefined : manuscript.data?.id,
     });
     editor.commands.setContent(documentToJson(next), { emitUpdate: false });
-  }, [chapterDirty, chapterId, editor, enabled, manuscript.data, manuscript.isSuccess, localDraft.data, localDraft.isSuccess, snapshot.baseRevisionId, snapshot.chapterId]);
+  }, [chapterDirty, chapterId, editor, enabled, manuscript.data, manuscript.isSuccess, localDraft.data, localDraft.isSuccess, readOnly, snapshot.baseRevisionId, snapshot.chapterId]);
 
   useEffect(() => {
-    if (mode !== "writing" || !chapterId || !projectId || !manuscript.isSuccess || !editor || snapshot.chapterId !== chapterId) return;
+    if (readOnly || mode !== "writing" || !chapterId || !projectId || !manuscript.isSuccess || !editor || snapshot.chapterId !== chapterId) return;
     try {
       const stored = window.sessionStorage.getItem(writingCandidateTransferKey);
       if (!stored) return;
@@ -147,7 +151,7 @@ export function useChapterManuscript({
     } catch (cause) {
       onError(errorMessage(cause));
     }
-  }, [chapterId, editor, manuscript.isSuccess, mode, onError, projectId, setDraft, snapshot.chapterId]);
+  }, [chapterId, editor, manuscript.isSuccess, mode, onError, projectId, readOnly, setDraft, snapshot.chapterId]);
 
   useEffect(() => {
     if (history.data && history.data.length >= 2 && (!compareLeftId || !compareRightId)) {
@@ -157,16 +161,16 @@ export function useChapterManuscript({
   }, [history.data, compareLeftId, compareRightId]);
 
   useEffect(() => {
-    if (projectTransitioning || !draftNeedsPersistence || savingDraft || savingLocalDraft || draftStorageError) return;
+    if (readOnly || projectTransitioning || !draftNeedsPersistence || savingDraft || savingLocalDraft || draftStorageError) return;
     const timer = window.setTimeout(() => {
       if (!savingFormal.current) void persistLocalDraft();
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [projectTransitioning, draftNeedsPersistence, draft, snapshot.baseRevisionId, savingDraft, savingLocalDraft, persistenceTick, draftStorageError]);
+  }, [readOnly, projectTransitioning, draftNeedsPersistence, draft, snapshot.baseRevisionId, savingDraft, savingLocalDraft, persistenceTick, draftStorageError]);
 
   async function persistLocalDraft() {
     const currentWriter = writer.current;
-    if (!draftReady || !currentWriter || savingFormal.current || savingLocalDraft) return;
+    if (readOnly || !draftReady || !currentWriter || savingFormal.current || savingLocalDraft) return;
     setSavingLocalDraft(true);
     setDraftStorageError(null);
     try {
@@ -195,6 +199,7 @@ export function useChapterManuscript({
   }
 
   async function saveDraft(showManuscriptAfterSave = false) {
+    if (readOnly) return;
     const currentWriter = writer.current;
     if (!chapterId || !draftReady || !chapterDirty || !draft.trim() || savingFormal.current || !currentWriter) return;
     savingFormal.current = true;
@@ -228,6 +233,7 @@ export function useChapterManuscript({
   }
 
   async function discardLocalDraft() {
+    if (readOnly) return;
     const currentWriter = writer.current;
     if (!chapterId || !draftReady || !currentWriter || savingFormal.current) return;
     if (!await confirmAction({ message: "放弃本章本地草稿并载入已保存正文吗？历史版本和恢复记录不会被删除。",
@@ -257,6 +263,7 @@ export function useChapterManuscript({
   }
 
   async function reloadLocalDraft() {
+    if (readOnly) return;
     if (!chapterId || savingFormal.current) return;
     const currentWriter = writer.current;
     if (draftReady && !await confirmAction({ message: "保留当前内容为恢复副本，再重新读取本地草稿吗？",
@@ -288,6 +295,7 @@ export function useChapterManuscript({
   }
 
   async function refreshChapterMemory() {
+    if (readOnly) return;
     if (!chapterId) return;
     setRefreshingChapterMemory(true);
     onError(null);
@@ -340,18 +348,18 @@ export function useChapterManuscript({
   }
 
   function openWritingCandidate() {
-    if (!chapterId || !draft.trim()) return;
+    if (readOnly || !projectId || !chapterId || !draft.trim()) return;
     try {
       storeCandidate(draft);
       setTransferringCandidate(true);
-      window.setTimeout(() => { window.location.href = `/writing#${chapterId}`; }, 0);
+      window.setTimeout(() => { window.location.href = aiWorkspaceHref({ workflow: "writing", projectId, targetId: chapterId }); }, 0);
     } catch (cause) {
       onError(errorMessage(cause));
     }
   }
 
   async function openCandidateReview() {
-    if (!chapterId || !draft.trim() || !draftReady || savingFormal.current) return;
+    if (readOnly || !projectId || !chapterId || !draft.trim() || !draftReady || savingFormal.current) return;
     const expected = snapshotRef.current, currentWriter = writer.current;
     let changedSinceReview = true;
     try {
@@ -368,13 +376,14 @@ export function useChapterManuscript({
       storeCandidate(draft);
       window.sessionStorage.setItem(candidateReviewTransferKey, JSON.stringify({ chapterId, documentJson: draft }));
       setTransferringCandidate(true);
-      window.setTimeout(() => { window.location.href = `/review?tab=manuscript&chapterId=${encodeURIComponent(chapterId)}`; }, 0);
+      window.setTimeout(() => { window.location.href = aiWorkspaceHref({ workflow: "writing", projectId, targetId: chapterId, tab: "review" }); }, 0);
     } catch (cause) {
       onError(errorMessage(cause));
     }
   }
 
   async function discardRecoveryLogs() {
+    if (readOnly) return;
     if (!chapterId || !recovery.data?.length || recoveryOperation.current) return;
     const currentWriter = writer.current;
     const recordIds = recovery.data.map((record) => record.id).sort().join(",");

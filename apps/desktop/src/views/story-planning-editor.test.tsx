@@ -1,9 +1,11 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { StoryPlanningWorkbench } from "./story-planning-workbench";
 import { emptyPlanningSection } from "./use-planning-draft";
+import { AiWorkspaceContext } from "./content-identity";
 
 const mocks = vi.hoisted(() => ({
   listPlanningSections: vi.fn(), savePlanningSection: vi.fn(), listModelProfiles: vi.fn(),
@@ -34,6 +36,20 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("planning content editor", () => {
+  it("shows only formal content outside AI and retains mixed preparation as unclassified", async () => {
+    mocks.listPlanningSections.mockResolvedValue([{ ...stored, pendingContent: "未确认候选不能展示为正式内容" }]);
+    render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={new QueryClient()}>
+      <StoryPlanningWorkbench selectedSectionId="seed-premise" />
+    </QueryClientProvider></AiWorkspaceContext.Provider>);
+    expect(await screen.findByText("已有正式内容")).toBeVisible();
+    expect(screen.getByText("待归类 · 创作准备")).toBeVisible();
+    expect(screen.queryByText("未确认候选不能展示为正式内容")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /生成候选|发起讨论|保存规划/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "去构思处理核心前提与开局情境" })).toHaveAttribute("href",
+      "/discussion?work=section&targetProject=project&item=seed-premise");
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
   it("discusses an existing setting without changing the formal version until confirmation", async () => {
     mocks.listModelProfiles.mockResolvedValue([{ id: "model", capability: "CHAT", hasSecret: true }]);
     const discussionSession = {

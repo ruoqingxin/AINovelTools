@@ -14,6 +14,9 @@ describe("entity and chapter links", () => {
   it("routes chapter references to the existing assistant and round-trips entity returns", () => {
     const back = entityHref("entity-1", "project-1");
     const url = new URL(entityChapterHref("chapter:1", "project-1", back), window.location.origin);
+    expect(url.pathname).toBe("/discussion");
+    expect(url.searchParams.get("work")).toBe("writing");
+    expect(url.searchParams.get("tab")).toBe("plan");
     expect(url.searchParams.get("referenceChapter")).toBe("chapter:1");
     expect(url.searchParams.get("assistant")).toBe("plan");
     expect(url.searchParams.get("returnTo")).toBe(back);

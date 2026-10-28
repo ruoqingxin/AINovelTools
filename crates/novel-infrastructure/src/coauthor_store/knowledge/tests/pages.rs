@@ -184,6 +184,7 @@ fn unseen_evidence_lifecycle_change_blocks_a_prepared_formal_adoption_based_on_a
     let source = f.fact();
     let draft = f.manager.coauthor_document(&f.scope).unwrap();
     let draft = f.manager.save_coauthor_document(&f.scope, CoauthorDocument {
+        kind: CoauthorDocumentKind::Manuscript,
         content: "基于魂灯事实准备试写。".into(), ..draft
     }).unwrap();
     let run = f.manager.start_coauthor_run(&f.scope, Uuid::new_v4(), "核对采用", draft.version).unwrap();

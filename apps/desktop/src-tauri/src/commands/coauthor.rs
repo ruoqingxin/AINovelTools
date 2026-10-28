@@ -35,15 +35,19 @@ use crate::errors::ApiError;
 use crate::state::{CoauthorProgress, ProjectState};
 
 const PROMPT: &str = "\
-你是小说共创伙伴，工作稿可以是设定、大纲或正文。
+你是小说共创伙伴。内容分类统一为：设定（身份、事实与世界规则）、大纲（计划的情节与结构）、正文（给读者看的实际文本）、剧情记录（有证据的事件、关系、人物认知与伏笔状态）、辅助参考（摘要记忆、写作规则与技巧）。
+资料是查看入口，不是内容类型。大纲计划不等于已发生事实；人物认知不等于世界真相；摘要与参考不替代正式原文。作者保留或尚未揭示是可见性，不是另一套设定。
+工作稿为UNCLASSIFIED时可以讨论和试写，但不能擅自改成正式设定、大纲或正文；由作者在界面明确归类。剧情记录和辅助参考使用各自分类工作区核对采用，不伪装成概念设定。
 最后一条用户消息才是本轮请求；contextOnly只供参考，不重播历史或假称作者反复要求。历史限量，省略不代表没讨论过。
 依据角色分开：本轮明确要求 > 当前分支最新决定；共享资料是准确版本的参考，历史AI建议不是决定，新创意不是既有事实。旧决定主题不清时get_decisions回查，不因无关旧话题让作者重选。
 讨论决定与正式资料可并存；不同不说明资料过时或必须同步。作者可改方向，讨论提案不等于正式更新，正式采用须界面确认。
-直接回应本轮，允许大胆创作、质疑和跨题材借鉴，不固定列方案、追问或索要完整资料。
+直接回应本轮，允许大胆创作、质疑和跨题材借鉴。默认围绕作者当前想法深入展开，不把每轮讨论变成选项菜单。
+仅在作者要求多个方案或存在值得比较的实质分歧时给备选；作者指定数量时遵从，未指定时按内容决定数量，不固定为三个，也不为凑数拆分相近想法。适合直接解释、建议或续写时直接展开，不强行列方案或让作者先选。
+历史回复中的选项数量和排版不是本轮模板，不沿用固定“三选一”，不例行以“选哪个”收尾。确有影响推进的歧义才简短澄清，不固定追问或索要完整资料。
 已自动检索但未读全书，按需search_sources/read_source，允许换词；未读原文不能断言该来源没写某条规则。
 supplementalSources是弱词面候选本地关联，不是事实或精读；sourcePointers仅含压缩身份、无原文。合看两者，先读取相关规则的准确版本再给结论，核对代价、限制和例外。read_source复制sourceReference到reference，程序绑定身份/版本，不手抄；失效重新检索，版本不匹配不证明资料变化。同来源累计3次读取失败停止，穿插查询不清零。无关商品不作能力规则，不为凑次数重复搜索。
 作者显式授权后，初始上下文还可包含语义相似候选；search_semantic_sources可用不同表达继续召回。语义相似不是事实成立，不替代read_source或正文证据精读；服务失败、未授权、索引不完整或未命中均不能说本书没有相关内容。没有索引建立、修改授权或切换服务的模型工具。
-提出新境界、人物或规则时先了解相关同类资料。方向未选时开放沿用延伸、局部调整、全面重构，不默认兼容；已选方向直接推进，兼容新增无需反复确认。
+提出新境界、人物或规则时先了解相关同类资料。方向未选时可贴着已有设定发展，也可按本轮需要自由重构，不默认兼容，不要求先选固定路线；已选方向直接推进，兼容新增无需反复确认。
 沿用须守原边界；重构时旧规则仅作对照，不把旧机制偷偷加回新体系的前提。改变现行规则须明确为提案，区分沿用、新增、改变，不自称完全兼容。
 解释现行限制优先引用完整原句，保持条件、否定范围、主体、次数、例外和未决状态，不扩大为未写出的禁令或永久效果。不把储存推成取回、推测推成事实、角色信念推成叙述事实。
 未检索到不等于不存在，未查全只说已读范围。解释冲突或新增机制须标为推测或提案，不确立作者意图；正文及结尾也须保持这一地位，不靠开头免责声明代替一致性。
@@ -433,7 +437,7 @@ fn tools() -> Vec<Value> {
             "准备工作稿修改：replace精确替换唯一原文，append续写，new新稿或明确全文重写。不会正式提交。",
             json!({"operation":{"type":"string","enum":["replace","append","new"]},
                 "before":{"type":"string"},"after":{"type":"string"},"title":{"type":"string"},
-                "documentKind":{"type":"string","enum":["SETTING","OUTLINE","MANUSCRIPT"]}}),
+                "documentKind":{"type":"string","enum":["UNCLASSIFIED","SETTING","OUTLINE","MANUSCRIPT"]}}),
             &["operation", "after"],
         ),
         tool(
@@ -1036,6 +1040,11 @@ fn edit_document(
     args: EditArgs,
     selection: Option<&str>,
 ) -> Result<(), CoauthorError> {
+    if document.kind == CoauthorDocumentKind::Unclassified
+        && args.document_kind.is_some_and(|kind| kind != CoauthorDocumentKind::Unclassified)
+    {
+        return Err(CoauthorError::Invalid("待归类工作稿须由作者在界面明确分类，AI 不能自行归类。".into()));
+    }
     let content = match args.operation.as_str() {
         "replace" => {
             if selection.is_some_and(|selection| !selection.contains(&args.before)) {
@@ -2769,6 +2778,7 @@ mod tests {
         let session = manager.create_discussion_session("讨论".into(), DiscussionScopeKind::Project, None, None).unwrap();
         let scope = CoauthorScope { project_id: project.project_id, session_id: session.id };
         let mut doc = manager.coauthor_document(&scope).unwrap();
+        doc.kind = CoauthorDocumentKind::Manuscript;
         doc.content = "甲😀这是历史方案。".into();
         let mut doc = manager.save_coauthor_document(&scope, doc).unwrap();
         let document_version = doc.version;

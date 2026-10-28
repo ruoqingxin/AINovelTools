@@ -74,6 +74,23 @@ try {
   await page.getByRole("tab", { name: "讨论", exact: true }).click();
   assert.equal(await input.inputValue(), "保留未发送输入");
   await page.screenshot({ path: join(harness.artifacts, "native-discussion.png"), fullPage: true });
+  const beforeAppend = (await invoke(main, "get_coauthor_state", { scope })).document;
+  await answer.getByRole("button", { name: "放入工作稿", exact: true }).click();
+  const append = page.getByRole("alertdialog", { name: "追加回复到工作稿", exact: true });
+  await append.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal((await invoke(main, "get_coauthor_state", { scope })).document.content, saved.content);
+  await answer.getByRole("button", { name: "放入工作稿", exact: true }).click();
+  await append.getByRole("button", { name: "追加到末尾", exact: true }).click();
+  const appended = `${saved.content}\n\n${reply}`;
+  await page.getByText("回复已放入工作稿，尚未正式采用。", { exact: true }).waitFor();
+  assert.equal(await page.getByLabel("工作稿内容", { exact: true }).inputValue(), appended);
+  await page.getByRole("button", { name: "保存工作稿", exact: true }).click();
+  await page.getByText(`已保存 v${beforeAppend.version + 1}`, { exact: true }).waitFor();
+  assert.equal((await invoke(main, "get_coauthor_state", { scope })).document.content, appended);
+  assert.deepEqual(await invoke(main, "list_entities", { includeArchived: false }), entitiesBefore);
+  await page.screenshot({ path: join(harness.artifacts, "native-reply-to-draft.png"), fullPage: true });
+  await page.getByRole("tab", { name: "讨论", exact: true }).click();
+  assert.equal(await input.inputValue(), "保留未发送输入");
   await assert.rejects(invoke(main, "delete_discussion_session", { scope: { ...scope, projectId: randomUUID() } }));
   await page.getByRole("button", { name: "删除当前讨论", exact: true }).click();
   const confirm = page.getByRole("alertdialog", { name: "删除当前讨论", exact: true });
@@ -127,6 +144,7 @@ try {
   await content.fill("第二版，等待恢复历史。");
   await actions.getByRole("button", { name: "保存工作稿", exact: true }).click();
   await actions.getByText(`已保存 v${first.version + 1}`, { exact: true }).waitFor();
+  await actions.getByText("版本、分支与多处修改", { exact: true }).click();
   await actions.getByRole("button", { name: "工作稿版本", exact: true }).click();
   const versions = actions.getByRole("dialog", { name: "稿件版本", exact: true });
   await versions.getByRole("article").filter({ hasText: `v${first.version} · 按钮落盘核验` })
@@ -144,6 +162,7 @@ try {
   assert(adopted.targetKey?.startsWith("ENTITY:"));
   assert((await invoke(main, "list_entities", { includeArchived: false })).some(entity => `ENTITY:${entity.id}` === adopted.targetKey));
   await publication.getByRole("button", { name: "关闭正式采用预览", exact: true }).click();
+  await actions.getByText("叙事与关联信息", { exact: true }).click();
   await actions.getByRole("button", { name: "解除关联", exact: true }).click();
   await actions.getByRole("button", { name: "保存工作稿", exact: true }).click();
   await actions.getByText(`已保存 v${adopted.version + 1}`, { exact: true }).waitFor();

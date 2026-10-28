@@ -26,20 +26,24 @@ import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { manuscriptSourceHref } from "../lib/manuscript-source";
 import "./library-workspace.css";
 import { SearchField } from "./search-field";
+import { recordTypeLabels } from "../lib/content-taxonomy";
+import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
 
 type RecordTab = "relations" | "events" | "beliefs" | "foreshadowings";
 
 const tabs: Array<{ id: RecordTab; label: string; icon: typeof Link2 }> = [
   { id: "relations", label: "关系", icon: Link2 },
   { id: "events", label: "事件", icon: Milestone },
-  { id: "beliefs", label: "信念", icon: UserRoundCheck },
+  { id: "beliefs", label: recordTypeLabels.beliefs, icon: UserRoundCheck },
   { id: "foreshadowings", label: "伏笔", icon: Sparkles },
 ];
 
 export function KnowledgeRecordsView() {
+  const aiWorkspace = useInAiWorkspace();
+  const searchParams = new URLSearchParams(window.location.search);
   const client = useQueryClient();
-  const [tab, setTab] = useState<RecordTab>("relations");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [tab, setTab] = useState<RecordTab>(() => tabs.some((item) => item.id === searchParams.get("tab")) ? searchParams.get("tab") as RecordTab : "relations");
+  const [selectedId, setSelectedId] = useState<string | null>(() => aiWorkspace ? searchParams.get("objectId") : null);
   const [editing, setEditing] = useState(false);
   const [editVersion, setEditVersion] = useState(0);
   const [search, setSearch] = useState("");
@@ -241,7 +245,8 @@ export function KnowledgeRecordsView() {
           <option value="ARCHIVED">已归档</option>
         </select>
         <SearchField label="搜索剧情记录" value={search} onChange={setSearch} placeholder="搜索记录" />
-        <button type="button" className="primary-action" disabled={busy || !project.data} onClick={startNew}><Plus size={15} />新建记录</button>
+        {aiWorkspace ? <button type="button" className="primary-action" disabled={busy || !project.data} onClick={startNew}><Plus size={15} />新建记录</button>
+          : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "records", tab }}>去构思整理{recordTypeLabels[tab]}</AiWorkspaceLink>}
       </div>
       {error ? <p className="project-error" role="alert">{error}</p> : null}
       {notice ? <p className="project-notice" role="status">{notice}</p> : null}
@@ -264,15 +269,18 @@ export function KnowledgeRecordsView() {
         </aside>
         <div className="library-detail">
         {!editing && activeRecord ? <>
+          <ContentTypeLabel identity={{ category: "RECORD", subtype: recordTypeLabels[tab] }} />
           <h2>{content.find((item) => item.id === selectedId)?.title}</h2><p className="library-content">{content.find((item) => item.id === selectedId)?.detail}</p>
           <p className="library-meta">v{activeVersion} · {activeRecord.evidenceAnchorIds.length} 条证据</p>
-          <button type="button" className="secondary-action" onClick={() => startEdit(activeRecord.id)}><Pencil size={15} />编辑记录</button>
+          {aiWorkspace ? <button type="button" className="secondary-action" onClick={() => startEdit(activeRecord.id)}><Pencil size={15} />编辑记录</button>
+            : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "records", targetId: activeRecord.id, tab }}>去构思处理此{recordTypeLabels[tab]}记录</AiWorkspaceLink>}
           <div className="library-evidence">{activeRecord.evidenceAnchorIds.map((id) => {
             const anchor = anchors.data?.find((item) => item.id === id);
             return anchor ? <a key={id} href={manuscriptSourceHref({ projectId: project.data?.projectId, evidenceAnchorId: id }, "/knowledge/records")}>
               {chapterList.find((chapter) => chapter.id === anchor.chapterId)?.title ?? "未命名章节"} · 查看来源证据</a> : <p key={id}>证据暂不可用</p>;
           })}</div>
-        </> : !editing ? <div className="library-empty"><p>{query.isPending ? "正在加载记录…" : query.isError ? "记录暂不可用"
+        </> : !editing ? <div className="library-empty"><p role={selectedId && query.isSuccess ? "alert" : undefined}>{query.isPending ? "正在加载记录…" : query.isError ? "记录暂不可用"
+          : selectedId ? "指定的剧情记录不存在或不属于当前作品，未打开其他记录。"
           : !content.length ? "尚未添加剧情记录" : "选择一条剧情记录"}</p></div> : null}
         {editing ? <form className="library-form" onSubmit={(form) => { form.preventDefault(); void save(); }}>
           <div className="section-heading"><h2>{selectedId ? `编辑${tabs.find((item) => item.id === tab)?.label}记录` : `新建${tabs.find((item) => item.id === tab)?.label}记录`}</h2><span>{selectedId ? `编辑基于 v${editVersion}` : `${evidenceIds.length} 条证据`}</span></div>

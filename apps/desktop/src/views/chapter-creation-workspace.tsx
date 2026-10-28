@@ -18,6 +18,8 @@ import { useWideWorkspace, WorkspacePanel } from "./workspace-panel";
 import { useLayoutPreference, useWorkspacePreferences } from "../lib/workspace-preferences";
 import { WritingDisplayControls } from "./writing-display-controls";
 import { useConfirmAction } from "../shell/confirm-action-provider";
+import { aiWorkspaceHref } from "../lib/content-taxonomy";
+import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
 
 type AssistantTab = "ai" | "plan" | "review";
 
@@ -28,6 +30,7 @@ const assistantTabs = [
 ] as const;
 
 export function ChapterCreationWorkspace({
+  projectId,
   chapter,
   volume,
   chapterPlan,
@@ -43,6 +46,7 @@ export function ChapterCreationWorkspace({
   state,
   onPendingChange,
 }: {
+  projectId?: string;
   chapter: PlanNode;
   volume?: PlanNode;
   chapterPlan: string;
@@ -58,6 +62,7 @@ export function ChapterCreationWorkspace({
   state: ReturnType<typeof useChapterManuscript>;
   onPendingChange?: (pending: boolean) => void;
 }) {
+  const aiWorkspace = useInAiWorkspace();
   const confirmAction = useConfirmAction();
   const planState = useRef<{ chapterId: string; chapterPlan: string; pendingChapterPlan?: string; savingPlan: boolean; planReady: boolean } | null>(null);
   planState.current = { chapterId: chapter.id, chapterPlan, pendingChapterPlan, savingPlan, planReady };
@@ -144,6 +149,7 @@ export function ChapterCreationWorkspace({
   }
 
   const aiProps = {
+    projectId,
     chapterId: chapter.id,
     chapterTitle: chapter.title,
     chapterPlan,
@@ -163,10 +169,26 @@ export function ChapterCreationWorkspace({
     onOpenChapterPlan: () => { selectAssistantTab("plan"); setAssistantOpen(true); },
   };
 
+  if (!aiWorkspace) return <section className="chapter-reading-workspace">
+    <ContentTypeLabel identity={{ category: "MANUSCRIPT", subtype: "章节正文" }} />
+    <div className="library-actions">
+      <AiWorkspaceLink target={{ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id }}>去构思处理本章正文</AiWorkspaceLink>
+      <a className="secondary-action" href={aiWorkspaceHref({ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id, tab: "review" })}><ShieldCheck size={14} />去构思检查正文</a>
+      <a className="secondary-action" href={aiWorkspaceHref({ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id, tab: "extraction" })}><Library size={14} />去构思提取设定与记录</a>
+      <AiWorkspaceLink target={{ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id, tab: "plan" }}>大纲 · 本章计划</AiWorkspaceLink>
+    </div>
+    {state.manuscript.isPending ? <p role="status">正在读取正式正文…</p> : state.manuscript.isError
+      ? <p role="alert" className="project-error">{state.manuscript.error.message}</p>
+      : state.manuscript.data ? <ManuscriptReader documentJson={state.manuscript.data.documentJson} />
+        : <p className="plan-empty">暂无正式正文</p>}
+    {state.chapterDirty && <p role="status" className="library-meta">有尚未采用的本地工作稿</p>}
+  </section>;
+
   return <div className="creation-workspace" data-assistant-open={assistantVisible} data-focus={focused}
     style={{ "--writing-font-size": `${preferences.fontSize}px`, "--writing-line-height": preferences.lineHeight,
       "--writing-width": `${preferences.readingWidth}px` } as CSSProperties}>
     <div className="creation-main">
+      <ContentTypeLabel identity={{ category: "MANUSCRIPT", subtype: `章节正文 · ${chapter.title}` }} />
       {referenceReturn && assistantTab !== "plan" ? <a className="activity-return" href={referenceReturn}>返回来源</a> : null}
       <div className="creation-navigation">
         <div className="creation-mode" role="group" aria-label="正文模式">
@@ -313,6 +335,7 @@ export function ChapterCreationWorkspace({
       </div>
       <div id="assistant-panel-plan" role="tabpanel" aria-labelledby="assistant-tab-plan" hidden={assistantTab !== "plan"}>
         {visitedAssistantTabs.includes("plan") ? <div className="creation-plan">
+          <ContentTypeLabel identity={{ category: "OUTLINE", subtype: `章节细纲 · ${chapter.title}` }} />
           {volume ? <details><summary>{volume.title}</summary><p>{volumePlan.trim() || "尚未填写分卷规划"}</p></details> : null}
           <label htmlFor="creation-chapter-plan">本章计划</label>
           <textarea id="creation-chapter-plan" disabled={!planReady} rows={8} value={chapterPlan} onChange={(event) => onPlanChange(event.target.value)}
@@ -341,7 +364,7 @@ export function ChapterCreationWorkspace({
           <ChapterEntityReferencePanel chapterId={chapter.id} active={assistantVisible && assistantTab === "plan"}
             onPendingChange={pendingCallbacks.references} />
           <PlanningDiscussionSources sectionId={`plan-node:${chapter.id}`} active={assistantVisible && assistantTab === "plan"}
-            returnTo={`/writing?assistant=plan#${encodeURIComponent(chapter.id)}`} />
+            returnTo={projectId ? aiWorkspaceHref({ workflow: "writing", projectId, targetId: chapter.id, tab: "plan" }) : undefined} />
           <details onToggle={(event) => setReadinessOpen(event.currentTarget.open)}>
             <summary>生成前检查</summary>
             {readinessOpen ? <AiWritingPanel {...aiProps} mode="readiness" active={assistantVisible && assistantTab === "plan"} /> : null}
