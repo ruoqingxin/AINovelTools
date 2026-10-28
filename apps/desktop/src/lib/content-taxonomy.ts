@@ -1,4 +1,5 @@
 import type { CoauthorDocument, EntityType, PlanNodeKind, SummaryMaterial, WritingCard } from "./tauri-client";
+import { sourceReturnTo } from "./manuscript-source";
 
 export const contentCategories = {
   UNCLASSIFIED: { label: "待归类", description: "尚未确定用途，不能作为正式设定或大纲采用" },
@@ -74,6 +75,7 @@ export type AiWorkspaceTarget = {
   tab?: string;
   materialKind?: "SUMMARY" | "CARD";
   action?: "import" | "new";
+  returnTo?: string;
 };
 export function aiWorkspaceHref(target: AiWorkspaceTarget) {
   const search = new URLSearchParams({ work: target.workflow, targetProject: target.projectId });
@@ -89,5 +91,25 @@ export function aiWorkspaceHref(target: AiWorkspaceTarget) {
   if (target.workflow === "writing" && target.tab === "review") search.set("assistant", "review");
   if (target.materialKind) search.set("materialKind", target.materialKind);
   if (target.action) search.set("action", target.action);
+  const returnTo = sourceReturnTo(target.returnTo ?? null);
+  if (returnTo) search.set("returnTo", returnTo);
   return `/discussion?${search}`;
+}
+
+export function aiWorkspaceReturnHref(search: URLSearchParams) {
+  const explicit = sourceReturnTo(search.get("returnTo"));
+  if (explicit) return explicit;
+  const work = search.get("work");
+  const path = work === "entity" ? "/knowledge" : work === "records" ? "/knowledge/records"
+    : work === "materials" ? "/knowledge/materials" : work === "writing" && search.get("tab") !== "plan" ? "/writing"
+      : work === "review" ? "/review" : "/planning";
+  const params = new URLSearchParams();
+  for (const key of ["targetProject", "planNode", "entity", "summary", "card", "materialKind", "objectId", "item"]) {
+    const value = search.get(key);
+    if (value) params.set(key, value);
+  }
+  if (path === "/planning") params.set("mode", work === "preparation" ? "prepare" : "structure");
+  if (work === "records" && search.get("tab")) params.set("tab", search.get("tab")!);
+  const hash = work === "section" && search.get("item") ? `#${encodeURIComponent(search.get("item")!)}` : "";
+  return `${path}${params.size ? `?${params}` : ""}${hash}`;
 }

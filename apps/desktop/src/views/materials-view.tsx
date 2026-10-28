@@ -62,7 +62,7 @@ function MaterialsManager() {
     .filter((item) => `${item.title} ${item.content}`.toLowerCase().includes(search.trim().toLowerCase()));
   function leaveEditor() { return !actionBusy && !editorState.busy && (!editing || !editorState.dirty || window.confirm("放弃尚未保存的资料修改吗？")); }
   function choose(id: string | null) {
-    if (id === selectedId) return;
+    if (id === selectedId) { setDetailOpen(true); return; }
     if (!leaveEditor()) return;
     listPosition.current = { list: list.current?.scrollTop ?? 0, workspace: document.querySelector(".workspace")?.scrollTop ?? 0 };
     setDetailOpen(true);
@@ -79,7 +79,7 @@ function MaterialsManager() {
     });
   }
   return <section className="materials-view library-workspace" data-mobile-detail={!wide && detailOpen}>
-    <div className="workspace-heading"><h1>辅助参考</h1></div><KnowledgeSectionNav />
+    {!aiWorkspace && <div className="workspace-heading"><h1>辅助参考</h1></div>}<KnowledgeSectionNav />
     <div className="library-toolbar">
       <div className="creation-mode" role="group" aria-label="参考资料类型">{(["SUMMARY", "CARD"] as const).map((value) =>
         <button type="button" key={value} disabled={editorState.busy || actionBusy} aria-pressed={kind === value} onClick={() => {

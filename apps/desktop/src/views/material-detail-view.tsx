@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, BookOpenText, Pencil, RefreshCw } from "lucide-react";
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { materialHref, parseMaterialTarget, summaryManuscriptHref } from "../lib/knowledge-navigation";
 import { sourceReturnTo } from "../lib/manuscript-source";
 import { errorMessage, getCurrentProject, getSummaryMaterial, getWritingCard } from "../lib/tauri-client";
@@ -8,8 +9,9 @@ import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import "./material-detail-view.css";
 import "./library-workspace.css";
 import { automaticSummary, MaterialEditor, SummaryActions } from "./material-controls";
-import { summaryIdentity, writingCardTypeLabels } from "../lib/content-taxonomy";
+import { aiWorkspaceHref, summaryIdentity, writingCardTypeLabels } from "../lib/content-taxonomy";
 import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
+import { WorkspaceLink } from "./workspace-link";
 
 export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<typeof parseMaterialTarget>> }) {
   const aiWorkspace = useInAiWorkspace();
@@ -38,10 +40,10 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
   const unavailable = !project.isPending && !project.isError && !valid;
 
   return <section className="materials-view material-detail-view library-workspace">
-    <div className="workspace-heading"><h1>{target.kind === "SUMMARY" ? "当前摘要" : "当前写作卡片"}</h1>
+    <div className="workspace-heading">{!aiWorkspace && <h1>{target.kind === "SUMMARY" ? "当前摘要" : "当前写作卡片"}</h1>}
       <div className="material-detail-actions">
-        {returnTo ? <a className="secondary-action" href={returnTo}><ArrowLeft size={15} />返回来源</a> : null}
-        <a className="secondary-action" href="/knowledge/materials"><BookOpenText size={15} />资料管理</a>
+        {!aiWorkspace && returnTo ? <WorkspaceLink className="secondary-action" href={returnTo}><ArrowLeft size={15} />返回来源</WorkspaceLink> : null}
+        <WorkspaceLink className="secondary-action" href={aiWorkspace ? aiWorkspaceHref({ workflow: "materials", projectId: target.projectId, materialKind: target.kind ?? undefined }) : "/knowledge/materials"}><BookOpenText size={15} />{aiWorkspace ? "参考列表" : "资料管理"}</WorkspaceLink>
         {valid ? <button className="secondary-action" type="button" disabled={editing || actionBusy || result.isFetching} onClick={() => void result.refetch()}><RefreshCw size={15} />刷新当前内容</button> : null}
       </div>
     </div>
@@ -58,7 +60,14 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
       {editing && project.data && target.kind ? <MaterialEditor key={item.id} kind={target.kind} projectId={project.data.projectId}
         summary={currentSummary ?? undefined} card={currentCard ?? undefined} onCancel={() => setEditing(false)}
         onSaved={(id) => {
-          if (id !== item.id) window.location.assign(materialHref("SUMMARY", id, target.projectId, returnTo ?? undefined));
+          if (id !== item.id) {
+            // Release the saved editor's leave guard before native navigation.
+            flushSync(() => setEditing(false));
+            const href = aiWorkspace
+              ? aiWorkspaceHref({ workflow: "materials", projectId: target.projectId, targetId: id, materialKind: "SUMMARY", returnTo: returnTo ?? undefined })
+              : materialHref("SUMMARY", id, target.projectId, returnTo ?? undefined);
+            window.location.assign(href);
+          }
           else { setEditing(false); setNotice("资料已保存"); }
         }} /> : <>
       <details className="library-advanced"><summary>来源与高级信息</summary><dl className="material-detail-metadata">

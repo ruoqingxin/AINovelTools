@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, FileUp, MessageSquareText, Pencil, Plus, RotateCcw, Save } from "lucide-react";
+import { Archive, ArrowLeft, Check, FileUp, MessageSquareText, Pencil, Plus, RotateCcw, Save } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
@@ -23,11 +23,12 @@ import { KnowledgeSectionNav } from "./knowledge-section-nav";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { sourceReturnTo } from "../lib/manuscript-source";
 import { EntityChapters } from "./entity-chapters";
-import { WorkspacePanel } from "./workspace-panel";
+import { useWideWorkspace, WorkspacePanel } from "./workspace-panel";
 import "./library-workspace.css";
 import { SearchField } from "./search-field";
 import { entityIdentity, entityTypeLabels } from "../lib/content-taxonomy";
 import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
+import { WorkspaceLink } from "./workspace-link";
 
 const typeLabels = entityTypeLabels;
 
@@ -71,6 +72,11 @@ export function StoryBibleView() {
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "ARCHIVED">("ACTIVE");
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState(aiWorkspace && params.get("action") === "new");
+  const wide = useWideWorkspace(851);
+  const [detailOpen, setDetailOpen] = useState(requestedEntity !== null || editing);
+  const list = useRef<HTMLElement>(null);
+  const detail = useRef<HTMLDivElement>(null);
+  const listPosition = useRef({ list: 0, workspace: 0 });
   const [showImport, setShowImport] = useState(aiWorkspace && params.get("action") === "import");
   const [importType, setImportType] = useState<EntityType>("CHARACTER");
   const [importTopic, setImportTopic] = useState("");
@@ -163,6 +169,54 @@ export function StoryBibleView() {
   useUnsavedChangesGuard(editing && entityDirty || busy !== null || importBusy || importItems.length > 0 || Boolean(importSourceText),
     "当前资料有未保存修改、导入候选或进行中的操作。");
 
+  useEffect(() => {
+    if (!wide && detailOpen) {
+      detail.current?.scrollIntoView?.({ block: "start" });
+      if (!editing) detail.current?.focus({ preventScroll: true });
+    }
+  }, [wide, detailOpen, editing]);
+
+  function openDetail() {
+    if (!detailOpen) {
+      listPosition.current = { list: list.current?.scrollTop ?? 0, workspace: document.querySelector(".workspace")?.scrollTop ?? 0 };
+    }
+    setDetailOpen(true);
+  }
+
+  function resetEditor() {
+    setEditing(false);
+    setForm({ ...form, id: undefined });
+    setSavedSignature(entitySignature(form, summaryText, scopeText));
+  }
+
+  function restoreList() {
+    setDetailOpen(false);
+    window.requestAnimationFrame(() => {
+      if (list.current) list.current.scrollTop = listPosition.current.list;
+      const workspace = document.querySelector(".workspace");
+      if (workspace) workspace.scrollTop = listPosition.current.workspace;
+      const selectedButton = list.current?.querySelector<HTMLButtonElement>('[data-selected="true"]');
+      (selectedButton ?? document.querySelector<HTMLInputElement>('input[aria-label="搜索实体"]'))?.focus({ preventScroll: true });
+    });
+  }
+
+  function returnToList() {
+    if (busy || importInFlight.current || editing && entityDirty && !window.confirm("放弃尚未保存的实体修改并返回列表吗？")) return;
+    if (!discardImport()) return;
+    resetEditor();
+    setTargetResolved(true);
+    setTargetError(null);
+    setError(null);
+    setNotice(null);
+    restoreList();
+  }
+
+  function cancelEditing() {
+    if (busy || importInFlight.current || entityDirty && !window.confirm("放弃尚未保存的实体修改吗？")) return;
+    resetEditor();
+    if (!selectedId) restoreList();
+  }
+
   async function refreshEntities(id?: string) {
     await Promise.all([
       client.invalidateQueries({ queryKey: ["entity-cards"] }),
@@ -213,6 +267,7 @@ export function StoryBibleView() {
   function startNew() {
     if (busy || importInFlight.current || entityDirty && !window.confirm("当前实体有未保存修改，确定新建并放弃这些修改吗？")) return;
     if (!discardImport()) return;
+    openDetail();
     setTargetError(null);
     setSelectedId(null);
     setEditing(true);
@@ -226,9 +281,10 @@ export function StoryBibleView() {
 
   function selectEntity(entity: Entity) {
     if (busy || importInFlight.current) return;
-    if (entity.id === selectedId) return;
+    if (entity.id === selectedId) { openDetail(); return; }
     if (entity.id !== selectedId && entityDirty && !window.confirm("当前实体有未保存修改，确定切换吗？")) return;
     if (!discardImport()) return;
+    openDetail();
     setTargetError(null);
     setSelectedId(entity.id);
     setEditing(false);
@@ -362,15 +418,15 @@ export function StoryBibleView() {
   }
 
   return (
-    <section className="story-bible-view library-workspace">
-      <div className="workspace-heading">
+    <section className="story-bible-view library-workspace" data-mobile-detail={!wide && detailOpen}>
+      {!aiWorkspace && <div className="workspace-heading">
         <h1>设定</h1>
-      </div>
+      </div>}
       <KnowledgeSectionNav />
-      {returnTo ? <a className="secondary-action" href={returnTo}>返回来源</a> : null}
+      {!aiWorkspace && returnTo ? <WorkspaceLink className="secondary-action" href={returnTo}>返回来源</WorkspaceLink> : null}
       {targetError ? <p className="project-error" role="alert">{targetError}</p> : null}
 
-      <div className="library-toolbar">
+      <div className="library-toolbar" hidden={!wide && detailOpen}>
         <SearchField label="搜索实体" value={search} onChange={setSearch} placeholder="搜索名称、别名或描述" />
         <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as "ALL" | EntityType)} aria-label="实体类型筛选">
           <option value="ALL">全部类型</option>
@@ -397,7 +453,7 @@ export function StoryBibleView() {
         <button type="button" className="secondary-action" disabled={project.isFetching} onClick={() => void project.refetch()}>重试</button></p> : null}
 
       <div className="library-layout">
-        <aside className="library-list" aria-label="实体列表">
+        <aside ref={list} hidden={!wide && detailOpen} className="library-list" aria-label="实体列表">
           <div className="section-heading"><h2>实体库</h2><span>{filtered.length} / {entities.data?.length ?? 0}</span></div>
           {entities.isPending ? <p className="plan-empty">正在加载实体…</p> : null}
           {entities.isError ? <p className="project-error" role="alert">无法加载实体：{errorMessage(entities.error)}
@@ -415,7 +471,10 @@ export function StoryBibleView() {
           ))}
         </aside>
 
-        {!targetResolved || targetError ? <div className="library-detail">{!targetResolved ? <p role="status">正在定位实体…</p> : null}</div> : <div className="library-detail">
+        <div ref={detail} hidden={!wide && !detailOpen} className="library-detail" tabIndex={-1} role="region" aria-label="设定详情">
+          {!wide ? <button type="button" className="secondary-action library-back" disabled={busy !== null || importBusy}
+            onClick={returnToList}><ArrowLeft size={15} />返回设定列表</button> : null}
+          {!targetResolved ? <p role="status">正在定位实体…</p> : targetError ? null : <>
           {!selected && !editing ? <div className="library-empty"><p>{entities.isPending ? "正在加载设定…" : entities.isError ? "设定暂不可用"
             : !entities.data?.length ? "尚未添加人物与世界设定" : "选择一个人物或世界设定"}</p></div> : <>
           <div className="section-heading"><h2>{selected ? editing ? "编辑实体" : form.name : "新建实体"}</h2>{selected ? <span>版本 {selected.version}</span> : <span>尚未保存</span>}</div>
@@ -454,14 +513,12 @@ export function StoryBibleView() {
           </div>
           <div className="inspector-actions"><span className="library-meta" role="status">{busy === "save" ? "正在保存…" : entityDirty ? "有未保存修改" : "尚无新修改"}</span>
             <button type="button" className="primary-action" onClick={() => void save()} disabled={!form.name.trim() || busy !== null || !project.data || Boolean(form.id) && !entityDirty}><Save size={15} />{busy === "save" ? "保存中…" : selected ? "保存为新修订" : "创建实体"}</button>
-            <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => {
-              if (entityDirty && !window.confirm("放弃尚未保存的实体修改吗？")) return;
-              setEditing(false); setForm({ ...form, id: undefined }); setSavedSignature(entitySignature(form, summaryText, scopeText));
-            }}>取消</button></div></fieldset> : null}
+            <button type="button" className="secondary-action" disabled={busy !== null} onClick={cancelEditing}>取消</button></div></fieldset> : null}
           {selected ? <details className="library-advanced"><summary>修订历史 · {revisions.data?.length ?? 0}</summary>{revisions.isError ? <p role="alert">{errorMessage(revisions.error)}<button type="button" onClick={() => void revisions.refetch()}>重试</button></p> : null}
             {revisions.data?.map((revision) => <div className="entity-revision-row" key={revision.id}><span>修订 {revision.revision}</span><span>{revision.name}</span><code>{revision.sourceVersion ?? "无来源版本"}</code>{revision.id === selected.currentRevisionId ? <span className="revision-current"><Check size={13} />当前</span> : null}</div>)}</details> : null}
           </>}
-        </div>}
+          </>}
+        </div>
       </div>
       <WorkspacePanel open={showImport} title="从文件导入" onClose={() => {
         if (importInFlight.current || !discardImport()) return;

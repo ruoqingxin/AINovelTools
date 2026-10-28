@@ -232,9 +232,9 @@ export function KnowledgeRecordsView() {
 
   return (
     <section className="story-bible-view knowledge-records-view library-workspace">
-      <div className="workspace-heading">
+      {!aiWorkspace && <div className="workspace-heading">
         <h1>剧情记录</h1>
-      </div>
+      </div>}
       <KnowledgeSectionNav />
       <div className="library-toolbar">
         <select aria-label="记录类型" value={tab} disabled={busy} onChange={(event) => switchTab(event.target.value as RecordTab)}>{tabs.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}</select>

@@ -114,6 +114,30 @@ describe("ChapterCreationWorkspace", () => {
     expect(screen.getByRole("textbox", { name: "本章计划" })).toBeVisible();
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ active: false, mode: "create" }));
   });
+  it("edits a dedicated chapter outline without mounting manuscript or AI controls", () => {
+    const props = makeProps();
+    render(<ChapterCreationWorkspace {...props} projectId="p" task="plan" planDirty pendingChapterPlan="计划候选" />);
+    expect(screen.getByRole("region", { name: "章节细纲编辑" })).toBeVisible();
+    expect(screen.getByText("大纲 · 章节细纲 · 入城")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "本章计划" })).toHaveValue("寻找师父");
+    expect(screen.queryByText("共享编辑器")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存正文" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "AI 写作" })).not.toBeInTheDocument();
+    expect(panels.ai).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "本章计划" }), { key: "s", ctrlKey: true });
+    expect(props.onSavePlan).toHaveBeenCalledOnce();
+    expect(props.state.saveDraft).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "处理本章正文" })).toHaveAttribute("href",
+      "/discussion?work=writing&targetProject=p&planNode=chapter-1");
+  });
+  it("keeps secondary reading actions collapsed until requested", async () => {
+    render(<AiWorkspaceContext.Provider value={false}><ChapterCreationWorkspace {...makeProps()} projectId="p" /></AiWorkspaceContext.Provider>);
+    expect(screen.getByText("检查正文")).not.toBeVisible();
+    fireEvent.click(screen.getByText("更多操作"));
+    await waitFor(() => expect(screen.getByText("检查正文")).toBeVisible());
+    expect(screen.getByRole("link", { name: "检查正文" })).toHaveAttribute("href", expect.stringContaining("tab=review"));
+    expect(screen.getByRole("link", { name: "提取设定与记录" })).toHaveAttribute("href", expect.stringContaining("tab=extraction"));
+  });
 
   it("opens the plan directly from the toolbar and saves it without saving the manuscript", () => {
     const props = makeProps(makeState({ chapterDirty: true }));
@@ -144,7 +168,8 @@ describe("ChapterCreationWorkspace", () => {
     window.history.replaceState(null, "", `/writing?assistant=${assistant}&purpose=admission&returnTo=%2Freview#chapter-1`);
     render(<ChapterCreationWorkspace {...makeProps()} />);
     expect(screen.getByRole("button", { name: "收起写作助手" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "返回来源" })).toHaveAttribute("href", "/review");
+    expect(screen.queryByRole("link", { name: "返回来源" })).not.toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("returnTo")).toBe("/review");
     if (assistant === "review") {
       expect(screen.getByLabelText("检查对象")).toHaveValue("admission");
       expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "review", reviewPurpose: "admission", active: true }));
@@ -280,9 +305,11 @@ describe("ChapterCreationWorkspace", () => {
     expect(state.setManuscriptTab).toHaveBeenCalledWith("manuscript");
   });
 
-  it.each([false, true])("does not replace newer chapter-plan edits after confirmation (adopt=%s)", async (adopt) => {
+  it.each([
+    [false, "writing"], [true, "writing"], [false, "plan"], [true, "plan"],
+  ] as const)("does not replace newer chapter-plan edits after confirmation (adopt=%s, task=%s)", async (adopt, task) => {
     window.history.replaceState(null, "", "/writing?assistant=plan");
-    const props = { ...makeProps(), pendingChapterPlan: "计划候选", planDirty: true, onAdoptPlan: vi.fn() };
+    const props = { ...makeProps(), task, pendingChapterPlan: "计划候选", planDirty: true, onAdoptPlan: vi.fn() };
     const view = render(<ConfirmActionProvider><ChapterCreationWorkspace {...props} /></ConfirmActionProvider>);
     fireEvent.click(screen.getByRole("button", { name: adopt ? "确认为本章计划" : "载入编辑" }));
     view.rerender(<ConfirmActionProvider><ChapterCreationWorkspace {...props} chapterPlan="新的计划修改" /></ConfirmActionProvider>);
@@ -364,7 +391,7 @@ describe("ChapterCreationWorkspace", () => {
     expect(panels.extraction).toHaveBeenLastCalledWith(expect.objectContaining({ active: true }));
   });
 
-  it("deactivates collapsed AI and lazily mounts readiness and review purposes", () => {
+  it("deactivates collapsed AI and groups preparation checks under admission review", () => {
     render(<ChapterCreationWorkspace {...makeProps()} />);
     fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
     fireEvent.click(screen.getByRole("button", { name: "收起写作助手" }));
@@ -377,6 +404,10 @@ describe("ChapterCreationWorkspace", () => {
     fireEvent.change(screen.getByLabelText("检查对象"), { target: { value: "admission" } });
     expect(panels.ai.mock.calls.some(([props]) => props.mode === "review" && props.reviewPurpose === "manuscript" && props.active === false)).toBe(true);
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "review", reviewPurpose: "admission", active: true }));
+    const preparation = screen.getByText("创作准备核对").closest("details")!;
+    preparation.open = true;
+    fireEvent(preparation, new Event("toggle"));
+    expect(panels.ai.mock.calls.some(([props]) => props.mode === "readiness" && props.active === true)).toBe(true);
   });
 
   it("remembers the docked assistant and preserves its input and preference through focus mode", () => {

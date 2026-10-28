@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiWorkspaceHref, draftIdentity, entityIdentity, parseContentOrigin, planIdentity, planningSectionIdentity, summaryIdentity } from "./content-taxonomy";
+import { aiWorkspaceHref, aiWorkspaceReturnHref, draftIdentity, entityIdentity, parseContentOrigin, planIdentity, planningSectionIdentity, summaryIdentity } from "./content-taxonomy";
 import { parseMaterialTarget } from "./knowledge-navigation";
 
 describe("canonical content classification", () => {
@@ -28,6 +28,33 @@ describe("canonical content classification", () => {
     const url = new URL(aiWorkspaceHref({ workflow: "writing", projectId: "p", targetId: "chapter", tab: "plan" }), "http://localhost");
     expect(url.searchParams.get("planNode")).toBe("chapter");
     expect(url.searchParams.get("assistant")).toBe("plan");
+  });
+  it.each([
+    ["entity", "entity=a%26b", "/knowledge", "entity", "a&b"],
+    ["writing", "planNode=c", "/writing", "planNode", "c"],
+    ["writing", "planNode=c&tab=plan", "/planning", "planNode", "c"],
+    ["materials", "card=rule", "/knowledge/materials", "card", "rule"],
+    ["records", "objectId=r&tab=events", "/knowledge/records", "objectId", "r"],
+  ])("returns %s work to its exact formal object", (work, detail, path, key, value) => {
+    const url = new URL(aiWorkspaceReturnHref(new URLSearchParams(`work=${work}&targetProject=p&${detail}`)), window.location.origin);
+    expect(url.pathname).toBe(path);
+    expect(url.searchParams.get(key)).toBe(value);
+    expect(url.searchParams.get("targetProject")).toBe("p");
+    if (work === "records") expect(url.searchParams.get("tab")).toBe("events");
+  });
+  it("preserves a safe source location and rejects external return destinations", () => {
+    const href = aiWorkspaceHref({ workflow: "entity", projectId: "p", returnTo: "/search?q=城#result" });
+    expect(aiWorkspaceReturnHref(new URL(href, window.location.origin).searchParams)).toBe("/search?q=%E5%9F%8E#result");
+    const unsafe = aiWorkspaceHref({ workflow: "entity", projectId: "p", returnTo: "//other.test" });
+    expect(new URL(unsafe, window.location.origin).searchParams.has("returnTo")).toBe(false);
+    expect(aiWorkspaceReturnHref(new URLSearchParams("work=entity&returnTo=https://other.test"))).toBe("/knowledge");
+  });
+  it("retains the preparation section and reference list type when returning", () => {
+    const section = new URL(aiWorkspaceReturnHref(new URLSearchParams("work=section&targetProject=p&item=seed-tone")), window.location.origin);
+    expect(section.pathname).toBe("/planning");
+    expect(section.hash).toBe("#seed-tone");
+    const cards = new URL(aiWorkspaceReturnHref(new URLSearchParams("work=materials&targetProject=p&materialKind=CARD")), window.location.origin);
+    expect(cards.searchParams.get("materialKind")).toBe("CARD");
   });
   it("does not infer identity from a discussion title or accept a foreign origin", () => {
     expect(parseContentOrigin("人物讨论", "p")).toBeNull();

@@ -91,7 +91,7 @@ function ChaptersEntryView() {
 function DiscussionEntryView() {
   const search = useRouterState({ select: (state) => state.location.searchStr });
   return <ProjectGate>{parseDiscussionSource(search) ? <DiscussionSourceView search={search} />
-    : new URLSearchParams(search).get("design") === "results" ? <HistoricalDiscussionReview /> : <DiscussionView />}</ProjectGate>;
+    : new URLSearchParams(search).get("design") === "results" ? <HistoricalDiscussionReview /> : <DiscussionView key={search} />}</ProjectGate>;
 }
 
 function ReviewEntryView() {

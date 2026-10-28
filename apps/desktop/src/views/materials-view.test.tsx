@@ -63,7 +63,8 @@ describe("MaterialsView", () => {
   });
   it("starts in list/detail mode and opens only the requested creation form", async () => {
     renderView();
-    expect(screen.getByRole("heading", { name: "辅助参考" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "辅助参考" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "参考资料类型" })).toBeVisible();
     expect(screen.queryByRole("textbox", { name: "摘要内容" })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "新建参考摘要" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "新建参考摘要" }));
@@ -127,6 +128,9 @@ describe("MaterialsView", () => {
       expect(list).toBeVisible();
       expect(screen.getByLabelText("搜索参考资料")).toHaveValue("章节记忆");
       await waitFor(() => expect(list.scrollTop).toBe(145));
+      await selectSummary();
+      expect(list).not.toBeVisible();
+      expect(screen.getByRole("heading", { name: "章节记忆" })).toBeVisible();
     } finally { media.mockRestore(); }
   });
   it("keeps focus on the new material input on narrow screens", async () => {

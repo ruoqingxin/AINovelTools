@@ -2,6 +2,7 @@ import { ArrowUpRight } from "lucide-react";
 import { createContext, useContext } from "react";
 import { aiWorkspaceHref, contentCategories, identityLabel, type AiWorkspaceTarget, type ContentIdentity } from "../lib/content-taxonomy";
 import "./content-identity.css";
+import { WorkspaceLink } from "./workspace-link";
 
 export const AiWorkspaceContext = createContext(false);
 export const useInAiWorkspace = () => useContext(AiWorkspaceContext);
@@ -11,7 +12,7 @@ export function ContentTypeLabel({ identity }: { identity: ContentIdentity }) {
     title={contentCategories[identity.category].description}>{identityLabel(identity)}</span>;
 }
 export function AiWorkspaceLink({ target, children }: { target: AiWorkspaceTarget; children: React.ReactNode }) {
-  return <a className="secondary-action content-workspace-link" href={aiWorkspaceHref(target)}><ArrowUpRight size={15} />{children}</a>;
+  return <WorkspaceLink className="secondary-action content-workspace-link" href={aiWorkspaceHref(target)}><ArrowUpRight size={15} />{children}</WorkspaceLink>;
 }
 export function FormalContent({ title, identity, content, status, target, pending = false }: {
   title: string; identity: ContentIdentity; content: string; status?: string;

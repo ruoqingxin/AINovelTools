@@ -1,5 +1,6 @@
 import { BookMarked, Files, UsersRound } from "lucide-react";
 import { Link, useRouterState } from "@tanstack/react-router";
+import { useInAiWorkspace } from "./content-identity";
 
 const sections = [
   { label: "设定", href: "/knowledge", icon: UsersRound, exact: true },
@@ -9,7 +10,9 @@ const sections = [
 ];
 
 export function KnowledgeSectionNav() {
+  const aiWorkspace = useInAiWorkspace();
   const currentPath = useRouterState({ select: (state) => state.location.pathname }).replace(/\/+$/, "") || "/";
+  if (aiWorkspace) return null;
 
   return <nav className="knowledge-section-nav" aria-label="知识资料分类">
     {sections.map(({ label, href, icon: Icon, exact }) => {

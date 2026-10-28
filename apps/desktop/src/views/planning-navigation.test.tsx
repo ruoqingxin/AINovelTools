@@ -45,10 +45,11 @@ describe("exact planning navigation", () => {
     mocks.getAuditFlowSettings.mockResolvedValue({ admission: true, manuscript: true, knowledge: true });
   });
 
-  it("opens the exact current node in the existing editor with a search return", async () => {
+  it("opens the exact node and retains its source for the unified workspace header", async () => {
     renderPlan();
     expect(await screen.findByDisplayValue("场景的正式计划")).toBeVisible();
-    const back = new URL(screen.getByRole("link", { name: "返回来源" }).getAttribute("href")!, window.location.origin);
+    expect(screen.queryByRole("link", { name: "返回来源" })).not.toBeInTheDocument();
+    const back = new URL(new URLSearchParams(window.location.search).get("returnTo")!, window.location.origin);
     expect(back.searchParams.get("q")).toBe("重逢");
     expect(back.searchParams.get("type")).toBe("PLAN");
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();

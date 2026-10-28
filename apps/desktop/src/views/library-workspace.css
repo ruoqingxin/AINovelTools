@@ -5,6 +5,7 @@
 .library-workspace .knowledge-section-link[data-active] { border-bottom-color: #3269cc; color: #245bb3; background: transparent; box-shadow: none; }
 .library-workspace .knowledge-section-link:hover { background: #f2f5fa; }
 .library-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 14px 0; }
+.library-toolbar[hidden] { display: none; }
 .library-toolbar input, .library-toolbar select { min-width: 0; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #48515e; font: inherit; font-size: 13px; }
 .library-toolbar .search-field { min-width: 0; flex: 1 1 180px; }
 .library-toolbar .search-field input { width: 100%; border: 0; }
@@ -67,7 +68,7 @@
   .library-layout { min-height: 260px; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(80px, .3fr) minmax(180px, .7fr); }
   .library-list { max-height: none; padding: 8px 0; border-right: 0; border-bottom: 1px solid var(--line); }
   .library-list > .section-heading { top: -8px; }
-  .materials-view .library-layout { min-height: 180px; grid-template-rows: minmax(0, 1fr); }
+  .materials-view .library-layout, .story-bible-view .library-layout { min-height: 180px; grid-template-rows: minmax(0, 1fr); }
   .materials-view .library-list { max-height: none; }
   .library-detail { padding: 18px 0; }
   .library-toolbar > select { flex: 1 1 130px; }
@@ -77,11 +78,11 @@
   .library-workspace .knowledge-section-link { gap: 4px; padding: 0 5px; }
 }
 @media (min-width: 650px) and (max-width: 850px) and (max-height: 560px) {
-  .library-workspace:not(.materials-view) .library-layout {
+  .library-workspace:not(.materials-view):not(.story-bible-view) .library-layout {
     min-height: 180px;
     grid-template-columns: 200px minmax(0, 1fr);
     grid-template-rows: minmax(180px, 1fr);
   }
-  .library-workspace:not(.materials-view) .library-list { border-right: 1px solid var(--line); border-bottom: 0; padding-right: 12px; }
-  .library-workspace:not(.materials-view) .library-detail { padding-inline: 16px; }
+  .library-workspace:not(.materials-view):not(.story-bible-view) .library-list { border-right: 1px solid var(--line); border-bottom: 0; padding-right: 12px; }
+  .library-workspace:not(.materials-view):not(.story-bible-view) .library-detail { padding-inline: 16px; }
 }

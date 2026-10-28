@@ -4,6 +4,7 @@ import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MaterialsView } from "./materials-view";
+import { AiWorkspaceContext } from "./content-identity";
 vi.mock("./knowledge-section-nav", () => ({ KnowledgeSectionNav: () => null }));
 
 const mocks = vi.hoisted(() => ({
@@ -20,9 +21,9 @@ const summary = {
   content: "旧修订的摘要内容", generationMode: "EXTRACTIVE_AUTO", lifecycleStatus: "STALE", createdAt: "0", updatedAt: "1",
 };
 
-function renderTarget(search = "?summary=summary-1&targetProject=project-1&returnTo=%2Fsearch%3Fq%3D城%26type%3DSUMMARY") {
+function renderTarget(search = "?summary=summary-1&targetProject=project-1&returnTo=%2Fsearch%3Fq%3D城%26type%3DSUMMARY", aiWorkspace = true) {
   window.history.replaceState(null, "", `/knowledge/materials${search}`);
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MaterialsView /></QueryClientProvider>);
+  render(<AiWorkspaceContext.Provider value={aiWorkspace}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MaterialsView /></QueryClientProvider></AiWorkspaceContext.Provider>);
 }
 
 describe("material detail navigation", () => {
@@ -39,7 +40,7 @@ describe("material detail navigation", () => {
   });
 
   it("reads only the exact summary and stays read-only", async () => {
-    renderTarget();
+    renderTarget(undefined, false);
     expect(await screen.findByText(summary.content)).toBeVisible();
     expect(mocks.getSummaryMaterial).toHaveBeenCalledWith("summary-1", "project-1");
     fireEvent.click(screen.getByText("来源与高级信息"));
@@ -99,7 +100,7 @@ describe("material detail navigation", () => {
     expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
   });
 
-  it("saves a card in place with a clear confirmation and retains its source return link", async () => {
+  it("saves a card in place and leaves the source return action to the unified workspace header", async () => {
     mocks.upsertWritingCard.mockImplementation(async (value) => {
       mocks.getWritingCard.mockResolvedValue(value);
       return value;
@@ -113,7 +114,8 @@ describe("material detail navigation", () => {
     expect(await screen.findByText("资料已保存")).toBeVisible();
     expect(screen.getByText("修改后的节奏规则")).toBeVisible();
     expect(screen.queryByRole("textbox", { name: "卡片内容" })).not.toBeInTheDocument();
-    const returnUrl = new URL(screen.getByRole("link", { name: "返回来源" }).getAttribute("href")!, window.location.origin);
+    expect(screen.queryByRole("link", { name: "返回来源" })).not.toBeInTheDocument();
+    const returnUrl = new URL(new URLSearchParams(window.location.search).get("returnTo")!, window.location.origin);
     expect(returnUrl.pathname).toBe("/search");
     expect(returnUrl.searchParams.get("q")).toBe("节奏");
     expect(mocks.upsertWritingCard).toHaveBeenCalledOnce();

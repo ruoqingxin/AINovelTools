@@ -44,9 +44,9 @@ const card: EntityCard = {
   revision: { id: "revision-1", entityId: "entity-1", revision: 1, name: "沈砚", aliases: ["小沈"],
     description: "原描述", fixedAttributesJson: "{}", tags: [], sourceVersion: null, baseRevisionId: null, createdAt: "" },
 };
-function renderView() {
+function renderView(aiWorkspace = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><StoryBibleView /></QueryClientProvider>);
+  render(<AiWorkspaceContext.Provider value={aiWorkspace}><QueryClientProvider client={client}><StoryBibleView /></QueryClientProvider></AiWorkspaceContext.Provider>);
   return client;
 }
 
@@ -95,7 +95,7 @@ describe("StoryBibleView", () => {
     window.history.replaceState(null, "", "/knowledge?entity=entity-1&targetProject=project-1&returnTo=%2Fwriting%3Fassistant%3Dplan%23chapter-1");
     mocks.listEntityCards.mockResolvedValue([card, { ...card, entity: { ...card.entity, id: "other-entity" } }]);
     mocks.listEntityRevisions.mockResolvedValue([{ ...card.revision, id: "obsolete", name: "错误旧名字" }]);
-    renderView();
+    renderView(false);
     expect(await screen.findByRole("heading", { name: "沈砚" })).toBeVisible();
     expect(screen.getByRole("link", { name: "返回来源" })).toHaveAttribute("href", "/writing?assistant=plan#chapter-1");
     expect(mocks.listEntityRevisions).toHaveBeenCalledWith("entity-1");
@@ -118,6 +118,105 @@ describe("StoryBibleView", () => {
     expect(search).toHaveValue("");
     expect(screen.getByRole("button", { name: /沈砚/ })).toBeVisible();
     expect(mocks.upsertEntity).not.toHaveBeenCalled();
+  });
+
+  function mobileViewport() {
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      matches: query.includes("max-width"), addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList));
+  }
+
+  it("keeps mobile list filters, scroll and selection when returning from a setting", async () => {
+    mobileViewport();
+    mocks.listEntityCards.mockResolvedValue([card]);
+    renderView();
+    const list = screen.getByRole("complementary", { name: "实体列表" });
+    const workspace = document.querySelector(".story-bible-view")!.parentElement!;
+    workspace.classList.add("workspace");
+    expect(screen.queryByRole("region", { name: "设定详情" })).not.toBeInTheDocument();
+    const item = await screen.findByRole("button", { name: /沈砚/ });
+    fireEvent.change(screen.getByLabelText("搜索实体"), { target: { value: "小沈" } });
+    fireEvent.change(screen.getByLabelText("实体类型筛选"), { target: { value: "CHARACTER" } });
+    list.scrollTop = 145;
+    workspace.scrollTop = 320;
+    fireEvent.click(item);
+    expect(list).not.toBeVisible();
+    expect(screen.getByRole("region", { name: "设定详情" })).toHaveFocus();
+    expect(screen.queryByRole("textbox", { name: "搜索实体" })).not.toBeInTheDocument();
+    workspace.scrollTop = 0;
+    fireEvent.click(screen.getByRole("button", { name: "返回设定列表" }));
+    expect(list).toBeVisible();
+    expect(screen.getByLabelText("搜索实体")).toHaveValue("小沈");
+    expect(screen.getByLabelText("实体类型筛选")).toHaveValue("CHARACTER");
+    await waitFor(() => expect(item).toHaveFocus());
+    expect(list.scrollTop).toBe(145);
+    expect(workspace.scrollTop).toBe(320);
+    fireEvent.click(item);
+    expect(screen.getByRole("heading", { name: "沈砚" })).toBeVisible();
+    expect(list).not.toBeVisible();
+  });
+
+  it("protects dirty mobile edits and restores formal content only after an approved return", async () => {
+    mobileViewport();
+    window.history.replaceState(null, "", "/discussion?work=entity&targetProject=project-1&entity=entity-1");
+    mocks.listEntityCards.mockResolvedValue([card]);
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "编辑实体" }));
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "暂未保存的姓名" } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "返回设定列表" }));
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText("名称")).toHaveValue("暂未保存的姓名");
+    expect(screen.getByLabelText("名称")).toHaveFocus();
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "返回设定列表" }));
+    fireEvent.click(screen.getByRole("button", { name: /沈砚/ }));
+    expect(await screen.findByRole("heading", { name: "沈砚" })).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "名称" })).not.toBeInTheDocument();
+    expect(mocks.upsertEntity).not.toHaveBeenCalled();
+  });
+
+  it("opens mobile creation directly and returns to the list when an empty new form is cancelled", async () => {
+    mobileViewport();
+    window.history.replaceState(null, "", "/discussion?work=entity&targetProject=project-1&action=new");
+    renderView();
+    expect(screen.getByRole("textbox", { name: "名称" })).toHaveFocus();
+    expect(document.querySelector(".library-list")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("complementary", { name: "实体列表" })).toBeVisible();
+    await waitFor(() => expect(screen.getByLabelText("搜索实体")).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: "新建实体" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "新建实体" }));
+    expect(screen.getByLabelText("名称")).toHaveFocus();
+  });
+
+  it("allows an invalid mobile setting target to return to the library without choosing another item", async () => {
+    mobileViewport();
+    window.history.replaceState(null, "", "/discussion?work=entity&targetProject=project-1&entity=missing");
+    mocks.listEntityCards.mockResolvedValue([card]);
+    renderView();
+    expect(await screen.findByRole("alert")).toHaveTextContent("未打开其他实体");
+    expect(document.querySelector(".library-list")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "返回设定列表" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /沈砚/ })).toBeVisible();
+    expect(mocks.listEntityRevisions).not.toHaveBeenCalled();
+  });
+
+  it("locks the mobile back action during a save and retains the form on failure", async () => {
+    mobileViewport();
+    window.history.replaceState(null, "", "/discussion?work=entity&targetProject=project-1&action=new");
+    let reject!: (cause: Error) => void;
+    mocks.upsertEntity.mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
+    renderView();
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "新设定" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "创建实体" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "创建实体" }));
+    expect(screen.getByRole("button", { name: "返回设定列表" })).toBeDisabled();
+    await act(async () => reject(new Error("保存失败")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("保存失败");
+    expect(screen.getByLabelText("名称")).toHaveValue("新设定");
+    expect(screen.getByRole("button", { name: "返回设定列表" })).toBeEnabled();
   });
 
   it("keeps optional aliases and tags collapsed when creating an entity", async () => {
@@ -247,7 +346,8 @@ describe("StoryBibleView", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByRole("heading", { name: "设定" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "设定" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "搜索实体" })).toBeVisible();
     expect(screen.queryByLabelText("名称")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "章节审核" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "搜索实体" })).toBeVisible();

@@ -134,16 +134,21 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
   const contextValue = useMemo(() => ({ register, unregister, confirmLeave }), [register, unregister, confirmLeave]);
   const dirtyEntry = Object.values(entries).find((entry) => entry.dirty);
   const dirty = Boolean(dirtyEntry);
+  const shouldWarnBeforeUnload = useCallback(
+    () => Object.values(entriesRef.current).some((entry) => entry.dirty),
+    [],
+  );
   const shouldBlock = useCallback(
     ({ current, next }: { current: { pathname: string; search?: Record<string, unknown> }; next: { pathname: string; search?: Record<string, unknown> } }) => (
       Object.values(entriesRef.current).some((entry) => entry.dirty)
-      && (current.pathname !== next.pathname || current.pathname === "/planning" && JSON.stringify(current.search) !== JSON.stringify(next.search))
+      && (current.pathname !== next.pathname || ["/planning", "/discussion"].includes(current.pathname)
+        && JSON.stringify(current.search) !== JSON.stringify(next.search))
     ),
     [],
   );
   const blocker = useBlocker({
     shouldBlockFn: shouldBlock,
-    enableBeforeUnload: dirty,
+    enableBeforeUnload: shouldWarnBeforeUnload,
     disabled: !dirty,
     withResolver: true,
   });

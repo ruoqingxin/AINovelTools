@@ -23,7 +23,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
 }));
-vi.mock("@tanstack/react-router", () => ({
+vi.mock("@tanstack/react-router", async () => ({
+  ...await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router"),
   Link: ({ to, hash, search: _search, children, ...props }: { to: string; hash?: string; search?: unknown; children: ReactNode }) =>
     <a href={`${to}${hash ? `#${hash}` : ""}`} {...props}>{children}</a>,
 }));

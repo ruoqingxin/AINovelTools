@@ -29,7 +29,7 @@ import { replyReviewRequest } from "./coauthor-reply-diagnostics";
 import { coauthorStepLabel, coauthorToolLabel, retrievalDisplay, splitLegacyRetrieval } from "./coauthor-run-presentation";
 import "./coauthor-workspace.css";
 import { coauthorKindLabels as kinds, draftIdentity, parseContentOrigin } from "../lib/content-taxonomy";
-import { ContentTypeLabel } from "./content-identity";
+import { ContentTypeLabel, useInAiWorkspace } from "./content-identity";
 
 const statuses: Record<string, string> = {
   RUNNING: "进行中", COMPLETED: "运行完成", FAILED: "本轮失败", CANCELLED: "已停止",
@@ -79,6 +79,7 @@ function sourcesFor(run?: CoauthorRun): Array<CoauthorSource & { read: boolean; 
 }
 
 export function CoauthorView() {
+  const aiWorkspace = useInAiWorkspace();
   const client = useQueryClient();
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   const sessions = useQuery({ queryKey: ["discussion-sessions"], queryFn: listDiscussionSessions, enabled: Boolean(project.data) });
@@ -107,19 +108,18 @@ export function CoauthorView() {
     setNameEditor({ projectId, title: `共创讨论 ${number}` });
   }
   return <section className="coauthor-workspace">
-    <header className="coauthor-heading">
-      <h1>共创讨论</h1>
+    {(available.length > 0 || !aiWorkspace) && <header className="coauthor-heading">
+      {!aiWorkspace && <h1>共创讨论</h1>}
       <label className="coauthor-session-picker">当前讨论<select aria-label="当前讨论" value={session?.id ?? ""} onChange={(event) => select(event.target.value)}>
         {!session && <option value="">选择讨论</option>}
         {available.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}
       </select></label>
       <button className="icon-command" type="button" title="重命名讨论" aria-label="重命名讨论" disabled={Boolean(nameEditor) || !session}
         onClick={() => { if (session && projectId) setNameEditor({ projectId, session, title: session.title }); }}><Pencil size={16} /></button>
-      <button className="secondary-action" type="button" title="创建独立讨论，不复制当前工作稿" disabled={Boolean(nameEditor) || !projectId} onClick={openCreate}><Plus size={16} />新建讨论</button>
-    </header>
+      {available.length > 0 && <button className="secondary-action" type="button" title="创建独立讨论，不复制当前工作稿" disabled={Boolean(nameEditor) || !projectId} onClick={openCreate}><Plus size={16} />新建讨论</button>}
+    </header>}
     {origin && !wrongTarget && <div className="ai-workspace-identity" aria-label="讨论来源">
       <div><ContentTypeLabel identity={origin} /><h2>{origin.title}</h2></div>
-      <dl><dt>讨论对象</dt><dd>{origin.title}（{origin.key}）</dd></dl>
     </div>}
     {(error || sessions.error || project.error) && <p className="project-error" role="alert">{error ?? errorMessage(sessions.error ?? project.error)}</p>}
     {wrongTarget ? <p role="alert">讨论链接不属于当前项目，未读取或修改该讨论。</p>

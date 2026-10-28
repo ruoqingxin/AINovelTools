@@ -45,7 +45,7 @@ import {
 
 const planningDefinitionsById = new Map(planningSectionGroups.flatMap((group) => group.children).map((item) => [item.id, item]));
 
-export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "writing"; embedded?: boolean } = {}) {
+export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "writing"; embedded?: boolean; chapterPlanTask?: boolean } = {}) {
   const aiWorkspace = useInAiWorkspace();
   const workspaceMode = props.mode ?? "planning";
   const isChapterMode = workspaceMode === "chapters" || workspaceMode === "writing";
@@ -477,24 +477,26 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
     catch (cause) { setError(errorMessage(cause)); }
   }
 
+  const showDirectoryToggle = !directoryDocked || !directoryOpen;
+  const showReturnLink = Boolean(!aiWorkspace && returnTo && (!isChapterMode || !selected));
   return (
     <section className="project-workspace writing-planning-workspace" data-workspace-mode={workspaceMode}>
-      <div className="workspace-heading workspace-heading-with-action">
+      {(!aiWorkspace || props.embedded || showDirectoryToggle || showReturnLink || !props.chapterPlanTask) && <div className="workspace-heading workspace-heading-with-action">
         <div>
-          {props.embedded ? <h2 className="planning-section-title">分卷与细化</h2> : <h1>{isChapterMode ? "写作" : "大纲与规划"}</h1>}
-          {returnTo && (!isChapterMode || !selected) ? <a className="secondary-action workspace-return-link" href={returnTo}><ArrowLeft size={15} />返回来源</a> : null}
+          {props.embedded ? <h2 className="planning-section-title">分卷与细化</h2> : !aiWorkspace ? <h1>{isChapterMode ? "写作" : "大纲与规划"}</h1> : null}
+          {showReturnLink ? <a className="secondary-action workspace-return-link" href={returnTo!}><ArrowLeft size={15} />返回来源</a> : null}
         </div>
-        <div className="workspace-heading-tools"><button type="button" className="icon-command" title={isChapterMode ? "章节目录" : "大纲目录"}
+        <div className="workspace-heading-tools">{showDirectoryToggle && <button type="button" className="icon-command" title={isChapterMode ? "章节目录" : "大纲目录"}
           aria-label={isChapterMode ? "章节目录" : "大纲目录"} aria-expanded={directoryOpen}
-          onClick={() => setDirectoryOpen((open) => !open)}><List size={18} /></button>
-        {currentProject.data ? <ManuscriptExportPanel
+          onClick={() => setDirectoryOpen((open) => !open)}><List size={18} /></button>}
+        {currentProject.data && !props.chapterPlanTask ? <ManuscriptExportPanel
           key={`${currentProject.data.projectId}:${selected?.id ?? ""}`}
           projectId={currentProject.data.projectId}
           chapter={selected?.kind === "CHAPTER" && !selected.archived ? { id: selected.id, title: selected.title } : undefined}
           chapterDirty={chapterDirty}
           saving={savingDraft}
         /> : null}</div>
-      </div>
+      </div>}
 
       {nodes.isPending ? <p className="plan-loading">正在加载规划…</p> : null}
       {nodes.isError ? <p className="project-error" role="alert">无法加载规划：{errorMessage(nodes.error)}</p> : null}
@@ -754,6 +756,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
           {currentProject.data ? <a href={planNodeHref(selected.id, currentProject.data.projectId, returnTo ?? undefined, true)}>查看本章计划</a> : null}
         </div> : null}
         {selected.kind === "CHAPTER" && isChapterMode ? <ChapterCreationWorkspace
+          task={props.chapterPlanTask ? "plan" : "writing"}
           projectId={currentProject.data?.projectId}
           key={`${currentProject.data?.projectId}:${selected.id}`}
           chapter={selected}

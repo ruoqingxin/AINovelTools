@@ -187,6 +187,7 @@ describe("coauthor workspace", () => {
     listedSessions = [];
     renderWorkspace();
     const empty = await screen.findByRole("heading", { name: "从一个想法开始" });
+    expect(screen.getAllByRole("button", { name: "新建讨论" })).toHaveLength(1);
     fireEvent.click(within(empty.parentElement!).getByRole("button", { name: "新建讨论" }));
     const dialog = await screen.findByRole("dialog", { name: "新建讨论" });
     expect(within(dialog).getByLabelText("讨论名")).toHaveValue("共创讨论 1");

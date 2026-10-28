@@ -5,6 +5,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UnsavedChangesProvider, useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { KnowledgeSectionNav } from "./knowledge-section-nav";
+import { AiWorkspaceContext } from "./content-identity";
 
 const sections = [
   ["/knowledge", "设定"],
@@ -19,11 +20,11 @@ function Pane({ label }: { label: string }) {
   return <><h1>{label}</h1><input aria-label="资料编辑" value={draft} onChange={(event) => setDraft(event.target.value)} /></>;
 }
 
-function setup(path = "/knowledge") {
+function setup(path = "/knowledge", aiWorkspace = false) {
   const root = createRootRoute({
     component: () => <UnsavedChangesProvider>
       <input aria-label="持久工具栏" defaultValue="unchanged" />
-      <KnowledgeSectionNav /><Outlet />
+      <AiWorkspaceContext.Provider value={aiWorkspace}><KnowledgeSectionNav /></AiWorkspaceContext.Provider><Outlet />
     </UnsavedChangesProvider>,
   });
   const tree = root.addChildren(sections.map(([url, label]) => createRoute({
@@ -40,6 +41,11 @@ beforeEach(() => { vi.spyOn(window, "scrollTo").mockImplementation(() => {}); })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("knowledge section navigation", () => {
+  it("does not repeat the formal-library navigation inside the AI workspace", async () => {
+    setup("/knowledge", true);
+    await screen.findByRole("heading", { name: "设定" });
+    expect(screen.queryByRole("navigation", { name: "知识资料分类" })).not.toBeInTheDocument();
+  });
   it("switches all categories inside the router without replacing the persistent shell", async () => {
     const router = setup();
     await screen.findByRole("heading", { name: "设定" });
