@@ -179,7 +179,7 @@ describe("SettingsView", () => {
   it("places model API configuration under settings", async () => {
     render(<QueryClientProvider client={new QueryClient()}><SettingsView /></QueryClientProvider>);
     expect(screen.getByRole("heading", { name: "设置" })).toBeVisible();
-    expect(screen.getByText("连接模型、分配任务、控制审核、查看费用与维护数据")).toBeVisible();
+    expect(screen.queryByText("连接模型、分配任务、控制审核、查看费用与维护数据")).not.toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "设置分类" }).querySelectorAll("button")).toHaveLength(5);
     expect(screen.getByRole("button", { name: "模型 API" })).toHaveAttribute("data-active");
     expect(await screen.findByRole("heading", { name: "模型 API" })).toBeVisible();

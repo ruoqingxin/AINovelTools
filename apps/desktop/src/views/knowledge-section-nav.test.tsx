@@ -61,8 +61,17 @@ describe("knowledge section navigation", () => {
       expect(link).toHaveAttribute("data-active", "true");
       expect(screen.getByLabelText("持久工具栏")).toBe(toolbar);
       expect(toolbar).toHaveValue("keep shell");
-      expect(document.querySelectorAll('.knowledge-section-link[aria-current="page"]')).toHaveLength(1);
+      expect(document.querySelectorAll('.knowledge-section-link[aria-current="page"]')).toHaveLength(path === "/knowledge/settings" ? 0 : 1);
     }
+  });
+
+  it("groups reveal status under settings instead of making it a fourth content category", async () => {
+    setup("/knowledge/settings");
+    await screen.findByRole("heading", { name: "设定揭示状态" });
+    const primary = screen.getByRole("navigation", { name: "知识资料分类" });
+    expect(Array.from(primary.querySelectorAll("a")).map((link) => link.textContent)).toEqual(["设定", "剧情记录", "辅助参考"]);
+    expect(screen.getByRole("link", { name: "设定" })).toHaveAttribute("aria-current", "location");
+    expect(screen.getByRole("navigation", { name: "设定视图" })).toContainElement(screen.getByRole("link", { name: "设定揭示状态" }));
   });
 
   it("marks the exact category for a direct link with search parameters", async () => {

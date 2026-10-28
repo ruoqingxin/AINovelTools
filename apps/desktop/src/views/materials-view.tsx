@@ -80,7 +80,7 @@ function MaterialsManager() {
   }
   return <section className="materials-view library-workspace" data-mobile-detail={!wide && detailOpen}>
     {!aiWorkspace && <div className="workspace-heading"><h1>辅助参考</h1></div>}<KnowledgeSectionNav />
-    <div className="library-toolbar">
+    <div className="library-toolbar" hidden={!wide && detailOpen}>
       <div className="creation-mode" role="group" aria-label="参考资料类型">{(["SUMMARY", "CARD"] as const).map((value) =>
         <button type="button" key={value} disabled={editorState.busy || actionBusy} aria-pressed={kind === value} onClick={() => {
           if (value === kind || !leaveEditor()) return;

@@ -9,6 +9,7 @@ import { aiTaskSettingsFromHash } from "../lib/ai-task-preferences";
 import { DataManagementView } from "./data-management-view";
 import { AiQualityReview } from "./ai-quality-review";
 import { useConfirmAction } from "../shell/confirm-action-provider";
+import { useActiveNavigation } from "./use-active-navigation";
 
 type SettingsSection = "MODEL_API" | "AI_TASKS" | "AI_USAGE" | "WRITING_ADMISSION" | "DATA";
 
@@ -34,6 +35,7 @@ export function SettingsView() {
   const viewRef = useRef<HTMLElement>(null);
   const acceptedHash = useRef(window.location.hash || "#model-api");
   const [activeSection, setActiveSection] = useState<SettingsSection>(settingsSectionFromHash);
+  const categoryNav = useActiveNavigation(activeSection);
   const [modelDirty, setModelDirty] = useState(false);
   const [aiTaskDirty, setAiTaskDirty] = useState(false);
   const [aiUsageDirty, setAiUsageDirty] = useState(false);
@@ -103,13 +105,12 @@ export function SettingsView() {
     if (workspace) workspace.scrollTop = 0;
     const panel = viewRef.current?.querySelector(".settings-section-panel");
     if (panel) panel.scrollTop = 0;
-    viewRef.current?.querySelector<HTMLElement>(".settings-nav-item[data-active]")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [activeSection, analysis]);
 
   return <section className="settings-view" ref={viewRef}>
-    <div className="workspace-heading"><h1>设置</h1><p className="workspace-lede">连接模型、分配任务、控制审核、查看费用与维护数据</p></div>
+    <div className="workspace-heading"><h1>设置</h1></div>
     <div className="settings-layout">
-      <nav className="settings-nav" aria-label="设置分类">
+      <nav ref={categoryNav} className="settings-nav" aria-label="设置分类">
         {sections.map(({ key, label, icon: Icon }) => <button key={key} type="button" className="settings-nav-item" aria-current={activeSection === key ? "page" : undefined} data-active={activeSection === key || undefined} onClick={() => void switchSection(key)}><Icon size={18} /><span>{label}</span></button>)}
       </nav>
       {switchError ? <p className="project-error settings-switch-error" role="alert">{switchError}</p> : null}

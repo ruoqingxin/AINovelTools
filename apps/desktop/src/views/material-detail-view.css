@@ -1,4 +1,8 @@
-.material-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.material-detail-view .workspace-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.material-detail-view .workspace-heading h1 { margin: 0; }
+.material-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.material-detail-actions .icon-command { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 34px; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: var(--surface); cursor: pointer; }
+.material-detail-actions .icon-command:disabled { opacity: .5; cursor: default; }
 .material-detail-view .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; max-width: 100%; padding: 6px 10px; border-radius: 5px; font-size: 12px; text-decoration: none; }
 .material-detail-view .secondary-action svg { flex-shrink: 0; }
 .material-detail-body { flex: 1; min-width: 0; min-height: 120px; padding: 20px 8px 20px 0; overflow: auto; }

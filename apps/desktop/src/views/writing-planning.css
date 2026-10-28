@@ -25,6 +25,7 @@
 .writing-planning-workspace .plan-root-section > div > .plan-row { border: 0; border-radius: 4px; background: transparent; }
 .writing-planning-workspace .plan-root-section > div > .plan-row[data-selected] { background: #eaf1fc; }
 .writing-planning-workspace .plan-row { border-radius: 5px; color: #343b45; }
+.writing-planning-workspace a.plan-row { text-decoration: none; }
 .writing-planning-workspace .plan-row::before { display: none; }
 .writing-planning-workspace .plan-title { color: inherit; font-size: 13px; }
 .writing-planning-workspace .plan-row[data-kind="work_design"] .plan-title { color: inherit; }
@@ -38,10 +39,11 @@
 .writing-planning-workspace .plan-design-item small { color: #788291; font-size: 11px; }
 .writing-planning-workspace .plan-design-item[data-selected] { color: #245bb3; background: #eaf1fc; }
 .chapter-directory { min-width: 0; }
+.chapter-directory .plan-empty { display: block; min-height: 0; margin: 0; padding: 12px 8px; text-align: left; font-size: 12px; }
 .directory-toolbar { display: flex; gap: 6px; padding: 8px 0; }
 .directory-toolbar .search-field { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; padding: 0 8px; min-height: 34px; border: 1px solid var(--line); border-radius: 5px; color: #68717f; }
 .directory-toolbar input { width: 100%; min-width: 0; padding: 0; border: 0; outline: none; background: transparent; font: inherit; font-size: 13px; }
-.directory-volume > div { display: flex; align-items: center; gap: 4px; padding: 6px 0; }
+.directory-volume-heading { display: flex; align-items: center; gap: 4px; padding: 6px 0; }
 .directory-volume-toggle { display: grid; place-items: center; width: 24px; height: 30px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .directory-volume-name { flex: 1; min-width: 0; padding: 6px 2px; border: 0; border-radius: 4px; background: transparent; color: #343b45; text-align: left; overflow-wrap: anywhere; font-size: 13px; font-weight: 600; cursor: pointer; }
 .directory-volume small { color: #7a8390; font-size: 12px; }

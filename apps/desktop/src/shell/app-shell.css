@@ -28,7 +28,6 @@
 .app-shell:has(.creation-workspace[data-focus="true"]) .stage-two-layout { grid-template-columns: minmax(0, 1fr); margin-top: 0; }
 .app-shell:has(.creation-workspace[data-focus="true"]) .workspace-page > .writing-planning-workspace { padding-top: 12px; }
 .global-toolbar { grid-area: toolbar; display: flex; min-width: 0; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); z-index: 110; }
-.global-location { min-width: 0; padding-left: 16px; border-left: 1px solid var(--line); color: var(--muted); font-size: 13px; white-space: nowrap; }
 .global-tools { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .shell-icon { position: relative; display: inline-flex; width: 34px; height: 34px; flex: 0 0 34px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 4px; color: #64717d; background: transparent; text-decoration: none; cursor: pointer; }
 .shell-icon:hover { color: #283b50; background: #edf1f5; }
@@ -71,14 +70,14 @@
   min-height: 0;
   width: calc(100% - 48px);
   margin: 0 auto;
-  padding: 24px 0 16px;
+  padding: 16px 0 12px;
   overflow: auto;
 }
 .workspace-page > :is(section, .discussion-workspace) > * { flex-shrink: 0; }
 .workspace-page > :is(.route-loading, .fatal-error) { flex: 1; min-width: 0; min-height: 0; padding: 24px; overflow-wrap: anywhere; }
 .workspace > :is(.global-action-error, .global-recovery-banner) { flex-shrink: 0; }
-.workspace-page .workspace-heading { padding-bottom: 16px; border-bottom-color: var(--line); }
-.workspace-page .workspace-heading h1 { color: #28313a; font-size: 22px; letter-spacing: 0; }
+.workspace-page .workspace-heading { padding-bottom: 12px; border-bottom-color: var(--line); }
+.workspace-page .workspace-heading h1 { color: #28313a; font-size: 20px; letter-spacing: 0; }
 .app-shell .status-bar { grid-area: status; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-top: 1px solid var(--line); color: var(--muted); background: var(--surface-subtle); font-size: 11px; }
 .status-item { display: inline-flex; align-items: center; gap: 5px; }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: #b67b19; }
@@ -126,7 +125,6 @@
     grid-template: "toolbar" 52px "workspace" minmax(0, 1fr) "status" 26px / minmax(0, 1fr);
   }
   .global-toolbar { gap: 8px; padding: 0 12px; }
-  .global-location { display: none; }
   .mobile-navigation-toggle { display: inline-flex; }
   .project-picker { flex: 1 1 auto; max-width: 360px; }
   .project-picker-panel { left: -42px; }
@@ -141,7 +139,7 @@
   .activity-bar .activity-settings { margin-top: auto; }
   .activity-button[data-active]::before { inset: 10px auto 10px -8px; width: 3px; height: auto; }
   .mobile-navigation-backdrop { position: fixed; inset: 52px 0 26px; z-index: 100; display: block; padding: 0; border: 0; background: #18222d40; }
-  .workspace-page > :is(section, .discussion-workspace) { width: calc(100% - 28px); padding-top: 20px; }
+  .workspace-page > :is(section, .discussion-workspace) { width: calc(100% - 28px); padding-top: 12px; }
   .project-manager-heading { align-items: flex-start; flex-direction: column; }
   .global-action-error { padding-inline: 14px; }
 }

@@ -72,7 +72,7 @@ describe("project routes", () => {
   });
 
   it.each([
-    ["/planning", "Creation preparation"],
+    ["/planning", "Workspace planning"],
     ["/planning?mode=structure", "Workspace planning"],
     ["/planning?mode=prepare&item=outline", "Creation preparation"],
     ["/planning?planNode=outline&targetProject=project-1", "Workspace planning"],

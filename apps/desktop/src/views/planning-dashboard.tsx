@@ -1,47 +1,82 @@
-import { ArrowRight, BookOpen, CheckCircle2, Circle, ListTree, NotebookPen, Settings2 } from "lucide-react";
+import { BookOpen, ListTree, NotebookPen } from "lucide-react";
 import type { PlanNode, PlanningSection } from "../lib/tauri-client";
-import { buildPreparationStages, preparationProgress, preparationStatus } from "./creation-preparation";
+import { useInAiWorkspace } from "./content-identity";
+import { preparationStatus, preparationStatusLabels } from "./creation-preparation";
+import { WorkspaceLink } from "./workspace-link";
+import { aiWorkspaceHref } from "../lib/content-taxonomy";
 
 type PlanningDashboardProps = {
   chapterNodes: PlanNode[];
   isChapterMode: boolean;
   onOpenFirstChapter: () => void;
-  onCreateChapter?: () => void;
-  onOpenPreferences?: () => void;
   onOpenDirection?: () => void;
   onOpenStructure?: () => void;
+  structureTask?: boolean;
+  outlineId?: string;
+  projectId?: string;
   nodes?: PlanNode[];
   sections?: PlanningSection[];
+  loadState?: "loading" | "error" | "ready";
 };
 
 export function PlanningDashboard(props: PlanningDashboardProps) {
+  const aiWorkspace = useInAiWorkspace();
   if (!props.isChapterMode) {
-    const stages = buildPreparationStages(props.nodes ?? []);
-    const progress = preparationProgress(stages, props.sections ?? []);
-    return <main className="planning-overview" aria-label="规划总览">
-      <h2>规划总览</h2>
-      <div className="planning-overview-next"><span>{progress.ready ? "开篇关键准备已确认" : `${progress.missing.length} 项关键准备待确认`}</span>
-        <a className="secondary-action" href={`/planning?mode=prepare&item=${progress.missing[0]?.id ?? "outline"}`}>
-          {progress.ready ? "查看主线与准备" : "继续当前准备"}<ArrowRight size={14} /></a></div>
-      <ol className="planning-stage-ledger">{stages.map((stage) => {
-        const required = stage.items.filter((item) => item.required);
-        const done = required.filter((item) => preparationStatus((props.sections ?? []).find((section) => section.id === item.sectionId), props.sections ?? []) === "confirmed").length;
-        return <li key={stage.id}>{done === required.length ? <CheckCircle2 size={17} /> : <Circle size={17} />}
-          <div><strong>{stage.title}</strong><p>{stage.outcome}</p></div><span>{done} / {required.length}</span>
-          <a href={`/planning?mode=prepare&item=${stage.items[0].id}`} aria-label={`审阅${stage.title}`} title={`审阅${stage.title}`}><ArrowRight size={16} /></a></li>;
-      })}</ol>
-      <div className="planning-overview-actions">
-        <button type="button" className="secondary-action" onClick={props.onOpenPreferences}><Settings2 size={15} />本书偏好</button>
-        <button type="button" className="secondary-action" onClick={props.onOpenDirection}><NotebookPen size={15} />审阅主线大纲</button>
-        <button type="button" className="primary-action" onClick={props.onOpenStructure}><ListTree size={15} />分卷与章节计划</button>
+    const nodes = (props.nodes ?? []).filter((node) => !node.archived);
+    const outline = nodes.find((node) => node.kind === "OUTLINE" && (!props.outlineId || node.id === props.outlineId));
+    const manager = nodes.find((node) => node.kind === "VOLUME_MANAGER");
+    const section = props.sections?.find((entry) => entry.id === `plan-node:${outline?.id}`);
+    const hasContent = Boolean(section?.content.trim());
+    const ready = !props.loadState || props.loadState === "ready";
+    const writeLabel = hasContent ? "修改全书大纲" : "编写全书大纲";
+    const counts = [
+      `${nodes.filter((node) => node.kind === "VOLUME").length} 卷`,
+      `${nodes.filter((node) => node.kind === "CHAPTER").length} 章`,
+      `${nodes.filter((node) => node.kind === "SCENE").length} 场景`,
+    ].join(" · ");
+    if (props.structureTask) return <main className="outline-reader" aria-label="分卷与章节">
+      <header className="outline-reader-heading"><div><span className="outline-reader-type">{counts}</span><h2>分卷与章节</h2></div></header>
+      <section className="outline-reader-empty">
+        <ListTree size={36} strokeWidth={1.25} aria-hidden="true" /><h3>尚未建立分卷规划</h3>
+        {aiWorkspace && <button type="button" className="primary-action" onClick={props.onOpenStructure}><ListTree size={15} />开始规划分卷与章节</button>}
+      </section>
+    </main>;
+    return <main className="outline-reader" aria-label="全书大纲">
+      <header className="outline-reader-heading">
+        <div><span className="outline-reader-type">{counts}</span><h2>全书大纲</h2></div>
+      </header>
+      <div className="outline-reader-toolbar">
+        <span className="outline-reader-type">大纲 · 全书</span>
+        {hasContent && ready && <span className="outline-reader-state">{preparationStatusLabels[preparationStatus(section, props.sections)]}</span>}
+        <div className="outline-reader-actions">
+        {hasContent && ready && (aiWorkspace
+          ? <button type="button" className="secondary-action" onClick={props.onOpenDirection}><NotebookPen size={15} />{writeLabel}</button>
+          : props.projectId ? <WorkspaceLink className="secondary-action" href={aiWorkspaceHref({ projectId: props.projectId,
+            workflow: "planning", targetId: outline?.id })}><NotebookPen size={15} />{writeLabel}</WorkspaceLink> : null)}
+        {aiWorkspace ? <button type="button" className="secondary-action" onClick={props.onOpenStructure}><ListTree size={15} />规划分卷与章节</button>
+          : props.projectId ? <WorkspaceLink className="secondary-action" href={aiWorkspaceHref({ projectId: props.projectId,
+            workflow: "planning", targetId: manager?.id, item: manager ? undefined : "structure" })}><ListTree size={15} />规划分卷与章节</WorkspaceLink> : null}
+        </div>
       </div>
+      {!ready ? <p role="status" className="outline-reader-message">{props.loadState === "loading" ? "正在读取全书大纲…" : "暂时无法读取全书大纲"}</p>
+        : hasContent ? <p className="outline-reader-text">{section!.content}</p> : <section className="outline-reader-empty" aria-label="尚无全书大纲">
+        <NotebookPen size={36} strokeWidth={1.25} aria-hidden="true" />
+        <h3>尚无正式全书大纲</h3>
+        {section?.pendingContent.trim() ? <span className="outline-reader-state">有待确认工作稿</span> : null}
+        {aiWorkspace ? <button type="button" className="primary-action" onClick={props.onOpenDirection}><NotebookPen size={15} />{writeLabel}</button>
+          : props.projectId ? <WorkspaceLink className="primary-action" href={aiWorkspaceHref({ projectId: props.projectId,
+            workflow: "planning", targetId: outline?.id })}><NotebookPen size={15} />{writeLabel}</WorkspaceLink> : null}
+      </section>}
+      {hasContent && ready && section?.pendingContent.trim() ? <p className="outline-reader-pending" role="status">有待确认工作稿</p> : null}
     </main>;
   }
-  return <main className="workspace-empty" aria-label={props.isChapterMode ? "正文工作区" : "大纲工作区"}>
+  return <main className="workspace-empty" aria-label="正文工作区">
     <BookOpen size={28} />
-    <h2>{props.isChapterMode ? props.chapterNodes.length ? "选择章节" : "故事尚未开始" : "大纲"}</h2>
-    {!props.chapterNodes.length ? <a href="/planning?mode=prepare" className="primary-action"><NotebookPen size={15} />开始创作准备</a> : null}
-    {props.isChapterMode && props.chapterNodes.length ? <button type="button" className="primary-action" onClick={props.onOpenFirstChapter}>
+    <h2>{props.chapterNodes.length ? "选择章节" : "故事尚未开始"}</h2>
+    {!props.chapterNodes.length && props.projectId ? <WorkspaceLink
+      href={aiWorkspaceHref({ projectId: props.projectId, workflow: "preparation" })}
+      className="primary-action"><NotebookPen size={15} />开始创作准备</WorkspaceLink> : null}
+    {props.chapterNodes.length ? <button type="button" className="primary-action" onClick={props.onOpenFirstChapter}>
       <BookOpen size={15} />打开章节</button> : null}
   </main>;
 }

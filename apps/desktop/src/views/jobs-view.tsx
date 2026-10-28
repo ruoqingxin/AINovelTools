@@ -12,6 +12,8 @@ import {
 import { planningTargetHref } from "../lib/discussion-source";
 import "./activity-workspace.css";
 import { WorkspaceTabs } from "./workspace-tabs";
+import { WorkspaceLink } from "./workspace-link";
+import { aiWorkspaceHref } from "../lib/content-taxonomy";
 
 const typeLabels: Record<JobType, string> = {
   BACKUP: "创建备份", RESTORE_VERIFY: "备份校验与恢复", HEALTH_SCAN: "检查数据健康",
@@ -68,7 +70,7 @@ function RequestSnapshot({ snapshot, pending, error }: {
     </div> : <p>暂无请求快照</p>;
 }
 
-function AiRunsHistory() {
+function AiRunsHistory({ projectId }: { projectId?: string }) {
   const client = useQueryClient();
   const [source, setSource] = useState("ALL");
   const [state, setState] = useState<ActivityState>("RECENT");
@@ -122,8 +124,10 @@ function AiRunsHistory() {
             <div><dt>估算费用</dt><dd>{formatCost(selected.estimatedCostMicros, selected.priceCurrency)}</dd></div></dl>
           <p className="job-result">{selected.errorCode ? classifyAiFailure(selected.errorCode).label
             : selected.status === "COMPLETED" ? "模型调用已完成" : selected.status === "CANCELLED" ? "调用已取消" : "等待模型返回"}</p>
-          {selected.chapterId && (selected.source === "WRITING" || selected.source === "KNOWLEDGE_EXTRACTION") ? <a className="secondary-action"
-            href={`/writing?${selected.source === "WRITING" ? "assistant=ai" : "tab=extraction"}&referenceChapter=${encodeURIComponent(selected.chapterId)}#${encodeURIComponent(selected.chapterId)}`}>打开章节</a> : null}
+          {projectId && selected.chapterId && (selected.source === "WRITING" || selected.source === "KNOWLEDGE_EXTRACTION") ? <WorkspaceLink className="secondary-action"
+            href={aiWorkspaceHref({ workflow: "writing", projectId, targetId: selected.chapterId,
+              tab: selected.source === "KNOWLEDGE_EXTRACTION" ? "extraction" : undefined, returnTo: "/jobs#ai-runs" })
+              + (selected.source === "WRITING" ? "&assistant=ai" : "")}>打开处理工作区</WorkspaceLink> : null}
           {selected.status === "RUNNING" ? <button className="secondary-action" type="button" disabled={action.isPending}
             onClick={() => action.mutate(selected.id)}><Square size={14} />取消调用</button> : null}
           <details className="activity-advanced" open={advanced} onToggle={(event) => setAdvanced(event.currentTarget.open)}>
@@ -199,7 +203,7 @@ export function JobsView() {
   const result = [...(events.data ?? [])].reverse().find((event) => event.stage === "RESULT")?.message;
 
   return <section className="jobs-view activity-workspace">
-    <div className="workspace-heading"><h1>后台活动</h1><a className="secondary-action" href="/settings#ai-usage">用量与效果</a></div>
+    <div className="workspace-heading"><h1>后台活动</h1><WorkspaceLink className="secondary-action" href="/settings#ai-usage">用量与效果</WorkspaceLink></div>
     <WorkspaceTabs prefix="activity" label="活动记录类型" value={view}
       tabs={[{ value: "JOBS", label: "后台任务", icon: ClipboardList }, { value: "AI_RUNS", label: "AI 运行记录", icon: History }]}
       onChange={(key) => {
@@ -207,7 +211,7 @@ export function JobsView() {
         window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}${key === "AI_RUNS" ? "#ai-runs" : ""}`);
       }} />
     <div className="activity-panel" role="tabpanel" id={`activity-panel-${view}`} aria-labelledby={`activity-tab-${view}`}>
-    {view === "AI_RUNS" ? <AiRunsHistory /> : <>
+    {view === "AI_RUNS" ? <AiRunsHistory projectId={project.data?.projectId} /> : <>
       <div className="activity-toolbar"><ActivityFilters value={state} onChange={setState} />
         {failedCount ? <button className="secondary-action" type="button" disabled={action.isPending}
           onClick={() => action.mutate(() => acknowledgeFailedJobs())}><BellOff size={14} />清除失败提醒 {failedCount}</button> : null}
@@ -223,7 +227,9 @@ export function JobsView() {
             aria-pressed={selected?.id === job.id} data-selected={selected?.id === job.id || undefined} onClick={() => setSelectedId(job.id)}>
             <span className="job-main"><strong>{typeLabels[job.jobType]}</strong><small>{target(job)}</small></span>
             <span className={`job-status job-${job.status.toLowerCase()}`}>{statusLabels[job.status]}</span>
-            <span className="job-progress"><span style={{ width: `${job.progress}%` }} /></span><small>{job.progress}%</small>
+            {(job.status === "RUNNING" || job.status === "QUEUED") && <>
+              <span className="job-progress"><span style={{ width: `${job.progress}%` }} /></span><small>{job.progress}%</small>
+            </>}
           </button>)}
         </div><aside className="job-detail" aria-label="任务详情">{selected ? <>
           <div className="job-detail-heading"><div><span>{typeLabels[selected.jobType]}</span><h2>{target(selected)}</h2></div>
@@ -235,7 +241,7 @@ export function JobsView() {
           <p className={selected.errorSummary ? "project-error job-result" : "job-result"}>
             {selected.errorSummary ?? result ?? (selected.status === "SUCCEEDED" ? "任务已完成"
               : selected.status === "CANCELLED" ? "任务已取消" : selected.cancelRequested ? "已提交取消请求" : "任务处理中")}</p>
-          <div className="maintenance-actions"><a className="secondary-action" href={href(selected)}>{isAiJob(selected) || text(payload(selected).chapterId) ? "打开目标" : "数据管理"}</a>
+          <div className="maintenance-actions"><WorkspaceLink className="secondary-action" href={href(selected)}>{isAiJob(selected) || text(payload(selected).chapterId) ? "打开目标" : "数据管理"}</WorkspaceLink>
             {selected.status === "FAILED" ? <button className="secondary-action" type="button" disabled={action.isPending}
               onClick={() => action.mutate(() => retryJob(selected.id))}><RotateCcw size={14} />重试</button> : null}
             {selected.status === "RUNNING" || selected.status === "QUEUED" ? <button className="secondary-action" type="button"

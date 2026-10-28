@@ -10,6 +10,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../lib/tauri-client", async () => ({ ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks }));
 const job = { id: "failed-job", jobType: "HEALTH_SCAN", payload: "{}", status: "FAILED", progress: 60, attemptCount: 1,
   cancelRequested: false, errorSummary: "健康扫描失败", createdAt: "2026-10-13T00:00:00Z", updatedAt: "2026-10-13T00:00:01Z", acknowledgedAt: null };
+const run = {
+  id: "run-1", taskKey: "writing", source: "WRITING", action: "DRAFT", status: "COMPLETED",
+  chapterId: "chapter-1", chapterTitle: "第1章", profileName: "写作模型", attemptCount: 1,
+  retryReason: null, errorCode: null, estimatedInputTokens: 1200, estimatedOutputTokens: 2400,
+  estimatedCostMicros: 3500, priceCurrency: "USD", promptVersion: "writing-v1",
+  createdAt: "2026-10-13T00:00:00Z", finishedAt: "2026-10-13T00:00:12Z",
+};
 function renderView() {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><JobsView /></QueryClientProvider>);
 }
@@ -74,13 +81,7 @@ describe("background activity", () => {
     expect(await screen.findByText("当前筛选没有后台任务")).toBeVisible();
   });
   it("shows AI records with lazy request snapshots and no default technical fields", async () => {
-    mocks.listAiRuns.mockResolvedValue([{
-      id: "run-1", taskKey: "writing", source: "WRITING", action: "DRAFT", status: "COMPLETED",
-      chapterId: "chapter-1", chapterTitle: "第1章", profileName: "写作模型", attemptCount: 1,
-      retryReason: null, errorCode: null, estimatedInputTokens: 1200, estimatedOutputTokens: 2400,
-      estimatedCostMicros: 3500, priceCurrency: "USD", promptVersion: "writing-v1",
-      createdAt: "2026-10-13T00:00:00Z", finishedAt: "2026-10-13T00:00:12Z",
-    }]);
+    mocks.listAiRuns.mockResolvedValue([run]);
     mocks.getAiRunRequest.mockResolvedValue({ endpoint: "https://example.test/chat", requestBody: '{"model":"mock"}' });
     renderView();
     fireEvent.click(screen.getByRole("tab", { name: "AI 运行记录" }));
@@ -91,5 +92,37 @@ describe("background activity", () => {
     fireEvent.click(screen.getByRole("button", { name: "查看完整请求" }));
     expect(await screen.findByText('{"model":"mock"}')).toBeVisible();
     expect(screen.getByText("12 秒")).toBeVisible();
+  });
+  it.each(["WRITING", "KNOWLEDGE_EXTRACTION"])("opens %s results in the exact AI workspace and returns to activity", async (source) => {
+    window.history.replaceState({}, "", "/jobs#ai-runs");
+    mocks.listAiRuns.mockResolvedValue([{ ...run, source, chapterId: "chapter:1 & two" }]);
+    renderView();
+    const link = await screen.findByRole("link", { name: "打开处理工作区" });
+    const href = new URL(link.getAttribute("href")!, window.location.origin);
+    expect(href.pathname).toBe("/discussion");
+    expect(href.searchParams.get("targetProject")).toBe("project-1");
+    expect(href.searchParams.get("planNode")).toBe("chapter:1 & two");
+    expect(href.searchParams.get("returnTo")).toBe("/jobs#ai-runs");
+    expect(href.searchParams.get(source === "WRITING" ? "assistant" : "tab")).toBe(source === "WRITING" ? "ai" : "extraction");
+    expect(screen.queryByRole("link", { name: "打开章节" })).not.toBeInTheDocument();
+  });
+  it("does not offer an unscoped AI target before the current project is known", async () => {
+    window.history.replaceState({}, "", "/jobs#ai-runs");
+    mocks.listAiRuns.mockResolvedValue([run]);
+    mocks.getCurrentProject.mockResolvedValue(null);
+    renderView();
+    await screen.findByText("整章创作 · 第1章");
+    expect(screen.queryByRole("link", { name: "打开处理工作区" })).not.toBeInTheDocument();
+  });
+  it("shows progress in the list only for active jobs while retaining failed detail progress", async () => {
+    mocks.listJobs.mockResolvedValue([job, { ...job, id: "active", status: "RUNNING", progress: 20, errorSummary: null }]);
+    renderView();
+    const failed = await screen.findByRole("button", { name: "检查数据健康 铜铃之城 失败" });
+    expect(failed.querySelector(".job-progress")).toBeNull();
+    const active = screen.getByRole("button", { name: /检查数据健康 铜铃之城 执行中/ });
+    expect(active.querySelector(".job-progress")).not.toBeNull();
+    fireEvent.click(failed);
+    expect(screen.getByRole("progressbar", { name: "任务进度" })).toHaveAttribute("value", "60");
+    expect(screen.getByRole("button", { name: "重试" })).toBeVisible();
   });
 });

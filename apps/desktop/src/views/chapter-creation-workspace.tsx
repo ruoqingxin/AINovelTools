@@ -1,4 +1,4 @@
-import { BookOpenText, ClipboardList, History, Library, MoreHorizontal, PanelRightClose, PanelRightOpen, RefreshCw, Save, ShieldCheck, Sparkles } from "lucide-react";
+import { BookOpenText, ClipboardList, History, Library, MoreHorizontal, PanelRightClose, PanelRightOpen, RefreshCw, Save, ShieldCheck, Sparkles, SquarePen } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { AuditFlowSettings, PlanNode } from "../lib/tauri-client";
 import { AiWritingPanel } from "./ai-writing-panel";
@@ -127,7 +127,7 @@ export function ChapterCreationWorkspace({
   const candidatePending = Object.values(pendingPanels).some(Boolean);
   useEffect(() => { onPendingChange?.(candidatePending); }, [candidatePending, onPendingChange]);
   useEffect(() => () => { onPendingChange?.(false); }, [onPendingChange]);
-  const hasDraft = Boolean(documentToText(state.draft).trim());
+  const hasDraft = task !== "plan" && Boolean(documentToText(state.draft).trim());
   const reviewEnabled = auditFlow?.[reviewPurpose] !== false;
   const knowledgeActive = state.manuscriptTab === "extraction";
   const extractionAvailable = state.draftReady && Boolean(state.manuscript.data) && !state.chapterDirty;
@@ -149,6 +149,8 @@ export function ChapterCreationWorkspace({
     setAssistantOpen(true);
   }
 
+  const planEditorHref = projectId ? aiWorkspaceHref({ workflow: "writing", projectId, targetId: chapter.id, tab: "plan",
+    returnTo: aiWorkspaceHref({ workflow: "writing", projectId, targetId: chapter.id }) }) : null;
   const aiProps = {
     projectId,
     chapterId: chapter.id,
@@ -169,7 +171,7 @@ export function ChapterCreationWorkspace({
     },
     onOpenChapterPlan: () => { selectAssistantTab("plan"); setAssistantOpen(true); },
   };
-  const planActive = task === "plan" || assistantVisible && assistantTab === "plan";
+  const planActive = task === "plan";
   const planPanel = <div className="creation-plan">
     <ContentTypeLabel identity={{ category: "OUTLINE", subtype: `章节细纲 · ${chapter.title}` }} />
     {volume ? <details><summary>{volume.title}</summary><p>{volumePlan.trim() || "尚未填写分卷规划"}</p></details> : null}
@@ -205,21 +207,40 @@ export function ChapterCreationWorkspace({
       returnTo={projectId ? aiWorkspaceHref({ workflow: "writing", projectId, targetId: chapter.id, tab: "plan" }) : undefined} />
   </div>;
 
-  if (!aiWorkspace) return <section className="chapter-reading-workspace">
-    <ContentTypeLabel identity={{ category: "MANUSCRIPT", subtype: "章节正文" }} />
-    <div className="library-actions">
-      <AiWorkspaceLink target={{ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id }}>去构思处理本章正文</AiWorkspaceLink>
-      <AiWorkspaceLink target={{ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id, tab: "plan" }}>大纲 · 本章计划</AiWorkspaceLink>
-      <details className="reader-more-actions"><summary>更多操作</summary>
-        <a href={aiWorkspaceHref({ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id, tab: "review" })}><ShieldCheck size={14} />检查正文</a>
-        <a href={aiWorkspaceHref({ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id, tab: "extraction" })}><Library size={14} />提取设定与记录</a>
+  const readingEmpty = !state.manuscript.isPending && !state.manuscript.isError && !state.manuscript.data;
+  const writingHref = aiWorkspaceHref({ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id });
+  if (!aiWorkspace) return <section className="chapter-reading-workspace" aria-label="章节正文阅读">
+    <div className="chapter-reading-toolbar">
+      <ContentTypeLabel identity={{ category: "MANUSCRIPT", subtype: "章节正文" }} />
+      <div className="chapter-reading-actions">
+        {!readingEmpty && <WorkspaceLink className="secondary-action reader-edit-action" href={writingHref}
+          aria-label="去构思处理本章正文"><SquarePen size={15} />编辑正文</WorkspaceLink>}
+        <WorkspaceLink className="reader-plan-action" aria-label="大纲 · 本章计划"
+          href={aiWorkspaceHref({ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id, tab: "plan" })}>
+          <ClipboardList size={15} />本章计划
+        </WorkspaceLink>
+      <details className="reader-more-actions"><summary aria-label="更多操作" title="更多操作"><MoreHorizontal size={18} /></summary>
+        <div className="reader-more-menu">
+        <WorkspaceLink href={aiWorkspaceHref({ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id, tab: "review" })}><ShieldCheck size={14} />检查正文</WorkspaceLink>
+        <WorkspaceLink href={aiWorkspaceHref({ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id, tab: "extraction" })}><Library size={14} />提取设定与记录</WorkspaceLink>
+        </div>
       </details>
+      </div>
     </div>
-    {state.manuscript.isPending ? <p role="status">正在读取正式正文…</p> : state.manuscript.isError
-      ? <p role="alert" className="project-error">{state.manuscript.error.message}</p>
+    <div className="chapter-reading-content">
+    {state.manuscript.isPending ? <p role="status" className="chapter-reading-message">正在读取正式正文…</p> : state.manuscript.isError
+      ? <p role="alert" className="chapter-reading-message project-error">{state.manuscript.error.message}</p>
       : state.manuscript.data ? <ManuscriptReader documentJson={state.manuscript.data.documentJson} />
-        : <p className="plan-empty">暂无正式正文</p>}
-    {state.chapterDirty && <p role="status" className="library-meta">有尚未采用的本地工作稿</p>}
+        : <div className="chapter-reading-empty">
+          <BookOpenText size={36} strokeWidth={1.25} aria-hidden="true" />
+          <h3>暂无正式正文</h3>
+          {state.chapterDirty && <p role="status">有尚未采用的本地工作稿</p>}
+          <WorkspaceLink className="primary-action reader-start-action" href={writingHref} aria-label="去构思处理本章正文">
+            <SquarePen size={16} />{state.chapterDirty ? "继续编辑草稿" : "开始写作"}
+          </WorkspaceLink>
+        </div>}
+    </div>
+    {!readingEmpty && state.chapterDirty && <p role="status" className="chapter-reading-draft-status">有尚未采用的本地工作稿</p>}
   </section>;
 
   if (task === "plan") return <section className="chapter-plan-workspace" aria-label="章节细纲编辑">
@@ -239,11 +260,9 @@ export function ChapterCreationWorkspace({
             onClick={() => state.setManuscriptTab("manuscript")}>阅读</button>
         </div>
         <div className="creation-local-tools">
-          <button type="button" className="creation-plan-trigger" aria-label="本章计划" title={planDirty ? "本章计划有未保存修改" : "本章计划"}
-            aria-pressed={assistantVisible && assistantTab === "plan"}
-            onClick={() => { setFocused(false); selectAssistantTab("plan"); setAssistantOpen(true); }}>
-            <ClipboardList size={16} /><span>本章计划</span>{planDirty ? <span className="plan-unsaved-dot" aria-label="计划未保存" /> : null}
-          </button>
+          {planEditorHref && <WorkspaceLink className="creation-plan-trigger" href={planEditorHref} title="前往大纲编辑本章细纲">
+            <ClipboardList size={16} /><span>本章细纲</span>
+          </WorkspaceLink>}
           <WritingDisplayControls focused={focused} onFocusChange={setFocused} />
           <button type="button" className="icon-command" title="历史版本" aria-label="历史版本"
             onClick={() => state.setManuscriptTab("versions")}><History size={17} />
@@ -375,7 +394,14 @@ export function ChapterCreationWorkspace({
           mode="create" onOpenAdmissionReview={() => openReview("admission")} /> : <p className="plan-empty">等待正文就绪…</p>}
       </div>
       <div id="assistant-panel-plan" role="tabpanel" aria-labelledby="assistant-tab-plan" hidden={assistantTab !== "plan"}>
-        {visitedAssistantTabs.includes("plan") ? planPanel : null}
+        {visitedAssistantTabs.includes("plan") ? <div className="creation-plan-preview">
+          <ContentTypeLabel identity={{ category: "OUTLINE", subtype: "章节细纲" }} />
+          <p className="library-content">{chapterPlan.trim() || "尚未编写本章计划"}</p>
+          {pendingChapterPlan?.trim() && <p className="library-meta">有待确认的计划候选</p>}
+          {planEditorHref && <WorkspaceLink className="secondary-action content-workspace-link" href={planEditorHref}>
+            <ClipboardList size={15} />编辑本章细纲
+          </WorkspaceLink>}
+        </div> : null}
       </div>
       <div id="assistant-panel-review" role="tabpanel" aria-labelledby="assistant-tab-review" hidden={assistantTab !== "review"}>
         {visitedAssistantTabs.includes("review") ? <>

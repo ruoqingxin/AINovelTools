@@ -1,3 +1,8 @@
+# UI Scope
+
+- Prioritize the desktop application. Do not proactively add mobile layouts, mobile-specific interactions, or phone viewport verification unless the user explicitly requests mobile support.
+- Evaluate layout and usability changes on desktop viewport sizes. Preserve existing mobile behavior where practical, but do not expand the task to improve it.
+
 # Test Scope
 
 - Match verification to the changed behavior. Do not run every suite after every small iteration.

@@ -1,8 +1,8 @@
 import { BookOpenText, FileSearch, ListTree, MessageSquareText, ShieldCheck } from "lucide-react";
 
 export const primaryNavigation = [
-  { label: "大纲规划", icon: ListTree, path: "/planning" },
-  { label: "写作", icon: BookOpenText, path: "/writing" },
+  { label: "大纲", icon: ListTree, path: "/planning" },
+  { label: "正文", icon: BookOpenText, path: "/writing" },
   { label: "构思", icon: MessageSquareText, path: "/discussion" },
   { label: "资料", icon: FileSearch, path: "/knowledge" },
   { label: "待办", icon: ShieldCheck, path: "/review" },

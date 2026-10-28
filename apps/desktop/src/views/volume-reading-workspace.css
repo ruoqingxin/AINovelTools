@@ -1,0 +1,22 @@
+.writing-planning-workspace .volume-focus-inspector { padding: 0; }
+.volume-reading-heading {
+  display: grid;
+  flex-shrink: 0;
+  align-content: center;
+  gap: 5px;
+  min-height: 88px;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.volume-reading-heading > span { color: var(--muted); font-size: 12px; }
+.volume-reading-heading h2 { margin: 0; color: inherit; font-size: 18px; line-height: 1.5; overflow-wrap: anywhere; }
+.volume-reading-plan {
+  width: 100%;
+  max-width: 896px;
+  margin: 0 auto;
+  padding: 28px;
+  font-size: 15px;
+  line-height: 1.95;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

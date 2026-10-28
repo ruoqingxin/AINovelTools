@@ -71,7 +71,8 @@ function ProjectIndexView() {
   if (nodes.isError || sections.isError) throw nodes.error ?? sections.error;
   const preparationStarted = sections.data.some((section) => readPlanningReview(section));
   const preparationIncomplete = preparationStarted && !preparationProgress(buildPreparationStages(nodes.data), sections.data).ready;
-  return <Navigate to={nodes.data.some((node) => node.kind === "CHAPTER" && !node.archived) && !preparationIncomplete ? "/writing" : "/planning"} replace />;
+  return nodes.data.some((node) => node.kind === "CHAPTER" && !node.archived) && !preparationIncomplete
+    ? <Navigate to="/writing" replace /> : <Navigate to="/planning" search={{ mode: "prepare" }} replace />;
 }
 
 function PlanningEntryView() {

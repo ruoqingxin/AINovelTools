@@ -106,12 +106,19 @@ describe("ChapterCreationWorkspace", () => {
     expect(props.state.saveDraft).not.toHaveBeenCalled();
   });
 
-  it("opens chapter-plan deep links in the existing assistant without activating AI creation", () => {
+  it("previews the chapter plan in the writing assistant without a second plan editor", () => {
     window.history.replaceState(null, "", "/writing?assistant=plan#chapter-1");
-    render(<ChapterCreationWorkspace {...makeProps()} pendingChapterPlan="讨论送来的候选" />);
+    render(<ChapterCreationWorkspace {...makeProps()} projectId="p" pendingChapterPlan="讨论送来的候选" />);
     expect(screen.getByRole("tab", { name: "本章计划" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("讨论送来的候选")).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "本章计划" })).toBeVisible();
+    expect(screen.getByText("寻找师父")).toBeVisible();
+    expect(screen.getByText("有待确认的计划候选")).toBeVisible();
+    expect(screen.queryByText("讨论送来的候选")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "本章计划" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存计划" })).not.toBeInTheDocument();
+    const href = new URL(screen.getByRole("link", { name: "编辑本章细纲" }).getAttribute("href")!, window.location.origin);
+    expect(href.searchParams.get("planNode")).toBe("chapter-1");
+    expect(href.searchParams.get("tab")).toBe("plan");
+    expect(href.searchParams.get("returnTo")).toBe("/discussion?work=writing&targetProject=p&planNode=chapter-1");
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ active: false, mode: "create" }));
   });
   it("edits a dedicated chapter outline without mounting manuscript or AI controls", () => {
@@ -133,20 +140,45 @@ describe("ChapterCreationWorkspace", () => {
   it("keeps secondary reading actions collapsed until requested", async () => {
     render(<AiWorkspaceContext.Provider value={false}><ChapterCreationWorkspace {...makeProps()} projectId="p" /></AiWorkspaceContext.Provider>);
     expect(screen.getByText("检查正文")).not.toBeVisible();
-    fireEvent.click(screen.getByText("更多操作"));
+    fireEvent.click(screen.getByLabelText("更多操作"));
     await waitFor(() => expect(screen.getByText("检查正文")).toBeVisible());
     expect(screen.getByRole("link", { name: "检查正文" })).toHaveAttribute("href", expect.stringContaining("tab=review"));
     expect(screen.getByRole("link", { name: "提取设定与记录" })).toHaveAttribute("href", expect.stringContaining("tab=extraction"));
   });
 
-  it("opens the plan directly from the toolbar and saves it without saving the manuscript", () => {
+  it.each([false, true])("offers one writing entry in an empty reader with local draft=%s", (chapterDirty) => {
+    const state = makeState({ manuscript: { isPending: false, isError: false, isSuccess: true, data: null } as ManuscriptState["manuscript"], chapterDirty });
+    render(<AiWorkspaceContext.Provider value={false}><ChapterCreationWorkspace {...makeProps(state)} projectId="p" /></AiWorkspaceContext.Provider>);
+    expect(screen.getByRole("heading", { name: "暂无正式正文" })).toBeVisible();
+    const entry = screen.getByRole("link", { name: "去构思处理本章正文" });
+    expect(entry).toHaveTextContent(chapterDirty ? "继续编辑草稿" : "开始写作");
+    expect(entry).toHaveAttribute("href", "/discussion?work=writing&targetProject=p&planNode=chapter-1");
+    expect(screen.queryByText("正式版本")).not.toBeInTheDocument();
+    expect(screen.queryByText("共享编辑器")).not.toBeInTheDocument();
+    expect(screen.queryByText("有尚未采用的本地工作稿") !== null).toBe(chapterDirty);
+    expect(state.saveDraft).not.toHaveBeenCalled();
+    expect(panels.ai).not.toHaveBeenCalled();
+  });
+
+  it("does not show the empty reader while a manuscript is loading or failed", () => {
+    const props = makeProps(makeState({
+      manuscript: { isPending: true, isError: false, data: undefined } as ManuscriptState["manuscript"],
+    }));
+    const view = render(<AiWorkspaceContext.Provider value={false}><ChapterCreationWorkspace {...props} /></AiWorkspaceContext.Provider>);
+    expect(screen.getByRole("status")).toHaveTextContent("正在读取正式正文");
+    expect(screen.queryByText("暂无正式正文")).not.toBeInTheDocument();
+    view.rerender(<AiWorkspaceContext.Provider value={false}><ChapterCreationWorkspace {...props}
+      state={makeState({ manuscript: { isPending: false, isError: true, error: new Error("读取失败"), data: null } as ManuscriptState["manuscript"] })} /></AiWorkspaceContext.Provider>);
+    expect(screen.getByRole("alert")).toHaveTextContent("读取失败");
+    expect(screen.queryByText("暂无正式正文")).not.toBeInTheDocument();
+  });
+
+  it("saves the dedicated plan without saving the manuscript and ignores IME shortcuts", () => {
     const props = makeProps(makeState({ chapterDirty: true }));
     props.planDirty = true;
-    render(<ChapterCreationWorkspace {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "本章计划" }));
+    render(<ChapterCreationWorkspace {...props} task="plan" />);
     const editor = screen.getByRole("textbox", { name: "本章计划" });
     expect(editor).toBeVisible();
-    expect(screen.getByRole("button", { name: "本章计划" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.keyDown(editor, { key: "s", ctrlKey: true });
     expect(props.onSavePlan).toHaveBeenCalledOnce();
     expect(props.state.saveDraft).not.toHaveBeenCalled();
@@ -195,7 +227,8 @@ describe("ChapterCreationWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "就地修改" }));
     expect(state.setManuscriptTab).toHaveBeenCalledWith("candidate");
     fireEvent.click(screen.getByRole("button", { name: "就地查看计划" }));
-    expect(screen.getByRole("textbox", { name: "本章计划" })).toBeVisible();
+    expect(screen.getByText("寻找师父")).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "本章计划" })).not.toBeInTheDocument();
   });
 
   it("preserves AI input through assistant tabs and collapsing the assistant", () => {
@@ -213,22 +246,20 @@ describe("ChapterCreationWorkspace", () => {
     expect(screen.getByLabelText("检查对象")).toHaveValue("admission");
   });
 
-  it("keeps chapter-plan edits and saves them without leaving the editor", () => {
-    const savePlan = vi.fn().mockResolvedValue(undefined);
-    function Harness() {
-      const [plan, setPlan] = useState("寻找师父");
-      return <ChapterCreationWorkspace {...makeProps()} chapterPlan={plan} planDirty={plan !== "寻找师父"}
-        onPlanChange={setPlan} onSavePlan={savePlan} />;
-    }
-    render(<Harness />);
+  it("updates the read-only plan preview without writing it or losing AI instructions", () => {
+    const props = makeProps();
+    const view = render(<ChapterCreationWorkspace {...props} projectId="p" />);
+    expect(screen.getByRole("link", { name: "本章细纲" })).toHaveAttribute("href",
+      expect.stringContaining("tab=plan"));
     fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
     fireEvent.click(screen.getByRole("tab", { name: "本章计划" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "本章计划" }), { target: { value: "在城门发生冲突" } });
-    fireEvent.click(screen.getByRole("tab", { name: "AI 写作" }));
-    fireEvent.click(screen.getByRole("tab", { name: "本章计划" }));
-    expect(screen.getByRole("textbox", { name: "本章计划" })).toHaveValue("在城门发生冲突");
-    fireEvent.click(screen.getByRole("button", { name: "保存计划" }));
-    expect(savePlan).toHaveBeenCalledOnce();
+    expect(screen.getByText("寻找师父")).toBeVisible();
+    view.rerender(<ChapterCreationWorkspace {...props} projectId="p" chapterPlan="在城门发生冲突" />);
+    expect(screen.getByText("在城门发生冲突")).toBeVisible();
+    expect(screen.getByRole("link", { name: "编辑本章细纲" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "保存计划" })).not.toBeInTheDocument();
+    expect(props.onSavePlan).not.toHaveBeenCalled();
+    expect(props.onPlanChange).not.toHaveBeenCalled();
     expect(screen.getByText("共享编辑器")).toBeVisible();
   });
 
@@ -274,10 +305,8 @@ describe("ChapterCreationWorkspace", () => {
     const props = makeProps();
     const adopt = vi.fn().mockResolvedValue(undefined);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    const view = render(<ChapterCreationWorkspace {...props} pendingChapterPlan="新的执行卡"
+    const view = render(<ChapterCreationWorkspace {...props} task="plan" pendingChapterPlan="新的执行卡"
       planDirty onAdoptPlan={adopt} />);
-    fireEvent.click(screen.getByRole("button", { name: "展开写作助手" }));
-    fireEvent.click(screen.getByRole("tab", { name: "本章计划" }));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "载入编辑" })));
     expect(props.onPlanChange).not.toHaveBeenCalled();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "确认为本章计划" })));
@@ -285,7 +314,7 @@ describe("ChapterCreationWorkspace", () => {
     confirm.mockReturnValue(true);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "载入编辑" })));
     expect(props.onPlanChange).toHaveBeenCalledWith("新的执行卡");
-    view.rerender(<ChapterCreationWorkspace {...props} pendingChapterPlan="新的执行卡"
+    view.rerender(<ChapterCreationWorkspace {...props} task="plan" pendingChapterPlan="新的执行卡"
       onAdoptPlan={adopt} />);
     fireEvent.click(screen.getByRole("button", { name: "确认为本章计划" }));
     expect(adopt).toHaveBeenCalledOnce();
@@ -305,11 +334,9 @@ describe("ChapterCreationWorkspace", () => {
     expect(state.setManuscriptTab).toHaveBeenCalledWith("manuscript");
   });
 
-  it.each([
-    [false, "writing"], [true, "writing"], [false, "plan"], [true, "plan"],
-  ] as const)("does not replace newer chapter-plan edits after confirmation (adopt=%s, task=%s)", async (adopt, task) => {
+  it.each([false, true])("does not replace newer chapter-plan edits after confirmation (adopt=%s)", async (adopt) => {
     window.history.replaceState(null, "", "/writing?assistant=plan");
-    const props = { ...makeProps(), task, pendingChapterPlan: "计划候选", planDirty: true, onAdoptPlan: vi.fn() };
+    const props = { ...makeProps(), task: "plan" as const, pendingChapterPlan: "计划候选", planDirty: true, onAdoptPlan: vi.fn() };
     const view = render(<ConfirmActionProvider><ChapterCreationWorkspace {...props} /></ConfirmActionProvider>);
     fireEvent.click(screen.getByRole("button", { name: adopt ? "确认为本章计划" : "载入编辑" }));
     view.rerender(<ConfirmActionProvider><ChapterCreationWorkspace {...props} chapterPlan="新的计划修改" /></ConfirmActionProvider>);
@@ -321,7 +348,7 @@ describe("ChapterCreationWorkspace", () => {
 
   it("does not adopt an old plan candidate after changing chapters during confirmation", async () => {
     window.history.replaceState(null, "", "/writing?assistant=plan");
-    const props = { ...makeProps(), pendingChapterPlan: "计划候选", planDirty: true, onAdoptPlan: vi.fn() };
+    const props = { ...makeProps(), task: "plan" as const, pendingChapterPlan: "计划候选", planDirty: true, onAdoptPlan: vi.fn() };
     const view = render(<ConfirmActionProvider><ChapterCreationWorkspace {...props} /></ConfirmActionProvider>);
     fireEvent.click(screen.getByRole("button", { name: "确认为本章计划" }));
     view.rerender(<ConfirmActionProvider><ChapterCreationWorkspace {...props} chapter={{ ...props.chapter, id: "chapter-2" }} /></ConfirmActionProvider>);
@@ -431,7 +458,8 @@ describe("ChapterCreationWorkspace", () => {
     localStorage.setItem("ainoveltools:workspace-preferences:v1", JSON.stringify({ layouts: { "writing:assistant": false } }));
     window.history.replaceState(null, "", "/writing?assistant=plan");
     render(<ChapterCreationWorkspace {...makeProps()} />);
-    expect(screen.getByRole("textbox", { name: "本章计划" })).toBeVisible();
+    expect(screen.getByText("寻找师父")).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "本章计划" })).not.toBeInTheDocument();
   });
 
   it("applies reading preferences and does not exit focus while a modal is open", () => {

@@ -71,6 +71,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("creation preparation workbench", () => {
+  it.each(["outline", "opening"])("only offers an AI entry for a missing %s on the normal preparation page", async (item) => {
+    render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={new QueryClient()}>
+      <CreationPreparationView initialItem={item} />
+    </QueryClientProvider></AiWorkspaceContext.Provider>);
+    expect(await screen.findByRole("link", { name: /去构思处理/ })).toHaveAttribute("href",
+      `/discussion?work=preparation&targetProject=project&item=${item}`);
+    expect(screen.queryByRole("button", { name: /发起讨论|建立开篇章节计划|建立主线大纲/ })).not.toBeInTheDocument();
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+    expect(mocks.createDiscussionSession).not.toHaveBeenCalled();
+  });
   it("keeps formal preparation separate from candidate editing outside the AI workspace", async () => {
     stored = [{ ...confirmed("engine-protagonist"), pendingContent: "尚未采用的人物候选" }];
     render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={new QueryClient()}>

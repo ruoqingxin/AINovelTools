@@ -15,7 +15,7 @@
 .settings-view > .workspace-heading,
 .settings-view .settings-layout { width: 100%; max-width: none; margin-inline: 0; }
 .settings-view > .workspace-heading { padding-bottom: 16px; border: 0; }
-.settings-view .workspace-heading h1 { color: var(--settings-text); font-size: 24px; }
+.settings-view .workspace-heading h1 { color: var(--settings-text); font-size: 20px; }
 .settings-view .workspace-lede { margin: 6px 0 0; color: var(--settings-muted); font-size: 13px; }
 .settings-view .settings-layout { display: flex; flex: 1; min-height: 0; flex-direction: column; align-items: stretch; margin-top: 0; }
 .settings-view .settings-layout > * { flex-shrink: 0; }
@@ -25,9 +25,9 @@
   position: sticky;
   top: 0;
   z-index: 5;
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
   padding: 0;
   border: 0;
   border-bottom: 1px solid var(--settings-line);
@@ -35,15 +35,19 @@
 }
 .settings-view .settings-nav-item {
   position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
   min-width: 0;
   justify-content: center;
   gap: 9px;
-  min-height: 48px;
-  padding: 10px 8px;
+  min-height: 40px;
+  padding: 8px;
   border-radius: 0;
   color: var(--settings-muted);
   background: transparent;
-  font-size: 14px;
+  font-size: 13px;
+  white-space: nowrap;
   line-height: 1.5;
   cursor: pointer;
 }
@@ -255,11 +259,10 @@
 
 @media (max-width: 700px) {
   .settings-view { padding: 22px 16px 40px; }
-  .settings-view .settings-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; overflow: visible; border-bottom: 0; }
-  .settings-view .settings-nav-item { flex-direction: column; gap: 4px; min-height: 58px; padding: 7px 4px; border-radius: 3px; font-size: 12px; text-align: center; }
-  .settings-view .settings-nav-item[data-active] { background: #f2f6fc; }
+  .settings-view .settings-nav { gap: 8px; }
+  .settings-view .settings-nav-item { gap: 6px; min-height: 40px; padding: 8px 4px; font-size: 13px; }
   .settings-view .settings-nav-item[data-active]::after { inset: auto 0 0; height: 2px; }
-  .settings-view .settings-nav-item span { white-space: normal; overflow-wrap: anywhere; }
+  .settings-view .settings-nav-item span { white-space: nowrap; }
   .settings-view .settings-content-heading { align-items: flex-start; }
   .settings-view .settings-content-heading > div { flex-basis: 100%; }
   .settings-view .model-profile-workbench { grid-template-columns: 1fr; }

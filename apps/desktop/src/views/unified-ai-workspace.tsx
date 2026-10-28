@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { ArrowLeft, BookOpenText, Files, ListTree, MessageSquareText, NotebookTabs, NotebookPen, UsersRound } from "lucide-react";
 import { aiWorkflows, aiWorkspaceHref, aiWorkspaceReturnHref, type AiWorkflow } from "../lib/content-taxonomy";
 import { errorMessage, getCurrentProject } from "../lib/tauri-client";
@@ -13,6 +14,8 @@ import { KnowledgeRecordsView } from "./knowledge-records-view";
 import { ReviewCenterView } from "./review-center-view";
 import { WorkspaceLink } from "./workspace-link";
 import { sourceReturnTo } from "../lib/manuscript-source";
+import { PreparationNotesNav } from "./preparation-notes-nav";
+import { useActiveNavigation } from "./use-active-navigation";
 
 const destinations: Record<AiWorkflow, string> = {
   preparation: "创作准备", section: "创作准备", planning: "大纲", writing: "正文",
@@ -20,14 +23,16 @@ const destinations: Record<AiWorkflow, string> = {
 };
 
 export function UnifiedAiWorkspace() {
+  const router = useRouter({ warn: false });
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
-  const search = new URLSearchParams(window.location.search);
+  const search = new URLSearchParams(router?.state.location.searchStr ?? window.location.search);
   const work = search.get("work");
   const workflow = aiWorkflows.includes(work as AiWorkflow) ? work as AiWorkflow : null;
   const chapterPlan = workflow === "writing" && search.get("tab") === "plan";
   const projectId = project.data?.projectId;
   const invalid = Boolean(work && (!workflow || !search.get("targetProject") || search.get("targetProject") !== projectId));
   const destination = chapterPlan ? "大纲 · 章节细纲" : workflow ? destinations[workflow] : null;
+  const categoryNav = useActiveNavigation(`${projectId}:${workflow}:${chapterPlan}`);
   return <AiWorkspaceContext.Provider value>
     <section className="unified-ai-workspace">
       <header className="ai-workspace-heading"><h1>AI 工作区</h1>
@@ -35,7 +40,7 @@ export function UnifiedAiWorkspace() {
         {projectId && <WorkspaceLink className="ai-preparation-link" href={aiWorkspaceHref({ projectId, workflow: "preparation" })}
           aria-current={workflow === "preparation" || workflow === "section" ? "page" : undefined}><NotebookPen size={15} />创作准备</WorkspaceLink>}
       </header>
-      {projectId && <nav className="ai-category-nav" aria-label="AI 内容分类">
+      {projectId && <nav ref={categoryNav} className="ai-category-nav" aria-label="AI 内容分类">
         <WorkspaceLink href="/discussion" aria-current={!work ? "page" : undefined}><MessageSquareText size={15} />自由构思</WorkspaceLink>
         <WorkspaceLink href={aiWorkspaceHref({ projectId, workflow: "entity" })} aria-current={workflow === "entity" ? "page" : undefined}><UsersRound size={15} />设定</WorkspaceLink>
         <WorkspaceLink href={aiWorkspaceHref({ projectId, workflow: "planning" })} aria-current={workflow === "planning" || chapterPlan ? "page" : undefined}><ListTree size={15} />大纲</WorkspaceLink>
@@ -49,6 +54,7 @@ export function UnifiedAiWorkspace() {
             : !project.data ? <p role="status">请先打开作品。</p>
             : !workflow ? <CoauthorView />
               : <>
+                {(workflow === "preparation" || workflow === "section") && <PreparationNotesNav selectedId={workflow === "section" ? search.get("item") ?? "seed-tone" : undefined} />}
                 {workflow === "preparation" && <CreationPreparationView embedded initialItem={search.get("item") ?? undefined} />}
                 {workflow === "section" && <StoryPlanningWorkbench selectedSectionId={search.get("item") ?? undefined} />}
                 {workflow === "planning" && <ProjectWorkspaceView />}

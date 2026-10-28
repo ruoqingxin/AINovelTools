@@ -15,8 +15,9 @@ import { assembleOutline, buildOutlineSteps, outlineSourcesChanged, withOutlineS
 import { openingReviewChecks, outlineReviewChecks, planningReviewChanges, planningReviewIsCurrent, readPlanningReview, withPlanningReview } from "./planning-review";
 import { PlanningSectionDiscussion } from "./planning-section-discussion";
 import "./creation-preparation.css";
-import { identityLabel, planningSectionIdentity } from "../lib/content-taxonomy";
-import { ContentTypeLabel, FormalContent, useInAiWorkspace } from "./content-identity";
+import { aiWorkspaceHref, identityLabel, planningSectionIdentity } from "../lib/content-taxonomy";
+import { AiWorkspaceLink, ContentTypeLabel, FormalContent, useInAiWorkspace } from "./content-identity";
+import { WorkspaceLink } from "./workspace-link";
 
 function jobSection(job: Job) {
   if (job.jobType !== "AI_PLANNING_GENERATE") return null;
@@ -24,6 +25,7 @@ function jobSection(job: Job) {
 }
 
 export function CreationPreparationView({ embedded = false, initialItem }: { embedded?: boolean; initialItem?: string } = {}) {
+  const aiWorkspace = useInAiWorkspace();
   const client = useQueryClient();
   const confirm = useConfirmAction();
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
@@ -74,7 +76,7 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
   }
 
   async function createOutline() {
-    if (creatingRef.current || editorState.current.busy || previousMissing.length) return;
+    if (!aiWorkspace || creatingRef.current || editorState.current.busy || previousMissing.length) return;
     creatingRef.current = true;
     setCreating(true);
     setError(null);
@@ -138,7 +140,7 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
           writingChapterId={progress.ready && !pending ? (nodes.data ?? []).find((node) => node.kind === "CHAPTER" && !node.archived)?.id : undefined}
           onPendingChange={changePending} /> : <div className="preparation-create">
           <h2>{selected.title}</h2><p>{selected.question}</p>
-          <PlanningSectionDiscussion sectionId={`preparation:${selected.id}`} title={selected.title} question={selected.question}
+          {aiWorkspace ? <><PlanningSectionDiscussion sectionId={`preparation:${selected.id}`} title={selected.title} question={selected.question}
             draftContent="" readOnly disabled={creating} onBusyChange={changeUncreatedBusy} onUseDraft={() => {}} />
           {previousMissing.length ? <div className="preparation-prerequisites" role="status">
             <strong>前序关键准备尚有 {previousMissing.length} 项待确认</strong>
@@ -146,7 +148,8 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
           </div> : null}
           <button type="button" className="primary-action" disabled={creating || editorBusy || previousMissing.length > 0}
             onClick={() => selected.kind === "CHAPTER" ? setCreateChapterOpen(true) : void createOutline()}>
-            <Plus size={15} />{creating ? "建立中…" : selected.kind === "CHAPTER" ? "建立开篇章节计划" : "建立主线大纲"}</button>
+            <Plus size={15} />{creating ? "建立中…" : selected.kind === "CHAPTER" ? "建立开篇章节计划" : "建立主线大纲"}</button></>
+            : project.data ? <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "preparation", item: selected.id }}>去构思处理{selected.title}</AiWorkspaceLink> : null}
         </div>}
         {error ? <p role="alert" className="project-error">{error}</p> : null}
       </main>
@@ -159,7 +162,9 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
         <div className="preparation-readiness"><strong>{progress.ready ? "开篇准备已确认" : `${progress.missing.length} 项关键准备待确认`}</strong>
           {progress.missing.map((item) => <button type="button" key={item.id} disabled={creating || editorBusy}
             onClick={() => void select(item.id)}>{item.title}<ArrowRight size={13} /></button>)}
-          {progress.ready ? <Link to="/planning" search={{ mode: "structure" }} className="secondary-action">继续分卷与细化<ArrowRight size={14} /></Link> : null}
+          {progress.ready && project.data ? <WorkspaceLink href={aiWorkspace
+            ? aiWorkspaceHref({ projectId: project.data.projectId, workflow: "planning" }) : "/planning?mode=structure"}
+            className="secondary-action">打开大纲规划<ArrowRight size={14} /></WorkspaceLink> : null}
         </div>
       </aside>
     </div>

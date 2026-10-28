@@ -108,8 +108,11 @@ export function aiWorkspaceReturnHref(search: URLSearchParams) {
     const value = search.get(key);
     if (value) params.set(key, value);
   }
-  if (path === "/planning") params.set("mode", work === "preparation" ? "prepare" : "structure");
+  if (path === "/planning") params.set("mode", work === "preparation" || work === "section" ? "prepare" : "structure");
+  if (work === "section" && search.get("item")) {
+    params.delete("item");
+    params.set("note", search.get("item")!);
+  }
   if (work === "records" && search.get("tab")) params.set("tab", search.get("tab")!);
-  const hash = work === "section" && search.get("item") ? `#${encodeURIComponent(search.get("item")!)}` : "";
-  return `${path}${params.size ? `?${params}` : ""}${hash}`;
+  return `${path}${params.size ? `?${params}` : ""}`;
 }

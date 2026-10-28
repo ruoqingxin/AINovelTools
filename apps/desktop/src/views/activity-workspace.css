@@ -1,6 +1,10 @@
 .activity-workspace { color: #303640; letter-spacing: 0; }
 .activity-workspace .workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .activity-meta { color: #74808c; font-size: 13px; }
+.activity-heading-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.activity-heading-actions select { max-width: 180px; }
+.author-todos .workspace-heading > div:first-child { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
+.author-todos .workspace-heading h1 { margin: 0; }
 .activity-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 14px 0; }
 .activity-toolbar select, .activity-workspace input, .activity-workspace select { min-width: 0; max-width: 100%; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: #48515e; font: inherit; font-size: 13px; }
 .activity-workspace .primary-action, .activity-workspace .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; max-width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; font-size: 13px; text-decoration: none; cursor: pointer; }
@@ -78,6 +82,7 @@
   .ai-runs-history { flex: 1 0 auto; }
 }
 @media (max-width: 800px) {
+  .author-todos .workspace-heading { flex-wrap: wrap; }
   .todo-row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
   .todo-target { grid-column: 1 / -1; }
 }

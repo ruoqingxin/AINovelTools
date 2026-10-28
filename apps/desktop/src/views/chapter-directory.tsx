@@ -4,7 +4,7 @@ import type { PlanNode } from "../lib/tauri-client";
 import { SearchField } from "./search-field";
 
 export function ChapterDirectory({ nodes, selectedId, onSelect, onCreate, showScenes = false }: {
-  nodes: PlanNode[]; selectedId: string | null; onSelect: (node: PlanNode) => void; onCreate: () => void;
+  nodes: PlanNode[]; selectedId: string | null; onSelect: (node: PlanNode) => void; onCreate?: () => void;
   showScenes?: boolean;
 }) {
   const [search, setSearch] = useState("");
@@ -22,14 +22,14 @@ export function ChapterDirectory({ nodes, selectedId, onSelect, onCreate, showSc
   return <div className="chapter-directory">
     <div className="directory-toolbar">
       <SearchField label="搜索章节" value={search} onChange={setSearch} />
-      <button type="button" className="icon-command" aria-label="新建章节" title="新建章节" onClick={onCreate}><Plus size={17} /></button>
+      {onCreate ? <button type="button" className="icon-command" aria-label="新建章节" title="新建章节" onClick={onCreate}><Plus size={17} /></button> : null}
     </div>
     {volumes.map((volume) => {
       const items = matched.filter((node) => node.parentId === volume.id);
       if (search && !items.length) return null;
       const expanded = Boolean(search) || !collapsed.has(volume.id);
       return <div className="directory-volume" key={volume.id}>
-        <div><button type="button" aria-expanded={expanded} aria-label={`${expanded ? "收起" : "展开"}${volume.title}`}
+        <div className="directory-volume-heading"><button type="button" aria-expanded={expanded} aria-label={`${expanded ? "收起" : "展开"}${volume.title}`}
           title={`${expanded ? "收起" : "展开"}${volume.title}`} className="directory-volume-toggle" onClick={() => setCollapsed((current) => {
           const next = new Set(current);
           if (next.has(volume.id)) next.delete(volume.id); else next.add(volume.id);

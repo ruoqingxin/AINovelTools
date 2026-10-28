@@ -116,6 +116,8 @@ describe("MaterialsView", () => {
       document.querySelector<HTMLElement>(".library-detail")!.scrollIntoView = scroll;
       await selectSummary();
       expect(list).not.toBeVisible();
+      expect(screen.queryByRole("group", { name: "参考资料类型" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("textbox", { name: "搜索参考资料" })).not.toBeInTheDocument();
       expect(scroll).toHaveBeenCalledWith({ block: "start" });
       fireEvent.click(screen.getByRole("button", { name: "编辑参考副本" }));
       expect(scroll).toHaveBeenCalledTimes(2);
@@ -126,6 +128,7 @@ describe("MaterialsView", () => {
       confirm.mockReturnValue(true);
       fireEvent.click(screen.getByRole("button", { name: "返回资料列表" }));
       expect(list).toBeVisible();
+      expect(screen.getByRole("group", { name: "参考资料类型" })).toBeVisible();
       expect(screen.getByLabelText("搜索参考资料")).toHaveValue("章节记忆");
       await waitFor(() => expect(list.scrollTop).toBe(145));
       await selectSummary();

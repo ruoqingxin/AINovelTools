@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthorSettingsView } from "./author-settings-view";
@@ -9,7 +9,7 @@ vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
 }));
 describe("AuthorSettingsView", () => {
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
   beforeEach(() => { vi.resetAllMocks(); mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" }); });
   it("keeps author-only settings distinct and links the exact entity and source discussion", async () => {
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
@@ -52,5 +52,28 @@ describe("AuthorSettingsView", () => {
     render(<QueryClientProvider client={new QueryClient()}><AuthorSettingsView /></QueryClientProvider>);
     expect(await screen.findByText("尚未添加作者设定")).toBeVisible();
     expect(screen.queryByText("选择一条作者设定")).not.toBeInTheDocument();
+  });
+  it("opens reveal details separately on mobile and restores the filtered list and focus", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      matches: query.includes("max-width"), addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList));
+    mocks.listAuthorSettings.mockResolvedValue([
+      { id: "secret", entityId: "entity-1", entityName: "吞声灯", content: "尚未揭示的秘密",
+        visibility: "AUTHOR_ONLY", sessionId: "session-1" },
+    ]);
+    render(<QueryClientProvider client={new QueryClient()}><AuthorSettingsView /></QueryClientProvider>);
+    fireEvent.change(screen.getByLabelText("搜索作者设定"), { target: { value: "吞声" } });
+    const item = await screen.findByRole("button", { name: /吞声灯/ });
+    const list = screen.getByRole("complementary", { name: "作者设定列表" });
+    list.scrollTop = 80;
+    fireEvent.click(item);
+    expect(list).not.toBeVisible();
+    expect(screen.getByRole("region", { name: "设定揭示详情" })).toHaveFocus();
+    expect(screen.queryByRole("textbox", { name: "搜索作者设定" })).not.toBeInTheDocument();
+    expect(screen.getByText("作者确认 · 尚未揭示")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "返回设定列表" }));
+    expect(screen.getByLabelText("搜索作者设定")).toHaveValue("吞声");
+    await waitFor(() => expect(item).toHaveFocus());
+    expect(list.scrollTop).toBe(80);
   });
 });

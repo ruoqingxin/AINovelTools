@@ -52,7 +52,9 @@ describe("canonical content classification", () => {
   it("retains the preparation section and reference list type when returning", () => {
     const section = new URL(aiWorkspaceReturnHref(new URLSearchParams("work=section&targetProject=p&item=seed-tone")), window.location.origin);
     expect(section.pathname).toBe("/planning");
-    expect(section.hash).toBe("#seed-tone");
+    expect(section.searchParams.get("mode")).toBe("prepare");
+    expect(section.searchParams.get("note")).toBe("seed-tone");
+    expect(section.hash).toBe("");
     const cards = new URL(aiWorkspaceReturnHref(new URLSearchParams("work=materials&targetProject=p&materialKind=CARD")), window.location.origin);
     expect(cards.searchParams.get("materialKind")).toBe("CARD");
   });

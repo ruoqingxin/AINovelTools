@@ -23,20 +23,20 @@ export function ReviewCenterView() {
   return <section className="author-todos activity-workspace">
     <div className="workspace-heading workspace-heading-with-action">
       <div><h1>待办</h1>{queue.isSuccess ? <span className="activity-meta">{queue.data.pendingCount} 项待处理</span> : null}</div>
+      <div className="activity-heading-actions">
+        <select aria-label="待办类型" value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>
+          <option value="ALL">全部待办</option>
+          {Object.entries(todoLabels).map(([value, label]) => <option key={value} value={value}>{label.title}</option>)}
+        </select>
       <button type="button" className="icon-command" aria-label="刷新待办" title="刷新待办"
         disabled={queue.isFetching} onClick={() => void queue.refetch()}><RefreshCw size={16} /></button>
+      </div>
     </div>
     {legacyTab ? <div className="activity-legacy-entry">
       <a href={`/discussion?${legacyParams}${legacyChapter ? `#${encodeURIComponent(legacyChapter)}` : ""}`}>
         {legacyTab === "facts" ? "打开本章事实审核" : legacyTab === "admission" ? "打开生成前检查" : "打开正文检查"}
       </a>
     </div> : null}
-    <div className="activity-toolbar">
-      <select aria-label="待办类型" value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>
-        <option value="ALL">全部待办</option>
-        {Object.entries(todoLabels).map(([value, label]) => <option key={value} value={value}>{label.title}</option>)}
-      </select>
-    </div>
     {queue.isPending ? <p className="plan-empty" role="status">正在加载待办…</p>
       : queue.isError ? <p className="project-error" role="alert">待办加载失败：{errorMessage(queue.error)}
         <button type="button" className="secondary-action" disabled={queue.isFetching} onClick={() => void queue.refetch()}><RefreshCw size={14} />重试加载</button></p>

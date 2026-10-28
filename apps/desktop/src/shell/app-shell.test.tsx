@@ -75,14 +75,14 @@ describe("global workspace shell", () => {
     await screen.findByRole("link", { name: "资料" });
     const navigation = within(screen.getByRole("complementary", { name: "主要导航" }));
     expect(navigation.getAllByRole("link").map((link) => link.getAttribute("aria-label")))
-      .toEqual(["大纲规划", "写作", "构思", "资料", "待办", "设置"]);
+      .toEqual(["大纲", "正文", "构思", "资料", "待办", "设置"]);
     expect(within(screen.getByLabelText("全局工具")).getByRole("link", { name: "搜索" })).toBeVisible();
     expect(within(screen.getByLabelText("全局工具")).getByRole("link", { name: "后台活动" })).toBeVisible();
     expect(navigation.queryByRole("link", { name: "项目" })).not.toBeInTheDocument();
   });
   it.each([
     ["/knowledge/settings", "资料"], ["/knowledge/materials", "资料"],
-    ["/knowledge/records", "资料"], ["/knowledge/review", "待办"], ["/chapters", "写作"],
+    ["/knowledge/records", "资料"], ["/knowledge/review", "待办"], ["/chapters", "正文"],
   ])("keeps the parent selected for %s", async (path, label) => {
     mocks.pathname = path;
     setup();
@@ -91,7 +91,7 @@ describe("global workspace shell", () => {
   it("disables project destinations but keeps settings and project management available without a project", async () => {
     mocks.project = null;
     setup();
-    await waitFor(() => expect(screen.getByRole("button", { name: "写作" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "正文" })).toBeDisabled());
     expect(screen.getByRole("link", { name: "设置" })).toBeVisible();
     expect(screen.getByRole("link", { name: "搜索" })).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(screen.getByRole("button", { name: "选择作品" }));
@@ -108,7 +108,7 @@ describe("global workspace shell", () => {
   });
   it("offers accessible collapsed and narrow-window navigation controls", async () => {
     setup();
-    await screen.findByRole("link", { name: "写作" });
+    await screen.findByRole("link", { name: "正文" });
     fireEvent.click(screen.getByRole("button", { name: "收起导航" }));
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-nav-collapsed", "true");
     fireEvent.click(screen.getByRole("button", { name: "打开导航" }));
@@ -125,7 +125,7 @@ describe("global workspace shell", () => {
   });
   it("remembers the collapsed navigation after reopening the shell", async () => {
     setup();
-    await screen.findByRole("link", { name: "写作" });
+    await screen.findByRole("link", { name: "正文" });
     fireEvent.click(screen.getByRole("button", { name: "收起导航" }));
     cleanup();
     setup();
@@ -136,7 +136,7 @@ describe("global workspace shell", () => {
     let rejectOpen!: (error: Error) => void;
     mocks.openProject.mockImplementation(() => new Promise((_resolve, reject) => { rejectOpen = reject; }));
     setup();
-    await screen.findByRole("link", { name: "写作" });
+    await screen.findByRole("link", { name: "正文" });
     fireEvent.change(screen.getByLabelText("Local note"), { target: { value: "not saved yet" } });
     fireEvent.click(screen.getByRole("button", { name: "选择作品" }));
     fireEvent.click(await screen.findByRole("button", { name: "雾城来信" }));

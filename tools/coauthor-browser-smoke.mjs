@@ -10,10 +10,11 @@ const { values } = parseArgs({ options: {
   artifacts: { type: "string", default: ".tmp/coauthor-browser" },
   width: { type: "string" },
   "naming-only": { type: "boolean", default: false },
+  "layout-only": { type: "boolean", default: false },
 } });
-const viewports = [{ width: 1440, height: 1000 }, { width: 960, height: 640 }, { width: 390, height: 844 }];
-const selectedViewports = values.width ? viewports.filter(viewport => String(viewport.width) === values.width) : viewports;
-if (!selectedViewports.length) throw new Error("--width must be 1440, 960 or 390");
+const viewports = [{ width: 1440, height: 1000 }, { width: 1280, height: 820 }, { width: 960, height: 640 }, { width: 390, height: 844 }];
+const selectedViewports = values.width ? viewports.filter(viewport => String(viewport.width) === values.width) : viewports.filter(viewport => viewport.width >= 800);
+if (!selectedViewports.length) throw new Error("--width must be 1440, 1280, 960 or 390");
 const { chromium } = await import(values.playwright ? pathToFileURL(values.playwright).href : "playwright");
 const artifacts = resolve(values.artifacts);
 await mkdir(artifacts, { recursive: true });
@@ -461,6 +462,51 @@ try {
     "Opening the workspace must not load historical audits or the run directory");
     assert.equal(await page.getByLabel("允许改工作稿", { exact: true }).isChecked(), false);
     assert.equal(await page.getByLabel("工作稿内容", { exact: true }).isVisible(), false);
+    if (values["layout-only"]) {
+      const input = page.getByLabel("讨论输入", { exact: true });
+      await input.fill("切换稿件时保留的未发送问题");
+      const menu = page.getByLabel("更多讨论操作", { exact: true });
+      assert.equal(await page.getByRole("button", { name: "删除当前讨论", exact: true }).isVisible(), false);
+      await menu.click();
+      await page.getByRole("button", { name: "删除当前讨论", exact: true }).waitFor();
+      await menu.press("Escape");
+      assert.equal(await page.getByRole("button", { name: "删除当前讨论", exact: true }).isVisible(), false);
+      await menu.click();
+      await input.click();
+      assert.equal(await page.getByRole("button", { name: "删除当前讨论", exact: true }).isVisible(), false);
+      await page.getByRole("tab", { name: "工作稿", exact: true }).click();
+      await page.getByRole("heading", { name: "正文 · 工作稿", exact: true }).waitFor();
+      assert.equal(await page.getByLabel("叙事位置与视角", { exact: true }).isVisible(), false);
+      await page.screenshot({ path: resolve(artifacts, `${viewport.width}-draft-simplified.png`), fullPage: true });
+      await page.getByText("更多稿件选项", { exact: true }).click();
+      await page.getByLabel("叙事位置与视角", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "工作稿版本", exact: true }).waitFor();
+      await page.getByRole("button", { name: "关联变更", exact: true }).waitFor();
+      await page.screenshot({ path: resolve(artifacts, `${viewport.width}-draft-options.png`), fullPage: true });
+      await page.getByRole("tab", { name: "讨论", exact: true }).click();
+      assert.equal(await input.inputValue(), "切换稿件时保留的未发送问题");
+      await menu.click();
+      await page.getByRole("button", { name: "删除当前讨论", exact: true }).click();
+      const deletion = page.getByRole("alertdialog", { name: "删除当前讨论", exact: true });
+      await deletion.getByRole("button", { name: "取消", exact: true }).click();
+      assert.equal(await input.inputValue(), "切换稿件时保留的未发送问题");
+      assert.equal(await page.evaluate(() => window.__coauthorCalls.some(name =>
+        /^(delete_|save_|publish_|run_coauthor|prepare_|commit_|apply_)/.test(name))), false);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+      assert.equal(await input.evaluate(element =>
+        getComputedStyle(element).color === getComputedStyle(element.parentElement).color), true,
+      "discussion input must inherit readable theme text");
+      await page.screenshot({ path: resolve(artifacts, `${viewport.width}-discussion-dark.png`), fullPage: true });
+      await page.getByRole("tab", { name: "工作稿", exact: true }).click();
+      assert.equal(await page.getByLabel("工作稿内容", { exact: true }).evaluate(element =>
+        getComputedStyle(element).color === getComputedStyle(element.parentElement).color), true,
+      "working draft must inherit readable theme text");
+      await page.screenshot({ path: resolve(artifacts, `${viewport.width}-draft-dark.png`), fullPage: true });
+      reports.push({ viewport, overflow, commands: await page.evaluate(() => window.__coauthorCalls) });
+      await context.close();
+      continue;
+    }
     if (values["naming-only"]) {
       const input = page.getByLabel("讨论输入", { exact: true });
       await input.fill("命名时保留的未发送输入");
@@ -651,7 +697,7 @@ try {
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-draft.png`), fullPage: true });
     assert.ok((await draft.boundingBox()).height >= 200, "Draft editor must retain usable height");
     assert.equal(await page.getByRole("button", { name: "另开分支", exact: true }).isVisible(), false);
-    await page.getByText("版本、分支与多处修改", { exact: true }).click();
+    await page.getByText("更多稿件选项", { exact: true }).click();
     assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("list_coauthor_branches")), false,
       "Opening a workspace must not load branch drafts or the branch directory");
     await page.getByRole("button", { name: "分支比较与合并", exact: true }).click();
@@ -967,6 +1013,7 @@ try {
     await reviewInput.evaluate(el => el.scrollIntoView({ block: "center" }));
     await page.screenshot({ path: resolve(artifacts, `${viewport.width}-decision-review-composer.png`), fullPage: true });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.getByLabel("更多讨论操作", { exact: true }).click();
     await page.getByRole("button", { name: "删除当前讨论", exact: true }).click();
     const deletion = page.getByRole("alertdialog", { name: "删除当前讨论", exact: true });
     await deletion.getByText(/已正式采用的内容和其他分支不变/).waitFor();
@@ -974,6 +1021,7 @@ try {
     await deletion.getByRole("button", { name: "取消", exact: true }).click();
     assert.equal(await page.evaluate(() => window.__coauthorCalls.includes("delete_discussion_session")), false);
     assert.equal(await reviewInput.inputValue(), reviewText);
+    await page.getByLabel("更多讨论操作", { exact: true }).click();
     await page.getByRole("button", { name: "删除当前讨论", exact: true }).click();
     await deletion.getByRole("button", { name: "删除讨论", exact: true }).click();
     await page.getByRole("heading", { name: "从一个想法开始", exact: true }).waitFor();

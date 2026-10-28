@@ -18,7 +18,7 @@ export function sourceReturnTo(value: string | null) {
   try {
     const url = new URL(value, window.location.origin);
     if (url.origin !== window.location.origin || ![
-      "/search", "/writing", "/chapters", "/review", "/knowledge/review", "/knowledge/records", "/knowledge", "/knowledge/settings", "/knowledge/materials", "/discussion", "/planning",
+      "/search", "/writing", "/chapters", "/review", "/knowledge/review", "/knowledge/records", "/knowledge", "/knowledge/settings", "/knowledge/materials", "/discussion", "/planning", "/jobs",
     ].includes(url.pathname)) return null;
     return `${url.pathname}${url.search}${url.hash}`;
   } catch { return null; }

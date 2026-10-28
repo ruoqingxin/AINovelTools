@@ -28,4 +28,10 @@ describe("manuscript source navigation", () => {
     expect(sourceReturnTo("/writing?tab=extraction&knowledge=facts#chapter-1"))
       .toBe("/writing?tab=extraction&knowledge=facts#chapter-1");
   });
+
+  it("preserves an activity return without allowing unrelated paths", () => {
+    expect(sourceReturnTo("/jobs#ai-runs")).toBe("/jobs#ai-runs");
+    expect(sourceReturnTo("/jobs?jobId=job-1")).toBe("/jobs?jobId=job-1");
+    expect(sourceReturnTo("/jobs/other")).toBeNull();
+  });
 });

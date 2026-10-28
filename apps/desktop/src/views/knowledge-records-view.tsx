@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Milestone, Pencil, Plus, Save, Sparkles, UserRoundCheck } from "lucide-react";
+import { ArrowLeft, Link2, Milestone, Pencil, Plus, Save, Sparkles, UserRoundCheck } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import {
   createBelief,
@@ -28,6 +28,7 @@ import "./library-workspace.css";
 import { SearchField } from "./search-field";
 import { recordTypeLabels } from "../lib/content-taxonomy";
 import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
+import { useLibraryNavigation } from "./use-library-navigation";
 
 type RecordTab = "relations" | "events" | "beliefs" | "foreshadowings";
 
@@ -44,6 +45,8 @@ export function KnowledgeRecordsView() {
   const client = useQueryClient();
   const [tab, setTab] = useState<RecordTab>(() => tabs.some((item) => item.id === searchParams.get("tab")) ? searchParams.get("tab") as RecordTab : "relations");
   const [selectedId, setSelectedId] = useState<string | null>(() => aiWorkspace ? searchParams.get("objectId") : null);
+  const navigation = useLibraryNavigation(Boolean(selectedId));
+  const mobileDetail = !navigation.wide && navigation.detailOpen;
   const [editing, setEditing] = useState(false);
   const [editVersion, setEditVersion] = useState(0);
   const [search, setSearch] = useState("");
@@ -134,6 +137,7 @@ export function KnowledgeRecordsView() {
   }
   function startNew() {
     if (!mayLeave()) return;
+    navigation.openDetail();
     reset(); setEditing(true);
   }
 
@@ -220,6 +224,7 @@ export function KnowledgeRecordsView() {
       setEvidenceIds([]);
       setSelectedId(null);
       setEditing(false);
+      navigation.closeDetail();
       await client.invalidateQueries({ queryKey: [tab] });
       setNotice(activeRecord ? `已追加为 v${activeVersion + 1}` : `已创建${tabs.find((item) => item.id === tab)?.label}记录`);
     } catch (cause) {
@@ -231,12 +236,12 @@ export function KnowledgeRecordsView() {
   }
 
   return (
-    <section className="story-bible-view knowledge-records-view library-workspace">
+    <section className="story-bible-view knowledge-records-view library-workspace" data-mobile-detail={mobileDetail}>
       {!aiWorkspace && <div className="workspace-heading">
         <h1>剧情记录</h1>
       </div>}
       <KnowledgeSectionNav />
-      <div className="library-toolbar">
+      <div className="library-toolbar" hidden={mobileDetail}>
         <select aria-label="记录类型" value={tab} disabled={busy} onChange={(event) => switchTab(event.target.value as RecordTab)}>{tabs.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}</select>
         <select value={lifecycleFilter} onChange={(event) => setLifecycleFilter(event.target.value as "ALL" | KnowledgeLifecycleStatus)} aria-label="审核状态筛选">
           <option value="ALL">全部审核状态</option>
@@ -254,7 +259,7 @@ export function KnowledgeRecordsView() {
       {project.isError ? <p role="alert" className="project-error">{errorMessage(project.error)}
         <button type="button" className="secondary-action" disabled={project.isFetching} onClick={() => void project.refetch()}>重试作品信息</button></p> : null}
       <div className="library-layout">
-        <aside className="library-list" aria-label="剧情记录列表">
+        <aside ref={navigation.list} hidden={mobileDetail} className="library-list" aria-label="剧情记录列表">
           {query.isError ? <p className="project-error" role="alert">无法加载记录：{errorMessage(query.error)}<button type="button" onClick={() => void query.refetch()}>重试</button></p> : null}
           {query.isPending ? <p className="plan-empty">正在加载记录…</p> : null}
           {query.isSuccess && !visibleRecords.length ? <div className="library-list-empty">
@@ -263,11 +268,18 @@ export function KnowledgeRecordsView() {
               setSearch(""); setLifecycleFilter("ALL");
             }}>重置筛选</button> : null}</div> : null}
           {visibleRecords.map((item) => <button type="button" className="library-item" data-selected={selectedId === item.id} disabled={busy} key={item.id} onClick={() => {
-            if (item.id === selectedId || !mayLeave()) return;
+            if (item.id === selectedId) { navigation.openDetail(); return; }
+            if (!mayLeave()) return;
+            navigation.openDetail();
             setSelectedId(item.id); setEditing(false); setError(null); setNotice(null);
           }}><strong>{item.title}</strong><span>{item.detail}</span><small>v{item.version} · {item.status.replace("ACTIVE", "有效").replace("NEEDS_REVIEW", "待复核").replace("ARCHIVED", "已归档").replace("PLANTED", "已埋设").replace("ADVANCING", "推进中").replace("RESOLVED", "已回收")} · {item.evidence} 条证据</small></button>)}
         </aside>
-        <div className="library-detail">
+        <div ref={navigation.detail} hidden={!navigation.wide && !navigation.detailOpen} className="library-detail"
+          tabIndex={-1} role="region" aria-label="剧情记录详情">
+        {!navigation.wide && <button type="button" className="secondary-action library-back" disabled={busy} onClick={() => {
+          if (!mayLeave()) return;
+          setEditing(false); navigation.closeDetail();
+        }}><ArrowLeft size={15} />返回记录列表</button>}
         {!editing && activeRecord ? <>
           <ContentTypeLabel identity={{ category: "RECORD", subtype: recordTypeLabels[tab] }} />
           <h2>{content.find((item) => item.id === selectedId)?.title}</h2><p className="library-content">{content.find((item) => item.id === selectedId)?.detail}</p>
@@ -314,7 +326,11 @@ export function KnowledgeRecordsView() {
           </div>
           <fieldset className="knowledge-select-list"><legend>证据锚点</legend>{anchors.isPending ? <span>正在加载证据…</span> : null}{anchors.isError ? <span role="alert">{errorMessage(anchors.error)}</span> : null}{!anchors.isPending && !(anchors.data ?? []).length ? <span>尚无证据锚点，请先在正文事实审核流程中建立证据。</span> : null}{(anchors.data ?? []).map((item, index) => <label key={item.id}><input type="checkbox" checked={evidenceIds.includes(item.id)} onChange={() => toggle(evidenceIds, item.id, setEvidenceIds)} />{chapterList.find((chapter) => chapter.id === item.chapterId)?.title ?? "未命名章节"} · 证据 {index + 1}</label>)}</fieldset>
           <div className="inspector-actions"><button type="submit" className="primary-action" disabled={!canSave()}><Save size={15} />{busy ? "保存中…" : selectedId ? `保存为 v${editVersion + 1}` : `创建${tabs.find((item) => item.id === tab)?.label}`}</button>
-            <button type="button" className="secondary-action" disabled={busy} onClick={() => { if (mayLeave()) setEditing(false); }}>取消</button></div>
+            <button type="button" className="secondary-action" disabled={busy} onClick={() => {
+              if (!mayLeave()) return;
+              setEditing(false);
+              if (!selectedId) navigation.closeDetail();
+            }}>取消</button></div>
           </fieldset>
         </form> : null}
         </div>

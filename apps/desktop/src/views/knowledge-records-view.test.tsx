@@ -139,6 +139,62 @@ describe("KnowledgeRecordsView", () => {
     render(<QueryClientProvider client={client}><KnowledgeRecordsView /></QueryClientProvider>);
     return client;
   }
+  function mobileViewport() {
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      matches: query.includes("max-width"), addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList));
+  }
+  it("shows only one mobile pane and restores record filters, scroll and focus on return", async () => {
+    mobileViewport();
+    mocks.listRelations.mockResolvedValue([existing]);
+    renderRecords();
+    const list = screen.getByRole("complementary", { name: "剧情记录列表" });
+    expect(screen.queryByRole("region", { name: "剧情记录详情" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("搜索剧情记录"), { target: { value: "同盟" } });
+    list.scrollTop = 120;
+    const item = await screen.findByRole("button", { name: /同盟/ });
+    fireEvent.click(item);
+    expect(list).not.toBeVisible();
+    expect(screen.getByRole("region", { name: "剧情记录详情" })).toHaveFocus();
+    expect(screen.queryByRole("textbox", { name: "搜索剧情记录" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "返回记录列表" }));
+    expect(list).toBeVisible();
+    expect(screen.getByLabelText("搜索剧情记录")).toHaveValue("同盟");
+    await waitFor(() => expect(item).toHaveFocus());
+    expect(list.scrollTop).toBe(120);
+    fireEvent.click(item);
+    expect(screen.getByRole("heading", { name: "同盟" })).toBeVisible();
+  });
+  it("guards a mobile back action and does not leave while a record save is pending", async () => {
+    mobileViewport();
+    mocks.listRelations.mockResolvedValue([existing]);
+    let finish!: (value: unknown) => void;
+    mocks.updateRelation.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    renderRecords();
+    fireEvent.click(await screen.findByRole("button", { name: /同盟/ }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑记录" }));
+    fireEvent.change(screen.getByLabelText("关系类型"), { target: { value: "新同盟" } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "返回记录列表" }));
+    expect(screen.getByLabelText("关系类型")).toHaveValue("新同盟");
+    expect(confirm).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "保存为 v2" }));
+    await waitFor(() => expect(mocks.updateRelation).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "返回记录列表" })).toBeDisabled();
+    await act(async () => finish({}));
+    expect(await screen.findByRole("complementary", { name: "剧情记录列表" })).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("已追加为 v2");
+  });
+  it("allows a missing exact mobile target to return without selecting another record", async () => {
+    mobileViewport();
+    window.history.replaceState(null, "", "/discussion?work=records&targetProject=project-1&objectId=missing");
+    mocks.listRelations.mockResolvedValue([existing]);
+    renderRecords();
+    expect(await screen.findByRole("alert")).toHaveTextContent("未打开其他记录");
+    fireEvent.click(screen.getByRole("button", { name: "返回记录列表" }));
+    expect(screen.getByRole("button", { name: /同盟/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "编辑记录" })).not.toBeInTheDocument();
+  });
   it("resets filtered empty records without discarding an edited draft", async () => {
     mocks.listRelations.mockResolvedValue([existing]);
     renderRecords();

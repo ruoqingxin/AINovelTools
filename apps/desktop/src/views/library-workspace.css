@@ -1,10 +1,16 @@
 .library-workspace { color: #303640; letter-spacing: 0; }
 .library-workspace .workspace-heading { padding-bottom: 12px; }
-.library-workspace .knowledge-section-nav { padding: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+.library-workspace .knowledge-section-nav { margin-top: 8px; padding: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+.library-workspace .knowledge-section-nav { flex-wrap: nowrap; overflow-x: auto; }
+.library-workspace .knowledge-section-link { flex: 0 0 auto; white-space: nowrap; }
+.knowledge-subnav { display: flex; align-items: center; gap: 18px; padding: 10px 0 0; }
+.knowledge-subnav a { padding: 4px 0; color: var(--muted); font-size: 12px; text-decoration: none; }
+.knowledge-subnav a[aria-current="page"] { color: var(--accent-strong); font-weight: 600; }
+.knowledge-subnav a:hover { text-decoration: underline; }
 .library-workspace .knowledge-section-link { min-height: 40px; border-bottom: 2px solid transparent; border-radius: 0; color: #647080; }
 .library-workspace .knowledge-section-link[data-active] { border-bottom-color: #3269cc; color: #245bb3; background: transparent; box-shadow: none; }
 .library-workspace .knowledge-section-link:hover { background: #f2f5fa; }
-.library-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 14px 0; }
+.library-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 0; }
 .library-toolbar[hidden] { display: none; }
 .library-toolbar input, .library-toolbar select { min-width: 0; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #48515e; font: inherit; font-size: 13px; }
 .library-toolbar .search-field { min-width: 0; flex: 1 1 180px; }
@@ -19,7 +25,7 @@
 .library-detail:has(> .library-empty) { display: flex; flex-direction: column; }
 .library-detail > .library-empty { flex: 1; min-height: 180px; text-align: center; }
 .library-list[hidden], .library-detail[hidden] { display: none; }
-.library-back { margin-bottom: 18px; }
+.library-back { margin-bottom: 12px; }
 .library-detail > .section-heading h2 { margin: 0; font-size: 18px; }
 .library-detail > h2 { margin: 0 0 14px; font-size: 18px; }
 .library-item { display: grid; width: 100%; gap: 6px; min-width: 0; padding: 12px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; text-align: left; background: transparent; color: #303640; font: inherit; font-size: 14px; cursor: pointer; overflow-wrap: anywhere; }
@@ -28,7 +34,8 @@
 .library-empty { display: grid; min-height: 280px; place-content: center; justify-items: center; gap: 16px; color: #788291; }
 .library-empty p { margin: 0; }
 .library-list-empty { padding: 12px 0; }
-.library-list-empty .plan-empty { margin: 0 0 12px; }
+.library-list .plan-empty { display: block; min-height: 0; height: auto; margin: 0; padding: 16px 8px; border: 0; background: transparent; text-align: left; font-size: 13px; }
+.library-list-empty .plan-empty { margin: 0 0 8px; }
 .library-workspace .primary-action, .library-workspace .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; font-size: 13px; cursor: pointer; }
 .library-workspace .primary-action { border-color: var(--accent); }
 .library-workspace .primary-action:disabled, .library-workspace .secondary-action:disabled { opacity: .55; cursor: not-allowed; }
@@ -68,7 +75,7 @@
   .library-layout { min-height: 260px; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(80px, .3fr) minmax(180px, .7fr); }
   .library-list { max-height: none; padding: 8px 0; border-right: 0; border-bottom: 1px solid var(--line); }
   .library-list > .section-heading { top: -8px; }
-  .materials-view .library-layout, .story-bible-view .library-layout { min-height: 180px; grid-template-rows: minmax(0, 1fr); }
+  .library-workspace[data-mobile-detail] .library-layout { min-height: 180px; grid-template-rows: minmax(0, 1fr); }
   .materials-view .library-list { max-height: none; }
   .library-detail { padding: 18px 0; }
   .library-toolbar > select { flex: 1 1 130px; }

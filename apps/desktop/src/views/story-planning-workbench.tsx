@@ -26,6 +26,7 @@ import { PlanningSectionDiscussion } from "./planning-section-discussion";
 import { identityLabel, planningSectionIdentity } from "../lib/content-taxonomy";
 import { getCurrentProject } from "../lib/tauri-client";
 import { ContentTypeLabel, FormalContent, useInAiWorkspace } from "./content-identity";
+import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 
 type PlanningItem = { id: string; label: string; prompt: string; guidance: string };
 type PlanningGroup = { id: string; label: string; children: PlanningItem[] };
@@ -188,6 +189,7 @@ function EditableStoryPlanningWorkbench(props: StoryPlanningWorkbenchProps) {
   const activeJob = sectionJobs.find((job) => job.status === "QUEUED" || job.status === "RUNNING");
   const latestJob = sectionJobs[0];
   const aiBusy = generating || importing || Boolean(activeJob) || discussionBusy;
+  useUnsavedChangesGuard(dirty || saving || discussionBusy, "当前准备笔记有未保存修改或进行中的操作。");
   const visibleJob = activeJob ?? (latestJob?.status === "FAILED" || latestJob?.status === "CANCELLED" ? latestJob : null);
   const visibleFailure = visibleJob?.status === "FAILED"
     ? classifyAiFailure(visibleJob.errorSummary)

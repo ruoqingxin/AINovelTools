@@ -40,11 +40,12 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
   const unavailable = !project.isPending && !project.isError && !valid;
 
   return <section className="materials-view material-detail-view library-workspace">
-    <div className="workspace-heading">{!aiWorkspace && <h1>{target.kind === "SUMMARY" ? "当前摘要" : "当前写作卡片"}</h1>}
+    <div className="workspace-heading">{!aiWorkspace && <h1>辅助参考</h1>}
       <div className="material-detail-actions">
         {!aiWorkspace && returnTo ? <WorkspaceLink className="secondary-action" href={returnTo}><ArrowLeft size={15} />返回来源</WorkspaceLink> : null}
         <WorkspaceLink className="secondary-action" href={aiWorkspace ? aiWorkspaceHref({ workflow: "materials", projectId: target.projectId, materialKind: target.kind ?? undefined }) : "/knowledge/materials"}><BookOpenText size={15} />{aiWorkspace ? "参考列表" : "资料管理"}</WorkspaceLink>
-        {valid ? <button className="secondary-action" type="button" disabled={editing || actionBusy || result.isFetching} onClick={() => void result.refetch()}><RefreshCw size={15} />刷新当前内容</button> : null}
+        {valid ? <button className="icon-command" type="button" title="刷新当前内容" aria-label="刷新当前内容"
+          disabled={editing || actionBusy || result.isFetching} onClick={() => void result.refetch()}><RefreshCw size={15} /></button> : null}
       </div>
     </div>
     <KnowledgeSectionNav />
@@ -70,6 +71,7 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
           }
           else { setEditing(false); setNotice("资料已保存"); }
         }} /> : <>
+      <p className="material-detail-content">{item.content}</p>
       <details className="library-advanced"><summary>来源与高级信息</summary><dl className="material-detail-metadata">
         <div><dt>对象</dt><dd><code>{item.id}</code></dd></div>
         <div><dt>来源标识</dt><dd><code>{item.sourceVersion ?? "无"}</code></dd></div>
@@ -77,7 +79,6 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
         {currentSummary ? <div><dt>状态</dt><dd>{currentSummary.lifecycleStatus === "ACTIVE" ? "有效" : currentSummary.lifecycleStatus === "CANDIDATE" ? "AI 候选" : "已失效"}</dd></div> : null}
         {currentCard ? <div><dt>状态 / 范围</dt><dd>{currentCard.enabled ? "已启用" : "已停用"} · {currentCard.scope}</dd></div> : null}
       </dl></details>
-      <p className="material-detail-content">{item.content}</p>
       <div className="library-actions">{aiWorkspace ? <button type="button" className="secondary-action" disabled={actionBusy} onClick={() => { setEditing(true); setNotice(null); }}><Pencil size={15} />
         {currentSummary && automaticSummary(currentSummary) ? "编辑参考副本" : "编辑资料"}</button>
         : target.kind && <AiWorkspaceLink target={{ projectId: target.projectId, workflow: "materials", targetId: target.id, materialKind: target.kind }}>去构思处理此参考</AiWorkspaceLink>}</div>

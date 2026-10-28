@@ -3,7 +3,7 @@ import { primaryDestination, primaryNavigation, workspaceLabel } from "./navigat
 
 describe("workspace navigation", () => {
   it("unifies preparation and outlines into a single planning destination", () => {
-    expect(primaryNavigation.map((item) => item.label)).toEqual(["大纲规划", "写作", "构思", "资料", "待办"]);
+    expect(primaryNavigation.map((item) => item.label)).toEqual(["大纲", "正文", "构思", "资料", "待办"]);
   });
   it.each([
     ["/preparation", "/planning"],

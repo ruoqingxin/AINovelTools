@@ -287,11 +287,12 @@ describe("coauthor workspace", () => {
     fireEvent.click(screen.getByRole("tab", { name: "讨论" }));
     fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "尚未发送的问题" } });
     fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
-    expect(screen.getByRole("heading", { name: "草稿编辑" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "正文 · 工作稿" })).toBeVisible();
     expect(screen.getByLabelText("讨论输入")).not.toBeVisible();
     expect(screen.getByLabelText("叙事位置与视角")).not.toBeVisible();
     expect(screen.getByRole("button", { name: "另开分支" })).not.toBeVisible();
-    fireEvent.click(screen.getByText("版本、分支与多处修改"));
+    fireEvent.click(screen.getByText("更多稿件选项"));
+    expect(screen.getByLabelText("叙事位置与视角")).toBeVisible();
     const draftTools = screen.getByRole("group", { name: "工作稿工具" });
     expect(within(draftTools).getByRole("button", { name: "另开分支" })).toHaveTextContent("另开分支");
     expect(within(draftTools).getByRole("button", { name: "工作稿版本" })).toHaveTextContent("工作稿版本");
@@ -311,6 +312,7 @@ describe("coauthor workspace", () => {
     renderWorkspace();
     await screen.findByLabelText("讨论输入");
     fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "保留的输入" } });
+    fireEvent.click(screen.getByLabelText("更多讨论操作"));
     fireEvent.click(screen.getByRole("button", { name: "删除当前讨论" }));
     const dialog = await screen.findByRole("alertdialog", { name: "删除当前讨论" });
     expect(within(dialog).getByText(/已正式采用的内容和其他分支不变/)).toBeVisible();
@@ -321,12 +323,29 @@ describe("coauthor workspace", () => {
     expect(mocks.invoke.mock.calls.some(([name]) => name === "delete_discussion_session")).toBe(false);
   });
 
+  it("keeps destructive actions out of the toolbar and dismisses the menu without changing content", async () => {
+    renderWorkspace();
+    const input = await screen.findByLabelText("讨论输入");
+    expect(screen.getByRole("button", { name: "删除当前讨论" })).not.toBeVisible();
+    const menu = screen.getByLabelText("更多讨论操作");
+    fireEvent.click(menu);
+    expect(screen.getByRole("button", { name: "删除当前讨论" })).toBeVisible();
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(menu).toHaveFocus();
+    expect(screen.getByRole("button", { name: "删除当前讨论" })).not.toBeVisible();
+    fireEvent.click(menu);
+    fireEvent.pointerDown(input);
+    expect(screen.getByRole("button", { name: "删除当前讨论" })).not.toBeVisible();
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "delete_discussion_session")).toBe(false);
+  });
+
   it("deletes only the confirmed current discussion and clears its exact local backups", async () => {
     renderWorkspace();
     await screen.findByLabelText("讨论输入");
     fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "将被清除" } });
     localStorage.setItem("coauthor-draft:p1:s1", "当前讨论备份");
     localStorage.setItem("coauthor-draft:p1:other", "其他讨论备份");
+    fireEvent.click(screen.getByLabelText("更多讨论操作"));
     fireEvent.click(screen.getByRole("button", { name: "删除当前讨论" }));
     const dialog = await screen.findByRole("alertdialog", { name: "删除当前讨论" });
     fireEvent.click(within(dialog).getByRole("button", { name: "删除讨论" }));
@@ -344,6 +363,7 @@ describe("coauthor workspace", () => {
     listedSessions.push({ id: "s2", projectId: "p1", title: "另一个讨论", scopeKind: "PROJECT" });
     renderWorkspace();
     await screen.findByLabelText("讨论输入");
+    fireEvent.click(screen.getByLabelText("更多讨论操作"));
     fireEvent.click(screen.getByRole("button", { name: "删除当前讨论" }));
     const dialog = await screen.findByRole("alertdialog", { name: "删除当前讨论" });
     fireEvent.click(within(dialog).getByRole("button", { name: "删除讨论" }));
@@ -359,6 +379,7 @@ describe("coauthor workspace", () => {
     renderWorkspace();
     await screen.findByLabelText("讨论输入");
     fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "不能丢失" } });
+    fireEvent.click(screen.getByLabelText("更多讨论操作"));
     fireEvent.click(screen.getByRole("button", { name: "删除当前讨论" }));
     const dialog = await screen.findByRole("alertdialog", { name: "删除当前讨论" });
     fireEvent.click(within(dialog).getByRole("button", { name: "删除讨论" }));
@@ -371,6 +392,7 @@ describe("coauthor workspace", () => {
   it("disables deletion while a task is generating", async () => {
     renderWorkspace();
     const request = await begin();
+    fireEvent.click(screen.getByLabelText("更多讨论操作"));
     expect(screen.getByRole("button", { name: "删除当前讨论" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "删除当前讨论" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
@@ -384,6 +406,7 @@ describe("coauthor workspace", () => {
     fireEvent.change(screen.getByLabelText("讨论输入"), { target: { value: "本机备份" } });
     const remove = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new Error("storage blocked"); });
     try {
+      fireEvent.click(screen.getByLabelText("更多讨论操作"));
       fireEvent.click(screen.getByRole("button", { name: "删除当前讨论" }));
       const dialog = await screen.findByRole("alertdialog", { name: "删除当前讨论" });
       fireEvent.click(within(dialog).getByRole("button", { name: "删除讨论" }));
@@ -1020,7 +1043,7 @@ describe("coauthor workspace", () => {
     await screen.findByLabelText("工作稿内容");
     expect(mocks.invoke.mock.calls.some(([name]) => name === "list_coauthor_branches")).toBe(false);
     fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
-    fireEvent.click(screen.getByText("版本、分支与多处修改"));
+    fireEvent.click(screen.getByText("更多稿件选项"));
     fireEvent.click(screen.getByRole("button", { name: "分支比较与合并" }));
     await screen.findByRole("option", { name: "子分支 · 失忆分支" });
     fireEvent.change(screen.getByLabelText("对照分支"), { target: { value: "s2" } });
@@ -1061,7 +1084,7 @@ describe("coauthor workspace", () => {
     renderWorkspace();
     await screen.findByLabelText("工作稿内容");
     fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
-    fireEvent.click(screen.getByText("版本、分支与多处修改"));
+    fireEvent.click(screen.getByText("更多稿件选项"));
     fireEvent.click(screen.getByRole("button", { name: "分支比较与合并" }));
     await screen.findByRole("option", { name: "子分支 · 失忆分支" });
     fireEvent.change(screen.getByLabelText("对照分支"), { target: { value: "s2" } });

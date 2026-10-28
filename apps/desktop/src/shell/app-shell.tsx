@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { Clock3, ListChecks, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings, X } from "lucide-react";
+import { ListChecks, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings, X } from "lucide-react";
 import { getBootstrapStatus, getCurrentProject, getHealth, listAllRecoveryLogs } from "../lib/tauri-client";
 import { useJobs } from "../lib/jobs-query";
 import { useAuthorTodos } from "../lib/author-todos-query";
 import { UnsavedChangesProvider } from "./unsaved-changes-provider";
-import { primaryDestination, primaryNavigation, workspaceLabel } from "./navigation";
+import { primaryDestination, primaryNavigation } from "./navigation";
 import { ProjectActionsProvider, useProjectActions } from "./project-actions-provider";
 import { ProjectPicker } from "./project-picker";
 import { useLayoutPreference } from "../lib/workspace-preferences";
@@ -89,7 +89,6 @@ function ShellLayout() {
             {mobileNavigation ? <X size={19} /> : <Menu size={19} />}
           </button>
           <ProjectPicker />
-          <span className="global-location">{workspaceLabel(pathname)}</span>
           <div className="global-tools" aria-label="全局工具">
             <AppearanceControls />
             <Link ref={searchTrigger} to="/search" className="shell-icon" aria-label="搜索" title="搜索 (Ctrl+K)" aria-current={pathname === "/search" ? "page" : undefined}
@@ -172,9 +171,6 @@ function ShellLayout() {
               aria-hidden="true"
             />
             <span title={health.data ? `SQLite ${health.data.sqliteVersion} · Schema ${health.data.schemaVersion}` : undefined}>{serviceLabel}</span>
-          </span>
-          <span className="status-item">
-            <Clock3 size={13} /> 本地优先
           </span>
         </footer>
       </div>
