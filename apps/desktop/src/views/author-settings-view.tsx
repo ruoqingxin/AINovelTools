@@ -54,7 +54,7 @@ export function AuthorSettingsView() {
       {selected ? <><ContentTypeLabel identity={{ category: "SETTING", subtype: "揭示状态" }} /><h2>{selected.entityName}</h2><p className="library-meta">作者确认 · {selected.visibility === "AUTHOR_ONLY" ? "尚未揭示" : "可向读者揭示"}</p>
         <p className="library-content">{selected.content}</p>
         <div className="library-actions"><WorkspaceLink className="secondary-action" href={`/discussion#${encodeURIComponent(selected.sessionId)}`}>来源讨论</WorkspaceLink>
-          {project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "entity", targetId: selected.entityId }}>去构思核对关联设定</AiWorkspaceLink>}
+          {project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "entity", targetId: selected.entityId }}>去共创核对关联设定</AiWorkspaceLink>}
           {project.data ? <WorkspaceLink className="secondary-action" href={entityHref(selected.entityId, project.data.projectId, "/knowledge/settings")}>关联人物或世界资料</WorkspaceLink> : null}
         </div><details className="library-advanced"><summary>来源信息</summary><p>来源修订 <code>{selected.entityRevisionId}</code></p><p>整理结果 <code>{selected.sourceProposalId}</code></p></details>
       </> : <div className="library-empty"><p>{settings.isPending ? "正在读取揭示状态…" : settings.isError ? "设定暂不可用"

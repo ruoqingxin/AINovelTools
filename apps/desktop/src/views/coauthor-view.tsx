@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Check, ClipboardList, DatabaseZap, FileInput, FileText, GitBranch, GitCompareArrows, History, ListChecks, MessageSquareText, MoreHorizontal, Pencil, Plus, Save, Send, Square, Trash2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ArrowDown, BookOpen, Check, ClipboardList, Columns2, DatabaseZap, FileInput, FileText, GitBranch, GitCompareArrows, History, Info, ListChecks, MessageSquareText, MoreHorizontal, Pencil, Plus, Save, Send, Square, Trash2, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "../lib/ipc-transport";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
@@ -15,7 +15,8 @@ import { useConfirmAction } from "../shell/confirm-action-provider";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { useProjectTransition } from "../shell/project-actions-provider";
 import { sameDraft, useCoauthorDraft } from "./use-coauthor-draft";
-import { WorkspacePanel } from "./workspace-panel";
+import { WorkspacePanel, useWideWorkspace } from "./workspace-panel";
+import { useLayoutPreference } from "../lib/workspace-preferences";
 import { CoauthorChangesPanel } from "./coauthor-changes-panel";
 import { CoauthorChecksPanel } from "./coauthor-checks-panel";
 import { CoauthorDecisionHistory, DecisionContext } from "./coauthor-decision-history";
@@ -242,6 +243,9 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState("chat");
+  const wide = useWideWorkspace(1180);
+  const [preferSplit, setPreferSplit] = useLayoutPreference("coauthor-split", false);
+  const split = wide && preferSplit;
   const [panel, setPanel] = useState<"sources" | "semantic" | "checks" | "decisions" | "history" | "publish" | "changes" | "branches" | null>(null);
   const [recordSections, setRecordSections] = useState(["sources"]);
   const recordsOpen = panel === "sources" || panel === "checks" || panel === "semantic";
@@ -262,6 +266,9 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
   const focusReview = useRef(false);
   const [proposalSelection, setProposalSelection] = useState("");
   const thread = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
+  const historyScroll = useRef<{ height: number; top: number } | null>(null);
+  const [awayFromLatest, setAwayFromLatest] = useState(false);
   const panelFeedback = useRef<HTMLDivElement>(null);
   const discussionMenu = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -315,10 +322,26 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
     mounted.current = true;
     return () => { mounted.current = false; subscriptions.current.forEach((remove) => remove()); subscriptions.current.clear(); };
   }, []);
+  useLayoutEffect(() => {
+    const el = thread.current;
+    if (!el || (!split && tab !== "chat")) return;
+    if (historyScroll.current) {
+      el.scrollTop = historyScroll.current.top + el.scrollHeight - historyScroll.current.height;
+      historyScroll.current = null;
+    } else if (followLatest.current) {
+      el.scrollTop = el.scrollHeight;
+      setAwayFromLatest(false);
+    }
+  }, [stream, messages.data, active, older, tab, split]);
   useEffect(() => {
     const el = thread.current;
-    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight;
-  }, [stream, messages.data, active]);
+    if (!el || (!split && tab !== "chat") || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (followLatest.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [tab, split]);
   useEffect(() => { setProposalSelection(""); }, [run]);
   useEffect(() => { setSource(null); }, [runId]);
   useEffect(() => {
@@ -338,6 +361,11 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
     setInput(value);
     try { if (value) localStorage.setItem(composerKey, value); else localStorage.removeItem(composerKey); }
     catch { setError("讨论输入备份失败，请暂时不要离开。"); }
+  }
+  function jumpToLatest() {
+    followLatest.current = true;
+    setAwayFromLatest(false);
+    if (thread.current) thread.current.scrollTop = thread.current.scrollHeight;
   }
   function reviewReply(message: DiscussionMessage) {
     if (activeRef.current || busyRef.current) return;
@@ -442,6 +470,7 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
       if (activeRef.current) await stop();
       id = crypto.randomUUID();
       const started = id;
+      jumpToLatest();
       activeRef.current = started; setActive(started); setStream(""); setProgress("正在准备…");
       stateEpoch.current++;
       unlisten = await listen("coauthor-progress", ({ payload }) => {
@@ -582,13 +611,17 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
   return <div className="coauthor-session">
     <nav className="coauthor-toolbar" aria-label="工作区">
       <div className="coauthor-tabs" role="tablist" aria-label="共创页签">
-        <button id="coauthor-chat-tab" role="tab" aria-controls="coauthor-chat-panel" aria-selected={tab === "chat"} onClick={() => setTab("chat")}><MessageSquareText size={15} />讨论</button>
-        <button id="coauthor-draft-tab" role="tab" aria-controls="coauthor-draft-panel" aria-selected={tab === "draft"} onClick={() => setTab("draft")}><FileText size={15} />工作稿</button>
+        <button id="coauthor-chat-tab" role="tab" aria-controls="coauthor-chat-panel" aria-selected={tab === "chat"} onClick={() => { setTab("chat"); setPreferSplit(false); }}><MessageSquareText size={15} />讨论</button>
+        <button id="coauthor-draft-tab" role="tab" aria-controls="coauthor-draft-panel" aria-selected={tab === "draft"} onClick={() => { setTab("draft"); setPreferSplit(false); }}><FileText size={15} />工作稿</button>
       </div>
       <div className="coauthor-tools" role="group" aria-label="讨论工具">
         <button title="查看本轮记录、改稿建议、查证清单及检索设置" onClick={() => openRecords()}><BookOpen size={15} />依据与运行记录</button>
         <button title="查看和纠正当前讨论的决定" onClick={() => setPanel("decisions")}><ListChecks size={15} />讨论决定 <span>{state.decisions.length}</span></button>
       </div>
+      {wide && <button className="icon-command coauthor-split-toggle" type="button"
+        aria-label="并排显示讨论与工作稿" aria-pressed={split}
+        title={split ? "取消并排，保留当前页签" : "并排显示讨论与工作稿"}
+        onClick={() => setPreferSplit(!preferSplit)}><Columns2 size={17} /></button>}
       <details ref={discussionMenu} className="coauthor-discussion-menu" onKeyDown={(event) => {
         if (event.key !== "Escape") return;
         event.currentTarget.open = false;
@@ -619,18 +652,34 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
         }
       })}>读取此版本</button></>}
     </div>}
-    <div className="coauthor-columns" data-tab={tab}>
-      <section id="coauthor-chat-panel" className="coauthor-chat" role="tabpanel" aria-label="讨论" hidden={tab !== "chat"}>
-        <header className="coauthor-area-heading"><h2><MessageSquareText size={17} />讨论区</h2></header>
-        <p className="coauthor-reliability-note"><strong>AI 内容仍需核对</strong> 条件范围、新旧规则与前文承接仍可能出错；生成完成不代表内容可靠。</p>
+    <div className="coauthor-columns" data-tab={tab} data-split={split}>
+      <section id="coauthor-chat-panel" className="coauthor-chat" role={split ? "region" : "tabpanel"} aria-label="讨论" hidden={!split && tab !== "chat"}>
+        <header className="coauthor-area-heading"><h2><MessageSquareText size={17} />讨论区</h2>
+          <details className="coauthor-reliability-note"><summary><Info size={14} />生成完成不代表内容可靠</summary>
+            <p>AI 内容仍需核对。条件范围、新旧规则与前文承接仍可能出错，请对照原文确认。</p></details>
+        </header>
         {state.runs[0] && state.runs[0].status !== "COMPLETED" && state.runs[0].id !== active && <div className="coauthor-incomplete" role="status">
           <span>最近一轮：{statuses[state.runs[0].status] ?? "状态待核实"}，不代表已完成你的要求。</span>
           <button type="button" onClick={() => openRecords(undefined, state.runs[0].id)}>查看原因与保留结果</button>
         </div>}
-        <div className="coauthor-thread" ref={thread}>
+        <div className="coauthor-thread-wrap">
+        <div className="coauthor-thread" ref={thread} role="log" aria-label="讨论记录" aria-live="off"
+          onScroll={(event) => {
+            if (!split && tab !== "chat") return;
+            const el = event.currentTarget;
+            const away = el.scrollHeight - el.scrollTop - el.clientHeight > 80;
+            followLatest.current = !away;
+            setAwayFromLatest(away);
+          }}>
           {visible.length >= 100 && moreHistory && <button disabled={busy} onClick={() => void act(async () => {
+            const before = thread.current ? { height: thread.current.scrollHeight, top: thread.current.scrollTop } : null;
             const page = await listDiscussionMessages(scope.sessionId, 100, visible[0]?.id);
-            if (mounted.current) { setOlder((entries) => [...page, ...entries]); setMoreHistory(page.length === 100); }
+            if (mounted.current) {
+              const el = thread.current;
+              // Hidden tabs have zero layout metrics; retain the last visible reading position.
+              historyScroll.current = el && el.clientHeight > 0 ? { height: el.scrollHeight, top: el.scrollTop } : before;
+              setOlder((entries) => [...page, ...entries]); setMoreHistory(page.length === 100);
+            }
           })}>更早的讨论</button>}
           {messages.isPending && <p role="status">正在读取讨论记录…</p>}
           {messages.isSuccess && !visible.length && !active && <p className="coauthor-placeholder">今天想推敲哪一部分？</p>}
@@ -651,25 +700,37 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
           })}
           {(active || stream) && <article className="coauthor-message"><header><strong>共创伙伴</strong><small>{active ? progress : "未完成的输出"}</small></header><div>{stream}</div></article>}
         </div>
+        {awayFromLatest && <button type="button" className="coauthor-jump-latest" onClick={jumpToLatest}>
+          <ArrowDown size={14} />回到最新</button>}
+        </div>
         <form className="coauthor-composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
           {selection && <div className="coauthor-selection"><span>选区 · {selection.slice(0, 40)}</span>
             <button type="button" className="icon-command" title="清除选区" aria-label="清除选区" onClick={() => setSelection("")}><X size={14} /></button></div>}
           <textarea ref={composer} aria-label="讨论输入" placeholder="聊想法、查资料，或接着写…" value={input}
-            onChange={(event) => changeInput(event.target.value)} rows={3} />
+            aria-keyshortcuts="Control+Enter Meta+Enter"
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey
+                || event.nativeEvent.isComposing || event.keyCode === 229) return;
+              event.preventDefault();
+              void send();
+            }}
+            onChange={(event) => changeInput(event.target.value)} rows={2} />
           <div className="coauthor-composer-actions">
             <label><input type="checkbox" checked={allowEdits} onChange={(event) => setAllowEdits(event.target.checked)} />允许改工作稿</label>
             <small>{profile?.name ?? "未选择模型"}</small>
+            {[...input].length > 16_000 && <span className="coauthor-input-count">{[...input].length} / 20000</span>}
+            <button className="icon-command" type="button" title="清空输入" aria-label="清空输入" disabled={!input}
+              onClick={() => { changeInput(""); composer.current?.focus(); }}><Trash2 size={15} /></button>
             {active && <button type="button" className="secondary-action" title="停止生成" aria-label="停止生成" onClick={() => void stop().catch((cause) => setError(errorMessage(cause)))}><Square size={16} />停止生成</button>}
-            <button type="submit" className="primary-action" disabled={!canSend} title={active ? "停止旧任务并发送补充指令" : "发送"}
+            <button type="submit" className="primary-action" disabled={!canSend} title={active ? "停止旧任务并发送补充指令 (Ctrl/Cmd+Enter)" : "发送 (Ctrl/Cmd+Enter)"}
               aria-label={active ? "发送补充指令" : "发送"}><Send size={16} />{active ? "发送补充" : "发送"}</button>
           </div>
           {profiles.isSuccess && preferences.isSuccess && overrides.isSuccess && !profile?.hasSecret
             && <p className="coauthor-notice" role="status">未配置可用的讨论模型。<a href="/settings#models">配置模型</a></p>}
-          {input && <button className="coauthor-clear-input" type="button" onClick={() => changeInput("")}>清空输入</button>}
           {[...input].length > 20_000 && <p role="alert" className="project-error">本轮输入超过 20000 字，请分轮讨论；原文未被截断。</p>}
         </form>
       </section>
-      <section id="coauthor-draft-panel" className="coauthor-draft" role="tabpanel" aria-label="工作稿" hidden={tab !== "draft"}>
+      <section id="coauthor-draft-panel" className="coauthor-draft" role={split ? "region" : "tabpanel"} aria-label="工作稿" hidden={!split && tab !== "draft"}>
         <header className="coauthor-area-heading"><h2><FileText size={17} /><ContentTypeLabel identity={draftIdentity(draft.document)} /></h2>
           <small><span>{draft.document.targetKey ? `已关联正式${kinds[draft.document.kind]}` : "仅保存在当前讨论"}</span>
             {" · "}<span>{draft.saving ? "保存中…" : draft.dirty ? "待保存" : `已保存 v${draft.document.version}`}</span></small></header>

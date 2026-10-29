@@ -97,7 +97,7 @@ describe("ChapterCreationWorkspace", () => {
     expect(screen.getByText("正文 · 章节正文")).toBeVisible();
     expect(screen.queryByText("共享编辑器")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /保存正文|检查正文|展开写作助手/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "去构思处理本章正文" })).toHaveAttribute("href",
+    expect(screen.getByRole("link", { name: "去共创处理本章正文" })).toHaveAttribute("href",
       "/discussion?work=writing&targetProject=project-1&planNode=chapter-1");
     expect(screen.getByRole("link", { name: "大纲 · 本章计划" })).toHaveAttribute("href",
       "/discussion?work=writing&targetProject=project-1&planNode=chapter-1&tab=plan&assistant=plan");
@@ -150,7 +150,7 @@ describe("ChapterCreationWorkspace", () => {
     const state = makeState({ manuscript: { isPending: false, isError: false, isSuccess: true, data: null } as ManuscriptState["manuscript"], chapterDirty });
     render(<AiWorkspaceContext.Provider value={false}><ChapterCreationWorkspace {...makeProps(state)} projectId="p" /></AiWorkspaceContext.Provider>);
     expect(screen.getByRole("heading", { name: "暂无正式正文" })).toBeVisible();
-    const entry = screen.getByRole("link", { name: "去构思处理本章正文" });
+    const entry = screen.getByRole("link", { name: "去共创处理本章正文" });
     expect(entry).toHaveTextContent(chapterDirty ? "继续编辑草稿" : "开始写作");
     expect(entry).toHaveAttribute("href", "/discussion?work=writing&targetProject=p&planNode=chapter-1");
     expect(screen.queryByText("正式版本")).not.toBeInTheDocument();
@@ -431,7 +431,7 @@ describe("ChapterCreationWorkspace", () => {
     fireEvent.change(screen.getByLabelText("检查对象"), { target: { value: "admission" } });
     expect(panels.ai.mock.calls.some(([props]) => props.mode === "review" && props.reviewPurpose === "manuscript" && props.active === false)).toBe(true);
     expect(panels.ai).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "review", reviewPurpose: "admission", active: true }));
-    const preparation = screen.getByText("创作准备核对").closest("details")!;
+    const preparation = screen.getByText("筹备核对").closest("details")!;
     preparation.open = true;
     fireEvent(preparation, new Event("toggle"));
     expect(panels.ai.mock.calls.some(([props]) => props.mode === "readiness" && props.active === true)).toBe(true);

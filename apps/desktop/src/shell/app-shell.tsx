@@ -13,6 +13,7 @@ import { useLayoutPreference } from "../lib/workspace-preferences";
 import { ConfirmActionProvider } from "./confirm-action-provider";
 import { AppearanceControls } from "./appearance-controls";
 import { useWorkspaceTheme } from "../lib/use-workspace-theme";
+import { WorkspaceLink } from "../views/workspace-link";
 
 export function AppShell() {
   return <ConfirmActionProvider><UnsavedChangesProvider><ProjectActionsProvider><ShellLayout /></ProjectActionsProvider></UnsavedChangesProvider></ConfirmActionProvider>;
@@ -21,6 +22,7 @@ export function AppShell() {
 function ShellLayout() {
   useWorkspaceTheme();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const searchStr = useRouterState({ select: (state) => state.location.searchStr });
   const [collapsed, setCollapsed] = useLayoutPreference("navigation:collapsed", false);
   const [mobileNavigation, setMobileNavigation] = useState(false);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
@@ -118,12 +120,12 @@ function ShellLayout() {
           </div>
           <nav id="primary-navigation">
             {primaryNavigation.map(({ label, icon: Icon, path }) => currentProject.data ? (
-              <Link
+              <WorkspaceLink
                 key={label}
-                to={path}
+                href={path}
                 className="activity-button"
-                data-active={primaryDestination(pathname) === path || undefined}
-                aria-current={primaryDestination(pathname) === path ? "page" : undefined}
+                data-active={primaryDestination(pathname, searchStr) === path || undefined}
+                aria-current={primaryDestination(pathname, searchStr) === path ? "page" : undefined}
                 aria-disabled={actions.busy !== null}
                 aria-label={label}
                 title={label}
@@ -132,7 +134,7 @@ function ShellLayout() {
                 <Icon size={20} strokeWidth={1.8} />
                 <span>{label}</span>
                 {path === "/review" && todos.data?.pendingCount ? <span className="nav-todo-count" aria-label={`${todos.data.pendingCount} 项待办`}>{todos.data.pendingCount > 99 ? "99+" : todos.data.pendingCount}</span> : null}
-              </Link>
+              </WorkspaceLink>
             ) : <button type="button" key={label} className="activity-button" aria-label={label} title={label} disabled>
               <Icon size={20} strokeWidth={1.8} /><span>{label}</span>
             </button>)}

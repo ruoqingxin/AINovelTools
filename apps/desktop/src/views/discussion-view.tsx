@@ -592,7 +592,7 @@ export function DiscussionView() {
   return <div className="discussion-workspace discussion-stage-three" data-draft-open={showDraft && wide}>
     {returnTo ? <a className="activity-return" href={returnTo}>返回来源</a> : null}
     <div className="workspace-heading">
-      <h1>构思</h1>
+      <h1>共创</h1>
       <div className="library-actions">
         <button type="button" className="secondary-action" onClick={() => setShowSessions(true)}><MessageSquareText size={15} />讨论列表</button>
         <button type="button" className="secondary-action" disabled={busy} onClick={() => {

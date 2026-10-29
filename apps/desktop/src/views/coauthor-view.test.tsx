@@ -117,6 +117,126 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it("remembers an optional split layout without remounting the input or draft", async () => {
+    const first = renderWorkspace();
+    const input = await screen.findByLabelText("讨论输入");
+    const manuscript = screen.getByLabelText("工作稿内容");
+    fireEvent.change(input, { target: { value: "保留我的问题" } });
+    const toggle = screen.getByRole("button", { name: "并排显示讨论与工作稿" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(input).toBeVisible();
+    expect(manuscript).toBeVisible();
+    fireEvent.change(manuscript, { target: { value: "并排时的编辑" } });
+    fireEvent.click(toggle);
+    expect(input).toBeVisible();
+    expect(manuscript).not.toBeVisible();
+    fireEvent.click(toggle);
+    expect(screen.getByLabelText("工作稿内容")).toBe(manuscript);
+    expect(manuscript).toHaveValue("并排时的编辑");
+    expect(input).toHaveValue("保留我的问题");
+    first.unmount();
+    renderWorkspace();
+    await screen.findByLabelText("讨论输入");
+    expect(screen.getByRole("button", { name: "并排显示讨论与工作稿" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("工作稿内容")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    expect(screen.getByLabelText("讨论输入")).not.toBeVisible();
+    expect(screen.getByRole("button", { name: "并排显示讨论与工作稿" })).toHaveAttribute("aria-pressed", "false");
+    expect(mocks.invoke.mock.calls.some(([name]) => ["run_coauthor", "publish_coauthor_document"].includes(name))).toBe(false);
+  });
+
+  it.each(["ctrlKey", "metaKey"])("sends with %s+Enter while keeping ordinary Enter and IME composition intact", async (modifier) => {
+    renderWorkspace();
+    const input = await screen.findByLabelText("讨论输入");
+    fireEvent.change(input, { target: { value: "快捷发送的问题" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeEnabled());
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", [modifier]: true, isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", [modifier]: true, keyCode: 229 });
+    fireEvent.keyDown(input, { key: "Enter", [modifier]: true, shiftKey: true });
+    expect(pending).toHaveLength(0);
+    expect(input).toHaveValue("快捷发送的问题");
+    fireEvent.keyDown(input, { key: "Enter", [modifier]: true });
+    await waitFor(() => expect(pending).toHaveLength(1));
+    expect(pending[0]!.input.message).toBe("快捷发送的问题");
+    await finish(pending[0]!);
+  });
+
+  it("keeps keyboard sending subject to the same model and input protections", async () => {
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (name, args) => name === "list_model_profiles" ? [] : original(name, args));
+    renderWorkspace();
+    const input = await screen.findByLabelText("讨论输入");
+    fireEvent.change(input, { target: { value: "没有配置模型" } });
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(input).toHaveValue("没有配置模型");
+    expect(pending).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "清空输入" }));
+    expect(input).toHaveValue("");
+    expect(input).toHaveFocus();
+    expect(localStorage.getItem("coauthor-input:p1:s1")).toBeNull();
+    expect(screen.getByRole("button", { name: "清空输入" })).toBeDisabled();
+  });
+
+  it("does not pull readers away from history and can explicitly follow the latest messages", async () => {
+    const { client } = renderWorkspace();
+    const log = await screen.findByRole("log", { name: "讨论记录" });
+    let height = 1600;
+    Object.defineProperties(log, {
+      scrollHeight: { configurable: true, get: () => height },
+      clientHeight: { configurable: true, value: 400 },
+    });
+    log.scrollTop = 100;
+    fireEvent.scroll(log);
+    act(() => client.setQueryData(["discussion-messages", "s1"], [
+      { id: "new-reply", sessionId: "s1", role: "ASSISTANT", content: "新的回复" },
+    ]));
+    await screen.findByText("新的回复");
+    expect(log.scrollTop).toBe(100);
+    fireEvent.click(screen.getByRole("button", { name: "回到最新" }));
+    expect(log.scrollTop).toBe(1600);
+    expect(screen.queryByRole("button", { name: "回到最新" })).not.toBeInTheDocument();
+    height = 1900;
+    act(() => client.setQueryData(["discussion-messages", "s1"], [
+      { id: "later-reply", sessionId: "s1", role: "ASSISTANT", content: "继续回复" },
+    ]));
+    await screen.findByText("继续回复");
+    expect(log.scrollTop).toBe(1900);
+  });
+
+  it("preserves the history position when earlier messages finish loading in a hidden tab", async () => {
+    posted = Array.from({ length: 100 }, (_, index) => ({
+      id: `message-${index}`, sessionId: "s1", role: "USER", content: `问题 ${index}`,
+    }));
+    const original = mocks.invoke.getMockImplementation()!;
+    let complete!: (value: unknown) => void;
+    mocks.invoke.mockImplementation(async (name, args) => name === "list_discussion_messages" && args.beforeMessageId
+      ? new Promise((resolve) => { complete = resolve; }) : original(name, args));
+    renderWorkspace();
+    const log = await screen.findByRole("log", { name: "讨论记录" });
+    await screen.findByText("问题 99");
+    const panel = screen.getByRole("tabpanel", { name: "讨论" });
+    Object.defineProperties(log, {
+      scrollHeight: { configurable: true, get: () => panel.hidden ? 0 : log.querySelectorAll("article").length * 100 },
+      clientHeight: { configurable: true, get: () => panel.hidden ? 0 : 400 },
+    });
+    log.scrollTop = 200;
+    fireEvent.scroll(log);
+    fireEvent.click(screen.getByRole("button", { name: "更早的讨论" }));
+    await waitFor(() => expect(complete).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("tab", { name: "工作稿" }));
+    await act(async () => complete(Array.from({ length: 20 }, (_, index) => ({
+      id: `older-${index}`, sessionId: "s1", role: "USER", content: `更早问题 ${index}`,
+    }))));
+    fireEvent.click(screen.getByRole("tab", { name: "讨论" }));
+    expect(log.scrollTop).toBe(2200);
+    expect(screen.getByRole("button", { name: "回到最新" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "更早的讨论" })).not.toBeInTheDocument();
+  });
+
   it("requires explicit confirmed classification before an unclear working draft can be adopted", async () => {
     stored.document = { ...baseline, kind: "UNCLASSIFIED" };
     renderWorkspace();

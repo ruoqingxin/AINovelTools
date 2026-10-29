@@ -214,7 +214,7 @@ export function ChapterCreationWorkspace({
       <ContentTypeLabel identity={{ category: "MANUSCRIPT", subtype: "章节正文" }} />
       <div className="chapter-reading-actions">
         {!readingEmpty && <WorkspaceLink className="secondary-action reader-edit-action" href={writingHref}
-          aria-label="去构思处理本章正文"><SquarePen size={15} />编辑正文</WorkspaceLink>}
+          aria-label="去共创处理本章正文"><SquarePen size={15} />编辑正文</WorkspaceLink>}
         <WorkspaceLink className="reader-plan-action" aria-label="大纲 · 本章计划"
           href={aiWorkspaceHref({ workflow: "writing", projectId: projectId ?? "", targetId: chapter.id, tab: "plan" })}>
           <ClipboardList size={15} />本章计划
@@ -235,7 +235,7 @@ export function ChapterCreationWorkspace({
           <BookOpenText size={36} strokeWidth={1.25} aria-hidden="true" />
           <h3>暂无正式正文</h3>
           {state.chapterDirty && <p role="status">有尚未采用的本地工作稿</p>}
-          <WorkspaceLink className="primary-action reader-start-action" href={writingHref} aria-label="去构思处理本章正文">
+          <WorkspaceLink className="primary-action reader-start-action" href={writingHref} aria-label="去共创处理本章正文">
             <SquarePen size={16} />{state.chapterDirty ? "继续编辑草稿" : "开始写作"}
           </WorkspaceLink>
         </div>}
@@ -417,7 +417,7 @@ export function ChapterCreationWorkspace({
           {!reviewEnabled ? <p className="plan-empty">此类检查已关闭。<a href="/settings#writing-admission">审核设置</a></p> : null}
           {state.draftReady ? visitedReviews.map((purpose) => <div key={purpose} hidden={reviewPurpose !== purpose || auditFlow?.[purpose] === false}>
             {purpose === "admission" ? <details onToggle={(event) => setReadinessOpen(event.currentTarget.open)}>
-              <summary>创作准备核对</summary>
+              <summary>筹备核对</summary>
               {readinessOpen ? <AiWritingPanel {...aiProps} mode="readiness"
                 active={assistantVisible && assistantTab === "review" && reviewPurpose === "admission" && auditFlow?.admission !== false} /> : null}
             </details> : null}

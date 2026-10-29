@@ -56,7 +56,7 @@ describe("MaterialsView", () => {
     await selectSummary();
     expect(screen.getByText("辅助参考 · 章节记忆")).toBeVisible();
     expect(screen.queryByRole("button", { name: /新建参考摘要|编辑参考副本|重新生成|确认为有效/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "去构思处理章节记忆" })).toHaveAttribute("href",
+    expect(screen.getByRole("link", { name: "去共创处理章节记忆" })).toHaveAttribute("href",
       "/discussion?work=materials&targetProject=project-1&summary=summary-1&materialKind=SUMMARY");
     expect(mocks.rebuildSummaryMaterial).not.toHaveBeenCalled();
     expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();

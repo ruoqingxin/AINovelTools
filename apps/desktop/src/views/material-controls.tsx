@@ -160,7 +160,7 @@ export function SummaryActions({ item, onBusyChange }: { item: SummaryMaterial; 
     : item.generationMode === "EXTRACTIVE_AUTO_SETTINGS" ? enqueueProjectSettingSummaryRefresh : null;
   if (!aiWorkspace) return automatic ? <AiWorkspaceLink
     target={{ projectId: item.projectId, workflow: "materials", targetId: item.id, materialKind: "SUMMARY" }}>
-    去构思更新{summaryLabel(item)}
+    去共创更新{summaryLabel(item)}
   </AiWorkspaceLink> : null;
   return <>
     <div className="library-actions">

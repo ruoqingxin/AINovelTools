@@ -80,7 +80,7 @@ describe("EmptyProjectView", () => {
     mocks.createPlanNode.mockResolvedValue({ id: "created", kind: "CHAPTER", parentId: "volume" });
     setup();
     await waitFor(() => expect(screen.getByRole("button", { name: "新建章节" })).toBeEnabled());
-    expect(screen.getByRole("link", { name: "开始创作准备" })).toHaveAttribute("href", "/planning?mode=prepare");
+    expect(screen.getByRole("link", { name: "开始筹备" })).toHaveAttribute("href", "/planning?mode=prepare");
     fireEvent.click(screen.getByRole("button", { name: "新建章节" }));
     expect(screen.queryByLabelText("一句话核心")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "创建章节" }));

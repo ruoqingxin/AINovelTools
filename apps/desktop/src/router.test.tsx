@@ -29,6 +29,7 @@ vi.mock("./views/jobs-view", () => ({ JobsView: () => <p>Activity</p> }));
 vi.mock("./views/manuscript-source-view", () => ({ ManuscriptSourceView: () => <p>Verified source</p> }));
 vi.mock("./views/discussion-source-view", () => ({ DiscussionSourceView: () => <p>Verified discussion source</p> }));
 vi.mock("./views/creation-preparation-view", () => ({ CreationPreparationView: () => <p>Creation preparation</p> }));
+vi.mock("./views/book-preparation-view", () => ({ BookPreparationView: () => <p>Whole-book preparation</p> }));
 
 function renderRoute(path: string) {
   const testRouter = createRouter({
@@ -76,7 +77,8 @@ describe("project routes", () => {
     ["/planning?mode=structure", "Workspace planning"],
     ["/planning?mode=prepare&item=outline", "Creation preparation"],
     ["/planning?planNode=outline&targetProject=project-1", "Workspace planning"],
-    ["/preparation", "Creation preparation"],
+    ["/preparation", "Whole-book preparation"],
+    ["/planning?mode=prepare", "Whole-book preparation"],
     ["/writing", "Workspace writing"],
     ["/chapters", "Workspace writing"],
     ["/writing?sourceRevision=old-revision", "Verified source"],
@@ -110,11 +112,20 @@ describe("project routes", () => {
     expect(await screen.findByText("No project")).toBeVisible();
     expect(screen.queryByText("Workspace writing")).not.toBeInTheDocument();
   });
+  it.each([
+    ["/planning?mode=prepare", "筹备", "Whole-book preparation"],
+    ["/planning?mode=structure", "大纲", "Workspace planning"],
+  ])("removes the redundant top-right workspace tabs from %s", async (path, title, content) => {
+    renderRoute(path);
+    await screen.findByText(content);
+    expect(screen.getByRole("heading", { name: title, level: 1 })).toBeVisible();
+    expect(screen.queryByRole("navigation", { name: "规划工作区" })).not.toBeInTheDocument();
+  });
 
   it.each([{ nodes: [] }, { nodes: [{ kind: "CHAPTER", archived: true }] }])("starts preparation when there are no active chapters: %j", async ({ nodes }) => {
     mocks.listPlanNodes.mockResolvedValue(nodes);
     renderRoute("/");
-    expect(await screen.findByText("Creation preparation")).toBeVisible();
+    expect(await screen.findByText("Whole-book preparation")).toBeVisible();
   });
 
   it("reports project loading errors instead of treating them as an unopened project", async () => {
@@ -137,7 +148,7 @@ describe("project routes", () => {
       references: ['author-planning-review:v1:{"sectionVersion":1,"checks":[],"basis":[]}'],
     }]);
     renderRoute("/");
-    expect(await screen.findByText("Creation preparation")).toBeVisible();
+    expect(await screen.findByText("Whole-book preparation")).toBeVisible();
     expect(screen.queryByText("Workspace writing")).not.toBeInTheDocument();
   });
 });

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   listPlanNodes: vi.fn(), getCurrentProject: vi.fn(), listPlanningSections: vi.fn(), listModelProfiles: vi.fn(),
   getAuditFlowSettings: vi.fn(), savePlanningSection: vi.fn(),
   adoptPlanBatch: vi.fn(), createPlanNode: vi.fn(),
+  currentManuscript: vi.fn(), currentManuscriptDraft: vi.fn(),
 }));
 vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
@@ -34,7 +35,8 @@ function renderPlan(search = "?planNode=scene-1&targetProject=project-1&returnTo
 }
 
 describe("exact planning navigation", () => {
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); window.history.replaceState(null, "", "/"); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); window.history.replaceState(null, "", "/");
+    window.localStorage.removeItem("ainoveltools:last-writing-chapter:project-1"); });
   beforeEach(() => {
     vi.resetAllMocks();
     vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -46,6 +48,8 @@ describe("exact planning navigation", () => {
     }]);
     mocks.listModelProfiles.mockResolvedValue([]);
     mocks.getAuditFlowSettings.mockResolvedValue({ admission: true, manuscript: true, knowledge: true });
+    mocks.currentManuscript.mockResolvedValue(null);
+    mocks.currentManuscriptDraft.mockResolvedValue(null);
   });
 
   it("opens the exact node and retains its source for the unified workspace header", async () => {
@@ -170,7 +174,7 @@ describe("exact planning navigation", () => {
     expect(reader).toHaveClass("formal-content-reader");
     expect(within(reader).getByRole("heading", { name: `暂无正式${subtype}` })).toBeVisible();
     expect(within(reader).getByRole("status")).toHaveTextContent("有待核对工作稿");
-    const entry = within(reader).getByRole("link", { name: "去构思处理重逢" });
+    const entry = within(reader).getByRole("link", { name: "去共创处理重逢" });
     expect(entry).toHaveTextContent(`核对${subtype}`);
     expect(entry).toHaveAttribute("href", `/discussion?work=${workflow}&targetProject=project-1&planNode=scene-1${extra}&returnTo=%2Fsearch`);
     expect(within(reader).queryByText("尚未采用的规划候选")).not.toBeInTheDocument();
@@ -183,7 +187,7 @@ describe("exact planning navigation", () => {
     renderPlan("?planNode=scene-1&targetProject=project-1", false);
     const reader = await screen.findByRole("region", { name: "重逢正式内容" });
     expect(within(reader).getByText("场景的正式计划")).toBeVisible();
-    const entry = within(reader).getByRole("link", { name: "去构思处理重逢" });
+    const entry = within(reader).getByRole("link", { name: "去共创处理重逢" });
     expect(entry).toHaveTextContent("编辑场景安排");
     expect(entry.closest(".formal-reader-toolbar")).not.toBeNull();
     expect(within(reader).queryByText("暂无正式场景安排")).not.toBeInTheDocument();
@@ -210,6 +214,198 @@ describe("exact planning navigation", () => {
     expect(screen.getByRole("button", { name: "开始规划分卷与章节" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "编写全书大纲" })).not.toBeInTheDocument();
     expect(mocks.createPlanNode).not.toHaveBeenCalled();
+  });
+
+  function emptyStructureSetup(sections: PlanningSection[] = []) {
+    const manager: PlanNode = { ...scene, id: "manager", kind: "VOLUME_MANAGER", title: "分卷管理" };
+    const volume: PlanNode = { ...scene, id: "volume", kind: "VOLUME", title: "第一卷", parentId: manager.id };
+    const chapter: PlanNode = { ...scene, id: "chapter", kind: "CHAPTER", title: "第1章", parentId: volume.id };
+    mocks.listPlanNodes.mockResolvedValue([manager, volume, chapter]);
+    mocks.listPlanningSections.mockResolvedValue(sections);
+    return { manager, volume, chapter };
+  }
+
+  function structureSection(id: string, content = "", pendingContent = ""): PlanningSection {
+    return { id, content, pendingContent, storyState: "CONFIRMED", version: 1,
+      rationale: "", consequence: "", references: [], updatedAt: "" };
+  }
+
+  it("hides empty starter volumes and chapters until planning begins and exposes one direct generation action", async () => {
+    emptyStructureSetup();
+    renderPlan("?planNode=manager&targetProject=project-1");
+    await screen.findByRole("heading", { name: "分卷与章节" });
+    const tree = screen.getByLabelText("规划树");
+    expect(within(tree).getByRole("button", { name: "分卷与章节" })).toBeVisible();
+    expect(within(tree).queryByRole("button", { name: "第一卷" })).not.toBeInTheDocument();
+    expect(within(tree).queryByRole("button", { name: "第1章" })).not.toBeInTheDocument();
+    expect(within(tree).queryByRole("textbox", { name: "搜索章节" })).not.toBeInTheDocument();
+    expect(screen.queryByText("1 卷 · 1 章")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "分卷方案" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "本卷章节" })).toBeDisabled();
+    expect(screen.queryByLabelText("拆章节目标分卷")).not.toBeInTheDocument();
+    const generate = screen.getByRole("button", { name: "生成分卷方案" });
+    expect(generate).toBeVisible();
+    expect(generate.closest("details")).toBeNull();
+    expect(screen.getByText("手动添加").closest("details")).not.toHaveAttribute("open");
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("目录选项"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "显示已删除节点" }));
+    expect(within(tree).getByRole("button", { name: "第一卷" })).toBeVisible();
+    expect(within(tree).getByRole("button", { name: "第1章" })).toBeVisible();
+  });
+
+  it("does not count empty starter nodes on the full-book outline", async () => {
+    emptyStructureSetup();
+    renderPlan("", false);
+    const reader = await screen.findByRole("main", { name: "全书大纲" });
+    expect(within(reader).getByText("0 卷 · 0 章 · 0 场景")).toBeVisible();
+    expect(within(screen.getByLabelText("规划树")).queryByRole("button", { name: "第一卷" })).not.toBeInTheDocument();
+  });
+
+  it("keeps volume candidates editable without treating them as an adopted directory", async () => {
+    emptyStructureSetup([structureSection("plan-node:manager", "", "第1卷·雾城｜寻找寄件人")]);
+    renderPlan("?planNode=manager&targetProject=project-1");
+    expect(await screen.findByLabelText("分卷候选")).toHaveValue("第1卷·雾城｜寻找寄件人");
+    expect(screen.getByRole("button", { name: "本卷章节" })).toBeDisabled();
+    expect(within(screen.getByLabelText("规划树")).queryByRole("button", { name: "第一卷" })).not.toBeInTheDocument();
+    expect(mocks.adoptPlanBatch).not.toHaveBeenCalled();
+  });
+
+  it("retains an established directory and chapter candidates while a later volume revision awaits review", async () => {
+    emptyStructureSetup([
+      structureSection("plan-node:manager", "已采用的分卷方案"),
+      structureSection("plan-node:volume", "已确认的本卷规划", "后续修改，尚未采用"),
+      structureSection("chapter-split-volume", "", "第2章·问路｜发现冲突"),
+    ]);
+    renderPlan("?planNode=manager&targetProject=project-1");
+    const editor = await screen.findByLabelText("章节拆分候选");
+    expect(editor).toHaveValue("第2章·问路｜发现冲突");
+    expect(screen.getByRole("button", { name: "本卷章节" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByLabelText("规划树")).getByRole("button", { name: "第一卷" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "拆分本卷章节" })).toBeDisabled();
+    expect(screen.getByRole("link", { name: "审定本卷规划" })).toHaveAttribute("href",
+      "/discussion?work=planning&targetProject=project-1&planNode=volume");
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it("keeps saved child drafts reachable even before a volume plan is confirmed", async () => {
+    emptyStructureSetup([structureSection("plan-node:chapter", "", "作者已写下的章节草稿")]);
+    renderPlan("?planNode=manager&targetProject=project-1");
+    await screen.findByRole("heading", { name: "分卷与章节" });
+    expect(within(screen.getByLabelText("规划树")).getByRole("button", { name: "第1章" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "本卷章节" })).toBeDisabled();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it("preserves direct navigation to an empty volume without making it a completed plan", async () => {
+    emptyStructureSetup();
+    renderPlan("?planNode=volume&targetProject=project-1");
+    expect(await screen.findByLabelText("编辑节点标题")).toHaveValue("第一卷");
+    expect(within(screen.getByLabelText("规划树")).getByRole("button", { name: "第一卷" })).toHaveAttribute("data-selected", "true");
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+  });
+
+  it("opens a manually added volume for planning instead of leaving it in the hidden empty directory", async () => {
+    const { manager, volume, chapter } = emptyStructureSetup();
+    const created: PlanNode = { ...volume, id: "manual-volume", title: "新的分卷" };
+    mocks.createPlanNode.mockImplementation(async () => {
+      mocks.listPlanNodes.mockResolvedValue([manager, volume, chapter, created]);
+      return created;
+    });
+    renderPlan("?planNode=manager&targetProject=project-1");
+    await screen.findByRole("heading", { name: "分卷与章节" });
+    fireEvent.click(screen.getByText("手动添加"));
+    fireEvent.change(screen.getByLabelText("父节点"), { target: { value: manager.id } });
+    fireEvent.change(screen.getByLabelText("节点标题"), { target: { value: created.title } });
+    fireEvent.click(screen.getByRole("button", { name: "创建分卷" }));
+    expect(await screen.findByLabelText("编辑节点标题")).toHaveValue(created.title);
+    expect(mocks.createPlanNode).toHaveBeenCalledWith({ kind: "VOLUME", title: created.title, parentId: manager.id });
+    expect(within(screen.getByLabelText("规划树")).getByRole("button", { name: created.title })).toBeVisible();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("hides unplanned empty writing nodes without reopening a remembered placeholder in AI workspace=%s", async (aiWorkspace) => {
+    emptyStructureSetup();
+    window.localStorage.setItem("ainoveltools:last-writing-chapter:project-1", "chapter");
+    renderPlan("?targetProject=project-1", aiWorkspace, "writing");
+    expect(await screen.findByRole("heading", { name: "尚未规划分卷与章节" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "规划分卷与章节" })).toHaveAttribute("href",
+      "/discussion?work=planning&targetProject=project-1&planNode=manager");
+    expect(screen.queryByRole("button", { name: "第一卷" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "第1章" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "搜索章节" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "章节正文阅读" })).not.toBeInTheDocument();
+    expect(screen.queryByText("导出正文")).not.toBeInTheDocument();
+    expect(mocks.currentManuscript).toHaveBeenCalledWith("chapter");
+    expect(mocks.currentManuscriptDraft).toHaveBeenCalledWith("chapter");
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it.each(["manuscript", "draft"])("keeps legacy writing content reachable without a volume plan: %s", async (kind) => {
+    const { manager, volume, chapter } = emptyStructureSetup();
+    const written: PlanNode = { ...chapter, id: "written", title: "已经写过的章节" };
+    mocks.listPlanNodes.mockResolvedValue([manager, volume, chapter, written]);
+    if (kind === "manuscript") mocks.currentManuscript.mockImplementation(async (id) =>
+      id === written.id ? { id: "revision", chapterId: id, documentJson: "已有正文" } : null);
+    else mocks.currentManuscriptDraft.mockImplementation(async (id) =>
+      id === written.id ? { chapterId: id, documentJson: "已有草稿", version: 1 } : null);
+    renderPlan("?targetProject=project-1", false, "writing");
+    const directory = await screen.findByRole("button", { name: written.title });
+    await waitFor(() => expect(directory).toHaveAttribute("data-selected", "true"));
+    expect(screen.getByRole("button", { name: "第一卷" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "第1章" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "尚未规划分卷与章节" })).not.toBeInTheDocument();
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+  });
+
+  it("does not claim writing is empty while checking manuscripts or after a read failure", async () => {
+    emptyStructureSetup();
+    let reject!: (error: Error) => void;
+    mocks.currentManuscript.mockReturnValue(new Promise((_, fail) => { reject = fail; }));
+    renderPlan("?targetProject=project-1", false, "writing");
+    const workspace = await screen.findByRole("main", { name: "正文工作区" });
+    expect(within(workspace).getByRole("status")).toHaveTextContent("正在读取章节");
+    expect(screen.queryByRole("heading", { name: "尚未规划分卷与章节" })).not.toBeInTheDocument();
+    await waitFor(() => expect(mocks.currentManuscript).toHaveBeenCalled());
+    await act(async () => reject(new Error("正文读取失败")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("暂时无法核对章节内容");
+    expect(screen.getByRole("button", { name: "第1章" })).toBeVisible();
+    expect(within(workspace).getByRole("status")).toHaveTextContent("暂时无法读取章节");
+    mocks.currentManuscript.mockResolvedValue(null);
+    fireEvent.click(screen.getByRole("button", { name: "重试读取章节" }));
+    expect(await screen.findByRole("heading", { name: "尚未规划分卷与章节" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "第1章" })).not.toBeInTheDocument();
+  });
+
+  it("retains writing navigation when planning evidence cannot be read instead of reporting an empty book", async () => {
+    emptyStructureSetup();
+    mocks.listPlanningSections.mockRejectedValue(new Error("规划读取失败"));
+    renderPlan("?targetProject=project-1", false, "writing");
+    expect(await screen.findByRole("button", { name: "第1章" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "第一卷" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "尚未规划分卷与章节" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("main", { name: "正文工作区" })).getByRole("status")).toHaveTextContent("暂时无法读取章节");
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+  });
+
+  it("keeps an explicitly requested empty writing chapter accessible before planning", async () => {
+    emptyStructureSetup();
+    renderPlan("?planNode=chapter&targetProject=project-1", false, "writing");
+    expect(await screen.findByRole("region", { name: "章节正文阅读" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "第1章" })).toHaveAttribute("data-selected", "true");
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+  });
+
+  it("shows an established writing directory without scanning unrelated manuscripts", async () => {
+    emptyStructureSetup([structureSection("plan-node:volume", "已有分卷规划", "待审的新候选")]);
+    renderPlan("?targetProject=project-1", false, "writing");
+    expect(await screen.findByRole("region", { name: "章节正文阅读" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "第一卷" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "第1章" })).toHaveAttribute("data-selected", "true");
+    expect(mocks.currentManuscript).not.toHaveBeenCalled();
+    expect(mocks.currentManuscriptDraft).not.toHaveBeenCalled();
   });
 
   it.each(["planning", "writing"] as const)("shows an empty volume overview with distinct plan and reading destinations in %s", async (mode) => {
@@ -387,7 +583,7 @@ describe("exact planning navigation", () => {
   it("links a chapter result to its current plan assistant and preserves the return", async () => {
     mocks.listPlanNodes.mockResolvedValue([{ ...scene, id: "chapter-1", kind: "CHAPTER", title: "入城" }]);
     renderPlan("?planNode=chapter-1&targetProject=project-1&returnTo=%2Fsearch%3Fq%3D入城%26type%3DPLAN", false);
-    const url = new URL((await screen.findByRole("link", { name: "去构思处理入城" })).getAttribute("href")!, window.location.origin);
+    const url = new URL((await screen.findByRole("link", { name: "去共创处理入城" })).getAttribute("href")!, window.location.origin);
     expect(url.pathname).toBe("/discussion");
     expect(url.searchParams.get("planNode")).toBe("chapter-1");
     expect(url.searchParams.get("assistant")).toBe("plan");
@@ -429,7 +625,7 @@ describe("exact planning navigation", () => {
     fireEvent.click(disclosure);
     expect(screen.getByText(`本书偏好：${preferences.content}`)).toBeVisible();
     expect(screen.queryByLabelText("篇幅、风格与边界")).not.toBeInTheDocument();
-    const link = new URL(screen.getByRole("link", { name: "前往创作准备修改偏好" }).getAttribute("href")!, window.location.origin);
+    const link = new URL(screen.getByRole("link", { name: "前往筹备修改偏好" }).getAttribute("href")!, window.location.origin);
     expect(link.searchParams.get("work")).toBe("section");
     expect(link.searchParams.get("item")).toBe("seed-tone");
     expect(link.searchParams.get("returnTo")).toBe("/discussion?work=planning&targetProject=project-1&planNode=manager");
@@ -489,6 +685,28 @@ describe("exact planning navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "采用并创建 1 个分卷" }));
     await waitFor(() => expect(mocks.adoptPlanBatch).toHaveBeenCalledTimes(2));
     expect(mocks.adoptPlanBatch.mock.calls[1][0].expectedSourceVersion).toBe(7);
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+  });
+
+  it("reveals the adopted directory and advances to chapter splitting after a successful volume batch", async () => {
+    const { source, parent } = batchSetup();
+    const created: PlanNode = { ...parent, id: "created-volume", kind: "VOLUME", parentId: parent.id, title: "第1卷·入城" };
+    const saved: PlanningSection = { ...source, content: source.pendingContent, pendingContent: "", version: 8 };
+    const outline: PlanNode = { ...scene, id: "outline", kind: "OUTLINE", title: "大纲" };
+    mocks.adoptPlanBatch.mockImplementation(async () => {
+      mocks.listPlanNodes.mockResolvedValue([parent, outline, created]);
+      mocks.listPlanningSections.mockResolvedValue([
+        saved, structureSection("plan-node:outline", "正式大纲"), structureSection("plan-node:created-volume", "阶段目标"),
+      ]);
+      return { nodes: [created], source: saved };
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "采用并创建 2 个分卷" })).toBeEnabled());
+    expect(within(screen.getByLabelText("规划树")).queryByRole("button", { name: created.title })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建 2 个分卷" }));
+    await waitFor(() => expect(screen.getByLabelText("拆章节目标分卷")).toHaveValue(created.id));
+    expect(within(screen.getByLabelText("规划树")).getByRole("button", { name: created.title })).toBeVisible();
+    expect(screen.getByRole("button", { name: "本卷章节" })).toHaveAttribute("aria-pressed", "true");
+    expect(mocks.adoptPlanBatch).toHaveBeenCalledTimes(1);
     expect(mocks.createPlanNode).not.toHaveBeenCalled();
   });
 

@@ -251,7 +251,7 @@ export function KnowledgeRecordsView() {
         </select>
         <SearchField label="搜索剧情记录" value={search} onChange={setSearch} placeholder="搜索记录" />
         {aiWorkspace ? <button type="button" className="primary-action" disabled={busy || !project.data} onClick={startNew}><Plus size={15} />新建记录</button>
-          : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "records", tab }}>去构思整理{recordTypeLabels[tab]}</AiWorkspaceLink>}
+          : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "records", tab }}>去共创整理{recordTypeLabels[tab]}</AiWorkspaceLink>}
       </div>
       {error ? <p className="project-error" role="alert">{error}</p> : null}
       {notice ? <p className="project-notice" role="status">{notice}</p> : null}
@@ -285,7 +285,7 @@ export function KnowledgeRecordsView() {
           <h2>{content.find((item) => item.id === selectedId)?.title}</h2><p className="library-content">{content.find((item) => item.id === selectedId)?.detail}</p>
           <p className="library-meta">v{activeVersion} · {activeRecord.evidenceAnchorIds.length} 条证据</p>
           {aiWorkspace ? <button type="button" className="secondary-action" onClick={() => startEdit(activeRecord.id)}><Pencil size={15} />编辑记录</button>
-            : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "records", targetId: activeRecord.id, tab }}>去构思处理此{recordTypeLabels[tab]}记录</AiWorkspaceLink>}
+            : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "records", targetId: activeRecord.id, tab }}>去共创处理此{recordTypeLabels[tab]}记录</AiWorkspaceLink>}
           <div className="library-evidence">{activeRecord.evidenceAnchorIds.map((id) => {
             const anchor = anchors.data?.find((item) => item.id === id);
             return anchor ? <a key={id} href={manuscriptSourceHref({ projectId: project.data?.projectId, evidenceAnchorId: id }, "/knowledge/records")}>

@@ -88,7 +88,7 @@ function MaterialsManager() {
         }}>{value === "SUMMARY" ? "摘要与记忆" : "写作卡片"}</button>)}</div>
       <SearchField label="搜索参考资料" value={search} onChange={setSearch} placeholder="搜索资料" />
       {!aiWorkspace && project.data ? <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "materials", materialKind: kind, action: "new" }}>
-        {kind === "SUMMARY" ? "去构思新建参考摘要" : "去构思新建写作参考"}
+        {kind === "SUMMARY" ? "去共创新建参考摘要" : "去共创新建写作参考"}
       </AiWorkspaceLink> : null}
       {aiWorkspace && <button type="button" className="primary-action" disabled={!project.data || creating || editorState.busy || actionBusy} onClick={() => {
         if (!leaveEditor()) return;
@@ -121,7 +121,7 @@ function MaterialsManager() {
         <h2>{card?.title ?? materialTitle(summary!)}</h2><p className="library-meta">{summary ? materialState(summary) : card?.enabled ? "已启用" : "已停用"}</p>
         <p className="library-content">{summary?.content ?? card?.content}</p>
         {aiWorkspace ? <button type="button" className="secondary-action" disabled={actionBusy} onClick={() => { setEditing(true); setNotice(null); }}><Pencil size={15} />{summary && automaticSummary(summary) ? "编辑参考副本" : "编辑资料"}</button>
-          : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "materials", targetId: selectedId!, materialKind: kind }}>去构思处理{summary ? summaryLabel(summary) : writingCardTypeLabels[card!.cardType]}</AiWorkspaceLink>}
+          : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "materials", targetId: selectedId!, materialKind: kind }}>去共创处理{summary ? summaryLabel(summary) : writingCardTypeLabels[card!.cardType]}</AiWorkspaceLink>}
         {summary ? <SummaryActions key={summary.id} item={summary} onBusyChange={setActionBusy} /> : null}
         {summary && summaryManuscriptHref(summary, "/knowledge/materials") ? <div className="library-actions"><a className="secondary-action" href={summaryManuscriptHref(summary, "/knowledge/materials")!}>查看来源正文</a></div> : null}
         <details className="library-advanced"><summary>来源与高级信息</summary><p>来源 <code>{summary?.sourceVersion ?? card?.sourceVersion ?? "未指定"}</code></p>

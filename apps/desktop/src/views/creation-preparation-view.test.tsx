@@ -75,7 +75,7 @@ describe("creation preparation workbench", () => {
     render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={new QueryClient()}>
       <CreationPreparationView initialItem={item} />
     </QueryClientProvider></AiWorkspaceContext.Provider>);
-    expect(await screen.findByRole("link", { name: /去构思处理/ })).toHaveAttribute("href",
+    expect(await screen.findByRole("link", { name: /去共创处理/ })).toHaveAttribute("href",
       `/discussion?work=preparation&targetProject=project&item=${item}`);
     expect(screen.queryByRole("button", { name: /发起讨论|建立开篇章节计划|建立主线大纲/ })).not.toBeInTheDocument();
     expect(mocks.createPlanNode).not.toHaveBeenCalled();
@@ -87,11 +87,11 @@ describe("creation preparation workbench", () => {
       <CreationPreparationView initialItem="protagonist" />
     </QueryClientProvider></AiWorkspaceContext.Provider>);
     expect(await screen.findByText("已决定：engine-protagonist")).toBeVisible();
-    expect(screen.getByText("待归类 · 创作准备")).toBeVisible();
+    expect(screen.getByText("待归类 · 筹备")).toBeVisible();
     expect(screen.queryByText("尚未采用的人物候选")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /AI 推敲|保存草稿|确认并继续/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /去构思处理主角/ })).toHaveAttribute("href",
+    expect(screen.getByRole("link", { name: /去共创处理主角/ })).toHaveAttribute("href",
       "/discussion?work=preparation&targetProject=project&item=protagonist");
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });

@@ -47,10 +47,17 @@
 .ai-category-nav { display: flex; flex-wrap: nowrap; gap: 18px; min-width: 0; overflow-x: auto; padding: 0; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
 .ai-category-nav a { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; padding: 6px 0; min-height: 36px; font-size: 13px; color: var(--muted); white-space: nowrap; text-decoration: none; border-bottom: 2px solid transparent; }
 .ai-category-nav a[aria-current="page"] { color: var(--accent-strong); border-bottom-color: var(--accent); }
-.ai-category-nav a:hover, .ai-workspace-heading a { color: var(--accent-strong); }
+.ai-category-nav a:hover, .ai-workspace-heading > a { color: var(--accent-strong); }
 .ai-workspace-heading .activity-return { display: inline-flex; align-items: center; gap: 5px; margin: 0; }
 .workspace-page > .unified-ai-workspace > .coauthor-workspace { flex: 1 1 0; min-height: 460px; height: auto; }
+.workspace-page > .unified-ai-workspace[data-workflow="discussion"] { overflow: hidden; }
+.workspace-page > .unified-ai-workspace[data-workflow="discussion"] > .coauthor-workspace { min-height: 0; flex-shrink: 1; }
 .chapter-plan-workspace { min-width: 0; }
 .chapter-plan-workspace .creation-plan { max-width: 960px; margin: 0 auto; }
 .chapter-plan-workspace .creation-plan textarea { min-height: 260px; }
+@media (min-width: 981px) {
+  .ai-workspace-heading { flex-wrap: nowrap; min-height: 40px; }
+  .ai-workspace-heading h1, .ai-workspace-heading .activity-return { flex-shrink: 0; }
+  .ai-workspace-heading .ai-category-nav { flex: 1; margin: 0; }
+}
 @media (max-width: 600px) { .ai-workspace-identity { grid-template-columns: minmax(0, 1fr); } .ai-workspace-identity dl { grid-template-columns: 1fr; gap: 4px; } .ai-workspace-identity dd { margin-bottom: 6px; } }

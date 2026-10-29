@@ -58,7 +58,7 @@ describe("KnowledgeRecordsView", () => {
     fireEvent.click(await screen.findByRole("button", { name: /同盟/ }));
     expect(screen.getByText("剧情记录 · 关系")).toBeVisible();
     expect(screen.queryByRole("button", { name: /新建记录|编辑记录/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "去构思处理此关系记录" })).toHaveAttribute("href",
+    expect(screen.getByRole("link", { name: "去共创处理此关系记录" })).toHaveAttribute("href",
       "/discussion?work=records&targetProject=project-1&objectId=relation-1&tab=relations");
     expect(mocks.createRelation).not.toHaveBeenCalled();
     expect(mocks.updateRelation).not.toHaveBeenCalled();

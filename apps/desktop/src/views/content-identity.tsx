@@ -23,7 +23,7 @@ export function FormalContent({ title, identity, content, status, target, pendin
   if (layout === "reader") {
     const hasContent = Boolean(content.trim());
     const editAction = <WorkspaceLink className={`${hasContent ? "secondary-action" : "primary-action"} content-workspace-link`}
-      href={aiWorkspaceHref(target)} aria-label={`去构思处理${title}`}>
+      href={aiWorkspaceHref(target)} aria-label={`去共创处理${title}`}>
       <SquarePen size={15} />{hasContent ? "编辑" : pending ? "核对" : "编写"}{identity.subtype}
     </WorkspaceLink>;
     return <section className="formal-content formal-content-reader" aria-label={`${title}正式内容`}>
@@ -43,6 +43,6 @@ export function FormalContent({ title, identity, content, status, target, pendin
     <header><ContentTypeLabel identity={identity} /><h2>{title}</h2>{status && <span className="library-meta">{status}</span>}</header>
     <p className="formal-content-text">{content.trim() || "暂无正式内容"}</p>
     <footer>{pending && <span className="library-meta">有待核对工作稿</span>}
-      <AiWorkspaceLink target={target}>去构思处理{title}</AiWorkspaceLink></footer>
+      <AiWorkspaceLink target={target}>去共创处理{title}</AiWorkspaceLink></footer>
   </section>;
 }

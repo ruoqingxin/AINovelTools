@@ -1,11 +1,14 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { StoryPlanningWorkbench } from "./story-planning-workbench";
 import { emptyPlanningSection } from "./use-planning-draft";
 import { AiWorkspaceContext } from "./content-identity";
+import { BookPreparationView } from "./book-preparation-view";
+import { emptyBookPreparation, readBookPreparation, withBookPreparation } from "./book-preparation";
+import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 
 const mocks = vi.hoisted(() => ({
   listPlanningSections: vi.fn(), savePlanningSection: vi.fn(), listModelProfiles: vi.fn(),
@@ -36,17 +39,178 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("planning content editor", () => {
+  function prepare() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><ConfirmActionProvider><BookPreparationView /></ConfirmActionProvider></QueryClientProvider>);
+    return client;
+  }
+
+  it("starts with choice-first whole-book directions and keeps supplements collapsed", async () => {
+    mocks.listPlanningSections.mockResolvedValue([]);
+    prepare();
+    await screen.findByRole("heading", { name: "本书偏好" });
+    for (const label of ["目标字数", "叙事视角", "语言风格", "整体基调"]) {
+      expect(screen.getByRole("combobox", { name: label })).toBeVisible();
+      expect(screen.getByRole("combobox", { name: label })).toHaveValue("");
+    }
+    expect(screen.queryByRole("textbox", { name: "核心故事" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "题材类型" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("节奏偏好")).not.toBeVisible();
+    expect(screen.getByText("已记录 0 / 4")).toBeVisible();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it("saves selected directions together while preserving old candidates and original notes", async () => {
+    mocks.listPlanningSections.mockResolvedValue([{
+      ...emptyPlanningSection("seed-tone"), content: "旧笔记原文", pendingContent: "旧讨论候选", version: 7, references: ["discussion:old"],
+    }]);
+    prepare();
+    await screen.findByRole("combobox", { name: "目标字数" });
+    fireEvent.change(screen.getByRole("combobox", { name: "目标字数" }), { target: { value: "20" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "叙事视角" }), { target: { value: "第三人称 · 限定视角" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "语言风格" }), { target: { value: "简洁直白" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "整体基调" }), { target: { value: "悬疑" } });
+    expect(screen.getByText("已记录 4 / 4")).toBeVisible();
+    fireEvent.click(screen.getByText("节奏、读者与边界"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "不写后宫" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "不靠误会拖剧情" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
+    await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledOnce());
+    const saved = mocks.savePlanningSection.mock.calls[0][0];
+    expect(saved).toMatchObject({ id: "seed-tone", version: 7, storyState: "CONFIRMED", pendingContent: "旧讨论候选",
+      references: expect.arrayContaining(["discussion:old"]) });
+    expect(readBookPreparation(saved)).toMatchObject({ genre: "", targetWords: "20", style: "简洁直白", premise: "", tone: "悬疑",
+      notes: "旧笔记原文", boundaries: "不写后宫\n不靠误会拖剧情" });
+    expect(mocks.savePlanningSection.mock.calls.every(([section]) => section.id === "seed-tone")).toBe(true);
+  });
+
+  it("allows custom choices and partial preparation without forcing a complete story", async () => {
+    mocks.listPlanningSections.mockResolvedValue([]);
+    prepare();
+    const style = await screen.findByRole("combobox", { name: "语言风格" });
+    fireEvent.change(style, { target: { value: "__custom__" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "语言风格（自定义）" }), { target: { value: "轻喜剧，夹杂书信体" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "目标字数" }), { target: { value: "__custom__" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "目标字数（自定义）" }), { target: { value: "12.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
+    await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledOnce());
+    expect(readBookPreparation(mocks.savePlanningSection.mock.calls[0][0])).toMatchObject({ targetWords: "12.5", style: "轻喜剧，夹杂书信体", genre: "", premise: "" });
+  });
+
+  it("requires confirmation for major changes and preserves the input when cancelled", async () => {
+    mocks.listPlanningSections.mockResolvedValue([withBookPreparation({
+      ...emptyPlanningSection("seed-tone"), version: 3, storyState: "CONFIRMED",
+    }, { ...emptyBookPreparation(), style: "简洁直白" })]);
+    prepare();
+    fireEvent.change(await screen.findByRole("combobox", { name: "语言风格" }), { target: { value: "细腻写实" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("已有正文和大纲保留");
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("combobox", { name: "语言风格" })).toHaveValue("细腻写实");
+    fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "保存新偏好" }));
+    await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledOnce());
+  });
+
+  it("retains dirty selections after a remote version change and failed checked save", async () => {
+    const original = withBookPreparation({ ...emptyPlanningSection("seed-tone"), version: 2 }, { ...emptyBookPreparation(), genre: "科幻" });
+    mocks.listPlanningSections.mockResolvedValue([original]);
+    mocks.savePlanningSection.mockRejectedValue(new Error("版本冲突"));
+    const client = prepare();
+    fireEvent.change(await screen.findByRole("combobox", { name: "目标字数" }), { target: { value: "50" } });
+    act(() => client.setQueryData(["planning-sections"], [{ ...original, version: 3 }]));
+    expect(await screen.findByRole("button", { name: "读取最新内容" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("版本冲突");
+    expect(screen.getByRole("combobox", { name: "目标字数" })).toHaveValue("50");
+    expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({ version: 2 }));
+  });
+
+  it("shows confirmed directions without exposing pending candidates outside the AI workspace", async () => {
+    mocks.listPlanningSections.mockResolvedValue([withBookPreparation({
+      ...emptyPlanningSection("seed-tone"), pendingContent: "未确认的私有候选",
+    }, { ...emptyBookPreparation(), genre: "都市悬疑", targetWords: "20" })]);
+    render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={new QueryClient()}>
+      <BookPreparationView /></QueryClientProvider></AiWorkspaceContext.Provider>);
+    expect(await screen.findByText("20")).toBeVisible();
+    fireEvent.click(screen.getByText("历史故事方向"));
+    expect(screen.getByText("都市悬疑")).toBeVisible();
+    expect(screen.queryByText("未确认的私有候选")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "编辑偏好" })).toHaveAttribute("href", "/discussion?work=preparation&targetProject=project");
+  });
+
+  it("only replaces directions with a candidate after explicit approval and discards stale form metadata", async () => {
+    mocks.listPlanningSections.mockResolvedValue([withBookPreparation({
+      ...emptyPlanningSection("seed-tone"), version: 8, pendingContent: "新的全书讨论方向", references: ["discussion:source"],
+    }, { ...emptyBookPreparation(), genre: "科幻", style: "简洁直白" })]);
+    prepare();
+    const adopt = await screen.findByRole("button", { name: "采用为本书偏好" });
+    fireEvent.click(adopt);
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "取消" }));
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox", { name: "语言风格" })).toHaveValue("简洁直白");
+    await waitFor(() => expect(adopt).toBeEnabled());
+    fireEvent.click(adopt);
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "采用为本书偏好" }));
+    await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledOnce());
+    const saved = mocks.savePlanningSection.mock.calls[0][0];
+    expect(saved).toMatchObject({ version: 8, content: "新的全书讨论方向", pendingContent: "", references: ["discussion:source"] });
+    expect(readBookPreparation(saved)).toEqual({ ...emptyBookPreparation(), notes: "新的全书讨论方向" });
+  });
+
+  it("preserves a custom selection when reload is cancelled and reads the remote choices only after approval", async () => {
+    mocks.listPlanningSections.mockResolvedValue([]);
+    const client = prepare();
+    fireEvent.change(await screen.findByRole("combobox", { name: "语言风格" }), { target: { value: "__custom__" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "语言风格（自定义）" }), { target: { value: "书信体" } });
+    act(() => client.setQueryData(["planning-sections"], [withBookPreparation({
+      ...emptyPlanningSection("seed-tone"), version: 3,
+    }, { ...emptyBookPreparation(), style: "细腻写实" })]));
+    fireEvent.click(await screen.findByRole("button", { name: "读取最新内容" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("textbox", { name: "语言风格（自定义）" })).toHaveValue("书信体");
+    await waitFor(() => expect(screen.getByRole("button", { name: "读取最新内容" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "读取最新内容" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "读取最新内容" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "语言风格" })).toHaveValue("细腻写实"));
+    expect(screen.queryByRole("textbox", { name: "语言风格（自定义）" })).not.toBeInTheDocument();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+  it("keeps legacy story directions intact while editing preferences and links to exact story tasks", async () => {
+    const oldFields = { ...emptyBookPreparation(), genre: "科幻", premise: "旧故事核心", experience: "旧阅读期待", ending: "旧结局倾向" };
+    mocks.listPlanningSections.mockResolvedValue([withBookPreparation({
+      ...emptyPlanningSection("seed-tone"), version: 9, references: ["discussion:legacy"], pendingContent: "旧候选",
+    }, oldFields)]);
+    prepare();
+    fireEvent.change(await screen.findByRole("combobox", { name: "语言风格" }), { target: { value: "细腻写实" } });
+    expect(screen.queryByRole("combobox", { name: "题材类型" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "核心故事" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("历史故事方向"));
+    for (const content of ["科幻", "旧故事核心", "旧阅读期待", "旧结局倾向"]) expect(screen.getByText(content)).toBeVisible();
+    expect(screen.getByRole("link", { name: "前往故事准备：故事核心" })).toHaveAttribute("href",
+      "/discussion?work=preparation&targetProject=project&item=premise");
+    fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
+    await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledOnce());
+    const saved = mocks.savePlanningSection.mock.calls[0][0];
+    expect(readBookPreparation(saved)).toEqual({ ...oldFields, style: "细腻写实" });
+    expect(saved).toMatchObject({ version: 9, pendingContent: "旧候选", references: expect.arrayContaining(["discussion:legacy"]) });
+  });
   it("shows only formal content outside AI and retains mixed preparation as unclassified", async () => {
     mocks.listPlanningSections.mockResolvedValue([{ ...stored, pendingContent: "未确认候选不能展示为正式内容" }]);
     render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={new QueryClient()}>
       <StoryPlanningWorkbench selectedSectionId="seed-premise" />
     </QueryClientProvider></AiWorkspaceContext.Provider>);
     expect(await screen.findByText("已有正式内容")).toBeVisible();
-    expect(screen.getByText("待归类 · 创作准备")).toBeVisible();
+    expect(screen.getByText("待归类 · 筹备")).toBeVisible();
     expect(screen.queryByText("未确认候选不能展示为正式内容")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /生成候选|发起讨论|保存规划/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "去构思处理核心前提与开局情境" })).toHaveAttribute("href",
+    expect(screen.getByRole("link", { name: "去共创处理核心前提与开局情境" })).toHaveAttribute("href",
       "/discussion?work=section&targetProject=project&item=seed-premise");
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
@@ -95,13 +259,13 @@ describe("planning content editor", () => {
     mocks.listPlanningSections.mockResolvedValue([preferences]);
     render(<QueryClientProvider client={new QueryClient()}>
       <StoryPlanningWorkbench selectedSectionId="seed-tone" /></QueryClientProvider>);
-    const editor = await screen.findByLabelText("篇幅、风格与边界");
+    const editor = await screen.findByLabelText("补充记录");
     await waitFor(() => expect(editor).toBeEnabled());
     expect(editor).not.toHaveAttribute("readonly");
     fireEvent.change(editor, { target: { value: "约 20 万字，轻松，第三人称。" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
     await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
-      id: "seed-tone", content: "约 20 万字，轻松，第三人称。", pendingContent: "旧候选仍保留",
+      id: "seed-tone", content: "【补充记录】\n约 20 万字，轻松，第三人称。", pendingContent: "旧候选仍保留",
       version: 7, storyState: "LOCKED",
     })));
     expect(screen.getByLabelText("笔记状态")).not.toBeVisible();
@@ -112,10 +276,10 @@ describe("planning content editor", () => {
     mocks.savePlanningSection.mockRejectedValue(new Error("版本冲突"));
     render(<QueryClientProvider client={new QueryClient()}>
       <StoryPlanningWorkbench selectedSectionId="seed-tone" /></QueryClientProvider>);
-    const editor = await screen.findByLabelText("篇幅、风格与边界");
+    const editor = await screen.findByLabelText("补充记录");
     await waitFor(() => expect(editor).toBeEnabled());
     fireEvent.change(editor, { target: { value: "先写短篇，结局未定。" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("版本冲突");
     expect(editor).toHaveValue("先写短篇，结局未定。");
   });
@@ -126,12 +290,12 @@ describe("planning content editor", () => {
     }]);
     render(<QueryClientProvider client={new QueryClient()}>
       <StoryPlanningWorkbench selectedSectionId="seed-tone" /></QueryClientProvider>);
-    const editor = await screen.findByLabelText("篇幅、风格与边界");
+    const editor = await screen.findByLabelText("补充记录");
     await waitFor(() => expect(editor).toBeEnabled());
     fireEvent.change(editor, { target: { value: "修改私有偏好，仍不公开。" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
     await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
-      storyState: "AUTHOR_RESERVED", content: "修改私有偏好，仍不公开。", version: 6,
+      storyState: "AUTHOR_RESERVED", content: "【补充记录】\n修改私有偏好，仍不公开。", version: 6,
     })));
   });
 

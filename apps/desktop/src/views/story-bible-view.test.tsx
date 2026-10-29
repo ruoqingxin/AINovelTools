@@ -85,7 +85,7 @@ describe("StoryBibleView", () => {
     expect(await screen.findByRole("heading", { name: "沈砚" })).toBeVisible();
     expect(screen.getByText("设定 · 人物")).toBeVisible();
     expect(screen.queryByRole("button", { name: /新建实体|导入|编辑实体|讨论/ })).not.toBeInTheDocument();
-    const link = screen.getByRole("link", { name: "去构思处理人物设定" });
+    const link = screen.getByRole("link", { name: "去共创处理人物设定" });
     expect(link).toHaveAttribute("href", "/discussion?work=entity&targetProject=project-1&entity=entity-1");
     expect(mocks.upsertEntity).not.toHaveBeenCalled();
     expect(mocks.extractEntitiesFromText).not.toHaveBeenCalled();

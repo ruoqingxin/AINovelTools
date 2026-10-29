@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
 
 const mocks = vi.hoisted(() => ({
-  pathname: "/knowledge/settings", project: { projectId: "p1", name: "夜行信使" } as { projectId: string; name: string } | null,
+  pathname: "/knowledge/settings", searchStr: "", project: { projectId: "p1", name: "夜行信使" } as { projectId: string; name: string } | null,
   getCurrentProject: vi.fn(), listRecentProjects: vi.fn(), getHealth: vi.fn(), getBootstrapStatus: vi.fn(),
   listAllRecoveryLogs: vi.fn(), listJobs: vi.fn(), navigate: vi.fn(), openProject: vi.fn(),
 }));
@@ -14,13 +14,14 @@ vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
 }));
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ to, search, children, activeOptions: _options, ...props }: {
-    to: string; search?: { manage?: string }; children: ReactNode; activeOptions?: unknown;
+  Link: ({ to, search, children, activeOptions: _options, activeProps: _activeProps, ...props }: {
+    to: string; search?: { manage?: string }; children: ReactNode; activeOptions?: unknown; activeProps?: unknown;
   }) => <a href={`${to}${search?.manage ? `?manage=${search.manage}` : ""}`} {...props}>{children}</a>,
   Outlet: () => <div><p>Current workspace</p><input aria-label="Local note" defaultValue="" /></div>,
-  useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
-    select({ location: { pathname: mocks.pathname } }),
+  useRouterState: ({ select }: { select: (state: { location: { pathname: string; searchStr: string } }) => unknown }) =>
+    select({ location: { pathname: mocks.pathname, searchStr: mocks.searchStr } }),
   useNavigate: () => mocks.navigate,
+  useRouter: () => null,
   useBlocker: () => ({ status: "idle" }),
 }));
 
@@ -33,6 +34,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   localStorage.clear();
   mocks.pathname = "/knowledge/settings";
+  mocks.searchStr = "";
   mocks.project = { projectId: "p1", name: "夜行信使" };
   mocks.getCurrentProject.mockImplementation(() => Promise.resolve(mocks.project));
   mocks.listRecentProjects.mockResolvedValue([{ name: "雾城来信", root: "E:\\story", lastOpenedAt: "0" }]);
@@ -75,11 +77,30 @@ describe("global workspace shell", () => {
     await screen.findByRole("link", { name: "资料" });
     const navigation = within(screen.getByRole("complementary", { name: "主要导航" }));
     expect(navigation.getAllByRole("link").map((link) => link.getAttribute("aria-label")))
-      .toEqual(["大纲", "正文", "构思", "资料", "待办", "设置"]);
+      .toEqual(["筹备", "大纲", "正文", "共创", "资料", "待办", "设置"]);
     expect(within(screen.getByLabelText("全局工具")).getByRole("link", { name: "搜索" })).toBeVisible();
     expect(within(screen.getByLabelText("全局工具")).getByRole("link", { name: "后台活动" })).toBeVisible();
     expect(navigation.queryByRole("link", { name: "项目" })).not.toBeInTheDocument();
   });
+  it("keeps preparation selected after its entry redirects to the prepare mode", async () => {
+    mocks.pathname = "/planning";
+    mocks.searchStr = "?mode=prepare";
+    setup();
+    expect(await screen.findByRole("link", { name: "筹备" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "大纲" })).not.toHaveAttribute("aria-current");
+  });
+  it.each(["preparation", "section", "planning", "writing", "entity", "records", "materials", "review"])(
+    "selects only coauthor when editing %s, not the formal content workspace", async (work) => {
+      mocks.pathname = "/discussion";
+      mocks.searchStr = `?work=${work}&targetProject=p1`;
+      setup();
+      expect(await screen.findByRole("link", { name: "共创" })).toHaveAttribute("aria-current", "page");
+      const navigation = screen.getByRole("complementary", { name: "主要导航" });
+      expect(navigation.querySelectorAll('a[aria-current="page"]')).toHaveLength(1);
+      for (const name of ["筹备", "大纲", "正文", "资料", "待办"]) {
+        expect(within(navigation).getByRole("link", { name })).not.toHaveAttribute("aria-current");
+      }
+    });
   it.each([
     ["/knowledge/settings", "资料"], ["/knowledge/materials", "资料"],
     ["/knowledge/records", "资料"], ["/knowledge/review", "待办"], ["/chapters", "正文"],

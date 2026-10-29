@@ -31,7 +31,7 @@ export function EmptyProjectView() {
     <div className="workspace-heading project-manager-heading"><h1>作品管理</h1>
       <div className="project-actions" aria-label="作品操作">
         {firstChapter ? <Link to="/writing" hash={firstChapter.id} className="primary-action"><BookOpenText size={15} />继续写作</Link>
-          : currentProject.data ? <Link to="/planning" search={{ mode: "prepare" }} className="primary-action"><PenLine size={15} />开始创作准备</Link> : null}
+          : currentProject.data ? <Link to="/planning" search={{ mode: "prepare" }} className="primary-action"><PenLine size={15} />开始筹备</Link> : null}
         {currentProject.data ? <button type="button" className="secondary-action" disabled={Boolean(actions.busy) || planNodes.isPending || planNodes.isError}
           onClick={() => setCreateOpen(true)}><FilePlus2 size={15} />新建章节</button> : null}
         <button className={currentProject.data ? "secondary-action" : "primary-action"} type="button" disabled={Boolean(actions.busy)} onClick={() => void actions.create()}>

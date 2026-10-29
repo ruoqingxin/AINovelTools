@@ -19,6 +19,7 @@ type ProjectPlanTreeProps = {
   rootNodeFor: (kind: PlanNode["kind"]) => PlanNode | undefined;
   selectedId: string | null;
   showArchived: boolean;
+  showStructureDirectory?: boolean;
   unorganizedRoots: PlanNode[];
   visibleNodes: PlanNode[];
   onCreateChapter?: () => void;
@@ -41,7 +42,7 @@ export function ProjectPlanTree(props: ProjectPlanTreeProps) {
           {!isTopLevelPlanningNode ? <span className="plan-kind">{kindLabels[node.kind]}</span> : null}<span className="plan-title">{node.kind === "OUTLINE" ? "全书大纲" : node.kind === "VOLUME_MANAGER" ? "分卷与章节" : node.title}</span>
           {node.kind === "OUTLINE" || node.kind === "VOLUME" ? <small className="plan-confirmation-state">{preparationStatusLabels[preparationStatus(sectionsById.get(`plan-node:${node.id}`), props.planningSections)]}</small> : null}
         </button>
-        {node.kind === "VOLUME_MANAGER" ? <ChapterDirectory showScenes nodes={props.visibleNodes.filter((item) => item.parentId === node.id || volumeIds.has(item.parentId ?? "") || chapterIds.has(item.parentId ?? ""))}
+        {node.kind === "VOLUME_MANAGER" ? props.showStructureDirectory !== false && <ChapterDirectory showScenes nodes={props.visibleNodes.filter((item) => item.parentId === node.id || volumeIds.has(item.parentId ?? "") || chapterIds.has(item.parentId ?? ""))}
           selectedId={props.selectedId} onSelect={props.onSelectNode} onCreate={props.onCreateChapter} />
           : (childrenByParent.get(node.id) ?? []).map((child) => renderNode(child, depth + 1))}
       </div>

@@ -81,7 +81,7 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
       </dl></details>
       <div className="library-actions">{aiWorkspace ? <button type="button" className="secondary-action" disabled={actionBusy} onClick={() => { setEditing(true); setNotice(null); }}><Pencil size={15} />
         {currentSummary && automaticSummary(currentSummary) ? "编辑参考副本" : "编辑资料"}</button>
-        : target.kind && <AiWorkspaceLink target={{ projectId: target.projectId, workflow: "materials", targetId: target.id, materialKind: target.kind }}>去构思处理此参考</AiWorkspaceLink>}</div>
+        : target.kind && <AiWorkspaceLink target={{ projectId: target.projectId, workflow: "materials", targetId: target.id, materialKind: target.kind }}>去共创处理此参考</AiWorkspaceLink>}</div>
       {currentSummary ? <SummaryActions item={currentSummary} onBusyChange={setActionBusy} /> : null}
       {sourceHref ? <a className="secondary-action" href={sourceHref}><BookOpenText size={15} />查看摘要来源正文</a> : null}
       </>}

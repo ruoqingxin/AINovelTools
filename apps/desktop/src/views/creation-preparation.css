@@ -4,9 +4,11 @@
 .preparation-heading h2 { margin: 5px 0 0; font-size: 16px; }
 .planning-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; color: #28313a; }
 .planning-workspace-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
-.planning-workspace-modes { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 5px; }
-.planning-workspace-modes a { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 7px 10px; border-radius: 3px; text-decoration: none; font-size: 13px; color: var(--muted); }
-.planning-workspace-modes a[aria-current] { color: var(--accent-strong); background: var(--surface); box-shadow: 0 1px 3px #18243212; }
+.planning-workspace > :is(.planning-workspace-heading, .preparation-notes-nav) { flex-shrink: 0; }
+.planning-workspace > .formal-content { flex: 1; min-height: 0; overflow: auto; }
+.planning-workspace > .formal-content > header .library-meta { margin-left: auto; color: var(--muted); font-size: 12px; }
+.planning-workspace > .formal-content .content-workspace-link { min-height: 34px; padding: 7px 12px; border-radius: 5px; font-size: 13px; }
+.planning-workspace > .formal-content .content-workspace-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .planning-workspace > .preparation-workspace, .planning-workspace > .project-workspace { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: auto; }
 .planning-workspace > .project-workspace { width: 100%; margin: 0; padding: 0; }
 .planning-workspace > .project-workspace > .stage-two-layout { margin-top: 0; }
@@ -67,13 +69,13 @@
 .plan-confirmation-state { margin-left: auto; flex-shrink: 0; font-size: 10px; color: var(--muted); }
 .planning-outline-editor { padding: 24px 0; }
 .preparation-notes-nav { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 20px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
-.preparation-notes-nav a { color: var(--accent-strong); text-decoration: none; }
-.preparation-notes-nav a[aria-current] { font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
-.preparation-notes-nav summary { cursor: pointer; color: var(--muted); }
-.preparation-notes-nav details[open] { flex: 1 1 100%; }
-.preparation-note-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 20px; padding: 16px 0 4px; }
+.preparation-notes-nav > a { padding: 7px 0; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; }
+.preparation-notes-nav > a[aria-current] { color: var(--accent-strong); font-weight: 600; border-bottom-color: var(--accent); }
+.preparation-notes-nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.preparation-note-groups { display: grid; flex: 1 1 100%; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 20px; padding: 12px 0 4px; border-top: 1px solid var(--line); }
 .preparation-note-groups h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); }
-.preparation-note-groups a { display: block; padding: 7px 0; overflow-wrap: anywhere; }
+.preparation-note-groups a { display: block; padding: 7px 0; overflow-wrap: anywhere; color: var(--muted); text-decoration: none; }
+.preparation-note-groups a[aria-current] { color: var(--accent-strong); font-weight: 600; }
 .preparation-project { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .preparation-progress { display: grid; width: 180px; flex: 0 0 auto; gap: 8px; font-size: 12px; color: var(--muted); }
 .preparation-progress progress { width: 100%; height: 5px; accent-color: #31846e; }
@@ -133,8 +135,6 @@
   .preparation-editor { padding: 24px 0 24px 20px; }
 }
 @media (max-width: 650px) {
-  .planning-workspace-modes { width: 100%; }
-  .planning-workspace-modes a { flex: 1; justify-content: center; padding: 7px 4px; font-size: 12px; }
   .outline-reader { padding: 20px 10px; }
   .outline-reader-heading { align-items: start; }
   .outline-reader-heading > .secondary-action { margin-top: 4px; }

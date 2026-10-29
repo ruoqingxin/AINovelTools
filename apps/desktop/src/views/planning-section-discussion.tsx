@@ -39,7 +39,7 @@ function SectionDiscussionEntry({ sectionId, title }: Props) {
   const preparation = sectionId.startsWith("preparation:");
   return <AiWorkspaceLink target={{ projectId: project.data.projectId,
     workflow: preparation ? "preparation" : "section", item: preparation ? sectionId.slice("preparation:".length) : sectionId }}>
-    去构思讨论{title}
+    去共创讨论{title}
   </AiWorkspaceLink>;
 }
 

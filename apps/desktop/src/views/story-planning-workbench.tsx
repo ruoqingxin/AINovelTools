@@ -21,12 +21,13 @@ import {
 import { AiModelNote } from "./ai-model-note";
 import { usePlanningDraft } from "./use-planning-draft";
 import { PlanningDiscussionSources } from "./planning-discussion-sources";
-import { FreePlanningEditor } from "./free-planning-editor";
+import { BookPreparationView } from "./book-preparation-view";
 import { PlanningSectionDiscussion } from "./planning-section-discussion";
 import { identityLabel, planningSectionIdentity } from "../lib/content-taxonomy";
 import { getCurrentProject } from "../lib/tauri-client";
 import { ContentTypeLabel, FormalContent, useInAiWorkspace } from "./content-identity";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
+import { buildPreparationStages } from "./creation-preparation";
 
 type PlanningItem = { id: string; label: string; prompt: string; guidance: string };
 type PlanningGroup = { id: string; label: string; children: PlanningItem[] };
@@ -65,10 +66,15 @@ export const planningSectionGroups: PlanningGroup[] = [
       { id: "cast-arcs", label: "人物弧光、秘密与信息差", prompt: "核心人物会如何变化，各自隐藏什么秘密，最终必须做出什么选择", guidance: "为核心角色写表面身份、真实欲望、不能说的秘密和最终选择。秘密应服务于反转，人物变化应由连续选择推动。" },
       { id: "frame-setting", label: "舞台、硬规则与资源限制", prompt: "哪些世界规则、力量上限、资源限制和禁忌会直接影响人物行动", guidance: "只写会影响剧情的规则：力量上限、行动代价、稀缺资源、身份秩序和禁忌。每条规则都最好能限制主角、制造冲突并提供解法。" },
       { id: "frame-history", label: "历史因果、势力与矛盾来源", prompt: "世界为何变成现在这样，哪些势力在争什么，主角卷入后会改变谁的利益", guidance: "先写当前矛盾的因果链和三层势力：近处、中层、顶层。无需编完整年史，只保留会影响当下冲突的历史。" },
-      { id: "frame-narrative", label: "视角、信息与叙事节奏", prompt: "由谁讲述故事，秘密何时揭示，一卷解决什么问题，高潮和章末钩子如何安排", guidance: "确定人称、视角数量、信息差策略、每卷阶段目标、大小高潮间隔和章末钩子。升级流可采用贴近主角的第三人称，辅以少量配角视角。" },
+      { id: "frame-narrative", label: "信息揭示与节奏安排", prompt: "秘密何时揭示，一卷解决什么问题，高潮和章末钩子如何安排", guidance: "沿用本书偏好的叙事视角与节奏，补充信息差策略、每卷阶段目标、高潮间隔和章末钩子，不重复设定人称和语言风格。" },
     ],
   },
-]; 
+];
+const storyPreparationSectionIds = new Set(buildPreparationStages([]).flatMap((stage) => stage.items)
+  .flatMap((item) => item.sectionId ? [item.sectionId] : []));
+export const supplementaryPlanningSectionGroups = planningSectionGroups
+  .map((group) => ({ ...group, children: group.children.filter((item) => item.id !== "seed-tone" && !storyPreparationSectionIds.has(item.id)) }))
+  .filter((group) => group.children.length > 0);
 const sections = planningSectionGroups.flatMap((group) => group.children);
 const sectionIds = new Set(sections.map((section) => section.id));
 export const essentialPlanningSectionIds = [
@@ -118,6 +124,7 @@ type StoryPlanningWorkbenchProps = {
 export function StoryPlanningWorkbench(props: StoryPlanningWorkbenchProps) {
   const workspace = useInAiWorkspace();
   if (props.selectedSectionId && !sectionIds.has(props.selectedSectionId)) return <p role="alert">准备节点不存在，未打开其他内容。</p>;
+  if (!props.selectedSectionId || props.selectedSectionId === "seed-tone") return <BookPreparationView onDirtyChange={props.onDirtyChange} />;
   return workspace ? <EditableStoryPlanningWorkbench {...props} /> : <StoryPlanningContent {...props} />;
 }
 
@@ -442,61 +449,17 @@ function EditableStoryPlanningWorkbench(props: StoryPlanningWorkbenchProps) {
     }
   }
 
-  async function savePreferences() {
-    const snapshot = planningDraft.beginSave();
-    if (!snapshot) return;
-    setError(null);
-    try {
-      const saved = await savePlanningSection({
-        ...snapshot.form, version: snapshot.baseline.version,
-        storyState: ["UNSET", "AI_SUGGESTED"].includes(snapshot.form.storyState)
-          ? snapshot.form.content.trim() ? "CONFIRMED" : snapshot.form.pendingContent.trim() ? "AI_SUGGESTED" : "UNSET"
-          : snapshot.form.storyState,
-        references: snapshot.form.content !== snapshot.baseline.content ? [] : snapshot.form.references,
-      });
-      planningDraft.acknowledge(snapshot, saved);
-      cacheSavedSection(saved);
-      await client.invalidateQueries({ queryKey: ["planning-sections"] });
-      setNotice("本书偏好已保存");
-    } catch (cause) {
-      setError(errorMessage(cause));
-      void client.invalidateQueries({ queryKey: ["planning-sections"] });
-    } finally {
-      planningDraft.finishSave(snapshot);
-    }
-  }
-
-  if (storedSections.isPending) return <p role="status">正在读取创作准备…</p>;
+  if (storedSections.isPending) return <p role="status">正在读取筹备…</p>;
   if (storedSections.isError && !storedSections.data) return <p className="project-error" role="alert">{errorMessage(storedSections.error)}</p>;
 
   const discussion = <PlanningSectionDiscussion sectionId={selectedId} title={selectedDefinition.label}
     question={selectedDefinition.prompt} draftContent={form.pendingContent}
-    referenceContent={selectedId === "seed-tone" ? [
-      form.content ? `当前笔记（可能含未保存修改）：\n${form.content}` : "",
-      form.pendingContent ? `待采用内容：\n${form.pendingContent}` : "",
-    ].filter(Boolean).join("\n\n") : undefined}
     disabled={!planningDraft.ready || saving || generating || importing || Boolean(activeJob)}
     readOnly={form.storyState === "LOCKED"} onBusyChange={setDiscussionBusy}
     onUseDraft={(content) => {
       setForm((current) => ({ ...current, pendingContent: content }));
       setEditorTab("pending"); setShowEditor(true); setNotice(null);
     }} />;
-
-  if (selectedId === "seed-tone") return <section className="story-planning-workbench book-preferences-editor" aria-label="本书偏好">
-    <ContentTypeLabel identity={planningSectionIdentity(selectedId)} />
-    {!props.compact ? <h2>本书偏好</h2> : null}
-    {discussion}
-    <FreePlanningEditor draft={planningDraft} label="篇幅、风格与边界" rows={4} stateLabels={planningStoryStateLabels}
-      placeholder="想写约 20 万字，大致分三卷，章节数暂不定。轻松、克制，带一点悬疑，第三人称，不写过度血腥。"
-      onSave={() => void savePreferences()} onAdopt={() => void confirmPending()} />
-    <PlanningDiscussionSources sectionId={selectedId} />
-    {notice ? <p className="project-notice" role="status">{notice}</p> : null}
-    {error ? <p className="project-error" role="alert">{error}</p> : null}
-    {planningDraft.remoteChanged ? <div className="project-error" role="status">偏好已有新版本，本地修改仍保留。
-      <button type="button" disabled={saving} onClick={() => {
-        if (window.confirm("放弃本地修改并读取最新偏好吗？")) planningDraft.reload();
-      }}><RotateCcw size={14} />读取最新偏好</button></div> : null}
-  </section>;
 
   return (
     <section className="story-planning-workbench compact-work-design" aria-label="作品定位">

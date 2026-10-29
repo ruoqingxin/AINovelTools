@@ -436,8 +436,8 @@ export function StoryBibleView() {
           <option value="ACTIVE">仅显示活动</option><option value="ALL">全部状态</option><option value="ARCHIVED">仅显示归档</option>
         </select>
         {!aiWorkspace && project.data ? <>
-          <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "entity", action: "import" }}>去构思提取设定</AiWorkspaceLink>
-          <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "entity", action: "new" }}>去构思新建设定</AiWorkspaceLink>
+          <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "entity", action: "import" }}>去共创提取设定</AiWorkspaceLink>
+          <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "entity", action: "new" }}>去共创新建设定</AiWorkspaceLink>
         </> : null}
         {aiWorkspace && <button type="button" className="secondary-action" disabled={importBusy || busy !== null} onClick={() => {
           if (editing && entityDirty && !window.confirm("放弃当前实体修改并打开文件导入吗？")) return;
@@ -485,7 +485,7 @@ export function StoryBibleView() {
             <div className="library-actions">{aiWorkspace ? <>
               <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => setEditing(true)}><Pencil size={15} />编辑实体</button>
               <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => void toggleArchive()}>{selected.lifecycleStatus === "ACTIVE" ? <Archive size={15} /> : <RotateCcw size={15} />}{selected.lifecycleStatus === "ACTIVE" ? "归档实体" : "恢复实体"}</button>
-            </> : <AiWorkspaceLink target={{ projectId: selected.projectId, workflow: "entity", targetId: selected.id }}>去构思处理{typeLabels[selected.entityType]}设定</AiWorkspaceLink>}</div>
+            </> : <AiWorkspaceLink target={{ projectId: selected.projectId, workflow: "entity", targetId: selected.id }}>去共创处理{typeLabels[selected.entityType]}设定</AiWorkspaceLink>}</div>
             <details className="library-advanced"><summary>属性与来源</summary><pre>{form.fixedAttributesJson}</pre><p>来源版本 <code>{form.sourceVersion ?? "未指定"}</code></p></details>
           </> : null}
           {aiWorkspace && selected?.lifecycleStatus === "ACTIVE" ? <button type="button" className="secondary-action"

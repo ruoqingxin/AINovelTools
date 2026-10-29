@@ -17,6 +17,8 @@ type PlanningDashboardProps = {
   nodes?: PlanNode[];
   sections?: PlanningSection[];
   loadState?: "loading" | "error" | "ready";
+  awaitingStructure?: boolean;
+  structureTargetId?: string;
 };
 
 export function PlanningDashboard(props: PlanningDashboardProps) {
@@ -72,10 +74,13 @@ export function PlanningDashboard(props: PlanningDashboardProps) {
   }
   return <main className="workspace-empty" aria-label="正文工作区">
     <BookOpen size={28} />
-    <h2>{props.chapterNodes.length ? "选择章节" : "故事尚未开始"}</h2>
-    {!props.chapterNodes.length && props.projectId ? <WorkspaceLink
+    <h2>{props.chapterNodes.length ? "选择章节" : props.awaitingStructure ? "尚未规划分卷与章节" : "故事尚未开始"}</h2>
+    {!props.chapterNodes.length && props.projectId && props.awaitingStructure ? <WorkspaceLink
+      href={aiWorkspaceHref({ projectId: props.projectId, workflow: "planning", targetId: props.structureTargetId })}
+      className="primary-action"><ListTree size={15} />规划分卷与章节</WorkspaceLink>
+      : !props.chapterNodes.length && props.projectId ? <WorkspaceLink
       href={aiWorkspaceHref({ projectId: props.projectId, workflow: "preparation" })}
-      className="primary-action"><NotebookPen size={15} />开始创作准备</WorkspaceLink> : null}
+      className="primary-action"><NotebookPen size={15} />开始筹备</WorkspaceLink> : null}
     {props.chapterNodes.length ? <button type="button" className="primary-action" onClick={props.onOpenFirstChapter}>
       <BookOpen size={15} />打开章节</button> : null}
   </main>;

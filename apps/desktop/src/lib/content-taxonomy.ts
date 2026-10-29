@@ -31,7 +31,7 @@ export function entityIdentity(type: EntityType): ContentIdentity {
 }
 export function planIdentity(kind: PlanNodeKind): ContentIdentity {
   const subtypes: Record<PlanNodeKind, string> = {
-    WORK_DESIGN: "创作准备", OUTLINE: "全书大纲", VOLUME_MANAGER: "分卷与章节结构",
+    WORK_DESIGN: "筹备", OUTLINE: "全书大纲", VOLUME_MANAGER: "分卷与章节结构",
     VOLUME: "分卷规划", CHAPTER: "章节细纲", SCENE: "场景安排",
   };
   return { category: kind === "WORK_DESIGN" ? "UNCLASSIFIED" : "OUTLINE", subtype: subtypes[kind] };
@@ -47,7 +47,7 @@ export function planningSectionIdentity(id: string): ContentIdentity {
   if (id === "frame-setting") return { category: "SETTING", subtype: "世界规则与限制" };
   if (id.startsWith("plan-node:") || id.startsWith("chapter-split-")) return { category: "OUTLINE", subtype: "情节规划" };
   // Legacy preparation notes can mix facts and intended plot. Do not silently recategorize them.
-  return { category: "UNCLASSIFIED", subtype: "创作准备" };
+  return { category: "UNCLASSIFIED", subtype: "筹备" };
 }
 export function draftIdentity(document: Pick<CoauthorDocument, "kind">): ContentIdentity {
   return { category: document.kind, subtype: document.kind === "SETTING" ? "世界规则与概念" : "工作稿" };

@@ -57,7 +57,7 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
   const creatingRef = useRef(false);
   const [createChapterOpen, setCreateChapterOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useUnsavedChangesGuard(creating, "创作准备正在建立结构。");
+  useUnsavedChangesGuard(creating, "筹备正在建立结构。");
   const previousMissing = preparationPrerequisites(stages, selected.id, sections.data ?? []);
   const basisItems = stages.slice(0, stageIndex).flatMap((entry) => entry.items);
   const byId = new Map((sections.data ?? []).map((section) => [section.id, section]));
@@ -88,9 +88,9 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
     finally { creatingRef.current = false; setCreating(false); }
   }
 
-  if (project.isPending || nodes.isPending || sections.isPending) return <p className="route-loading" role="status">正在读取创作准备…</p>;
+  if (project.isPending || nodes.isPending || sections.isPending) return <p className="route-loading" role="status">正在读取筹备…</p>;
   if (project.isError || nodes.isError || sections.isError) return <section className="preparation-workspace">
-    <p role="alert" className="project-error">无法读取创作准备：{errorMessage(project.error ?? nodes.error ?? sections.error)}</p>
+    <p role="alert" className="project-error">无法读取筹备：{errorMessage(project.error ?? nodes.error ?? sections.error)}</p>
     <button type="button" className="secondary-action" onClick={() => void Promise.all([project.refetch(), nodes.refetch(), sections.refetch()])}>重试</button>
   </section>;
   if (initialItem && !items.some((item) => item.id === initialItem)) return <p role="alert">准备事项不存在，未打开其他内容。</p>;
@@ -102,11 +102,11 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
 
   return <section className="preparation-workspace">
     <header className="workspace-heading preparation-heading">
-      <div><span className="preparation-project">{project.data?.name}</span>{embedded ? <h2>创作准备</h2> : <h1>创作准备</h1>}</div>
+      <div><span className="preparation-project">{project.data?.name}</span>{embedded ? <h2>故事准备</h2> : <h1>筹备</h1>}</div>
       <div className="preparation-progress"><span>关键准备 {progress.confirmed} / {progress.total}</span>
         <progress aria-label="关键准备确认进度" value={progress.confirmed} max={progress.total} /></div>
     </header>
-    <nav className="preparation-stages" aria-label="创作准备阶段">
+    <nav className="preparation-stages" aria-label="筹备阶段">
       {stages.map((entry, index) => {
         const required = entry.items.filter((item) => item.required);
         const done = required.filter((item) => item.sectionId && preparationStatus(byId.get(item.sectionId), sections.data ?? []) === "confirmed").length;
@@ -149,7 +149,7 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
           <button type="button" className="primary-action" disabled={creating || editorBusy || previousMissing.length > 0}
             onClick={() => selected.kind === "CHAPTER" ? setCreateChapterOpen(true) : void createOutline()}>
             <Plus size={15} />{creating ? "建立中…" : selected.kind === "CHAPTER" ? "建立开篇章节计划" : "建立主线大纲"}</button></>
-            : project.data ? <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "preparation", item: selected.id }}>去构思处理{selected.title}</AiWorkspaceLink> : null}
+            : project.data ? <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "preparation", item: selected.id }}>去共创处理{selected.title}</AiWorkspaceLink> : null}
         </div>}
         {error ? <p role="alert" className="project-error">{error}</p> : null}
       </main>
@@ -362,7 +362,7 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
   const changedBasis = planningReviewChanges(stored, sections);
   const reviewStale = !planningReviewIsCurrent(stored, sections);
   const existingReview = readPlanningReview(stored);
-  useUnsavedChangesGuard(draft.dirty || busy, "创作准备有未保存内容或正在处理的操作。");
+  useUnsavedChangesGuard(draft.dirty || busy, "筹备有未保存内容或正在处理的操作。");
   useEffect(() => { onPendingChange(draft.dirty, busy, draft.form); }, [draft.dirty, busy, draft.form, onPendingChange]);
   useEffect(() => () => onPendingChange(false, false, null), [onPendingChange]);
   useEffect(() => {
