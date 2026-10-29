@@ -1,18 +1,18 @@
-import { ArrowUpRight, FileText, SquarePen } from "lucide-react";
-import { createContext, useContext } from "react";
+import { ArrowUpRight, FileText, SquarePen, type LucideIcon } from "lucide-react";
 import { aiWorkspaceHref, contentCategories, identityLabel, type AiWorkspaceTarget, type ContentIdentity } from "../lib/content-taxonomy";
 import "./content-identity.css";
 import { WorkspaceLink } from "./workspace-link";
 
-export const AiWorkspaceContext = createContext(false);
-export const useInAiWorkspace = () => useContext(AiWorkspaceContext);
+export { AiWorkspaceContext, useInAiWorkspace } from "./ai-workspace-context";
 
 export function ContentTypeLabel({ identity }: { identity: ContentIdentity }) {
   return <span className="content-type-label" data-category={identity.category}
     title={contentCategories[identity.category].description}>{identityLabel(identity)}</span>;
 }
-export function AiWorkspaceLink({ target, children }: { target: AiWorkspaceTarget; children: React.ReactNode }) {
-  return <WorkspaceLink className="secondary-action content-workspace-link" href={aiWorkspaceHref(target)}><ArrowUpRight size={15} />{children}</WorkspaceLink>;
+export function AiWorkspaceLink({ target, children, icon: Icon = ArrowUpRight, title }: {
+  target: AiWorkspaceTarget; children: React.ReactNode; icon?: LucideIcon; title?: string;
+}) {
+  return <WorkspaceLink className="secondary-action content-workspace-link" href={aiWorkspaceHref(target)} title={title}><Icon size={15} />{children}</WorkspaceLink>;
 }
 export function FormalContent({ title, identity, content, status, target, pending = false, layout = "inline", loadState = "ready" }: {
   title: string; identity: ContentIdentity; content: string; status?: string;

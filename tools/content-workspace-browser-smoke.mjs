@@ -16,6 +16,9 @@ const { values } = parseArgs({ options: {
   "coauthor-only": { type: "boolean", default: false },
   "include-mobile": { type: "boolean", default: false },
   "layout-only": { type: "boolean", default: false },
+  "empty-states-only": { type: "boolean", default: false },
+  "coauthor-audit-only": { type: "boolean", default: false },
+  "library-only": { type: "boolean", default: false },
 } });
 const { chromium } = await import(values.playwright ? pathToFileURL(values.playwright).href : "playwright");
 const artifacts = resolve(values.artifacts);
@@ -60,6 +63,12 @@ const transport = `
   export async function waitForPendingCommands(){}
   export async function invoke(command,args={}){
     window.__contentCalls??=[];window.__contentCalls.push(command);
+    if(sessionStorage.getItem("content-workspace-empty-states")==="1"){
+      if(command==="list_author_todos")return {projectId:"p1",pendingCount:0,items:[]};
+      if(["list_entity_cards","list_entity_revisions","list_relations","list_events","list_beliefs",
+        "list_foreshadowings","list_summary_materials","list_writing_cards","list_planning_sections","list_author_settings"].includes(command))return [];
+      if(command==="list_plan_nodes")return nodes.filter(node=>["OUTLINE","VOLUME_MANAGER"].includes(node.kind));
+    }
     if(command==="current_project")return project;
     if(command==="health_query")return {schemaVersion:66};
     if(command==="bootstrap_status"||command==="get_project_ai_task_overrides"||command==="get_ai_task_preferences")return {};
@@ -136,6 +145,7 @@ const transport = `
     if(${Boolean(values["coauthor-only"])}){
       if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"未来来信的悬念与伏笔",scopeKind:"PROJECT"}];
       if(command==="list_discussion_messages"){
+        if(sessionStorage.getItem("coauthor-header-empty")==="1")return [];
         const offset=args.beforeMessageId?-20:0;
         return Array.from({length:args.beforeMessageId?20:100},(_,index)=>({
           id:"message-"+(index+offset),sessionId:"s1",role:index%2?"ASSISTANT":"USER",
@@ -200,6 +210,253 @@ try {
       assert.deepEqual(await navigation.locator('a[aria-current="page"]').allTextContents(), [label]);
     }
 
+    if (values["library-only"]) {
+      async function assertLibrary(category) {
+        await selectedWorkspace("资料");
+        await page.getByRole("heading", { name: "资料", exact: true }).waitFor();
+        const navigation = page.getByRole("navigation", { name: "知识资料分类" });
+        assert.deepEqual(await navigation.locator("a[data-active]").allTextContents(), [category]);
+        assert.equal(await page.getByRole("link", { name: /^去共创/ }).count(), 0);
+      }
+      async function assertReadOnly() {
+        const writes = await page.evaluate(() => window.__contentCalls.filter(command => /^(create_|upsert_|save_|enqueue_|run_)/.test(command)));
+        assert.deepEqual(writes, [], "Reading or navigating the library must not write or run a model");
+      }
+      async function captureThemes(name) {
+        for (const theme of ["light", "dark"]) {
+          await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+          await capture(`library-${name}-${theme}`);
+        }
+        await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+      }
+      await visit("/knowledge?entity=person&targetProject=p1");
+      await page.getByRole("heading", { name: "沈砚", exact: true }).waitFor();
+      await assertLibrary("设定");
+      const editSetting = page.getByRole("link", { name: "编辑设定", exact: true });
+      assert.match(await editSetting.getAttribute("href"), /work=entity&targetProject=p1&entity=person/);
+      assert.equal(await editSetting.locator("svg").count(), 1);
+      await assertReadOnly();
+      await captureThemes("setting");
+      await editSetting.click();
+      await selectedCategory("设定");
+      await page.getByRole("button", { name: "编辑实体", exact: true }).waitFor();
+      await assertReadOnly();
+
+      await visit("/knowledge");
+      await page.getByRole("navigation", { name: "知识资料分类" }).getByRole("link", { name: "剧情记录", exact: true }).click();
+      await page.getByRole("button", { name: /守护/ }).click();
+      await assertLibrary("剧情记录");
+      assert.match(await page.getByRole("link", { name: "编辑记录", exact: true }).getAttribute("href"), /objectId=relation1&tab=relations/);
+      await captureThemes("record");
+      await assertReadOnly();
+
+      await page.getByRole("navigation", { name: "知识资料分类" }).getByRole("link", { name: "辅助参考", exact: true }).click();
+      await page.getByRole("button", { name: /辅助摘要/ }).click();
+      await assertLibrary("辅助参考");
+      assert.equal(await page.getByRole("link", { name: "处理参考", exact: true }).count(), 1);
+      assert.equal(await page.locator('a[href*="summary=memory"]').count(), 1);
+      assert.equal(await page.getByRole("button", { name: /重新生成|确认为有效|编辑参考副本/ }).count(), 0);
+      await captureThemes("reference");
+      await assertReadOnly();
+      await visit("/knowledge/materials?summary=memory&targetProject=p1");
+      await page.getByRole("heading", { name: "章节记忆", exact: true }).waitFor();
+      await assertLibrary("辅助参考");
+      assert.equal(await page.getByRole("link", { name: "处理参考", exact: true }).count(), 1);
+      assert.equal(await page.locator('a[href*="summary=memory"]').count(), 1);
+      assert.equal(await page.getByRole("link", { name: "参考列表", exact: true }).getAttribute("href"), "/knowledge/materials");
+      await assertReadOnly();
+
+      await visit("/knowledge");
+      await page.getByRole("navigation", { name: "设定视图" }).getByRole("link", { name: "设定揭示状态", exact: true }).click();
+      await page.getByRole("button", { name: /沈砚.*作者保留设定/ }).click();
+      await assertLibrary("设定");
+      await page.getByText("作者确认 · 尚未揭示", { exact: true }).waitFor();
+      const linkedSetting = new URL(await page.getByRole("link", { name: "查看关联设定", exact: true }).getAttribute("href"), values.url);
+      assert.equal(linkedSetting.searchParams.get("entity"), "person");
+      assert.equal(linkedSetting.searchParams.get("returnTo"), "/knowledge/settings");
+      assert.equal(await page.getByRole("link", { name: "来源讨论", exact: true }).getAttribute("href"), "/discussion#s1");
+      assert.equal(await page.locator(".library-actions a").count(), 2);
+      await captureThemes("reveal");
+      await page.getByRole("combobox", { name: "设定公开状态", exact: true }).selectOption("PUBLIC");
+      await page.getByText("没有符合条件的作者设定。", { exact: true }).waitFor();
+      await page.getByText("作者确认 · 尚未揭示", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "重置筛选", exact: true }).click();
+      await assertReadOnly();
+
+      await visit("/knowledge/settings");
+      await page.getByRole("button", { name: /沈砚.*作者保留设定/ }).waitFor();
+      await page.getByRole("textbox", { name: "搜索作者设定", exact: true }).fill("不存在");
+      await page.getByRole("heading", { name: "没有符合条件的作者设定。", exact: true }).waitFor();
+      assert.equal(await page.locator(".library-list:visible").count(), 0);
+      await page.getByRole("button", { name: "重置筛选", exact: true }).click();
+      await page.getByRole("button", { name: /沈砚.*作者保留设定/ }).waitFor();
+
+      await page.evaluate(() => sessionStorage.setItem("content-workspace-empty-states", "1"));
+      for (const [path, category, title] of [
+        ["/knowledge", "设定", "尚未添加人物与世界设定"],
+        ["/knowledge/records", "剧情记录", "暂无关系记录"],
+        ["/knowledge/materials", "辅助参考", "尚未添加摘要与记忆"],
+        ["/knowledge/settings", "设定", "尚未添加作者设定"],
+      ]) {
+        await visit(path);
+        await page.getByRole("heading", { name: title, exact: true }).waitFor();
+        await assertLibrary(category);
+        assert.equal(await page.locator(".workspace-empty-state:visible").count(), 1);
+        assert.equal(await page.locator(".library-list:visible").count(), 0);
+        assert.equal(await page.locator(".workspace-empty-copy p").count(), 0);
+        const bounds = await page.locator(".workspace-empty-state").boundingBox();
+        assert.ok(bounds.height > 360, `${path} empty surface collapsed`);
+        assert.ok(bounds.y + bounds.height < viewport.height, `${path} empty surface exceeds viewport`);
+        for (const link of await page.locator(".workspace-empty-actions a").all()) {
+          assert.equal(await link.locator("svg").count(), 1);
+        }
+        await assertReadOnly();
+        await captureThemes(`empty-${path.split("/").pop()}`);
+      }
+      reports.push({ viewport, workflow: "library-cleanup", categories: 3, revealStates: true, readOnly: true, emptySurfaces: 4 });
+      await context.close();
+      continue;
+    }
+
+    if (values["coauthor-audit-only"]) {
+      await visit("/discussion");
+      await page.getByRole("textbox", { name: "讨论输入", exact: true }).waitFor();
+      const stableContext = await page.evaluate(async () => {
+        const first = await import("/src/views/content-identity.tsx?workspace-audit=first");
+        const second = await import("/src/views/content-identity.tsx?workspace-audit=second");
+        return first.AiWorkspaceContext === second.AiWorkspaceContext;
+      });
+      assert.equal(stableContext, true, "Re-evaluating presentation modules must not replace workspace context");
+      async function assertWorkspaceContent() {
+        assert.equal(await page.getByRole("navigation", { name: "知识资料分类" }).count(), 0);
+        assert.equal(await page.getByRole("navigation", { name: "设定视图" }).count(), 0);
+        assert.deepEqual(await page.locator(".ai-workspace-content").getByRole("link", { name: /^去共创/ }).allTextContents(), []);
+        assert.equal(await page.locator(".workspace-empty-copy p, .coauthor-placeholder > p, .coauthor-empty > p").count(), 0);
+        assert.equal(await page.evaluate(() => window.__contentCalls.some(command => /^(create_|upsert_|save_|enqueue_|run_)/.test(command))), false);
+      }
+      await assertWorkspaceContent();
+      const checks = [
+        ["筹备", () => page.getByRole("combobox", { name: "目标字数", exact: true })],
+        ["设定", () => page.getByRole("button", { name: "新建实体", exact: true })],
+        ["大纲", () => page.getByText("正式大纲：邮差入城调查来信。", { exact: true })],
+        ["正文", () => page.getByRole("heading", { name: "第一章 入城", exact: true })],
+        ["剧情记录", () => page.getByRole("button", { name: "新建记录", exact: true })],
+        ["辅助参考", () => page.getByRole("button", { name: "新建参考摘要", exact: true })],
+        ["待办核对", () => page.getByRole("heading", { name: "待办", exact: true })],
+        ["自由讨论", () => page.getByRole("textbox", { name: "讨论输入", exact: true })],
+      ];
+      for (const [category, ready] of checks) {
+        await page.getByRole("navigation", { name: "AI 内容分类" }).getByRole("link", { name: category, exact: true }).click();
+        await ready().waitFor();
+        await selectedCategory(category);
+        await assertWorkspaceContent();
+        await capture(`audit-${new URL(page.url()).searchParams.get("work") ?? "discussion"}`);
+      }
+      for (const [path, title] of [
+        ["/discussion?work=preparation&targetProject=p1&item=protagonist", "主角"],
+        ["/discussion?work=section&targetProject=p1&item=seed-hook", "核心卖点与独特钩子"],
+      ]) {
+        await visit(path);
+        await page.getByRole("heading", { name: title, exact: true }).waitFor();
+        await page.getByRole("button", { name: "发起讨论", exact: true }).waitFor();
+        await assertWorkspaceContent();
+        await capture(`audit-${new URL(page.url()).searchParams.get("work")}-detail`);
+      }
+      await visit("/discussion?work=records&targetProject=p1");
+      await page.getByRole("button", { name: "新建记录", exact: true }).waitFor();
+      for (const [tab, title] of [["events", "暂无事件记录"], ["beliefs", "暂无人物认知记录"], ["foreshadowings", "暂无伏笔记录"]]) {
+        await page.getByRole("combobox", { name: "记录类型", exact: true }).selectOption(tab);
+        await page.getByRole("heading", { name: title, exact: true }).waitFor();
+        await assertWorkspaceContent();
+      }
+      await page.evaluate(() => sessionStorage.setItem("content-workspace-empty-states", "1"));
+      await visit("/discussion?work=records&targetProject=p1");
+      await page.getByRole("button", { name: "添加关系记录", exact: true }).waitFor();
+      await assertWorkspaceContent();
+      assert.equal(await page.getByRole("heading", { name: "剧情记录", exact: true }).count(), 0);
+      await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+      await capture("audit-records-empty-dark");
+      await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+      await capture("audit-records-empty-light");
+      reports.push({ viewport, workflow: "coauthor-content-audit", categories: checks.length, stableContext });
+      await context.close();
+      continue;
+    }
+
+    if (values["empty-states-only"]) {
+      async function assertNoEmptyStateWrites() {
+        const writes = await page.evaluate(() => window.__contentCalls.filter(command => /^(create_|upsert_|save_|enqueue_|run_)/.test(command)));
+        assert.deepEqual(writes, [], "Empty-state actions must not write or run a model");
+      }
+      await visit("/discussion");
+      await page.evaluate(() => sessionStorage.setItem("content-workspace-empty-states", "1"));
+      const cases = [
+        ["review", "待办核对", "暂无待处理事项", null],
+        ["materials", "辅助参考", "尚未添加摘要与记忆", "添加参考摘要"],
+        ["records", "剧情记录", "暂无关系记录", "添加关系记录"],
+        ["writing", "正文", "尚未规划分卷与章节", "规划分卷与章节"],
+        ["planning", "大纲", "尚无正式全书大纲", "编写全书大纲"],
+        ["entity", "设定", "尚未添加人物与世界设定", "添加第一个设定"],
+      ];
+      for (const [work, category, title] of cases) {
+        await visit(`/discussion?work=${work}&targetProject=p1`);
+        await selectedCategory(category);
+        await page.getByRole("heading", { name: title, exact: true }).waitFor();
+        assert.equal(await page.locator(".workspace-empty-state:visible").count(), 1);
+        assert.equal(await page.locator(".workspace-empty-copy p").count(), 0);
+        if (["materials", "records", "entity"].includes(work)) {
+          assert.equal(await page.locator(".library-list:visible").count(), 0);
+        }
+        const bounds = await page.locator(".workspace-empty-state").evaluate(element => {
+          const rect = element.getBoundingClientRect();
+          const heading = element.querySelector(".workspace-empty-copy").getBoundingClientRect();
+          return { height: rect.height, bottom: rect.bottom,
+            centerOffset: Math.abs((rect.left + rect.right) / 2 - (heading.left + heading.right) / 2) };
+        });
+        assert.ok(bounds.height > 360, `${work} empty surface collapsed: ${bounds.height}`);
+        assert.ok(bounds.bottom < viewport.height, `${work} empty surface exceeds viewport`);
+        assert.ok(bounds.centerOffset < 2, `${work} empty heading is off-center`);
+        await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+        await capture(`empty-${work}-dark`);
+        await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+        await capture(`empty-${work}-light`);
+      }
+      for (const [work, , title, action] of cases.filter(([work]) => ["materials", "records", "entity"].includes(work))) {
+        await visit(`/discussion?work=${work}&targetProject=p1`);
+        await page.getByRole("heading", { name: title }).waitFor();
+        await page.getByRole("button", { name: action, exact: true }).click();
+        assert.equal(await page.locator(".workspace-empty-state:visible").count(), 0);
+        assert.equal(await page.locator('.library-layout[data-empty="true"]').count(), 0);
+        await assertNoEmptyStateWrites();
+        await capture(`empty-${work}-start`);
+      }
+      await visit("/discussion?work=writing&targetProject=p1");
+      await page.getByRole("heading", { name: "尚未规划分卷与章节" }).waitFor();
+      const planningLink = page.getByRole("link", { name: "规划分卷与章节", exact: true });
+      assert.match(await planningLink.getAttribute("href"), /work=planning/);
+      await planningLink.click();
+      await page.getByRole("button", { name: "生成分卷方案", exact: true }).waitFor();
+      await assertNoEmptyStateWrites();
+      await page.evaluate(() => sessionStorage.removeItem("content-workspace-empty-states"));
+      for (const [work, label, item] of [
+        ["entity", "搜索实体", /沈砚/],
+        ["materials", "搜索参考资料", /辅助摘要/],
+        ["records", "搜索剧情记录", /守护/],
+      ]) {
+        await visit(`/discussion?work=${work}&targetProject=p1`);
+        await page.getByRole("button", { name: item }).waitFor();
+        await page.getByRole("textbox", { name: label }).fill("没有匹配内容");
+        await page.locator('.library-layout[data-empty="true"]').waitFor();
+        await capture(`empty-${work}-filtered`);
+        await page.getByRole("button", { name: work === "materials" ? "清空搜索" : "重置筛选", exact: true }).click();
+        await page.getByRole("button", { name: item }).waitFor();
+      }
+      await assertNoEmptyStateWrites();
+      reports.push({ viewport, workflow: "empty-states", surfaces: cases.length });
+      await context.close();
+      continue;
+    }
+
     if (values["coauthor-only"]) {
       await visit("/discussion");
       const input = page.getByRole("textbox", { name: "讨论输入", exact: true });
@@ -213,11 +470,12 @@ try {
           const box = selector => {
             const element = document.querySelector(selector);
             const rect = element.getBoundingClientRect();
-            return { top: rect.top, bottom: rect.bottom, height: rect.height };
+            return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, height: rect.height };
           };
           const shell = document.querySelector('.unified-ai-workspace');
           const thread = document.querySelector(".coauthor-thread");
-          return { composer: box(".coauthor-composer"), thread: box(".coauthor-thread"),
+          return { composer: box(".coauthor-composer"), thread: box(".coauthor-thread"), toolbar: box(".coauthor-toolbar"),
+            categories: box(".ai-category-nav"), content: box(".ai-workspace-content"),
             shell: box(".unified-ai-workspace"), shellScroll: shell.scrollHeight-shell.clientHeight,
             bottom: innerHeight-26, remaining: thread.scrollHeight-thread.scrollTop-thread.clientHeight };
         });
@@ -225,8 +483,19 @@ try {
         assert.ok(metrics.thread.height >= 120, JSON.stringify(metrics));
         assert.ok(metrics.thread.bottom <= metrics.composer.top, JSON.stringify(metrics));
         assert.ok(metrics.shellScroll <= 1, JSON.stringify(metrics));
+        assert.ok(metrics.toolbar.height <= 50, "discussion controls stay on a single desktop row");
+        assert.ok(metrics.thread.top >= metrics.toolbar.bottom, JSON.stringify(metrics));
+        assert.ok(metrics.categories.right < metrics.content.left, "content categories form a separate left navigation rail");
+        assert.equal(await page.locator(".coauthor-thread-wrap").evaluate(el => getComputedStyle(el).borderTopWidth), "1px");
       }
       await assertFits();
+      const toolbar = page.getByRole("navigation", { name: "工作区", exact: true });
+      assert.equal(await toolbar.getByRole("combobox", { name: "当前讨论" }).count(), 1);
+      assert.equal(await toolbar.getByRole("tablist", { name: "共创页签" }).count(), 1);
+      assert.equal(await toolbar.getByRole("button", { name: "新建讨论", exact: true }).getAttribute("title"), "新建讨论，不复制当前工作稿");
+      assert.equal(await toolbar.getByRole("button", { name: "依据与运行记录", exact: true }).getAttribute("title"), "依据与运行记录");
+      assert.equal(await page.getByRole("heading", { name: "讨论区", exact: true }).count(), 0);
+      assert.equal(await page.getByRole("navigation", { name: "AI 内容分类" }).locator("svg").count(), 0);
       assert.ok(await log.evaluate(el=>el.scrollHeight-el.scrollTop-el.clientHeight) < 5, "initial history opens at latest");
       await capture("coauthor-discussion");
       await input.fill("保留当前未发送的问题");
@@ -281,6 +550,31 @@ try {
       await manuscript.waitFor({ state: "visible" });
       assert.equal(await manuscript.inputValue(), "工作稿编辑保留，不能因布局切换丢失。");
       assert.equal(await page.evaluate(()=>window.__contentCalls.some(name=>["run_coauthor","publish_coauthor_document"].includes(name))), false);
+      await page.getByRole("tab", { name: "讨论", exact: true }).click();
+      await input.fill("");
+      await page.evaluate(() => sessionStorage.setItem("coauthor-header-empty", "1"));
+      await page.reload();
+      await page.getByText("今天想推敲哪一部分？", { exact: true }).waitFor();
+      await page.evaluate(() => { document.documentElement.dataset.theme="dark"; });
+      await assertFits();
+      await page.evaluate(() => { document.documentElement.dataset.theme="light"; });
+      await capture("coauthor-empty-light");
+      await page.evaluate(() => { document.documentElement.dataset.theme="dark"; });
+      await capture("coauthor-empty-dark");
+      const frame = await page.locator(".coauthor-thread-wrap").boundingBox();
+      const placeholder = await page.locator(".coauthor-placeholder").boundingBox();
+      assert.ok(Math.abs((frame.x+frame.width/2)-(placeholder.x+placeholder.width/2)) < 15, "empty state is centered horizontally");
+      assert.ok(placeholder.y > frame.y && placeholder.y+placeholder.height < frame.y+frame.height, "empty state fits the conversation frame");
+      await page.getByRole("button", { name: "推敲人物", exact: true }).click();
+      assert.ok((await input.inputValue()).includes("人物的动机"));
+      assert.equal(await input.evaluate(el => el===document.activeElement), true);
+      assert.equal(await page.evaluate(()=>window.__contentCalls.includes("run_coauthor")), false);
+      await input.fill("");
+      await page.getByLabel("AI 内容核对说明", { exact: true }).click();
+      await page.getByText("生成完成不代表内容可靠。条件范围、新旧规则与前文承接仍可能出错，请对照原文确认。", { exact: true }).waitFor({ state: "visible" });
+      const caution = await page.locator(".coauthor-reliability-note p").boundingBox();
+      assert.ok(caution.y >= 0 && caution.y + caution.height < viewport.height-26, "reliability detail remains visible");
+      assert.ok(caution.x >= 0 && caution.x + caution.width <= viewport.width, "reliability detail stays within the desktop viewport");
       reports.push({ viewport, workflow: "coauthor" });
       await context.close();
       continue;
@@ -818,7 +1112,7 @@ try {
     await page.getByText("正式人物设定：城中邮差。", { exact: true }).waitFor();
     await noButtons(/新建实体|编辑实体|导入实体/);
     await capture("setting-reader");
-    await page.getByRole("link", { name: "去共创处理人物设定" }).click();
+    await page.getByRole("link", { name: "编辑设定", exact: true }).click();
     await page.getByRole("heading", { name: "共创", exact: true }).waitFor();
     assert.equal(await page.getByRole("navigation", { name: "知识资料分类" }).count(), 0);
     assert.equal(await page.locator("h1").count(), 1);
@@ -903,7 +1197,7 @@ try {
     await page.getByText("辅助摘要：邮差在城门收到来信。", { exact: true }).waitFor();
     await noButtons(/编辑参考副本|重新生成/);
     await capture("reference-reader");
-    await page.getByRole("link", { name: "去共创处理此参考", exact: true }).click();
+    await page.getByRole("link", { name: "处理参考", exact: true }).click();
     await page.getByRole("heading", { name: "共创", exact: true }).waitFor();
     await page.getByRole("button", { name: "编辑参考副本", exact: true }).waitFor();
     await capture("reference-workspace");
@@ -982,7 +1276,7 @@ try {
       assert.equal(await page.getByRole("textbox", { name: "搜索剧情记录" }).inputValue(), "守护");
       await recordItem.click();
     }
-    await page.getByRole("link", { name: "去共创处理此关系记录", exact: true }).click();
+    await page.getByRole("link", { name: "编辑记录", exact: true }).click();
     await page.getByRole("button", { name: "编辑记录", exact: true }).waitFor();
     const activeRecordCategory = await page.locator(".ai-category-nav a[aria-current='page']").boundingBox();
     const recordNav = await page.locator(".ai-category-nav").boundingBox();

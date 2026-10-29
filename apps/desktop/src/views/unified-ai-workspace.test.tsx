@@ -54,6 +54,10 @@ describe("unified AI workspace", () => {
     setup();
     expect(await screen.findByText("自由工作稿 · 统一处理")).toBeVisible();
     expect(screen.getByRole("heading", { name: "共创", level: 1 })).toBeVisible();
+    const nav = screen.getByRole("navigation", { name: "AI 内容分类" });
+    expect(nav.closest("header")).toBeNull();
+    expect(nav.parentElement).toHaveClass("ai-workspace-body");
+    expect(screen.getByText("自由工作稿 · 统一处理").parentElement).toHaveClass("ai-workspace-content");
     expect(screen.getByRole("link", { name: "自由讨论" })).toHaveAttribute("aria-current", "page");
     for (const label of ["设定", "大纲", "正文", "剧情记录", "辅助参考"]) {
       expect(screen.getByRole("link", { name: label })).toHaveAttribute("href", expect.stringContaining("/discussion?work="));

@@ -4,6 +4,7 @@ import { useInAiWorkspace } from "./content-identity";
 import { preparationStatus, preparationStatusLabels } from "./creation-preparation";
 import { WorkspaceLink } from "./workspace-link";
 import { aiWorkspaceHref } from "../lib/content-taxonomy";
+import { WorkspaceEmptyState } from "./workspace-empty-state";
 
 type PlanningDashboardProps = {
   chapterNodes: PlanNode[];
@@ -39,8 +40,9 @@ export function PlanningDashboard(props: PlanningDashboardProps) {
     if (props.structureTask) return <main className="outline-reader" aria-label="分卷与章节">
       <header className="outline-reader-heading"><div><span className="outline-reader-type">{counts}</span><h2>分卷与章节</h2></div></header>
       <section className="outline-reader-empty">
-        <ListTree size={36} strokeWidth={1.25} aria-hidden="true" /><h3>尚未建立分卷规划</h3>
+        <WorkspaceEmptyState icon={ListTree} title="尚未建立分卷规划">
         {aiWorkspace && <button type="button" className="primary-action" onClick={props.onOpenStructure}><ListTree size={15} />开始规划分卷与章节</button>}
+        </WorkspaceEmptyState>
       </section>
     </main>;
     return <main className="outline-reader" aria-label="全书大纲">
@@ -62,19 +64,19 @@ export function PlanningDashboard(props: PlanningDashboardProps) {
       </div>
       {!ready ? <p role="status" className="outline-reader-message">{props.loadState === "loading" ? "正在读取全书大纲…" : "暂时无法读取全书大纲"}</p>
         : hasContent ? <p className="outline-reader-text">{section!.content}</p> : <section className="outline-reader-empty" aria-label="尚无全书大纲">
-        <NotebookPen size={36} strokeWidth={1.25} aria-hidden="true" />
-        <h3>尚无正式全书大纲</h3>
+        <WorkspaceEmptyState icon={NotebookPen} title="尚无正式全书大纲">
         {section?.pendingContent.trim() ? <span className="outline-reader-state">有待确认工作稿</span> : null}
         {aiWorkspace ? <button type="button" className="primary-action" onClick={props.onOpenDirection}><NotebookPen size={15} />{writeLabel}</button>
           : props.projectId ? <WorkspaceLink className="primary-action" href={aiWorkspaceHref({ projectId: props.projectId,
             workflow: "planning", targetId: outline?.id })}><NotebookPen size={15} />{writeLabel}</WorkspaceLink> : null}
+        </WorkspaceEmptyState>
       </section>}
       {hasContent && ready && section?.pendingContent.trim() ? <p className="outline-reader-pending" role="status">有待确认工作稿</p> : null}
     </main>;
   }
   return <main className="workspace-empty" aria-label="正文工作区">
-    <BookOpen size={28} />
-    <h2>{props.chapterNodes.length ? "选择章节" : props.awaitingStructure ? "尚未规划分卷与章节" : "故事尚未开始"}</h2>
+    <WorkspaceEmptyState icon={BookOpen} headingLevel={2}
+      title={props.chapterNodes.length ? "选择章节" : props.awaitingStructure ? "尚未规划分卷与章节" : "故事尚未开始"}>
     {!props.chapterNodes.length && props.projectId && props.awaitingStructure ? <WorkspaceLink
       href={aiWorkspaceHref({ projectId: props.projectId, workflow: "planning", targetId: props.structureTargetId })}
       className="primary-action"><ListTree size={15} />规划分卷与章节</WorkspaceLink>
@@ -83,5 +85,6 @@ export function PlanningDashboard(props: PlanningDashboardProps) {
       className="primary-action"><NotebookPen size={15} />开始筹备</WorkspaceLink> : null}
     {props.chapterNodes.length ? <button type="button" className="primary-action" onClick={props.onOpenFirstChapter}>
       <BookOpen size={15} />打开章节</button> : null}
+    </WorkspaceEmptyState>
   </main>;
 }

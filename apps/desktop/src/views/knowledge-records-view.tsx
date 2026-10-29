@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Link2, Milestone, Pencil, Plus, Save, Sparkles, UserRoundCheck } from "lucide-react";
+import { ArrowLeft, Link2, Milestone, Pencil, Plus, Save, SearchX, Sparkles, UserRoundCheck } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import {
   createBelief,
@@ -29,6 +29,7 @@ import { SearchField } from "./search-field";
 import { recordTypeLabels } from "../lib/content-taxonomy";
 import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
 import { useLibraryNavigation } from "./use-library-navigation";
+import { WorkspaceEmptyState } from "./workspace-empty-state";
 
 type RecordTab = "relations" | "events" | "beliefs" | "foreshadowings";
 
@@ -99,6 +100,9 @@ export function KnowledgeRecordsView() {
   }, [beliefs.data, chapterList, events.data, factLabels, foreshadowings.data, relations.data, tab]);
   const visibleRecords = content.filter((item) => (lifecycleFilter === "ALL" || item.status === lifecycleFilter || item.status.startsWith(`${lifecycleFilter} ·`))
     && `${item.title} ${item.detail}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const emptyCollection = navigation.wide && query.isSuccess && !visibleRecords.length && !selectedId && !editing;
+  const filteredEmpty = emptyCollection && Boolean(search.trim() || lifecycleFilter !== "ALL");
+  const activeTab = tabs.find((item) => item.id === tab)!;
   const draftSignature = JSON.stringify({ fields: { relations: relation, events: event, beliefs: belief, foreshadowings: foreshadowing }[tab], evidenceIds, lifecycleStatus });
   const [baseline, setBaseline] = useState(draftSignature);
   const recordDirty = editing && draftSignature !== baseline;
@@ -238,7 +242,7 @@ export function KnowledgeRecordsView() {
   return (
     <section className="story-bible-view knowledge-records-view library-workspace" data-mobile-detail={mobileDetail}>
       {!aiWorkspace && <div className="workspace-heading">
-        <h1>剧情记录</h1>
+        <h1>资料</h1>
       </div>}
       <KnowledgeSectionNav />
       <div className="library-toolbar" hidden={mobileDetail}>
@@ -251,15 +255,15 @@ export function KnowledgeRecordsView() {
         </select>
         <SearchField label="搜索剧情记录" value={search} onChange={setSearch} placeholder="搜索记录" />
         {aiWorkspace ? <button type="button" className="primary-action" disabled={busy || !project.data} onClick={startNew}><Plus size={15} />新建记录</button>
-          : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "records", tab }}>去共创整理{recordTypeLabels[tab]}</AiWorkspaceLink>}
+          : project.data && <AiWorkspaceLink title="在共创中整理剧情记录" target={{ projectId: project.data.projectId, workflow: "records", tab }}>整理{recordTypeLabels[tab]}</AiWorkspaceLink>}
       </div>
       {error ? <p className="project-error" role="alert">{error}</p> : null}
       {notice ? <p className="project-notice" role="status">{notice}</p> : null}
 
       {project.isError ? <p role="alert" className="project-error">{errorMessage(project.error)}
         <button type="button" className="secondary-action" disabled={project.isFetching} onClick={() => void project.refetch()}>重试作品信息</button></p> : null}
-      <div className="library-layout">
-        <aside ref={navigation.list} hidden={mobileDetail} className="library-list" aria-label="剧情记录列表">
+      <div className="library-layout" data-empty={emptyCollection}>
+        <aside ref={navigation.list} hidden={emptyCollection || mobileDetail} className="library-list" aria-label="剧情记录列表">
           {query.isError ? <p className="project-error" role="alert">无法加载记录：{errorMessage(query.error)}<button type="button" onClick={() => void query.refetch()}>重试</button></p> : null}
           {query.isPending ? <p className="plan-empty">正在加载记录…</p> : null}
           {query.isSuccess && !visibleRecords.length ? <div className="library-list-empty">
@@ -285,13 +289,18 @@ export function KnowledgeRecordsView() {
           <h2>{content.find((item) => item.id === selectedId)?.title}</h2><p className="library-content">{content.find((item) => item.id === selectedId)?.detail}</p>
           <p className="library-meta">v{activeVersion} · {activeRecord.evidenceAnchorIds.length} 条证据</p>
           {aiWorkspace ? <button type="button" className="secondary-action" onClick={() => startEdit(activeRecord.id)}><Pencil size={15} />编辑记录</button>
-            : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "records", targetId: activeRecord.id, tab }}>去共创处理此{recordTypeLabels[tab]}记录</AiWorkspaceLink>}
+            : project.data && <AiWorkspaceLink icon={Pencil} title="在共创中编辑当前记录" target={{ projectId: project.data.projectId, workflow: "records", targetId: activeRecord.id, tab }}>编辑记录</AiWorkspaceLink>}
           <div className="library-evidence">{activeRecord.evidenceAnchorIds.map((id) => {
             const anchor = anchors.data?.find((item) => item.id === id);
             return anchor ? <a key={id} href={manuscriptSourceHref({ projectId: project.data?.projectId, evidenceAnchorId: id }, "/knowledge/records")}>
               {chapterList.find((chapter) => chapter.id === anchor.chapterId)?.title ?? "未命名章节"} · 查看来源证据</a> : <p key={id}>证据暂不可用</p>;
           })}</div>
-        </> : !editing ? <div className="library-empty"><p role={selectedId && query.isSuccess ? "alert" : undefined}>{query.isPending ? "正在加载记录…" : query.isError ? "记录暂不可用"
+        </> : !editing && !selectedId && query.isSuccess ? <WorkspaceEmptyState icon={filteredEmpty ? SearchX : activeTab.icon}
+          title={filteredEmpty ? "没有符合条件的记录。" : !content.length ? `暂无${activeTab.label}记录` : "选择一条剧情记录"}>
+          {filteredEmpty ? <button type="button" className="secondary-action" onClick={() => { setSearch(""); setLifecycleFilter("ALL"); }}>重置筛选</button>
+            : !content.length ? aiWorkspace ? <button type="button" className="primary-action" disabled={busy || !project.data} onClick={startNew}><Plus size={15} />添加{activeTab.label}记录</button>
+              : project.data && <AiWorkspaceLink title="在共创中整理剧情记录" target={{ projectId: project.data.projectId, workflow: "records", tab }}>整理{activeTab.label}记录</AiWorkspaceLink> : null}
+        </WorkspaceEmptyState> : !editing ? <div className="library-empty"><p role={selectedId && query.isSuccess ? "alert" : undefined}>{query.isPending ? "正在加载记录…" : query.isError ? "记录暂不可用"
           : selectedId ? "指定的剧情记录不存在或不属于当前作品，未打开其他记录。"
           : !content.length ? "尚未添加剧情记录" : "选择一条剧情记录"}</p></div> : null}
         {editing ? <form className="library-form" onSubmit={(form) => { form.preventDefault(); void save(); }}>

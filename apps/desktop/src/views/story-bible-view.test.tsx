@@ -85,8 +85,11 @@ describe("StoryBibleView", () => {
     expect(await screen.findByRole("heading", { name: "沈砚" })).toBeVisible();
     expect(screen.getByText("设定 · 人物")).toBeVisible();
     expect(screen.queryByRole("button", { name: /新建实体|导入|编辑实体|讨论/ })).not.toBeInTheDocument();
-    const link = screen.getByRole("link", { name: "去共创处理人物设定" });
+    expect(screen.getByRole("heading", { name: "资料" })).toBeVisible();
+    const link = screen.getByRole("link", { name: "编辑设定" });
     expect(link).toHaveAttribute("href", "/discussion?work=entity&targetProject=project-1&entity=entity-1");
+    expect(link).toHaveAttribute("title", "在共创中编辑当前设定");
+    expect(link.querySelectorAll("svg")).toHaveLength(1);
     expect(mocks.upsertEntity).not.toHaveBeenCalled();
     expect(mocks.extractEntitiesFromText).not.toHaveBeenCalled();
   });
@@ -352,7 +355,28 @@ describe("StoryBibleView", () => {
     expect(screen.queryByRole("link", { name: "章节审核" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "搜索实体" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "实体类型筛选" })).toBeVisible();
-    expect(await screen.findByText("暂无人物与世界设定")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "尚未添加人物与世界设定" })).toBeVisible();
+    expect(screen.queryByRole("complementary", { name: "实体列表" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "添加第一个设定" }));
+    expect(screen.getByLabelText("名称")).toHaveFocus();
+    expect(mocks.upsertEntity).not.toHaveBeenCalled();
+  });
+
+  it("reveals archived settings when resetting an empty active-only filter", async () => {
+    mocks.listEntityCards.mockResolvedValue([{ ...card, entity: { ...card.entity, lifecycleStatus: "ARCHIVED" } }]);
+    renderView();
+    expect(await screen.findByRole("heading", { name: "没有符合条件的实体。" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "重置筛选" }));
+    expect(screen.getByLabelText("实体状态筛选")).toHaveValue("ALL");
+    expect(screen.getByRole("button", { name: /沈砚/ })).toBeVisible();
+    expect(mocks.upsertEntity).not.toHaveBeenCalled();
+  });
+
+  it("keeps the empty formal setting library read-only", async () => {
+    renderView(false);
+    expect(await screen.findByRole("link", { name: "添加第一个设定" })).toHaveAttribute("href",
+      "/discussion?work=entity&targetProject=project-1&action=new");
+    expect(screen.queryByRole("button", { name: "添加第一个设定" })).not.toBeInTheDocument();
   });
 
   it("reports a successful append-only save", async () => {

@@ -54,7 +54,13 @@ describe("material detail navigation", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(mocks.listSummaryMaterials).not.toHaveBeenCalled();
     expect(mocks.listWritingCards).not.toHaveBeenCalled();
-    expect(mocks.listJobs).toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "资料" })).toBeVisible();
+    expect(screen.getAllByRole("link", { name: "处理参考" })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "处理参考" })).toHaveAttribute("href",
+      "/discussion?work=materials&targetProject=project-1&summary=summary-1&materialKind=SUMMARY");
+    expect(screen.getByRole("link", { name: "参考列表" })).toHaveAttribute("href", "/knowledge/materials");
+    expect(screen.queryByRole("link", { name: /去共创更新/ })).not.toBeInTheDocument();
+    expect(mocks.listJobs).not.toHaveBeenCalled();
     expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
   });
 

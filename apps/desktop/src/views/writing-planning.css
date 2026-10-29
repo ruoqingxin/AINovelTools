@@ -72,6 +72,7 @@
 .writing-planning-workspace .chapter-focus-header { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: white; padding: 12px 18px; }
 .chapter-focus-copy h2 { overflow-wrap: anywhere; }
 .workspace-empty { display: grid; min-height: 460px; place-content: center; justify-items: center; gap: 20px; color: #737c88; }
+.workspace-empty:has(> .workspace-empty-state) { display: flex; color: inherit; }
 .workspace-empty h2 { margin: 0; font-size: 18px; }
 .workspace-empty > a.primary-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 14px; text-decoration: none; }
 .workspace-empty > a.primary-action svg { flex-shrink: 0; }

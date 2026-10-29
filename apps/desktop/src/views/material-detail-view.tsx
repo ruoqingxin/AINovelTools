@@ -40,10 +40,10 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
   const unavailable = !project.isPending && !project.isError && !valid;
 
   return <section className="materials-view material-detail-view library-workspace">
-    <div className="workspace-heading">{!aiWorkspace && <h1>辅助参考</h1>}
+    <div className="workspace-heading">{!aiWorkspace && <h1>资料</h1>}
       <div className="material-detail-actions">
         {!aiWorkspace && returnTo ? <WorkspaceLink className="secondary-action" href={returnTo}><ArrowLeft size={15} />返回来源</WorkspaceLink> : null}
-        <WorkspaceLink className="secondary-action" href={aiWorkspace ? aiWorkspaceHref({ workflow: "materials", projectId: target.projectId, materialKind: target.kind ?? undefined }) : "/knowledge/materials"}><BookOpenText size={15} />{aiWorkspace ? "参考列表" : "资料管理"}</WorkspaceLink>
+        <WorkspaceLink className="secondary-action" href={aiWorkspace ? aiWorkspaceHref({ workflow: "materials", projectId: target.projectId, materialKind: target.kind ?? undefined }) : "/knowledge/materials"}><BookOpenText size={15} />参考列表</WorkspaceLink>
         {valid ? <button className="icon-command" type="button" title="刷新当前内容" aria-label="刷新当前内容"
           disabled={editing || actionBusy || result.isFetching} onClick={() => void result.refetch()}><RefreshCw size={15} /></button> : null}
       </div>
@@ -81,8 +81,8 @@ export function MaterialDetailView({ target }: { target: NonNullable<ReturnType<
       </dl></details>
       <div className="library-actions">{aiWorkspace ? <button type="button" className="secondary-action" disabled={actionBusy} onClick={() => { setEditing(true); setNotice(null); }}><Pencil size={15} />
         {currentSummary && automaticSummary(currentSummary) ? "编辑参考副本" : "编辑资料"}</button>
-        : target.kind && <AiWorkspaceLink target={{ projectId: target.projectId, workflow: "materials", targetId: target.id, materialKind: target.kind }}>去共创处理此参考</AiWorkspaceLink>}</div>
-      {currentSummary ? <SummaryActions item={currentSummary} onBusyChange={setActionBusy} /> : null}
+        : target.kind && <AiWorkspaceLink icon={Pencil} title="在共创中处理当前参考" target={{ projectId: target.projectId, workflow: "materials", targetId: target.id, materialKind: target.kind }}>处理参考</AiWorkspaceLink>}</div>
+      {aiWorkspace && currentSummary ? <SummaryActions item={currentSummary} onBusyChange={setActionBusy} /> : null}
       {sourceHref ? <a className="secondary-action" href={sourceHref}><BookOpenText size={15} />查看摘要来源正文</a> : null}
       </>}
     </div> : null}

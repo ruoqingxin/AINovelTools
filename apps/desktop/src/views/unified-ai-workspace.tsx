@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { ArrowLeft, BookOpenText, Files, ListTree, MessageSquareText, NotebookTabs, NotebookPen, ShieldCheck, UsersRound } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { aiWorkflows, aiWorkspaceHref, aiWorkspaceReturnHref, type AiWorkflow } from "../lib/content-taxonomy";
 import { errorMessage, getCurrentProject } from "../lib/tauri-client";
-import { AiWorkspaceContext } from "./content-identity";
+import { AiWorkspaceContext } from "./ai-workspace-context";
 import { CoauthorView } from "./coauthor-view";
 import { CreationPreparationView } from "./creation-preparation-view";
 import { StoryPlanningWorkbench } from "./story-planning-workbench";
@@ -37,26 +37,28 @@ export function UnifiedAiWorkspace() {
   const category = invalid ? null : !work ? "discussion" : workflow === "section" ? "preparation" : chapterPlan ? "planning" : workflow;
   const currentHref = router?.state.location.href ?? `/discussion${window.location.search}${window.location.hash}`;
   const categories = projectId ? [
-    { id: "discussion", label: "自由讨论", icon: MessageSquareText, href: "/discussion" },
-    { id: "preparation", label: "筹备", icon: NotebookPen, href: aiWorkspaceHref({ projectId, workflow: "preparation" }) },
-    { id: "entity", label: "设定", icon: UsersRound, href: aiWorkspaceHref({ projectId, workflow: "entity" }) },
-    { id: "planning", label: "大纲", icon: ListTree, href: aiWorkspaceHref({ projectId, workflow: "planning" }) },
-    { id: "writing", label: "正文", icon: BookOpenText, href: aiWorkspaceHref({ projectId, workflow: "writing" }) },
-    { id: "records", label: "剧情记录", icon: NotebookTabs, href: aiWorkspaceHref({ projectId, workflow: "records" }) },
-    { id: "materials", label: "辅助参考", icon: Files, href: aiWorkspaceHref({ projectId, workflow: "materials" }) },
-    { id: "review", label: "待办核对", icon: ShieldCheck, href: aiWorkspaceHref({ projectId, workflow: "review" }) },
+    { id: "discussion", label: "自由讨论", href: "/discussion" },
+    { id: "preparation", label: "筹备", href: aiWorkspaceHref({ projectId, workflow: "preparation" }) },
+    { id: "entity", label: "设定", href: aiWorkspaceHref({ projectId, workflow: "entity" }) },
+    { id: "planning", label: "大纲", href: aiWorkspaceHref({ projectId, workflow: "planning" }) },
+    { id: "writing", label: "正文", href: aiWorkspaceHref({ projectId, workflow: "writing" }) },
+    { id: "records", label: "剧情记录", href: aiWorkspaceHref({ projectId, workflow: "records" }) },
+    { id: "materials", label: "辅助参考", href: aiWorkspaceHref({ projectId, workflow: "materials" }) },
+    { id: "review", label: "待办核对", href: aiWorkspaceHref({ projectId, workflow: "review" }) },
   ] : [];
   return <AiWorkspaceContext.Provider value>
     <section className="unified-ai-workspace" data-workflow={!work ? "discussion" : workflow ?? "invalid"}>
       <header className="ai-workspace-heading"><h1>共创</h1>
-      {projectId && <nav ref={categoryNav} className="ai-category-nav" aria-label="AI 内容分类">
-        {categories.map(({ id, label, icon: Icon, href }) => <WorkspaceLink key={id}
-          href={category === id ? currentHref : href} aria-current={category === id ? "page" : undefined}>
-          <Icon size={15} />{label}
-        </WorkspaceLink>)}
-      </nav>}
         {destination && !invalid && <WorkspaceLink href={aiWorkspaceReturnHref(search)} className="activity-return"><ArrowLeft size={14} />返回{sourceReturnTo(search.get("returnTo")) ? "来源" : destination}</WorkspaceLink>}
       </header>
+      <div className="ai-workspace-body">
+      {projectId && <nav ref={categoryNav} className="ai-category-nav" aria-label="AI 内容分类">
+        {categories.map(({ id, label, href }) => <WorkspaceLink key={id}
+          href={category === id ? currentHref : href} aria-current={category === id ? "page" : undefined}>
+          {label}
+        </WorkspaceLink>)}
+      </nav>}
+      <div className="ai-workspace-content">
       {project.isPending ? <p role="status">正在核对工作区项目…</p>
         : project.isError ? <p role="alert" className="project-error">{errorMessage(project.error)}</p>
           : invalid ? <p role="alert" className="project-error">工作区链接无效或不属于当前作品，未打开其他对象。</p>
@@ -75,6 +77,8 @@ export function UnifiedAiWorkspace() {
                 {workflow === "materials" && <MaterialsView />}
                 {workflow === "review" && <ReviewCenterView />}
               </>}
+      </div>
+      </div>
     </section>
   </AiWorkspaceContext.Provider>;
 }

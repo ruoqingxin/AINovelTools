@@ -68,4 +68,12 @@ describe("author to-dos", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试加载" }));
     await waitFor(() => expect(screen.getByText("3 项待处理")).toBeVisible());
   });
+  it("shows a neutral empty queue without claiming that manuscript checks passed", async () => {
+    mocks.listAuthorTodos.mockResolvedValue({ projectId: "project-1", pendingCount: 0, items: [] });
+    renderView();
+    expect(await screen.findByRole("heading", { name: "暂无待处理事项" })).toBeVisible();
+    expect(screen.queryByText("当前队列中没有待处理事项。")).not.toBeInTheDocument();
+    expect(screen.queryByText(/全部通过|无风险/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看全部待办" })).not.toBeInTheDocument();
+  });
 });

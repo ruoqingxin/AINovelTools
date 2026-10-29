@@ -58,7 +58,8 @@ describe("KnowledgeRecordsView", () => {
     fireEvent.click(await screen.findByRole("button", { name: /同盟/ }));
     expect(screen.getByText("剧情记录 · 关系")).toBeVisible();
     expect(screen.queryByRole("button", { name: /新建记录|编辑记录/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "去共创处理此关系记录" })).toHaveAttribute("href",
+    expect(screen.getByRole("heading", { name: "资料" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "编辑记录" })).toHaveAttribute("href",
       "/discussion?work=records&targetProject=project-1&objectId=relation-1&tab=relations");
     expect(mocks.createRelation).not.toHaveBeenCalled();
     expect(mocks.updateRelation).not.toHaveBeenCalled();
@@ -70,6 +71,30 @@ describe("KnowledgeRecordsView", () => {
     render(<QueryClientProvider client={new QueryClient()}><KnowledgeRecordsView /></QueryClientProvider>);
     expect(await screen.findByRole("alert")).toHaveTextContent("未打开其他记录");
     expect(screen.queryByRole("button", { name: "编辑记录" })).not.toBeInTheDocument();
+  });
+  it("opens the current record type from the single empty surface without creating data", async () => {
+    render(<QueryClientProvider client={new QueryClient()}><KnowledgeRecordsView /></QueryClientProvider>);
+    expect(await screen.findByRole("heading", { name: "暂无关系记录" })).toBeVisible();
+    expect(screen.queryByRole("complementary", { name: "剧情记录列表" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "添加关系记录" }));
+    expect(screen.getByRole("heading", { name: "新建关系记录" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "创建关系" })).toBeDisabled();
+    expect(mocks.createRelation).not.toHaveBeenCalled();
+  });
+  it("resets an empty status filter while leaving the collection unselected", async () => {
+    mocks.listRelations.mockResolvedValue([{
+      id: "relation-1", projectId: "project-1", relationVersion: 1,
+      fromKnowledgeId: "fact-1", toKnowledgeId: "fact-2", relationType: "同盟",
+      evidenceAnchorIds: ["anchor-1"], lifecycleStatus: "ACTIVE",
+    }]);
+    render(<QueryClientProvider client={new QueryClient()}><KnowledgeRecordsView /></QueryClientProvider>);
+    await screen.findByRole("button", { name: /同盟/ });
+    fireEvent.change(screen.getByLabelText("审核状态筛选"), { target: { value: "ARCHIVED" } });
+    expect(screen.getByRole("heading", { name: "没有符合条件的记录。" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "重置筛选" }));
+    expect(screen.getByRole("button", { name: /同盟/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "选择一条剧情记录" })).toBeVisible();
+    expect(mocks.createRelation).not.toHaveBeenCalled();
   });
 
   it("creates a relation from current facts and an evidence anchor", async () => {

@@ -21,11 +21,13 @@ describe("AuthorSettingsView", () => {
     render(<QueryClientProvider client={new QueryClient()}><AuthorSettingsView /></QueryClientProvider>);
     fireEvent.click(await screen.findByRole("button", { name: /吞声灯/ }));
     expect(screen.getByText("作者确认 · 尚未揭示")).toBeVisible();
-    const href = new URL(screen.getByRole("link", { name: "关联人物或世界资料" }).getAttribute("href")!, window.location.origin);
+    expect(screen.getByRole("heading", { name: "资料" })).toBeVisible();
+    const href = new URL(screen.getByRole("link", { name: "查看关联设定" }).getAttribute("href")!, window.location.origin);
     expect(href.searchParams.get("entity")).toBe("entity-1");
     expect(href.searchParams.get("targetProject")).toBe("project-1");
     expect(href.searchParams.get("returnTo")).toBe("/knowledge/settings");
     expect(screen.getByRole("link", { name: "来源讨论" })).toHaveAttribute("href", "/discussion#session-1");
+    expect(screen.queryByRole("link", { name: /去共创核对/ })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("设定公开状态"), { target: { value: "AUTHOR_ONLY" } });
     expect(screen.queryByRole("button", { name: /北境/ })).not.toBeInTheDocument();
   });
@@ -50,8 +52,36 @@ describe("AuthorSettingsView", () => {
   it("does not ask authors to select a setting when the library is empty", async () => {
     mocks.listAuthorSettings.mockResolvedValue([]);
     render(<QueryClientProvider client={new QueryClient()}><AuthorSettingsView /></QueryClientProvider>);
-    expect(await screen.findByText("尚未添加作者设定")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "尚未添加作者设定" })).toBeVisible();
+    expect(screen.getAllByText("尚未添加作者设定")).toHaveLength(1);
+    expect(screen.queryByRole("complementary", { name: "作者设定列表" })).not.toBeInTheDocument();
+    expect(screen.queryByText("暂无可查看的揭示状态")).not.toBeInTheDocument();
     expect(screen.queryByText("选择一条作者设定")).not.toBeInTheDocument();
+  });
+  it("uses one filtered empty surface and restores the unselected list", async () => {
+    mocks.listAuthorSettings.mockResolvedValue([
+      { id: "secret", entityId: "entity-1", entityName: "吞声灯", content: "作者秘密",
+        visibility: "AUTHOR_ONLY", sessionId: "session-1" },
+    ]);
+    render(<QueryClientProvider client={new QueryClient()}><AuthorSettingsView /></QueryClientProvider>);
+    await screen.findByRole("button", { name: /吞声灯/ });
+    fireEvent.change(screen.getByLabelText("搜索作者设定"), { target: { value: "不存在" } });
+    fireEvent.change(screen.getByLabelText("设定公开状态"), { target: { value: "PUBLIC" } });
+    expect(screen.getAllByText("没有符合条件的作者设定。")).toHaveLength(1);
+    expect(screen.queryByRole("complementary", { name: "作者设定列表" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重置筛选" }));
+    expect(screen.getByLabelText("搜索作者设定")).toHaveValue("");
+    expect(screen.getByLabelText("设定公开状态")).toHaveValue("ALL");
+    expect(screen.getByRole("button", { name: /吞声灯/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "选择一条作者设定" })).toBeVisible();
+  });
+  it("keeps load errors retryable instead of showing a successful empty library", async () => {
+    mocks.listAuthorSettings.mockRejectedValueOnce(new Error("资料读取失败")).mockResolvedValue([]);
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AuthorSettingsView /></QueryClientProvider>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("资料读取失败");
+    expect(screen.queryByRole("heading", { name: "尚未添加作者设定" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("heading", { name: "尚未添加作者设定" })).toBeVisible();
   });
   it("opens reveal details separately on mobile and restores the filtered list and focus", async () => {
     vi.spyOn(window, "matchMedia").mockImplementation((query) => ({

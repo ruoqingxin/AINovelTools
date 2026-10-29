@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, BookOpen, Check, ClipboardList, Columns2, DatabaseZap, FileInput, FileText, GitBranch, GitCompareArrows, History, Info, ListChecks, MessageSquareText, MoreHorizontal, Pencil, Plus, Save, Send, Square, Trash2, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowDown, BookOpen, Check, ClipboardList, Columns2, DatabaseZap, Feather, FileInput, FileText, GitBranch, GitCompareArrows, History, Info, ListChecks, MessageSquareText, MoreHorizontal, Pencil, Plus, Save, Send, Shuffle, Square, Trash2, UserRound, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "../lib/ipc-transport";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
@@ -108,24 +108,25 @@ export function CoauthorView() {
     while (available.some((entry) => entry.title === `共创讨论 ${number}`)) number++;
     setNameEditor({ projectId, title: `共创讨论 ${number}` });
   }
-  return <section className="coauthor-workspace">
-    {(available.length > 0 || !aiWorkspace) && <header className="coauthor-heading">
-      {!aiWorkspace && <h1>共创讨论</h1>}
-      <label className="coauthor-session-picker">当前讨论<select aria-label="当前讨论" value={session?.id ?? ""} onChange={(event) => select(event.target.value)}>
+  const sessionControls = <div className="coauthor-session-controls" role="group" aria-label="当前讨论管理">
+      <label className="coauthor-session-picker"><select aria-label="当前讨论" title={session?.title ?? "选择讨论"} value={session?.id ?? ""} onChange={(event) => select(event.target.value)}>
         {!session && <option value="">选择讨论</option>}
         {available.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}
       </select></label>
       <button className="icon-command" type="button" title="重命名讨论" aria-label="重命名讨论" disabled={Boolean(nameEditor) || !session}
         onClick={() => { if (session && projectId) setNameEditor({ projectId, session, title: session.title }); }}><Pencil size={16} /></button>
-      {available.length > 0 && <button className="secondary-action" type="button" title="创建独立讨论，不复制当前工作稿" disabled={Boolean(nameEditor) || !projectId} onClick={openCreate}><Plus size={16} />新建讨论</button>}
-    </header>}
+      {available.length > 0 && <button className="icon-command" type="button" aria-label="新建讨论" title="新建讨论，不复制当前工作稿" disabled={Boolean(nameEditor) || !projectId} onClick={openCreate}><Plus size={17} /></button>}
+    </div>;
+  return <section className="coauthor-workspace">
+    {!aiWorkspace && <h1 className="coauthor-page-title">共创讨论</h1>}
+    {(!session || wrongTarget) && (available.length > 0 || !aiWorkspace) && <header className="coauthor-heading">{sessionControls}</header>}
     {origin && !wrongTarget && <div className="ai-workspace-identity" aria-label="讨论来源">
       <div><ContentTypeLabel identity={origin} /><h2>{origin.title}</h2></div>
     </div>}
     {(error || sessions.error || project.error) && <p className="project-error" role="alert">{error ?? errorMessage(sessions.error ?? project.error)}</p>}
     {wrongTarget ? <p role="alert">讨论链接不属于当前项目，未读取或修改该讨论。</p>
       : session && projectId ? <CoauthorLoader key={`${projectId}:${session.id}`} scope={{ projectId, sessionId: session.id }}
-        sessionTitle={session.title} onDeleted={(warning) => {
+        sessionTitle={session.title} sessionControls={sessionControls} onDeleted={(warning) => {
           const remaining = client.getQueryData<DiscussionSession[]>(["discussion-sessions"])?.filter((entry) => entry.id !== session.id) ?? [];
           client.setQueryData(["discussion-sessions"], remaining);
           client.removeQueries({ queryKey: ["discussion-messages", session.id] });
@@ -141,7 +142,7 @@ export function CoauthorView() {
         }} />
         : sessions.isPending ? <p role="status">正在读取讨论…</p>
           : selected ? <p role="alert">指定讨论不存在，请选择其他讨论。</p>
-            : <div className="coauthor-empty"><MessageSquareText size={32} /><h2>从一个想法开始</h2>
+            : <div className="coauthor-empty"><span className="coauthor-empty-mark" aria-hidden="true"><Feather size={28} strokeWidth={1.5} /></span><h2>从一个想法开始</h2>
               <button className="primary-action" disabled={Boolean(nameEditor) || !projectId} onClick={openCreate}><Plus size={16} />新建讨论</button></div>}
     {nameEditor && nameEditor.projectId === projectId && <DiscussionNameDialog
       key={`discussion-name:${nameEditor.projectId}:${nameEditor.session?.id ?? "new"}`} projectId={nameEditor.projectId}
@@ -203,8 +204,8 @@ function DiscussionNameDialog({ projectId, session, initialTitle, onClose, onSav
   </WorkspacePanel>;
 }
 
-function CoauthorLoader({ scope, sessionTitle, onFork, onDeleted }: {
-  scope: CoauthorScope; sessionTitle: string; onFork: (session: DiscussionSession) => void; onDeleted: (warning?: string) => void;
+function CoauthorLoader({ scope, sessionTitle, sessionControls, onFork, onDeleted }: {
+  scope: CoauthorScope; sessionTitle: string; sessionControls: ReactNode; onFork: (session: DiscussionSession) => void; onDeleted: (warning?: string) => void;
 }) {
   const [state, setState] = useState<CoauthorState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -217,13 +218,16 @@ function CoauthorLoader({ scope, sessionTitle, onFork, onDeleted }: {
       (cause) => { if (current) setError(errorMessage(cause)); });
     return () => { current = false; };
   }, [scope.projectId, scope.sessionId, attempt]);
-  if (error) return <p role="alert" className="project-error">{error}<button onClick={() => setAttempt((value) => value + 1)}>重试</button></p>;
-  if (!state) return <p role="status">正在读取工作稿…</p>;
-  return <CoauthorSession scope={scope} initial={state} sessionTitle={sessionTitle} onFork={onFork} onDeleted={onDeleted} />;
+  if (!state || error) return <>
+    <header className="coauthor-heading">{sessionControls}</header>
+    {error ? <p role="alert" className="project-error">{error}<button onClick={() => setAttempt((value) => value + 1)}>重试</button></p>
+      : <p role="status">正在读取工作稿…</p>}
+  </>;
+  return <CoauthorSession scope={scope} initial={state} sessionTitle={sessionTitle} sessionControls={sessionControls} onFork={onFork} onDeleted={onDeleted} />;
 }
 
-function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
-  scope: CoauthorScope; initial: CoauthorState; sessionTitle: string; onFork: (session: DiscussionSession) => void; onDeleted: (warning?: string) => void;
+function CoauthorSession({ scope, initial, sessionTitle, sessionControls, onFork, onDeleted }: {
+  scope: CoauthorScope; initial: CoauthorState; sessionTitle: string; sessionControls: ReactNode; onFork: (session: DiscussionSession) => void; onDeleted: (warning?: string) => void;
 }) {
   const client = useQueryClient();
   const confirm = useConfirmAction();
@@ -366,6 +370,15 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
     followLatest.current = true;
     setAwayFromLatest(false);
     if (thread.current) thread.current.scrollTop = thread.current.scrollHeight;
+  }
+  function prepareDiscussion(prompt: string) {
+    const next = inputRef.current.trim() ? `${inputRef.current}\n\n${prompt}` : prompt;
+    if ([...next].length > 20_000) {
+      setError("加入这个话题会超过 20000 字，当前输入已保留。请先整理输入后再试。");
+      return;
+    }
+    changeInput(next);
+    composer.current?.focus();
   }
   function reviewReply(message: DiscussionMessage) {
     if (activeRef.current || busyRef.current) return;
@@ -610,13 +623,15 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
   </>;
   return <div className="coauthor-session">
     <nav className="coauthor-toolbar" aria-label="工作区">
+      {sessionControls}
       <div className="coauthor-tabs" role="tablist" aria-label="共创页签">
-        <button id="coauthor-chat-tab" role="tab" aria-controls="coauthor-chat-panel" aria-selected={tab === "chat"} onClick={() => { setTab("chat"); setPreferSplit(false); }}><MessageSquareText size={15} />讨论</button>
-        <button id="coauthor-draft-tab" role="tab" aria-controls="coauthor-draft-panel" aria-selected={tab === "draft"} onClick={() => { setTab("draft"); setPreferSplit(false); }}><FileText size={15} />工作稿</button>
+        <button id="coauthor-chat-tab" role="tab" aria-controls="coauthor-chat-panel" aria-selected={tab === "chat"} onClick={() => { setTab("chat"); setPreferSplit(false); }}>讨论</button>
+        <button id="coauthor-draft-tab" role="tab" aria-controls="coauthor-draft-panel" aria-selected={tab === "draft"} onClick={() => { setTab("draft"); setPreferSplit(false); }}>工作稿</button>
       </div>
       <div className="coauthor-tools" role="group" aria-label="讨论工具">
-        <button title="查看本轮记录、改稿建议、查证清单及检索设置" onClick={() => openRecords()}><BookOpen size={15} />依据与运行记录</button>
-        <button title="查看和纠正当前讨论的决定" onClick={() => setPanel("decisions")}><ListChecks size={15} />讨论决定 <span>{state.decisions.length}</span></button>
+        <button className="icon-command" aria-label="依据与运行记录" title="依据与运行记录" onClick={() => openRecords()}><BookOpen size={17} /></button>
+        <button className="icon-command coauthor-decisions-toggle" aria-label="讨论决定" title={`讨论决定 · ${state.decisions.length}`} onClick={() => setPanel("decisions")}><ListChecks size={17} />
+          {state.decisions.length > 0 && <span className="coauthor-decision-count">{state.decisions.length > 99 ? "99+" : state.decisions.length}</span>}</button>
       </div>
       {wide && <button className="icon-command coauthor-split-toggle" type="button"
         aria-label="并排显示讨论与工作稿" aria-pressed={split}
@@ -654,16 +669,12 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
     </div>}
     <div className="coauthor-columns" data-tab={tab} data-split={split}>
       <section id="coauthor-chat-panel" className="coauthor-chat" role={split ? "region" : "tabpanel"} aria-label="讨论" hidden={!split && tab !== "chat"}>
-        <header className="coauthor-area-heading"><h2><MessageSquareText size={17} />讨论区</h2>
-          <details className="coauthor-reliability-note"><summary><Info size={14} />生成完成不代表内容可靠</summary>
-            <p>AI 内容仍需核对。条件范围、新旧规则与前文承接仍可能出错，请对照原文确认。</p></details>
-        </header>
         {state.runs[0] && state.runs[0].status !== "COMPLETED" && state.runs[0].id !== active && <div className="coauthor-incomplete" role="status">
           <span>最近一轮：{statuses[state.runs[0].status] ?? "状态待核实"}，不代表已完成你的要求。</span>
           <button type="button" onClick={() => openRecords(undefined, state.runs[0].id)}>查看原因与保留结果</button>
         </div>}
         <div className="coauthor-thread-wrap">
-        <div className="coauthor-thread" ref={thread} role="log" aria-label="讨论记录" aria-live="off"
+        <div className="coauthor-thread" data-empty={messages.isSuccess && !visible.length && !active && !stream} ref={thread} role="log" aria-label="讨论记录" aria-live="off"
           onScroll={(event) => {
             if (!split && tab !== "chat") return;
             const el = event.currentTarget;
@@ -682,7 +693,15 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
             }
           })}>更早的讨论</button>}
           {messages.isPending && <p role="status">正在读取讨论记录…</p>}
-          {messages.isSuccess && !visible.length && !active && <p className="coauthor-placeholder">今天想推敲哪一部分？</p>}
+          {messages.isSuccess && !visible.length && !active && !stream && <div className="coauthor-placeholder">
+            <span className="coauthor-empty-mark" aria-hidden="true"><Feather size={28} strokeWidth={1.5} /></span>
+            <h2>今天想推敲哪一部分？</h2>
+            <div className="coauthor-starters" role="group" aria-label="开场话题">
+              <button type="button" onClick={() => prepareDiscussion("一起推敲一个人物的动机，先从他最想得到什么、又害怕失去什么开始。")}><UserRound size={15} />推敲人物</button>
+              <button type="button" onClick={() => prepareDiscussion("一起打磨一个情节转折，让它既出人意料，又符合前面的铺垫。")}><Shuffle size={15} />打磨转折</button>
+              <button type="button" onClick={() => prepareDiscussion("一起想一个故事开篇，从一个具体的场景或冲突开始。")}><Feather size={15} />想个开篇</button>
+            </div>
+          </div>}
           {visible.map((message) => {
             const display = message.role === "ASSISTANT" && message.contextVersion?.startsWith("coauthor:")
               ? splitLegacyRetrieval(message.content) : { reply: message.content, receipt: null };
@@ -718,6 +737,8 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
           <div className="coauthor-composer-actions">
             <label><input type="checkbox" checked={allowEdits} onChange={(event) => setAllowEdits(event.target.checked)} />允许改工作稿</label>
             <small>{profile?.name ?? "未选择模型"}</small>
+            <details className="coauthor-reliability-note"><summary aria-label="AI 内容核对说明" title="AI 内容核对说明"><Info size={14} /></summary>
+              <p>生成完成不代表内容可靠。条件范围、新旧规则与前文承接仍可能出错，请对照原文确认。</p></details>
             {[...input].length > 16_000 && <span className="coauthor-input-count">{[...input].length} / 20000</span>}
             <button className="icon-command" type="button" title="清空输入" aria-label="清空输入" disabled={!input}
               onClick={() => { changeInput(""); composer.current?.focus(); }}><Trash2 size={15} /></button>
@@ -726,7 +747,7 @@ function CoauthorSession({ scope, initial, sessionTitle, onFork, onDeleted }: {
               aria-label={active ? "发送补充指令" : "发送"}><Send size={16} />{active ? "发送补充" : "发送"}</button>
           </div>
           {profiles.isSuccess && preferences.isSuccess && overrides.isSuccess && !profile?.hasSecret
-            && <p className="coauthor-notice" role="status">未配置可用的讨论模型。<a href="/settings#models">配置模型</a></p>}
+            && <div className="coauthor-composer-status"><p className="coauthor-notice" role="status">未配置可用的讨论模型。<a href="/settings#models">配置模型</a></p></div>}
           {[...input].length > 20_000 && <p role="alert" className="project-error">本轮输入超过 20000 字，请分轮讨论；原文未被截断。</p>}
         </form>
       </section>

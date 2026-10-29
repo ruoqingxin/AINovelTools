@@ -56,8 +56,12 @@ describe("MaterialsView", () => {
     await selectSummary();
     expect(screen.getByText("辅助参考 · 章节记忆")).toBeVisible();
     expect(screen.queryByRole("button", { name: /新建参考摘要|编辑参考副本|重新生成|确认为有效/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "去共创处理章节记忆" })).toHaveAttribute("href",
+    expect(screen.getByRole("heading", { name: "资料" })).toBeVisible();
+    expect(screen.getAllByRole("link", { name: "处理参考" })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "处理参考" })).toHaveAttribute("href",
       "/discussion?work=materials&targetProject=project-1&summary=summary-1&materialKind=SUMMARY");
+    expect(screen.queryByRole("link", { name: /去共创更新/ })).not.toBeInTheDocument();
+    expect(mocks.listJobs).not.toHaveBeenCalled();
     expect(mocks.rebuildSummaryMaterial).not.toHaveBeenCalled();
     expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
   });
@@ -76,6 +80,28 @@ describe("MaterialsView", () => {
     await waitFor(() => expect(mocks.upsertSummaryMaterial).toHaveBeenCalledWith(expect.objectContaining({
       content: "作者参考", generationMode: "MANUAL_REFERENCE", precision: "L0", lifecycleStatus: "ACTIVE",
     })));
+  });
+  it("uses a single empty surface and opens the selected material kind without writing", async () => {
+    renderView();
+    expect(await screen.findByRole("heading", { name: "尚未添加摘要与记忆" })).toBeVisible();
+    expect(screen.queryByRole("complementary", { name: "参考资料列表" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "写作卡片" }));
+    expect(await screen.findByRole("heading", { name: "尚未添加写作卡片" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "添加写作卡片" }));
+    expect(screen.getByRole("heading", { name: "新建卡片" })).toBeVisible();
+    expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
+    expect(mocks.upsertWritingCard).not.toHaveBeenCalled();
+  });
+  it("recovers a full-width search empty state without selecting a different material", async () => {
+    mocks.listSummaryMaterials.mockResolvedValue([summary]);
+    renderView();
+    await screen.findByRole("button", { name: /章节记忆正文/ });
+    fireEvent.change(screen.getByLabelText("搜索参考资料"), { target: { value: "无匹配" } });
+    expect(screen.getByRole("heading", { name: "没有匹配资料" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "清空搜索" }));
+    expect(screen.getByRole("button", { name: /章节记忆正文/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "选择一条参考资料" })).toBeVisible();
+    expect(mocks.upsertSummaryMaterial).not.toHaveBeenCalled();
   });
   it("clears a no-match search without discarding an unsaved material", async () => {
     mocks.listSummaryMaterials.mockResolvedValue([summary]);

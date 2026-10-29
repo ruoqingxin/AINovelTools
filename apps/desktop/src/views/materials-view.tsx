@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Pencil, Plus } from "lucide-react";
+import { ArrowLeft, Files, Pencil, Plus, SearchX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { errorMessage, getCurrentProject, listPlanNodes, listSummaryMaterials, listWritingCards, type SummaryMaterial } from "../lib/tauri-client";
 import { KnowledgeSectionNav } from "./knowledge-section-nav";
@@ -12,6 +12,7 @@ import "./library-workspace.css";
 import { SearchField } from "./search-field";
 import { summaryIdentity, writingCardTypeLabels } from "../lib/content-taxonomy";
 import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
+import { WorkspaceEmptyState } from "./workspace-empty-state";
 
 export function MaterialsView() {
   const target = parseMaterialTarget(window.location.search);
@@ -60,6 +61,7 @@ function MaterialsManager() {
   const items = (kind === "SUMMARY" ? (summaries.data ?? []).map((item) => ({ id: item.id, title: materialTitle(item), content: item.content, state: materialState(item) }))
     : (cards.data ?? []).map((item) => ({ id: item.id, title: item.title, content: item.content, state: `${item.enabled ? "已启用" : "已停用"} · ${writingCardTypeLabels[item.cardType]}` })))
     .filter((item) => `${item.title} ${item.content}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const emptyCollection = wide && query.isSuccess && !items.length && !selectedId && !editing;
   function leaveEditor() { return !actionBusy && !editorState.busy && (!editing || !editorState.dirty || window.confirm("放弃尚未保存的资料修改吗？")); }
   function choose(id: string | null) {
     if (id === selectedId) { setDetailOpen(true); return; }
@@ -67,6 +69,12 @@ function MaterialsManager() {
     listPosition.current = { list: list.current?.scrollTop ?? 0, workspace: document.querySelector(".workspace")?.scrollTop ?? 0 };
     setDetailOpen(true);
     setSelectedId(id); setCreating(false); setEditing(false); setNotice(null); setEditorState({ dirty: false, busy: false });
+  }
+  function startNew() {
+    if (!leaveEditor()) return;
+    listPosition.current = { list: list.current?.scrollTop ?? 0, workspace: document.querySelector(".workspace")?.scrollTop ?? 0 };
+    setDetailOpen(true);
+    setSelectedId(null); setCreating(true); setEditing(true); setNotice(null);
   }
   function returnToList() {
     if (!leaveEditor()) return;
@@ -79,7 +87,7 @@ function MaterialsManager() {
     });
   }
   return <section className="materials-view library-workspace" data-mobile-detail={!wide && detailOpen}>
-    {!aiWorkspace && <div className="workspace-heading"><h1>辅助参考</h1></div>}<KnowledgeSectionNav />
+    {!aiWorkspace && <div className="workspace-heading"><h1>资料</h1></div>}<KnowledgeSectionNav />
     <div className="library-toolbar" hidden={!wide && detailOpen}>
       <div className="creation-mode" role="group" aria-label="参考资料类型">{(["SUMMARY", "CARD"] as const).map((value) =>
         <button type="button" key={value} disabled={editorState.busy || actionBusy} aria-pressed={kind === value} onClick={() => {
@@ -87,18 +95,13 @@ function MaterialsManager() {
           setKind(value); setSelectedId(null); setDetailOpen(false); setEditing(false); setCreating(false); setNotice(null); setSearch(""); setEditorState({ dirty: false, busy: false });
         }}>{value === "SUMMARY" ? "摘要与记忆" : "写作卡片"}</button>)}</div>
       <SearchField label="搜索参考资料" value={search} onChange={setSearch} placeholder="搜索资料" />
-      {!aiWorkspace && project.data ? <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "materials", materialKind: kind, action: "new" }}>
-        {kind === "SUMMARY" ? "去共创新建参考摘要" : "去共创新建写作参考"}
+      {!aiWorkspace && project.data ? <AiWorkspaceLink icon={Plus} title="在共创中新建参考资料" target={{ projectId: project.data.projectId, workflow: "materials", materialKind: kind, action: "new" }}>
+        {kind === "SUMMARY" ? "新建摘要" : "新建卡片"}
       </AiWorkspaceLink> : null}
-      {aiWorkspace && <button type="button" className="primary-action" disabled={!project.data || creating || editorState.busy || actionBusy} onClick={() => {
-        if (!leaveEditor()) return;
-        listPosition.current = { list: list.current?.scrollTop ?? 0, workspace: document.querySelector(".workspace")?.scrollTop ?? 0 };
-        setDetailOpen(true);
-        setSelectedId(null); setCreating(true); setEditing(true); setNotice(null);
-      }}><Plus size={15} />{kind === "SUMMARY" ? "新建参考摘要" : "新建卡片"}</button>}
+      {aiWorkspace && <button type="button" className="primary-action" disabled={!project.data || creating || editorState.busy || actionBusy} onClick={startNew}><Plus size={15} />{kind === "SUMMARY" ? "新建参考摘要" : "新建卡片"}</button>}
     </div>
     {project.isError ? <p role="alert" className="project-error">{errorMessage(project.error)}<button type="button" onClick={() => void project.refetch()}>重试</button></p> : null}
-    <div className="library-layout"><aside ref={list} hidden={!wide && detailOpen} className="library-list" aria-label="参考资料列表">
+    <div className="library-layout" data-empty={emptyCollection}><aside ref={list} hidden={emptyCollection || !wide && detailOpen} className="library-list" aria-label="参考资料列表">
       {query.isPending ? <p role="status">正在读取资料…</p> : null}
       {query.isError ? <p role="alert" className="project-error">{errorMessage(query.error)}<button type="button" onClick={() => void query.refetch()}>重试</button></p> : null}
       {query.isSuccess && !items.length ? <div className="library-list-empty"><p className="plan-empty">{search.trim() ? "没有匹配资料" : kind === "SUMMARY" ? "暂无摘要与记忆" : "暂无写作卡片"}</p>
@@ -121,13 +124,17 @@ function MaterialsManager() {
         <h2>{card?.title ?? materialTitle(summary!)}</h2><p className="library-meta">{summary ? materialState(summary) : card?.enabled ? "已启用" : "已停用"}</p>
         <p className="library-content">{summary?.content ?? card?.content}</p>
         {aiWorkspace ? <button type="button" className="secondary-action" disabled={actionBusy} onClick={() => { setEditing(true); setNotice(null); }}><Pencil size={15} />{summary && automaticSummary(summary) ? "编辑参考副本" : "编辑资料"}</button>
-          : project.data && <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "materials", targetId: selectedId!, materialKind: kind }}>去共创处理{summary ? summaryLabel(summary) : writingCardTypeLabels[card!.cardType]}</AiWorkspaceLink>}
-        {summary ? <SummaryActions key={summary.id} item={summary} onBusyChange={setActionBusy} /> : null}
+          : project.data && <AiWorkspaceLink icon={Pencil} title="在共创中处理当前参考" target={{ projectId: project.data.projectId, workflow: "materials", targetId: selectedId!, materialKind: kind }}>处理参考</AiWorkspaceLink>}
+        {aiWorkspace && summary ? <SummaryActions key={summary.id} item={summary} onBusyChange={setActionBusy} /> : null}
         {summary && summaryManuscriptHref(summary, "/knowledge/materials") ? <div className="library-actions"><a className="secondary-action" href={summaryManuscriptHref(summary, "/knowledge/materials")!}>查看来源正文</a></div> : null}
         <details className="library-advanced"><summary>来源与高级信息</summary><p>来源 <code>{summary?.sourceVersion ?? card?.sourceVersion ?? "未指定"}</code></p>
           {card ? <p>作用范围 <code>{card.scope}</code> · 排序 {card.sortOrder}</p> : null}</details>
-      </> : <div className="library-empty"><p>{query.isPending ? "正在读取资料…" : query.isError ? "资料暂不可用"
-        : !(query.data?.length) ? kind === "SUMMARY" ? "尚未添加摘要与记忆" : "尚未添加写作卡片" : "选择一条参考资料"}</p></div>}
+      </> : query.isSuccess ? <WorkspaceEmptyState icon={emptyCollection && search.trim() ? SearchX : Files}
+        title={emptyCollection && search.trim() ? "没有匹配资料" : !query.data.length ? kind === "SUMMARY" ? "尚未添加摘要与记忆" : "尚未添加写作卡片" : "选择一条参考资料"}>
+        {emptyCollection && search.trim() ? <button type="button" className="secondary-action" onClick={() => setSearch("")}>清空搜索</button>
+          : !query.data.length ? aiWorkspace ? <button type="button" className="primary-action" disabled={!project.data || editorState.busy || actionBusy} onClick={startNew}><Plus size={15} />{kind === "SUMMARY" ? "添加参考摘要" : "添加写作卡片"}</button>
+            : project.data && <AiWorkspaceLink icon={Plus} title="在共创中新建参考资料" target={{ projectId: project.data.projectId, workflow: "materials", materialKind: kind, action: "new" }}>{kind === "SUMMARY" ? "添加参考摘要" : "添加写作卡片"}</AiWorkspaceLink> : null}
+      </WorkspaceEmptyState> : <div className="library-empty"><p>{query.isPending ? "正在读取资料…" : "资料暂不可用"}</p></div>}
     </div></div>
   </section>;
 }

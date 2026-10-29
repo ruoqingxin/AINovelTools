@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowLeft, Check, FileUp, MessageSquareText, Pencil, Plus, RotateCcw, Save } from "lucide-react";
+import { Archive, ArrowLeft, Check, FileUp, MessageSquareText, Pencil, Plus, RotateCcw, Save, SearchX, UsersRound } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
@@ -29,6 +29,7 @@ import { SearchField } from "./search-field";
 import { entityIdentity, entityTypeLabels } from "../lib/content-taxonomy";
 import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
 import { WorkspaceLink } from "./workspace-link";
+import { WorkspaceEmptyState } from "./workspace-empty-state";
 
 const typeLabels = entityTypeLabels;
 
@@ -417,10 +418,14 @@ export function StoryBibleView() {
     return true;
   }
 
+  const emptyCollection = wide && entities.isSuccess && !filtered.length && !selectedId && !editing && targetResolved && !targetError;
+  const filteredEmpty = emptyCollection && Boolean(entities.data?.length || search.trim() || typeFilter !== "ALL" || statusFilter === "ARCHIVED");
+  function resetFilters() { setSearch(""); setTypeFilter("ALL"); setStatusFilter("ALL"); }
+
   return (
     <section className="story-bible-view library-workspace" data-mobile-detail={!wide && detailOpen}>
       {!aiWorkspace && <div className="workspace-heading">
-        <h1>设定</h1>
+        <h1>资料</h1>
       </div>}
       <KnowledgeSectionNav />
       {!aiWorkspace && returnTo ? <WorkspaceLink className="secondary-action" href={returnTo}>返回来源</WorkspaceLink> : null}
@@ -436,8 +441,8 @@ export function StoryBibleView() {
           <option value="ACTIVE">仅显示活动</option><option value="ALL">全部状态</option><option value="ARCHIVED">仅显示归档</option>
         </select>
         {!aiWorkspace && project.data ? <>
-          <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "entity", action: "import" }}>去共创提取设定</AiWorkspaceLink>
-          <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "entity", action: "new" }}>去共创新建设定</AiWorkspaceLink>
+          <AiWorkspaceLink icon={FileUp} title="在共创中从文件提取设定" target={{ projectId: project.data.projectId, workflow: "entity", action: "import" }}>提取设定</AiWorkspaceLink>
+          <AiWorkspaceLink icon={Plus} title="在共创中新建设定" target={{ projectId: project.data.projectId, workflow: "entity", action: "new" }}>新建设定</AiWorkspaceLink>
         </> : null}
         {aiWorkspace && <button type="button" className="secondary-action" disabled={importBusy || busy !== null} onClick={() => {
           if (editing && entityDirty && !window.confirm("放弃当前实体修改并打开文件导入吗？")) return;
@@ -452,17 +457,15 @@ export function StoryBibleView() {
       {project.isError ? <p className="project-error" role="alert">{errorMessage(project.error)}
         <button type="button" className="secondary-action" disabled={project.isFetching} onClick={() => void project.refetch()}>重试</button></p> : null}
 
-      <div className="library-layout">
-        <aside ref={list} hidden={!wide && detailOpen} className="library-list" aria-label="实体列表">
+      <div className="library-layout" data-empty={emptyCollection}>
+        <aside ref={list} hidden={emptyCollection || !wide && detailOpen} className="library-list" aria-label="实体列表">
           <div className="section-heading"><h2>实体库</h2><span>{filtered.length} / {entities.data?.length ?? 0}</span></div>
           {entities.isPending ? <p className="plan-empty">正在加载实体…</p> : null}
           {entities.isError ? <p className="project-error" role="alert">无法加载实体：{errorMessage(entities.error)}
             <button type="button" className="secondary-action" disabled={entities.isFetching} onClick={() => void cards.refetch()}>重试加载</button></p> : null}
           {entities.isSuccess && filtered.length === 0 ? <div className="library-list-empty">
             <p className="plan-empty">{entities.data?.length ? "没有符合条件的实体。" : "暂无人物与世界设定"}</p>
-            {search || typeFilter !== "ALL" || statusFilter !== "ACTIVE" ? <button type="button" className="secondary-action" onClick={() => {
-              setSearch(""); setTypeFilter("ALL"); setStatusFilter("ACTIVE");
-            }}>重置筛选</button> : null}
+            {search || typeFilter !== "ALL" || statusFilter !== "ACTIVE" || entities.data?.length ? <button type="button" className="secondary-action" onClick={resetFilters}>重置筛选</button> : null}
           </div> : null}
           {filtered.map((entity) => (
             <button type="button" key={entity.id} className="library-item" disabled={importBusy || busy !== null} data-selected={selectedId === entity.id} onClick={() => selectEntity(entity)}>
@@ -475,8 +478,12 @@ export function StoryBibleView() {
           {!wide ? <button type="button" className="secondary-action library-back" disabled={busy !== null || importBusy}
             onClick={returnToList}><ArrowLeft size={15} />返回设定列表</button> : null}
           {!targetResolved ? <p role="status">正在定位实体…</p> : targetError ? null : <>
-          {!selected && !editing ? <div className="library-empty"><p>{entities.isPending ? "正在加载设定…" : entities.isError ? "设定暂不可用"
-            : !entities.data?.length ? "尚未添加人物与世界设定" : "选择一个人物或世界设定"}</p></div> : <>
+          {!selected && !editing ? entities.isSuccess ? <WorkspaceEmptyState icon={filteredEmpty ? SearchX : UsersRound}
+            title={filteredEmpty ? "没有符合条件的实体。" : !entities.data?.length ? "尚未添加人物与世界设定" : "选择一个人物或世界设定"}>
+            {filteredEmpty ? <button type="button" className="secondary-action" onClick={resetFilters}>重置筛选</button>
+              : !entities.data?.length ? aiWorkspace ? <button type="button" className="primary-action" disabled={importBusy || busy !== null || !project.data} onClick={startNew}><Plus size={15} />添加第一个设定</button>
+                : project.data && <AiWorkspaceLink icon={Plus} title="在共创中新建设定" target={{ projectId: project.data.projectId, workflow: "entity", action: "new" }}>添加第一个设定</AiWorkspaceLink> : null}
+          </WorkspaceEmptyState> : <div className="library-empty"><p>{entities.isPending ? "正在加载设定…" : "设定暂不可用"}</p></div> : <>
           <div className="section-heading"><h2>{selected ? editing ? "编辑实体" : form.name : "新建实体"}</h2>{selected ? <span>版本 {selected.version}</span> : <span>尚未保存</span>}</div>
           {selected && !editing ? <><p className="library-meta">{typeLabels[selected.entityType]} · {selected.lifecycleStatus === "ARCHIVED" ? "已归档" : "活动"}</p>
             <ContentTypeLabel identity={entityIdentity(selected.entityType)} />
@@ -485,7 +492,7 @@ export function StoryBibleView() {
             <div className="library-actions">{aiWorkspace ? <>
               <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => setEditing(true)}><Pencil size={15} />编辑实体</button>
               <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => void toggleArchive()}>{selected.lifecycleStatus === "ACTIVE" ? <Archive size={15} /> : <RotateCcw size={15} />}{selected.lifecycleStatus === "ACTIVE" ? "归档实体" : "恢复实体"}</button>
-            </> : <AiWorkspaceLink target={{ projectId: selected.projectId, workflow: "entity", targetId: selected.id }}>去共创处理{typeLabels[selected.entityType]}设定</AiWorkspaceLink>}</div>
+            </> : <AiWorkspaceLink icon={Pencil} title="在共创中编辑当前设定" target={{ projectId: selected.projectId, workflow: "entity", targetId: selected.id }}>编辑设定</AiWorkspaceLink>}</div>
             <details className="library-advanced"><summary>属性与来源</summary><pre>{form.fixedAttributesJson}</pre><p>来源版本 <code>{form.sourceVersion ?? "未指定"}</code></p></details>
           </> : null}
           {aiWorkspace && selected?.lifecycleStatus === "ACTIVE" ? <button type="button" className="secondary-action"

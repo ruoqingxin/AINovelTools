@@ -117,6 +117,37 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it("prepares empty-state topics without sending, replacing existing input, or editing the working draft", async () => {
+    renderWorkspace();
+    expect(await screen.findByRole("heading", { name: "今天想推敲哪一部分？" })).toBeVisible();
+    const topics = screen.getByRole("group", { name: "开场话题" });
+    expect(within(topics).getAllByRole("button")).toHaveLength(3);
+    const input = screen.getByLabelText("讨论输入");
+    fireEvent.change(input, { target: { value: "先保留这个设想。" } });
+    for (const [label, fragment] of [["推敲人物", "人物的动机"], ["打磨转折", "情节转折"], ["想个开篇", "故事开篇"]]) {
+      const previous = (input as HTMLTextAreaElement).value;
+      fireEvent.click(within(topics).getByRole("button", { name: label }));
+      expect((input as HTMLTextAreaElement).value.startsWith(`${previous}\n\n`)).toBe(true);
+      expect((input as HTMLTextAreaElement).value).toContain(fragment);
+      expect(input).toHaveFocus();
+    }
+    expect(localStorage.getItem("coauthor-input:p1:s1")).toBe((input as HTMLTextAreaElement).value);
+    expect(screen.getByLabelText("工作稿内容")).toHaveValue(baseline.content);
+    expect(mocks.invoke.mock.calls.some(([name]) => ["run_coauthor", "save_coauthor_document", "publish_coauthor_document"].includes(name))).toBe(false);
+  });
+
+  it("preserves overlong input instead of truncating it when preparing an empty-state topic", async () => {
+    renderWorkspace();
+    await screen.findByRole("group", { name: "开场话题" });
+    const input = screen.getByLabelText("讨论输入");
+    const original = "原".repeat(20_000);
+    fireEvent.change(input, { target: { value: original } });
+    fireEvent.click(screen.getByRole("button", { name: "推敲人物" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("当前输入已保留");
+    expect(input).toHaveValue(original);
+    expect(pending).toHaveLength(0);
+  });
+
   it("remembers an optional split layout without remounting the input or draft", async () => {
     const first = renderWorkspace();
     const input = await screen.findByLabelText("讨论输入");
@@ -392,13 +423,19 @@ describe("coauthor workspace", () => {
     posted = [{ id: "answer", sessionId: "s1", role: "ASSISTANT", content: "可编辑的试写" }];
     renderWorkspace();
     await screen.findByLabelText("讨论输入");
-    expect(screen.getByRole("heading", { name: "讨论区" })).toBeVisible();
+    expect(screen.getByRole("tabpanel", { name: "讨论" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "讨论区" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("工作稿内容")).not.toBeVisible();
-    expect(screen.getByText("当前讨论", { exact: true })).toBeVisible();
+    const toolbar = screen.getByRole("navigation", { name: "工作区" });
+    expect(within(toolbar).getByRole("combobox", { name: "当前讨论" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "新建讨论" })).toHaveAttribute("title", "新建讨论，不复制当前工作稿");
+    expect(within(toolbar).getByRole("tablist", { name: "共创页签" })).toBeVisible();
     const tools = screen.getByRole("group", { name: "讨论工具" });
     expect(within(tools).getAllByRole("button")).toHaveLength(2);
     expect(within(tools).getByRole("button", { name: /讨论决定/ })).toBeVisible();
     expect(within(tools).getByRole("button", { name: "依据与运行记录" })).toBeVisible();
+    expect(within(tools).getByRole("button", { name: "依据与运行记录" })).toHaveAttribute("title", "依据与运行记录");
+    expect(within(tools).getByRole("button", { name: /讨论决定/ })).not.toHaveTextContent("0");
     fireEvent.click(await screen.findByRole("button", { name: "放入工作稿" }));
     expect(await screen.findByText("回复已放入工作稿，尚未正式采用。")).toBeVisible();
     expect(screen.getByRole("tab", { name: "工作稿" })).toHaveAttribute("aria-selected", "true");
@@ -600,9 +637,11 @@ describe("coauthor workspace", () => {
     await finish(request);
   });
 
-  it("keeps known quality limits visible and defaults to discussion without draft edits", async () => {
+  it("keeps quality limits available on demand and defaults to discussion without draft edits", async () => {
     renderWorkspace();
     await screen.findByLabelText("讨论输入");
+    expect(screen.getByText(/生成完成不代表内容可靠/)).not.toBeVisible();
+    fireEvent.click(screen.getByLabelText("AI 内容核对说明"));
     expect(screen.getByText(/生成完成不代表内容可靠/)).toBeVisible();
     expect(screen.getByLabelText("允许改工作稿")).not.toBeChecked();
     const request = await begin();

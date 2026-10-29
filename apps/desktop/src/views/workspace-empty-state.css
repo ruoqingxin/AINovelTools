@@ -1,0 +1,8 @@
+.workspace-empty-state { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 22px; min-width: 0; min-height: 240px; width: 100%; padding: 36px 24px; color: inherit; text-align: center; }
+.workspace-empty-mark { display: grid; flex: 0 0 auto; place-items: center; width: 64px; height: 64px; border: 1px solid var(--line); border-radius: 8px; color: var(--accent-strong); background: var(--surface-subtle); }
+.workspace-empty-copy { display: grid; gap: 10px; max-width: 420px; }
+.workspace-empty-state .workspace-empty-copy :is(h2, h3) { margin: 0; color: inherit; font-size: 18px; line-height: 1.5; font-weight: 600; overflow-wrap: anywhere; }
+.workspace-empty-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; max-width: 100%; }
+.workspace-empty-actions :is(a, button) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; max-width: 100%; min-height: 36px; padding: 7px 14px; border-radius: 5px; font: inherit; font-size: 13px; line-height: 1.5; text-decoration: none; white-space: normal; overflow-wrap: anywhere; }
+.workspace-empty-actions svg { flex-shrink: 0; }
+.workspace-empty-actions > .outline-reader-state { flex-basis: 100%; }
