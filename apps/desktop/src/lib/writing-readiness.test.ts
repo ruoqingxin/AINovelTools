@@ -105,6 +105,17 @@ describe("assessWritingReadiness", () => {
     expect(readiness.canGenerate).toBe(true);
     expect(readiness.missingNarrativePerspective).toBe(false);
   });
+
+  it("recognizes perspective from book preferences without requiring a second narrative note", () => {
+    const readiness = assessWritingReadiness({
+      sections: [section("seed-tone", "【叙事视角】\n第三人称 · 限定视角"), section("frame-narrative", "逐渐揭示来信的秘密")],
+      hasCharacterCard: false, hasChapterPlan: false,
+    });
+    expect(readiness.missingNarrativePerspective).toBe(false);
+    expect(findWritingGapTargets("叙述视角未明确")).toEqual([{
+      id: "seed-tone", label: "补叙述视角", href: "/planning?mode=prepare",
+    }]);
+  });
 });
 
 describe("findWritingGapTargets", () => {
@@ -117,19 +128,25 @@ describe("findWritingGapTargets", () => {
       { id: "character-card", label: "补人物卡", href: "/knowledge" },
       {
         id: "frame-setting",
-        label: "补世界与力量规则",
-        href: "/planning#frame-setting",
+        label: "补关键设定",
+        href: "/planning?mode=prepare&item=rules",
       },
       {
-        id: "frame-narrative",
+        id: "seed-tone",
         label: "补叙述视角",
-        href: "/planning#frame-narrative",
+        href: "/planning?mode=prepare",
       },
     ]);
   });
 
   it("returns no target when the model only gives a generic insufficiency message", () => {
     expect(findWritingGapTargets("[上下文不足]\n正式设定不完整")).toEqual([]);
+  });
+  it("separates character facts from the story goal and motivation", () => {
+    expect(findWritingGapTargets("主角设定缺失")).toEqual([{ id: "character-card", label: "补人物卡", href: "/knowledge" }]);
+    expect(findWritingGapTargets("目标与动机不明确")).toEqual([{
+      id: "engine-motivation", label: "补目标与动机", href: "/planning?mode=prepare&item=motivation",
+    }]);
   });
 });
 
@@ -140,7 +157,7 @@ describe("buildWritingReadinessItems", () => {
       hasCharacterCard: false,
       hasChapterPlan: false,
     });
-    const items = buildWritingReadinessItems(readiness, "chapter-1");
+    const items = buildWritingReadinessItems(readiness, "chapter-1", "project-1");
 
     expect(
       items.slice(suggestedWritingSections.length).map((item) => item.id),
@@ -150,9 +167,9 @@ describe("buildWritingReadinessItems", () => {
     ]);
     expect(items.every((item) => item.severity === "warning")).toBe(true);
     expect(items.find((item) => item.id === "character-card")?.href).toBe("/knowledge");
-    expect(items.find((item) => item.id === "chapter-plan")?.href).toBe("/planning#chapter-1");
+    expect(items.find((item) => item.id === "chapter-plan")?.href).toBe("/planning?mode=structure&planNode=chapter-1&targetProject=project-1");
     expect(items.find((item) => item.id === "frame-setting")?.href).toBe(
-      "/planning#frame-setting",
+      "/planning?mode=prepare&item=rules",
     );
   });
 });

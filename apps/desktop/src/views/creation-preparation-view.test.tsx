@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { StrictMode, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PlanNode, PlanningSection } from "../lib/tauri-client";
+import type { EntityCard, PlanNode, PlanningSection } from "../lib/tauri-client";
 import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 import { CreationPreparationView } from "./creation-preparation-view";
 import { buildPreparationStages } from "./creation-preparation";
@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
   listModelProfiles: vi.fn(), savePlanningSection: vi.fn(), createPlanNode: vi.fn(),
   enqueuePlanningAiJob: vi.fn(), jobs: [] as unknown[],
   listDiscussionSessions: vi.fn(), listDiscussionMessages: vi.fn(), createDiscussionSession: vi.fn(),
-  askProjectDiscussion: vi.fn(), getProjectAiTaskOverrides: vi.fn(),
+  askProjectDiscussion: vi.fn(), getProjectAiTaskOverrides: vi.fn(), listEntityCards: vi.fn(),
 }));
 vi.mock("../lib/tauri-client", async () => ({
   ...await vi.importActual<typeof import("../lib/tauri-client")>("../lib/tauri-client"), ...mocks,
@@ -40,6 +40,14 @@ let nodes: PlanNode[];
 function confirmed(id: string): PlanningSection {
   return { ...emptyPlanningSection(id), content: `已决定：${id}`, storyState: "CONFIRMED", version: 1 };
 }
+function characterCard(id = "person"): EntityCard {
+  return {
+    entity: { id, projectId: "project", entityType: "CHARACTER", lifecycleStatus: "ACTIVE",
+      currentRevisionId: "revision", version: 1, createdAt: "", updatedAt: "" },
+    revision: { id: "revision", entityId: id, revision: 1, name: "林舟", description: "人物事实：城中邮差",
+      fixedAttributesJson: "{}", aliases: [], tags: [], baseRevisionId: null, sourceVersion: null, createdAt: "" },
+  };
+}
 function setup(initialItem?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<StrictMode><QueryClientProvider client={client}><ConfirmActionProvider>
@@ -50,6 +58,13 @@ function setup(initialItem?: string) {
 async function chooseStage(title: string) {
   fireEvent.click(await screen.findByRole("button", { name: new RegExp(title) }));
 }
+function expectTopics() {
+  const navigation = within(screen.getByRole("navigation", { name: "故事主题" }));
+  expect(navigation.getAllByRole("button").map((button) => button.textContent)).toEqual([
+    "故事概念", "核心人物", "目标与动机", "主要矛盾", "主线方向", "开篇事件",
+  ]);
+  expect(screen.queryByText(/前序关键准备/)).not.toBeInTheDocument();
+}
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.jobs = [];
@@ -59,6 +74,7 @@ beforeEach(() => {
   mocks.listPlanNodes.mockImplementation(async () => [...nodes]);
   mocks.listPlanningSections.mockImplementation(async () => [...stored]);
   mocks.listModelProfiles.mockResolvedValue([]);
+  mocks.listEntityCards.mockResolvedValue([]);
   mocks.listDiscussionSessions.mockResolvedValue([]);
   mocks.listDiscussionMessages.mockResolvedValue([]);
   mocks.getProjectAiTaskOverrides.mockResolvedValue({});
@@ -77,7 +93,7 @@ describe("creation preparation workbench", () => {
     </QueryClientProvider></AiWorkspaceContext.Provider>);
     expect(await screen.findByRole("link", { name: /去共创处理/ })).toHaveAttribute("href",
       `/discussion?work=preparation&targetProject=project&item=${item}`);
-    expect(screen.queryByRole("button", { name: /发起讨论|建立开篇章节计划|建立主线大纲/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /发起讨论|建立开篇事件|建立主线方向/ })).not.toBeInTheDocument();
     expect(mocks.createPlanNode).not.toHaveBeenCalled();
     expect(mocks.createDiscussionSession).not.toHaveBeenCalled();
   });
@@ -91,8 +107,19 @@ describe("creation preparation workbench", () => {
     expect(screen.queryByText("尚未采用的人物候选")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /AI 推敲|保存草稿|确认并继续/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /去共创处理主角/ })).toHaveAttribute("href",
+    expect(screen.getByRole("link", { name: /去共创处理核心人物/ })).toHaveAttribute("href",
       "/discussion?work=preparation&targetProject=project&item=protagonist");
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+  it.each(["OUTLINE", "CHAPTER"] as const)("links the read-only %s topic to its exact shared plan and project", async (kind) => {
+    nodes = [{ id: "node", kind, title: "现有规划", parentId: null, archived: false, revision: 1, sortOrder: 0 }];
+    stored = [confirmed("plan-node:node")];
+    render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={new QueryClient()}>
+      <CreationPreparationView initialItem={kind === "OUTLINE" ? "outline" : "opening"} />
+    </QueryClientProvider></AiWorkspaceContext.Provider>);
+    expect(await screen.findByRole("link", { name: kind === "OUTLINE" ? "全书大纲" : "章节计划" })).toHaveAttribute("href",
+      "/planning?mode=structure&targetProject=project&planNode=node");
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
   it("can discuss the outline before prior decisions or an outline node exist", async () => {
@@ -112,8 +139,8 @@ describe("creation preparation workbench", () => {
     });
     setup("outline");
     fireEvent.click(await screen.findByRole("button", { name: "发起讨论" }));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "主线大纲的讨论输入" })).toBeEnabled());
-    fireEvent.change(screen.getByRole("textbox", { name: "主线大纲的讨论输入" }), { target: { value: "我只想先聊故事的中段" } });
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "主线方向的讨论输入" })).toBeEnabled());
+    fireEvent.change(screen.getByRole("textbox", { name: "主线方向的讨论输入" }), { target: { value: "我只想先聊故事的中段" } });
     await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await screen.findByText("可以先从中段的一次选择开始。");
@@ -126,7 +153,7 @@ describe("creation preparation workbench", () => {
     mocks.listModelProfiles.mockResolvedValue([{ id: "model", capability: "CHAT", hasSecret: true }]);
     const discussionSession = {
       id: "discussion", projectId: "project", scopeKind: "PROJECT",
-      scopeText: JSON.stringify({ kind: "planning-section", sectionId: "seed-premise", title: "故事核心", question: "" }),
+      scopeText: JSON.stringify({ kind: "planning-section", sectionId: "seed-premise", title: "故事概念", question: "" }),
     };
     mocks.createDiscussionSession.mockImplementation(async () => {
       mocks.listDiscussionSessions.mockResolvedValue([discussionSession]);
@@ -142,20 +169,20 @@ describe("creation preparation workbench", () => {
       return exchange;
     });
     setup();
-    await screen.findByRole("textbox", { name: "故事核心" });
+    await screen.findByRole("textbox", { name: "故事概念" });
     fireEvent.click(screen.getByRole("button", { name: "发起讨论" }));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "故事核心的讨论输入" })).toBeEnabled());
-    fireEvent.change(await screen.findByRole("textbox", { name: "故事核心的讨论输入" }),
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "故事概念的讨论输入" })).toBeEnabled());
+    fireEvent.change(await screen.findByRole("textbox", { name: "故事概念的讨论输入" }),
       { target: { value: "我想从邮差收到一封怪信开始" } });
     await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "载入草稿" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "载入草稿" }));
-    expect(screen.getByRole("textbox", { name: "故事核心" })).toHaveValue(answer);
+    expect(screen.getByRole("textbox", { name: "故事概念" })).toHaveValue(answer);
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
-    expect(screen.getByText("关键准备 0 / 10")).toBeVisible();
+    expectTopics();
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
-    await screen.findByRole("textbox", { name: "题材" });
+    await screen.findByRole("textbox", { name: "核心人物" });
     expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
       id: "seed-premise", content: answer, pendingContent: "", storyState: "CONFIRMED",
     }));
@@ -163,17 +190,199 @@ describe("creation preparation workbench", () => {
 
   it("starts with story decisions, not chapter creation, and makes no writes on mount", async () => {
     setup();
-    expect(await screen.findByRole("textbox", { name: "故事核心" })).toBeVisible();
-    expect(screen.getByText("关键准备 0 / 10")).toBeVisible();
+    expect(await screen.findByRole("textbox", { name: "故事概念" })).toBeVisible();
+    expectTopics();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "已确认的创作依据" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("complementary")).toHaveLength(1);
+    expect(screen.queryByText("暂无其他已确认内容")).not.toBeInTheDocument();
+    expect(screen.queryByText("已确认依据")).not.toBeInTheDocument();
+    expect(screen.queryByText(/10 项关键准备待确认/)).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "故事主题" }).querySelectorAll("button")).toHaveLength(6);
+    expect(document.querySelector(".preparation-layout")?.children).toHaveLength(2);
     expect(screen.queryByRole("link", { name: "进入正文" })).not.toBeInTheDocument();
     expect(mocks.createPlanNode).not.toHaveBeenCalled();
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
     expect(mocks.enqueuePlanningAiJob).not.toHaveBeenCalled();
   });
 
+  it("creates the shared outline and starts with a rough direction instead of five mandatory plot steps", async () => {
+    const outline: PlanNode = { id: "new-outline", kind: "OUTLINE", title: "主线大纲", parentId: null, archived: false, revision: 1, sortOrder: 0 };
+    mocks.createPlanNode.mockImplementation(async () => { nodes.push(outline); return outline; });
+    setup("outline");
+    fireEvent.click(await screen.findByRole("button", { name: "建立主线大纲" }));
+    const input = await screen.findByRole("textbox", { name: "主线方向" });
+    fireEvent.change(input, { target: { value: "先让邮差入城，后续走向暂定。" } });
+    outlineReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
+    fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
+    await screen.findByRole("button", { name: "建立开篇章节计划" });
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({ id: "plan-node:new-outline", content: "先让邮差入城，后续走向暂定。", storyState: "CONFIRMED" });
+    expect(screen.queryByText(/前序关键准备/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a partial legacy event draft while confirming an independent rough main outline", async () => {
+    nodes = [{ id: "outline", kind: "OUTLINE", title: "大纲", parentId: null, archived: false, revision: 1, sortOrder: 0 }];
+    const event = { ...emptyPlanningSection("outline-step-outline-inciting"), pendingContent: "以前只推敲了一段起因。" };
+    stored = [event];
+    setup("outline");
+    await screen.findByRole("textbox", { name: "引发事件" });
+    fireEvent.click(screen.getByRole("button", { name: "汇总审阅" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "主线方向" }), { target: { value: "先入城，再沿来信寻找故人。" } });
+    outlineReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
+    expect(screen.getByRole("button", { name: "确认并继续" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "保存并推敲" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
+    await screen.findByRole("button", { name: "建立开篇章节计划" });
+    expect(stored.find((section) => section.id === event.id)).toEqual(event);
+    expect(stored.find((section) => section.id === "plan-node:outline")).toMatchObject({
+      content: "先入城，再沿来信寻找故人。", pendingContent: "", storyState: "CONFIRMED",
+    });
+    expect(mocks.savePlanningSection).toHaveBeenCalledOnce();
+  });
+
+  it("confirms an opening independently while retaining the chapter-plan review", async () => {
+    nodes = [{ id: "first", kind: "CHAPTER", title: "第一章", parentId: null, archived: false, revision: 1, sortOrder: 0 }];
+    setup("opening");
+    fireEvent.change(await screen.findByRole("textbox", { name: "开篇事件" }), { target: { value: "邮差在雨夜收到一封空白来信。" } });
+    expect(screen.getByRole("button", { name: "确认章节计划" })).toBeDisabled();
+    openingReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
+    fireEvent.click(screen.getByRole("button", { name: "确认章节计划" }));
+    await screen.findByRole("link", { name: "进入正文" });
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({ id: "plan-node:first", content: "邮差在雨夜收到一封空白来信。", storyState: "CONFIRMED" });
+    expect(readPlanningReview(stored[0])?.basis).toEqual([]);
+  });
+
+  it("saves only a reference ID, keeps facts out of preparation prose, and reads the latest linked revision for AI", async () => {
+    const card = characterCard();
+    mocks.listEntityCards.mockResolvedValue([card]);
+    mocks.listModelProfiles.mockResolvedValue([{ id: "chat", capability: "CHAT", hasSecret: true }]);
+    const client = setup("protagonist");
+    const input = await screen.findByRole("textbox", { name: "核心人物" });
+    const selector = await screen.findByRole("combobox", { name: "添加关联资料" });
+    await waitFor(() => expect(selector).toBeEnabled());
+    fireEvent.change(selector, { target: { value: "person" } });
+    expect(input).toHaveValue("");
+    fireEvent.change(input, { target: { value: "承担串联各家来信的叙事作用。" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    await screen.findByText("草稿已保存");
+    expect(stored[0]).toMatchObject({ id: "engine-protagonist", content: "",
+      pendingContent: "承担串联各家来信的叙事作用。", references: ["preparation-entity:v1:person"] });
+    act(() => client.setQueryData(["entity-cards", true], [{ ...card, revision: { ...card.revision, revision: 2, description: "最新人物事实：已经辞职" } }]));
+    expect(await screen.findByText(/v2/)).toBeInTheDocument();
+    expect(input).toHaveValue("承担串联各家来信的叙事作用。");
+    fireEvent.click(screen.getByRole("button", { name: "AI 推敲讨论稿" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "重新推敲" }));
+    await waitFor(() => expect(mocks.enqueuePlanningAiJob).toHaveBeenCalledOnce());
+    const job = mocks.enqueuePlanningAiJob.mock.calls[0][0];
+    expect(job.referenceContent).toContain("最新人物事实：已经辞职");
+    expect(job.referenceContent).not.toContain("人物事实：城中邮差");
+    expect(job.sectionPrompt).toContain("不另建一份人物档案");
+    expect(mocks.savePlanningSection).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByText("林舟"));
+    expect(screen.getByRole("link", { name: "查看资料" })).toHaveAttribute("href", "/knowledge?entity=person&targetProject=project");
+  });
+
+  it("protects unsaved reference choices when switching themes and retains them after a failed save", async () => {
+    mocks.listEntityCards.mockResolvedValue([characterCard()]);
+    mocks.savePlanningSection.mockRejectedValue(new Error("版本冲突"));
+    setup("protagonist");
+    const selector = await screen.findByRole("combobox", { name: "添加关联资料" });
+    await waitFor(() => expect(selector).toBeEnabled());
+    fireEvent.change(selector, { target: { value: "person" } });
+    await chooseStage("主线方向");
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("button", { name: "取消关联林舟" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("版本冲突");
+    expect(screen.getByRole("button", { name: "取消关联林舟" })).toBeInTheDocument();
+    expect(stored).toEqual([]);
+  });
+
+  it("does not expose other projects or use archived and missing linked records for AI", async () => {
+    const foreign = characterCard("foreign");
+    foreign.entity.projectId = "other-project";
+    foreign.revision.name = "其他作品的人物";
+    const archived = characterCard("archived");
+    archived.entity.lifecycleStatus = "ARCHIVED";
+    mocks.listEntityCards.mockResolvedValue([characterCard(), foreign, archived]);
+    mocks.listModelProfiles.mockResolvedValue([{ id: "chat", capability: "CHAT", hasSecret: true }]);
+    stored = [{ ...emptyPlanningSection("engine-protagonist"), references: [
+      "discussion:original", "preparation-entity:v1:archived", "preparation-entity:v1:missing", "preparation-entity:v1:foreign",
+    ] }];
+    setup("protagonist");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "添加关联资料" })).toBeEnabled());
+    expect(screen.queryByText("其他作品的人物")).not.toBeInTheDocument();
+    expect(screen.getAllByText("关联资料已不可用")).toHaveLength(2);
+    expect(screen.getByText(/已归档/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "取消关联林舟" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "取消关联不可用资料" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "取消关联不可用资料" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    await screen.findByText("草稿已保存");
+    expect(stored[0].references).toEqual(["discussion:original"]);
+  });
+
+  it("keeps locked reference links read-only without altering stored metadata on load failure", async () => {
+    stored = [{ ...confirmed("engine-protagonist"), storyState: "LOCKED", references: ["preparation-entity:v1:person"] }];
+    mocks.listEntityCards.mockRejectedValue(new Error("资料读取失败"));
+    setup("protagonist");
+    expect(await screen.findByRole("alert")).toHaveTextContent("资料读取失败");
+    expect(screen.queryByRole("combobox", { name: "添加关联资料" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /取消关联/ })).not.toBeInTheDocument();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+    expect(stored[0].references).toEqual(["preparation-entity:v1:person"]);
+  });
+
+  it("shows existing associations on the read-only preparation page without offering mutation controls", async () => {
+    mocks.listEntityCards.mockResolvedValue([characterCard()]);
+    stored = [{ ...confirmed("engine-protagonist"), references: ["preparation-entity:v1:person"] }];
+    render(<AiWorkspaceContext.Provider value={false}><QueryClientProvider client={new QueryClient()}>
+      <CreationPreparationView initialItem="protagonist" />
+    </QueryClientProvider></AiWorkspaceContext.Provider>);
+    fireEvent.click(await screen.findByText("林舟"));
+    expect(screen.getByRole("link", { name: "查看资料" })).toHaveAttribute("href", "/knowledge?entity=person&targetProject=project");
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /取消关联/ })).not.toBeInTheDocument();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+  });
+
+  it("does not submit stale linked facts when the source changes during autosave", async () => {
+    const card = characterCard();
+    mocks.listEntityCards.mockResolvedValue([card]);
+    mocks.listModelProfiles.mockResolvedValue([{ id: "chat", capability: "CHAT", hasSecret: true }]);
+    stored = [{ ...emptyPlanningSection("engine-protagonist"), references: ["preparation-entity:v1:person"] }];
+    let finish!: () => void;
+    mocks.savePlanningSection.mockImplementationOnce((section: PlanningSection) => new Promise((resolve) => {
+      finish = () => { const saved = { ...section, version: 1 }; stored = [saved]; resolve(saved); };
+    }));
+    const client = setup("protagonist");
+    const input = await screen.findByRole("textbox", { name: "核心人物" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeEnabled());
+    fireEvent.change(input, { target: { value: "人物作用还在推敲。" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存并推敲" }));
+    act(() => client.setQueryData(["entity-cards", true], [{ ...card, revision: { ...card.revision, revision: 2, description: "已经改变的事实" } }]));
+    await screen.findByText(/v2/);
+    await act(async () => finish());
+    expect(await screen.findByRole("alert")).toHaveTextContent("当前内容状态已变化");
+    expect(input).toHaveValue("人物作用还在推敲。");
+    expect(stored[0].pendingContent).toBe("人物作用还在推敲。");
+    expect(mocks.enqueuePlanningAiJob).not.toHaveBeenCalled();
+  });
+
+  it("lets the author defer a main topic without filling or confirming it", async () => {
+    setup("premise");
+    fireEvent.click(await screen.findByRole("button", { name: "暂不决定" }));
+    await screen.findByRole("textbox", { name: "核心人物" });
+    expect(stored[0]).toMatchObject({ id: "seed-premise", content: "", pendingContent: "", storyState: "DEFERRED" });
+    expect(mocks.createPlanNode).not.toHaveBeenCalled();
+  });
+
   it("saves drafts separately without advancing progress or changing formal content", async () => {
     setup();
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     fireEvent.change(input, { target: { value: "一个收到未来来信的邮差。" } });
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
     await screen.findByText("草稿已保存");
@@ -181,42 +390,44 @@ describe("creation preparation workbench", () => {
       id: "seed-premise", content: "", pendingContent: "一个收到未来来信的邮差。", storyState: "UNSET", version: 0,
     }));
     expect(input).toHaveValue("一个收到未来来信的邮差。");
-    expect(screen.getByText("关键准备 0 / 10")).toBeVisible();
+    expectTopics();
   });
 
   it("confirms the author's text using the stored version and advances to the next decision", async () => {
     stored = [{ ...emptyPlanningSection("seed-premise"), pendingContent: "收到未来来信的邮差", version: 4 }];
     setup();
-    expect(await screen.findByRole("textbox", { name: "故事核心" })).toHaveValue("收到未来来信的邮差");
+    expect(await screen.findByRole("textbox", { name: "故事概念" })).toHaveValue("收到未来来信的邮差");
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
-    expect(await screen.findByRole("textbox", { name: "题材" })).toBeVisible();
+    expect(await screen.findByRole("textbox", { name: "核心人物" })).toBeVisible();
     expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
       id: "seed-premise", content: "收到未来来信的邮差", pendingContent: "", storyState: "CONFIRMED", version: 4,
     }));
-    expect(screen.getByText("关键准备 1 / 10")).toBeVisible();
+    expectTopics();
   });
 
   it("preserves input after a failed save and does not advance", async () => {
     mocks.savePlanningSection.mockRejectedValue(new Error("磁盘不可写"));
     setup();
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     fireEvent.change(input, { target: { value: "尚未保存的核心" } });
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("磁盘不可写");
     expect(input).toHaveValue("尚未保存的核心");
-    expect(screen.getByText("关键准备 0 / 10")).toBeVisible();
+    expectTopics();
   });
 
-  it("confirms genre, reader expectation, protagonist and motivation one at a time", async () => {
+  it("keeps optional genre and reader expectation within their topic and continues between main themes", async () => {
     stored = [confirmed("seed-premise")];
-    setup();
+    setup("genre");
     const decisions = [
-      { title: "题材", question: "你想写什么题材？", value: "都市悬疑", sectionId: "seed-genre" },
-      { title: "阅读期待", question: "你最想让读者感受到什么？", value: "逐渐接近真相的紧张感", sectionId: "seed-genre-promise" },
-      { title: "主角", question: "主角是个怎样的人？", value: "一位谨慎的邮差", sectionId: "engine-protagonist" },
-      { title: "行动动机", question: "什么让主角必须行动？", value: "寻找失踪的妹妹", sectionId: "engine-motivation" },
+      { item: "genre", title: "题材", question: "你想写什么题材？", value: "都市悬疑", sectionId: "seed-genre" },
+      { item: "promise", title: "阅读期待", question: "你最想让读者感受到什么？", value: "逐渐接近真相的紧张感", sectionId: "seed-genre-promise" },
+      { item: "protagonist", title: "核心人物", question: "故事围绕怎样的人展开？", value: "一位谨慎的邮差", sectionId: "engine-protagonist" },
+      { item: "motivation", title: "目标与动机", question: "人物想做成什么，为什么在意？", value: "寻找失踪的妹妹", sectionId: "engine-motivation" },
     ];
     for (const [index, decision] of decisions.entries()) {
+      if (decision.item === "promise") fireEvent.click(screen.getByRole("button", { name: /阅读期待/ }));
+      if (decision.item === "protagonist") await chooseStage("核心人物");
       const input = await screen.findByRole("textbox", { name: decision.title });
       expect(screen.getAllByRole("textbox")).toHaveLength(1);
       expect(screen.getByText(decision.question)).toBeVisible();
@@ -228,40 +439,57 @@ describe("creation preparation workbench", () => {
         id: decision.sectionId, content: decision.value, pendingContent: "", storyState: "CONFIRMED",
       }));
     }
-    expect(await screen.findByRole("textbox", { name: "故事规则" })).toBeVisible();
-    expect(screen.getByText("关键准备 5 / 10")).toBeVisible();
+    expect(await screen.findByRole("textbox", { name: "主要矛盾" })).toBeVisible();
+    expectTopics();
   });
 
   it("keeps existing combined notes intact without guessing or confirming new split decisions", async () => {
     const combinedPromise = { ...confirmed("seed-genre-promise"), content: "都市悬疑，让读者逐渐接近真相。" };
     const combinedProtagonist = { ...confirmed("engine-protagonist"), content: "林舟是邮差，必须找到失踪的妹妹。" };
     stored = [confirmed("seed-premise"), combinedPromise, combinedProtagonist];
-    setup();
+    setup("genre");
     expect(await screen.findByRole("textbox", { name: "题材" })).toHaveValue("");
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
     expect(stored.find((section) => section.id === "seed-genre-promise")).toEqual(combinedPromise);
     expect(stored.find((section) => section.id === "engine-protagonist")).toEqual(combinedProtagonist);
     expect(screen.getByText(combinedPromise.content)).toBeInTheDocument();
     expect(screen.getByText(combinedProtagonist.content)).toBeInTheDocument();
+    const basis = screen.getByText("已确认依据").closest("details")!;
+    expect(basis).not.toHaveAttribute("open");
+    expect(basis.closest(".preparation-editor")).not.toBeNull();
+    expect(screen.getByText(combinedPromise.content)).not.toBeVisible();
+    fireEvent.click(within(basis).getByText("已确认依据"));
+    fireEvent.click(within(basis).getByText("阅读期待"));
+    expect(within(basis).getByText(combinedPromise.content)).toBeVisible();
+    fireEvent.click(within(basis).getByText("核心人物"));
+    expect(within(basis).getByText(combinedProtagonist.content)).toBeVisible();
+    expect(mocks.savePlanningSection).not.toHaveBeenCalled();
     expect(stored.some((section) => section.id === "seed-genre" || section.id === "engine-motivation")).toBe(false);
   });
 
-  it("cancels switching without losing dirty input", async () => {
+  it("preserves scroll and dirty input on cancellation, resetting scroll only after an approved switch", async () => {
     setup();
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     fireEvent.change(input, { target: { value: "我正在推敲" } });
-    await chooseStage("建立关键设定");
+    const layout = document.querySelector(".preparation-layout")!;
+    layout.scrollTop = 200;
+    await chooseStage("主要矛盾");
     expect(await screen.findByRole("alertdialog")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(input).toHaveValue("我正在推敲");
+    expect(layout.scrollTop).toBe(200);
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
+    await chooseStage("主要矛盾");
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "放弃修改并切换" }));
+    await screen.findByRole("textbox", { name: "主要矛盾" });
+    expect(layout.scrollTop).toBe(0);
   });
 
   it("shows a single outline review item and lets the author return to a previous item", async () => {
     outlineSetup();
     setup("outline");
-    fireEvent.change(await screen.findByRole("textbox", { name: "主线大纲" }), { target: { value: "主角收到来信后决定追查寄信人。" } });
+    fireEvent.change(await screen.findByRole("textbox", { name: "主线方向" }), { target: { value: "主角收到来信后决定追查寄信人。" } });
     const review = screen.getByRole("region", { name: "作者审阅" });
     expect(within(review).getAllByRole("checkbox")).toHaveLength(1);
     expect(within(review).getByRole("checkbox", { name: outlineReviewChecks[0] })).not.toBeChecked();
@@ -279,46 +507,44 @@ describe("creation preparation workbench", () => {
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
 
-  it("shows missing prerequisites and prevents early chapter or outline creation", async () => {
+  it("allows outline and opening creation without confirming other topics", async () => {
     setup();
-    await chooseStage("准备开篇");
-    expect(screen.getByRole("button", { name: "建立开篇章节计划" })).toBeDisabled();
-    expect(screen.getByText("前序关键准备尚有 9 项待确认")).toBeVisible();
-    await chooseStage("审定主线大纲");
-    expect(screen.getByRole("button", { name: "建立主线大纲" })).toBeDisabled();
+    await chooseStage("开篇事件");
+    expect(screen.getByRole("button", { name: "建立开篇章节计划" })).toBeEnabled();
+    expect(screen.queryByText(/前序关键准备/)).not.toBeInTheDocument();
+    await chooseStage("主线方向");
+    expect(screen.getByRole("button", { name: "建立主线大纲" })).toBeEnabled();
     expect(mocks.createPlanNode).not.toHaveBeenCalled();
   });
 
   it("reuses legacy unconfirmed notes without calling them confirmed or hiding them", async () => {
     stored = [{ ...emptyPlanningSection("seed-premise"), content: "以前写下的前提", version: 2 }];
     setup();
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     expect(input).toHaveValue("以前写下的前提");
     expect(screen.getByRole("button", { name: "确认并继续" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
-    await screen.findByRole("textbox", { name: "题材" });
+    await screen.findByRole("textbox", { name: "核心人物" });
     expect(stored.find((section) => section.id === "seed-premise")?.storyState).toBe("CONFIRMED");
   });
 
   it("keeps previously confirmed content while revising in a separate draft", async () => {
     stored = [confirmed("seed-premise")];
     setup();
-    await screen.findByRole("textbox", { name: "题材" });
-    fireEvent.click(screen.getByRole("button", { name: /故事核心/ }));
-    expect(await screen.findByRole("textbox", { name: "故事核心" })).toHaveAttribute("readonly");
+    expect(await screen.findByRole("textbox", { name: "故事概念" })).toHaveAttribute("readonly");
     fireEvent.click(screen.getByRole("button", { name: "修订草稿" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "故事核心" }), { target: { value: "新的前提" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "故事概念" }), { target: { value: "新的前提" } });
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
     await screen.findByText("草稿已保存");
     expect(stored.find((section) => section.id === "seed-premise")).toMatchObject({
       content: "已决定：seed-premise", pendingContent: "新的前提", storyState: "CONFIRMED",
     });
-    expect(screen.getByText("关键准备 0 / 10")).toBeVisible();
+    expectTopics();
   });
 
   it("records optional deferrals without inventing confirmed facts", async () => {
     setup();
-    await chooseStage("建立关键设定");
+    await chooseStage("核心人物");
     fireEvent.click(screen.getByRole("button", { name: /关键关系/ }));
     fireEvent.click(screen.getByRole("button", { name: "暂不决定" }));
     await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledWith(expect.objectContaining({
@@ -326,31 +552,32 @@ describe("creation preparation workbench", () => {
     })));
   });
 
-  it("offers writing only after each key decision has been confirmed", async () => {
+  it("offers the existing opening's writing entry without requiring other decisions", async () => {
     nodes = [
       { id: "outline", kind: "OUTLINE", title: "大纲", parentId: null, archived: false, revision: 1, sortOrder: 0 },
       { id: "first", kind: "CHAPTER", title: "第一章", parentId: "volume", archived: false, revision: 1, sortOrder: 0 },
     ];
-    stored = buildPreparationStages(nodes).flatMap((stage) => stage.items).filter((item) => item.required).map((item) => confirmed(item.sectionId!));
-    setup();
+    stored = [confirmed("plan-node:first")];
+    setup("opening");
     expect(await screen.findByRole("link", { name: "进入正文" })).toHaveAttribute("href", "/writing#first");
-    expect(screen.getByText("关键准备 10 / 10")).toBeVisible();
+    expectTopics();
+    expect(screen.getByRole("link", { name: "打开大纲规划" })).toHaveAttribute("href",
+      "/discussion?work=planning&targetProject=project");
+    expect(screen.getByRole("link", { name: "打开大纲规划" }).closest(".preparation-heading")).not.toBeNull();
     expect(mocks.createPlanNode).not.toHaveBeenCalled();
   });
 
   it("does not edit or overwrite locked decisions", async () => {
     stored = [{ ...confirmed("seed-premise"), storyState: "LOCKED" }];
     setup();
-    await screen.findByRole("textbox", { name: "题材" });
-    fireEvent.click(screen.getByRole("button", { name: /故事核心/ }));
-    expect(screen.getByRole("textbox", { name: "故事核心" })).toHaveAttribute("readonly");
+    expect(await screen.findByRole("textbox", { name: "故事概念" })).toHaveAttribute("readonly");
     expect(screen.queryByRole("button", { name: "修订草稿" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeDisabled();
   });
 
   it("retains local input when AI finishes remotely, requiring an explicit reload", async () => {
     const client = setup();
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     fireEvent.change(input, { target: { value: "本地输入" } });
     act(() => client.setQueryData(["planning-sections"], [{
       ...emptyPlanningSection("seed-premise"), pendingContent: "远端生成稿", storyState: "AI_SUGGESTED", version: 1,
@@ -365,9 +592,9 @@ describe("creation preparation workbench", () => {
 
   it("rejects stale discard approval when the author edits during confirmation", async () => {
     setup();
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     fireEvent.change(input, { target: { value: "原输入" } });
-    await chooseStage("建立关键设定");
+    await chooseStage("主要矛盾");
     fireEvent.change(input, { target: { value: "确认期间的新输入" } });
     fireEvent.click(screen.getByRole("button", { name: "放弃修改并切换" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("确认期间准备内容已变化");
@@ -378,13 +605,13 @@ describe("creation preparation workbench", () => {
     let finish!: (section: PlanningSection) => void;
     mocks.savePlanningSection.mockImplementationOnce(() => new Promise<PlanningSection>((resolve) => { finish = resolve; }));
     setup();
-    fireEvent.change(await screen.findByRole("textbox", { name: "故事核心" }), { target: { value: "确认中" } });
+    fireEvent.change(await screen.findByRole("textbox", { name: "故事概念" }), { target: { value: "确认中" } });
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
-    expect(screen.getByRole("button", { name: /建立关键设定/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /主要矛盾/ })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
     expect(mocks.savePlanningSection).toHaveBeenCalledOnce();
     await act(async () => finish({ ...confirmed("seed-premise"), content: "确认中" }));
-    expect(await screen.findByRole("textbox", { name: "题材" })).toBeVisible();
+    expect(await screen.findByRole("textbox", { name: "核心人物" })).toBeVisible();
   });
 
   it("generates only on explicit request, using confirmed context and keeping the task a draft", async () => {
@@ -393,7 +620,7 @@ describe("creation preparation workbench", () => {
     mocks.listModelProfiles.mockResolvedValue([{ id: "chat", capability: "CHAT", hasSecret: true }]);
     mocks.enqueuePlanningAiJob.mockResolvedValue({});
     setup();
-    await screen.findByRole("textbox", { name: "故事核心" });
+    await screen.findByRole("textbox", { name: "故事概念" });
     const button = screen.getByRole("button", { name: "AI 推敲讨论稿" });
     await waitFor(() => expect(button).toBeEnabled());
     expect(mocks.enqueuePlanningAiJob).not.toHaveBeenCalled();
@@ -403,14 +630,14 @@ describe("creation preparation workbench", () => {
       existingContext: `[设定 · 世界规则与限制] frame-setting: ${base.content}`,
     })));
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
-    expect(screen.getByText("关键准备 1 / 10")).toBeVisible();
+    expectTopics();
   });
 
   it("requires approval before AI replaces a saved candidate and cancels without submitting", async () => {
     stored = [{ ...emptyPlanningSection("seed-premise"), pendingContent: "保存过的讨论稿", storyState: "AI_SUGGESTED" }];
     mocks.listModelProfiles.mockResolvedValue([{ id: "chat", capability: "CHAT", hasSecret: true }]);
     setup();
-    await screen.findByRole("textbox", { name: "故事核心" });
+    await screen.findByRole("textbox", { name: "故事概念" });
     const button = screen.getByRole("button", { name: "AI 推敲讨论稿" });
     await waitFor(() => expect(button).toBeEnabled());
     fireEvent.click(button);
@@ -418,16 +645,17 @@ describe("creation preparation workbench", () => {
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(mocks.enqueuePlanningAiJob).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox", { name: "故事核心" })).toHaveValue("保存过的讨论稿");
+    expect(screen.getByRole("textbox", { name: "故事概念" })).toHaveValue("保存过的讨论稿");
   });
 
   it.each([
-    { initial: "premise", title: "故事核心", id: "seed-premise", taskKey: "workDesign" },
+    { initial: "premise", title: "故事概念", id: "seed-premise", taskKey: "workDesign" },
     { initial: "outline", title: "引发事件", id: "outline-step-outline-inciting", taskKey: "outline" },
   ])("saves the current $title input before submitting one scoped AI task", async ({ initial, title, id, taskKey }) => {
     if (initial === "outline") outlineSetup(false);
     mocks.listModelProfiles.mockResolvedValue([{ id: "chat", capability: "CHAT", hasSecret: true }]);
     setup(initial);
+    if (initial === "outline") fireEvent.click(await screen.findByRole("button", { name: "引发事件" }));
     const input = await screen.findByRole("textbox", { name: title });
     await waitFor(() => expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeEnabled());
     fireEvent.change(input, { target: { value: "来自妹妹的来信让主角决定追查。" } });
@@ -452,7 +680,7 @@ describe("creation preparation workbench", () => {
     stored.push({ ...confirmed("plan-node:outline"), content: "原正式主线", pendingContent: "已保存的讨论稿", version: 7, references: ["discussion:original"] });
     mocks.listModelProfiles.mockResolvedValue([{ id: "chat", capability: "CHAT", hasSecret: true }]);
     setup("outline");
-    const input = await screen.findByRole("textbox", { name: "主线大纲" });
+    const input = await screen.findByRole("textbox", { name: "主线方向" });
     await waitFor(() => expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeEnabled());
     fireEvent.change(input, { target: { value: "根据新想法修改的主线" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并推敲" }));
@@ -476,7 +704,7 @@ describe("creation preparation workbench", () => {
     mocks.listModelProfiles.mockResolvedValue([{ id: "chat", capability: "CHAT", hasSecret: true }]);
     mocks.savePlanningSection.mockRejectedValueOnce(new Error("版本冲突"));
     setup("premise");
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     await waitFor(() => expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeEnabled());
     fireEvent.change(input, { target: { value: "不能丢失的想法" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并推敲" }));
@@ -495,7 +723,7 @@ describe("creation preparation workbench", () => {
     mocks.listModelProfiles.mockResolvedValue([{ id: "chat", capability: "CHAT", hasSecret: true }]);
     mocks.enqueuePlanningAiJob.mockRejectedValueOnce(new Error("队列不可用")).mockResolvedValueOnce({});
     setup("premise");
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     await waitFor(() => expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeEnabled());
     fireEvent.change(input, { target: { value: "已经写下的想法" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并推敲" }));
@@ -518,12 +746,12 @@ describe("creation preparation workbench", () => {
       finish = () => { const saved = { ...section, version: 1 }; stored = [saved]; resolve(saved); };
     }));
     setup("premise");
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     await waitFor(() => expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeEnabled());
     fireEvent.change(input, { target: { value: "提交保存的想法" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并推敲" }));
     expect(input).toBeDisabled();
-    expect(screen.getByRole("button", { name: /建立关键设定/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /主要矛盾/ })).toBeDisabled();
     const saving = screen.getByRole("button", { name: "保存中…" });
     expect(saving).toBeDisabled();
     fireEvent.click(saving);
@@ -542,7 +770,7 @@ describe("creation preparation workbench", () => {
     stored = [{ ...emptyPlanningSection("seed-premise"), pendingContent: "旧讨论稿", version: 3 }];
     mocks.listModelProfiles.mockResolvedValue([{ id: "chat", capability: "CHAT", hasSecret: true }]);
     setup("premise");
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     await waitFor(() => expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeEnabled());
     fireEvent.change(input, { target: { value: "第一次修改" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并推敲" }));
@@ -563,6 +791,7 @@ describe("creation preparation workbench", () => {
       finish = () => { const saved = { ...section, version: 1 }; stored.push(saved); resolve(saved); };
     }));
     const client = setup("outline");
+    fireEvent.click(await screen.findByRole("button", { name: "引发事件" }));
     const input = await screen.findByRole("textbox", { name: "引发事件" });
     await waitFor(() => expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeEnabled());
     fireEvent.change(input, { target: { value: "需要继续推敲的起因" } });
@@ -579,17 +808,18 @@ describe("creation preparation workbench", () => {
 
   it("does not auto-switch away from dirty input when remote progress changes", async () => {
     const client = setup();
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     fireEvent.change(input, { target: { value: "本地仍在编辑" } });
     act(() => client.setQueryData(["planning-sections"], [confirmed("seed-premise")]));
-    await waitFor(() => expect(screen.getByText("关键准备 1 / 10")).toBeVisible());
+    await screen.findByRole("button", { name: "读取最新内容" });
+    expectTopics();
     expect(input).toHaveValue("本地仍在编辑");
     expect(screen.queryByRole("textbox", { name: "题材" })).not.toBeInTheDocument();
   });
 
   function outlineSetup(legacyDraft = true) {
-    nodes = [{ id: "outline", kind: "OUTLINE", title: "主线大纲", parentId: null, archived: false, revision: 1, sortOrder: 0 }];
-    stored = buildPreparationStages(nodes).slice(0, 2).flatMap((stage) => stage.items).filter((item) => item.required).map((item) => confirmed(item.sectionId!));
+    nodes = [{ id: "outline", kind: "OUTLINE", title: "主线方向", parentId: null, archived: false, revision: 1, sortOrder: 0 }];
+    stored = buildPreparationStages(nodes).slice(0, 4).flatMap((stage) => stage.items).filter((item) => item.primary).map((item) => confirmed(item.sectionId!));
     if (legacyDraft) stored.push({ ...emptyPlanningSection("plan-node:outline"), pendingContent: "以前写下的主线草稿" });
   }
 
@@ -597,6 +827,7 @@ describe("creation preparation workbench", () => {
     outlineSetup(false);
     setup("outline");
     const steps = buildOutlineSteps("plan-node:outline");
+    fireEvent.click(await screen.findByRole("button", { name: "引发事件" }));
     expect(await screen.findByRole("textbox", { name: steps[0].title })).toHaveValue("");
     expect(screen.getAllByRole("textbox")).toHaveLength(1);
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
@@ -609,26 +840,28 @@ describe("creation preparation workbench", () => {
       await waitFor(() => expect(stored.find((section) => section.id === step.sectionId)?.storyState).toBe("CONFIRMED"));
       expect(stored.some((section) => section.id === "plan-node:outline")).toBe(false);
     }
-    const mainInput = await screen.findByRole("textbox", { name: "主线大纲" });
+    const mainInput = await screen.findByRole("textbox", { name: "主线方向" });
     expect(screen.getByText("情节确认 5 / 5")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "AI 推敲讨论稿" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "汇总为大纲草稿" }));
     await waitFor(() => expect(mainInput).toHaveValue(assembleOutline(steps, stored)));
+    expect(screen.queryByRole("button", { name: "AI 推敲讨论稿" })).not.toBeInTheDocument();
     const main = stored.find((section) => section.id === "plan-node:outline")!;
     expect(main.content).toBe("");
     expect(main.storyState).toBe("UNSET");
-    expect(screen.getByText("关键准备 8 / 10")).toBeVisible();
+    expectTopics();
     outlineReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
-    await screen.findByRole("textbox", { name: "结局方向" });
+    await screen.findByRole("button", { name: "建立开篇章节计划" });
     const formal = stored.find((section) => section.id === "plan-node:outline")!;
     expect(formal.content).toBe(assembleOutline(steps, stored));
-    expect(readPlanningReview(formal)?.basis).toHaveLength(13);
+    expect(readPlanningReview(formal)?.basis).toHaveLength(9);
   });
 
   it("keeps unfinished events on their own drafts and blocks skipping their causal prerequisites", async () => {
     outlineSetup(false);
     const client = setup("outline");
+    fireEvent.click(await screen.findByRole("button", { name: "引发事件" }));
     const first = await screen.findByRole("textbox", { name: "引发事件" });
     fireEvent.change(first, { target: { value: "尚未确定的起因" } });
     fireEvent.click(screen.getByRole("button", { name: "冲突升级" }));
@@ -673,7 +906,7 @@ describe("creation preparation workbench", () => {
       ...confirmed("plan-node:outline"), content: "原正式主线", pendingContent: "作者修订稿", version: 7, references: ["discussion:original"],
     });
     setup("outline");
-    const main = await screen.findByRole("textbox", { name: "主线大纲" });
+    const main = await screen.findByRole("textbox", { name: "主线方向" });
     expect(main).toHaveValue("作者修订稿");
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "汇总为大纲草稿" }));
@@ -698,13 +931,13 @@ describe("creation preparation workbench", () => {
       references: withOutlineSources([], steps, steps.map((step) => confirmed(step.sectionId!))),
     });
     const client = setup("outline");
-    await screen.findByRole("textbox", { name: "主线大纲" });
+    await screen.findByRole("textbox", { name: "主线方向" });
     outlineReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
     expect(screen.getByRole("button", { name: "确认并继续" })).toBeEnabled();
     act(() => client.setQueryData(["planning-sections"], stored.map((section) => section.id === steps[0].sectionId ? { ...section, content: "不同的引发事件", version: 2 } : section)));
     expect(await screen.findByText("情节已修改，请重新汇总大纲。")).toBeVisible();
     expect(screen.getByRole("button", { name: "确认并继续" })).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: "主线大纲" })).toHaveValue("汇总稿");
+    expect(screen.getByRole("textbox", { name: "主线方向" })).toHaveValue("汇总稿");
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
 
@@ -712,7 +945,7 @@ describe("creation preparation workbench", () => {
     outlineSetup(false);
     stored.push({ ...confirmed("plan-node:outline"), content: "旧大纲原文" });
     setup("outline");
-    expect(await screen.findByRole("textbox", { name: "主线大纲" })).toHaveValue("旧大纲原文");
+    expect(await screen.findByRole("textbox", { name: "主线方向" })).toHaveValue("旧大纲原文");
     fireEvent.click(screen.getByRole("button", { name: "引发事件" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "引发事件" }), { target: { value: "新的起因" } });
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
@@ -725,6 +958,7 @@ describe("creation preparation workbench", () => {
     outlineSetup(false);
     mocks.savePlanningSection.mockRejectedValue(new Error("保存失败"));
     const client = setup("outline");
+    fireEvent.click(await screen.findByRole("button", { name: "引发事件" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "引发事件" }), { target: { value: "新的起因" } });
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("保存失败");
@@ -745,18 +979,18 @@ describe("creation preparation workbench", () => {
     let reject!: (error: Error) => void;
     mocks.savePlanningSection.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
     setup("outline");
-    await screen.findByRole("textbox", { name: "主线大纲" });
+    await screen.findByRole("textbox", { name: "主线方向" });
     fireEvent.click(screen.getByRole("button", { name: "汇总为大纲草稿" }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "重新汇总" }));
     await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledOnce());
-    expect(screen.getByRole("textbox", { name: "主线大纲" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "主线方向" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "引发事件" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /建立关键设定/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /主要矛盾/ })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "汇总中…" }));
     expect(mocks.savePlanningSection).toHaveBeenCalledOnce();
     await act(async () => reject(new Error("版本冲突")));
     expect(await screen.findByRole("alert")).toHaveTextContent("版本冲突");
-    expect(screen.getByRole("textbox", { name: "主线大纲" })).toHaveValue("保留的修订稿");
+    expect(screen.getByRole("textbox", { name: "主线方向" })).toHaveValue("保留的修订稿");
     expect(stored.find((section) => section.id === "plan-node:outline")).toMatchObject({ content: "原正式内容", pendingContent: "保留的修订稿", version: 4 });
     expect(screen.getByRole("button", { name: "汇总为大纲草稿" })).toBeEnabled();
   });
@@ -769,7 +1003,7 @@ describe("creation preparation workbench", () => {
       references: withOutlineSources([], steps, steps.map((step) => confirmed(step.sectionId!))),
     });
     const client = setup("outline");
-    await screen.findByRole("textbox", { name: "主线大纲" });
+    await screen.findByRole("textbox", { name: "主线方向" });
     fireEvent.click(screen.getByRole("button", { name: "汇总为大纲草稿" }));
     await screen.findByRole("alertdialog");
     act(() => client.setQueryData(["planning-sections"], stored.map((section) => section.id === steps[0].sectionId ? { ...section, version: 2 } : section)));
@@ -777,7 +1011,7 @@ describe("creation preparation workbench", () => {
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "重新汇总" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("情节已有更新");
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox", { name: "主线大纲" })).toHaveValue("旧修订稿");
+    expect(screen.getByRole("textbox", { name: "主线方向" })).toHaveValue("旧修订稿");
   });
 
   it.each(["plan-node:outline", "outline-step-outline-inciting"])("waits for active AI work before assembling or confirming: %s", async (sectionId) => {
@@ -788,7 +1022,7 @@ describe("creation preparation workbench", () => {
     });
     mocks.jobs = [{ id: "job", status: "RUNNING", progress: 40, jobType: "AI_PLANNING_GENERATE", payload: JSON.stringify({ sectionId }) }];
     setup("outline");
-    await screen.findByRole("textbox", { name: "主线大纲" });
+    await screen.findByRole("textbox", { name: "主线方向" });
     expect(screen.getByText("大纲情节仍在推敲中")).toBeVisible();
     expect(screen.getByRole("button", { name: "汇总为大纲草稿" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "确认并继续" })).toBeDisabled();
@@ -798,7 +1032,7 @@ describe("creation preparation workbench", () => {
   it("requires all outline review decisions and resets them when the text changes", async () => {
     outlineSetup();
     setup("outline");
-    const input = await screen.findByRole("textbox", { name: "主线大纲" });
+    const input = await screen.findByRole("textbox", { name: "主线方向" });
     fireEvent.change(input, { target: { value: "诱因、选择、升级、转折与收束" } });
     const accept = screen.getByRole("button", { name: "确认并继续" });
     expect(accept).toBeDisabled();
@@ -815,17 +1049,17 @@ describe("creation preparation workbench", () => {
     outlineSetup(false);
     stored.push({ ...emptyPlanningSection("plan-node:outline"), pendingContent: "早期草稿", references: ["discussion:original"], version: 2 });
     setup("outline");
-    fireEvent.change(await screen.findByRole("textbox", { name: "主线大纲" }), { target: { value: "主角失信后选择承担代价，完成阶段目标。" } });
+    fireEvent.change(await screen.findByRole("textbox", { name: "主线方向" }), { target: { value: "主角失信后选择承担代价，完成阶段目标。" } });
     fireEvent.click(screen.getByText("待定问题与取舍"));
     fireEvent.change(screen.getByRole("textbox", { name: "待定问题与取舍" }), { target: { value: "终局真相保留两个备选。" } });
     outlineReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
-    await screen.findByRole("textbox", { name: "结局方向" });
+    await screen.findByRole("button", { name: "建立开篇章节计划" });
     const section = stored.find((section) => section.id === "plan-node:outline")!;
     expect(section).toMatchObject({ version: 3, consequence: "终局真相保留两个备选。", pendingContent: "", storyState: "CONFIRMED" });
     expect(section.references).toContain("discussion:original");
     expect(readPlanningReview(section)).toMatchObject({ sectionVersion: 3, checks: outlineReviewChecks });
-    expect(readPlanningReview(section)?.basis).toHaveLength(8);
+    expect(readPlanningReview(section)?.basis).toHaveLength(4);
   });
 
   it("preserves a formal outline and requests re-review after an upstream revision", async () => {
@@ -833,27 +1067,28 @@ describe("creation preparation workbench", () => {
     const previous = { ...confirmed("plan-node:outline"), content: "原来审定的主线", version: 1 };
     stored.push({ ...previous, references: withPlanningReview(previous, outlineReviewChecks, [...stored]), version: 2 });
     const client = setup("outline");
-    const input = await screen.findByRole("textbox", { name: "主线大纲" });
+    const input = await screen.findByRole("textbox", { name: "主线方向" });
     expect(input).toHaveAttribute("readonly");
-    const updated = stored.map((section) => section.id === "seed-premise" ? { ...section, content: "新的故事核心", version: 2 } : section);
+    const updated = stored.map((section) => section.id === "seed-premise" ? { ...section, content: "新的故事概念", version: 2 } : section);
     act(() => client.setQueryData(["planning-sections"], updated));
-    expect(await screen.findByText(/确认依据已有变化/)).toHaveTextContent("故事核心");
+    expect(await screen.findByText(/确认依据已有变化/)).toHaveTextContent("故事概念");
     expect(input).toHaveValue("原来审定的主线");
-    expect(screen.getByText("关键准备 8 / 10")).toBeVisible();
+    expectTopics();
     expect(screen.getByRole("button", { name: "确认并继续" })).toBeDisabled();
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
 
-  it("does not bypass outline prerequisites even after every review box is checked", async () => {
+  it("confirms a rough main outline without requiring the other preparation topics", async () => {
     outlineSetup();
     stored = [{ ...emptyPlanningSection("plan-node:outline"), pendingContent: "早期草稿" }];
     setup("outline");
-    fireEvent.change(await screen.findByRole("textbox", { name: "主线大纲" }), { target: { value: "临时大纲草稿" } });
+    fireEvent.change(await screen.findByRole("textbox", { name: "主线方向" }), { target: { value: "临时大纲草稿" } });
     outlineReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
-    expect(screen.getByRole("button", { name: "确认并继续" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
-    await screen.findByText("草稿已保存");
-    expect(stored[0]).toMatchObject({ content: "", pendingContent: "临时大纲草稿", storyState: "UNSET", references: [] });
+    expect(screen.getByRole("button", { name: "确认并继续" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
+    await screen.findByRole("button", { name: "建立开篇章节计划" });
+    expect(stored[0]).toMatchObject({ content: "临时大纲草稿", pendingContent: "", storyState: "CONFIRMED" });
+    expect(readPlanningReview(stored[0])?.basis).toEqual([]);
   });
 
   it("reviews the opening chapter against the confirmed story and outline before writing", async () => {
@@ -861,10 +1096,10 @@ describe("creation preparation workbench", () => {
     nodes.push({ id: "first", kind: "CHAPTER", title: "第一章", parentId: "volume", archived: false, revision: 1, sortOrder: 0 });
     stored.push(confirmed("plan-node:outline"));
     setup("opening");
-    fireEvent.change(await screen.findByRole("textbox", { name: "开篇章节计划" }), { target: { value: "收信后隐瞒线索，导致监察员跟踪。" } });
-    expect(screen.getByRole("button", { name: "确认并继续" })).toBeDisabled();
+    fireEvent.change(await screen.findByRole("textbox", { name: "开篇事件" }), { target: { value: "收信后隐瞒线索，导致监察员跟踪。" } });
+    expect(screen.getByRole("button", { name: "确认章节计划" })).toBeDisabled();
     openingReviewChecks.forEach((check) => fireEvent.click(screen.getByRole("checkbox", { name: check })));
-    fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认章节计划" }));
     await screen.findByRole("link", { name: "进入正文" });
     expect(readPlanningReview(stored.find((section) => section.id === "plan-node:first"))?.basis).toEqual(expect.arrayContaining([
       { id: "plan-node:outline", version: 1 },
@@ -875,7 +1110,7 @@ describe("creation preparation workbench", () => {
     stored = [{ ...emptyPlanningSection("seed-premise"), pendingContent: "作者保存过的草稿", version: 2 }];
     mocks.savePlanningSection.mockRejectedValue(new Error("版本冲突"));
     const client = setup();
-    const input = await screen.findByRole("textbox", { name: "故事核心" });
+    const input = await screen.findByRole("textbox", { name: "故事概念" });
     fireEvent.click(screen.getByRole("button", { name: "确认并继续" }));
     await screen.findByRole("alert");
     act(() => client.setQueryData(["planning-sections"], [{ ...stored[0], pendingContent: "其他来源的新稿", version: 3 }]));
@@ -886,13 +1121,13 @@ describe("creation preparation workbench", () => {
   it("requires explicit approval to unlock and preserves the formal content", async () => {
     stored = [{ ...confirmed("seed-premise"), storyState: "LOCKED" }];
     setup("premise");
-    await screen.findByRole("textbox", { name: "故事核心" });
+    await screen.findByRole("textbox", { name: "故事概念" });
     fireEvent.click(screen.getByRole("button", { name: "解除锁定" }));
     const dialog = await screen.findByRole("alertdialog");
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "解除锁定" }));
     await screen.findByRole("button", { name: "修订草稿" });
     expect(stored[0]).toMatchObject({ content: "已决定：seed-premise", storyState: "CONFIRMED", pendingContent: "" });
-    expect(screen.getByRole("textbox", { name: "故事核心" })).toHaveAttribute("readonly");
+    expect(screen.getByRole("textbox", { name: "故事概念" })).toHaveAttribute("readonly");
   });
 });

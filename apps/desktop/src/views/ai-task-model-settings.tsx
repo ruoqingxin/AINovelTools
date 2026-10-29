@@ -264,7 +264,8 @@ export function AiTaskModelSettings(props: {
   const selectedMaxOutputLimit = maxOutputLimitForTask(selectedTask);
   const hasProjectOverride = Boolean(projectOverrides.data?.[selectedTask]);
   const globalDirty = comparisonPreferences ? !samePreferences(draft, comparisonPreferences) : false;
-  const projectDirty = projectOverrides.data?.available ? !samePreferences(projectDraft, projectBaseline) : false;
+  // Project drafts are reset on entry; an inactive inherited snapshot is not an unsaved edit.
+  const projectDirty = scope === "PROJECT" && projectOverrides.data?.available ? !samePreferences(projectDraft, projectBaseline) : false;
   const settingsDirty = globalDirty || projectDirty;
   useUnsavedChangesGuard(settingsDirty, "当前 AI 任务配置有未保存修改。");
 

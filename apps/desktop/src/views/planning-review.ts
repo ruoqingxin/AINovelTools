@@ -11,10 +11,10 @@ export const outlineReviewChecks = [
   "主角的行动理由成立",
   "前后事件能够衔接",
   "转折有充分铺垫",
-  "结局回应故事主线",
+  "已有情节符合当前故事方向",
 ];
 export const openingReviewChecks = [
-  "开篇承接故事主线",
+  "开篇承接已确定的故事方向",
   "主要事件推动了故事",
   "章末让人愿意继续读",
 ];

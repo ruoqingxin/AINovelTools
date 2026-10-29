@@ -527,9 +527,10 @@ describe("exact planning navigation", () => {
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
 
-  it("allows early outline drafts but never confirms incomplete preparation through a plain save", async () => {
+  it("preserves early event drafts without treating a plain save as author confirmation", async () => {
     mocks.listPlanNodes.mockResolvedValue([{ ...scene, id: "outline-1", kind: "OUTLINE", title: "大纲" }]);
     renderPlan("?planNode=outline-1&targetProject=project-1");
+    fireEvent.click(await screen.findByRole("button", { name: "引发事件" }));
     const note = await screen.findByLabelText("引发事件");
     await waitFor(() => expect(note).toBeEnabled());
     expect(screen.queryByText("故事大纲尚未开放")).not.toBeInTheDocument();

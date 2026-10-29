@@ -9,15 +9,16 @@ import { useConfirmAction } from "../shell/confirm-action-provider";
 import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import { AiModelNote } from "./ai-model-note";
 import { ChapterCreateDialog } from "./chapter-create-dialog";
-import { buildPreparationStages, preparationPrerequisites, preparationProgress, preparationStatus, preparationStatusLabels, type PreparationItem } from "./creation-preparation";
+import { buildPreparationStages, preparationStatus, preparationStatusLabels, type PreparationItem } from "./creation-preparation";
 import { planningDraftDirty, usePlanningDraft } from "./use-planning-draft";
-import { assembleOutline, buildOutlineSteps, outlineSourcesChanged, withOutlineSources } from "./outline-steps";
+import { assembleOutline, buildOutlineSteps, outlineHasSources, outlineSourcesChanged, withOutlineSources } from "./outline-steps";
 import { openingReviewChecks, outlineReviewChecks, planningReviewChanges, planningReviewIsCurrent, readPlanningReview, withPlanningReview } from "./planning-review";
 import { PlanningSectionDiscussion } from "./planning-section-discussion";
 import "./creation-preparation.css";
 import { aiWorkspaceHref, identityLabel, planningSectionIdentity } from "../lib/content-taxonomy";
 import { AiWorkspaceLink, ContentTypeLabel, FormalContent, useInAiWorkspace } from "./content-identity";
 import { WorkspaceLink } from "./workspace-link";
+import { PreparationEntityReferences, usePreparationEntityReferences } from "./preparation-entity-references";
 
 function jobSection(job: Job) {
   if (job.jobType !== "AI_PLANNING_GENERATE") return null;
@@ -33,9 +34,17 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
   const sections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections });
   const stages = buildPreparationStages(nodes.data ?? []);
   const items = stages.flatMap((stage) => stage.items);
-  const progress = preparationProgress(stages, sections.data ?? []);
   const [selectedId, setSelectedId] = useState<string | null>(items.some((item) => item.id === initialItem) ? initialItem! : null);
-  const selected = items.find((item) => item.id === selectedId) ?? progress.missing[0] ?? items[0];
+  const selected = items.find((item) => item.id === selectedId) ?? items[0];
+  const workspace = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!workspace.current) return;
+    workspace.current.scrollTop = 0;
+    const layout = workspace.current.querySelector<HTMLElement>(".preparation-layout");
+    if (layout) layout.scrollTop = 0;
+    const content = workspace.current.closest<HTMLElement>(".ai-workspace-content");
+    if (content) content.scrollTop = 0;
+  }, [selected.id]);
   useEffect(() => {
     if (selectedId === null && nodes.isSuccess && sections.isSuccess) setSelectedId(selected.id);
   }, [selectedId, nodes.isSuccess, sections.isSuccess, selected.id]);
@@ -58,9 +67,10 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
   const [createChapterOpen, setCreateChapterOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useUnsavedChangesGuard(creating, "筹备正在建立结构。");
-  const previousMissing = preparationPrerequisites(stages, selected.id, sections.data ?? []);
   const basisItems = stages.slice(0, stageIndex).flatMap((entry) => entry.items);
   const byId = new Map((sections.data ?? []).map((section) => [section.id, section]));
+  const confirmedBasis = items.filter((item) => item.id !== selected.id && item.sectionId
+    && preparationStatus(byId.get(item.sectionId), sections.data ?? []) === "confirmed");
 
   async function select(id: string) {
     if (id === selected.id || creatingRef.current || editorState.current.busy || selecting.current) return;
@@ -76,7 +86,7 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
   }
 
   async function createOutline() {
-    if (!aiWorkspace || creatingRef.current || editorState.current.busy || previousMissing.length) return;
+    if (!aiWorkspace || creatingRef.current || editorState.current.busy) return;
     creatingRef.current = true;
     setCreating(true);
     setError(null);
@@ -96,77 +106,69 @@ export function CreationPreparationView({ embedded = false, initialItem }: { emb
   if (initialItem && !items.some((item) => item.id === initialItem)) return <p role="alert">准备事项不存在，未打开其他内容。</p>;
 
   function advance() {
-    const index = items.findIndex((item) => item.id === selected.id);
-    setSelectedId(items[index + 1]?.id ?? progress.missing.find((item) => item.id !== selected.id)?.id ?? selected.id);
+    setSelectedId(!selected.primary ? stage.items[0].id : stages[stageIndex + 1]?.items[0].id ?? selected.id);
   }
 
-  return <section className="preparation-workspace">
+  return <section className="preparation-workspace" ref={workspace}>
     <header className="workspace-heading preparation-heading">
-      <div><span className="preparation-project">{project.data?.name}</span>{embedded ? <h2>故事准备</h2> : <h1>筹备</h1>}</div>
-      <div className="preparation-progress"><span>关键准备 {progress.confirmed} / {progress.total}</span>
-        <progress aria-label="关键准备确认进度" value={progress.confirmed} max={progress.total} /></div>
+      <div>{embedded ? <h2>故事准备</h2> : <h1>筹备</h1>}</div>
+      {project.data && selected.kind !== "OUTLINE" ? <WorkspaceLink href={aiWorkspace
+        ? aiWorkspaceHref({ projectId: project.data.projectId, workflow: "planning" }) : "/planning?mode=structure"}
+        className="secondary-action">打开大纲规划<ArrowRight size={14} /></WorkspaceLink> : null}
     </header>
-    <nav className="preparation-stages" aria-label="筹备阶段">
-      {stages.map((entry, index) => {
-        const required = entry.items.filter((item) => item.required);
-        const done = required.filter((item) => item.sectionId && preparationStatus(byId.get(item.sectionId), sections.data ?? []) === "confirmed").length;
-        return <button key={entry.id} type="button" aria-current={stage.id === entry.id ? "step" : undefined}
-          disabled={creating || editorBusy} onClick={() => void select(entry.items.find((item) => item.required && progress.missing.some((missing) => missing.id === item.id))?.id ?? entry.items[0].id)}>
-          <span className="preparation-stage-number">{done === required.length ? <Check size={16} /> : String(index + 1).padStart(2, "0")}</span>
-          <span><strong>{entry.title}</strong><small>{done} / {required.length} 已确认</small></span>
+    <nav className="preparation-stages" aria-label="故事主题">
+      {stages.map((entry) => {
+        return <button key={entry.id} type="button" aria-current={stage.id === entry.id ? "page" : undefined}
+          disabled={creating || editorBusy} onClick={() => void select(entry.items[0].id)}>
+          <strong>{entry.title}</strong>
         </button>;
       })}
     </nav>
     <div className="preparation-layout">
-      <aside className="preparation-outline" aria-label="本阶段准备事项">
+      <aside className="preparation-outline" aria-label="主题内容">
         <h2>{stage.title}</h2>
         {stage.items.map((item) => {
           const status = item.sectionId ? preparationStatus(byId.get(item.sectionId), sections.data ?? []) : "empty";
           return <button key={item.id} type="button" className="preparation-item" aria-current={item.id === selected.id ? "true" : undefined}
             disabled={creating || editorBusy} onClick={() => void select(item.id)}>
             {status === "confirmed" ? <CheckCircle2 size={16} /> : status === "deferred" ? <Clock3 size={16} /> : <Circle size={16} />}
-            <span><strong>{item.title}{item.required ? "" : "（可选）"}</strong><small>{preparationStatusLabels[status]}</small></span>
+            <span><strong>{item.title}</strong><small>{item.primary ? preparationStatusLabels[status] : `${preparationStatusLabels[status]} · 可选`}</small></span>
           </button>;
         })}
         <div className="preparation-stage-links">
-          {stageIndex > 0 ? <button type="button" disabled={creating || editorBusy} onClick={() => void select(stages[stageIndex - 1].items[0].id)}><ArrowLeft size={14} />上一阶段</button> : null}
-          {stageIndex < stages.length - 1 ? <button type="button" disabled={creating || editorBusy} onClick={() => void select(stages[stageIndex + 1].items[0].id)}>下一阶段<ArrowRight size={14} /></button> : null}
+          {stageIndex > 0 ? <button type="button" disabled={creating || editorBusy} onClick={() => void select(stages[stageIndex - 1].items[0].id)}><ArrowLeft size={14} />上一主题</button> : null}
+          {stageIndex < stages.length - 1 ? <button type="button" disabled={creating || editorBusy} onClick={() => void select(stages[stageIndex + 1].items[0].id)}>下一主题<ArrowRight size={14} /></button> : null}
         </div>
       </aside>
       <main className="preparation-editor" aria-label="准备内容">
-        <div className="preparation-outcome"><span>本阶段产出</span><strong>{stage.outcome}</strong></div>
+        <div className="preparation-outcome"><strong>{stage.outcome}</strong>
+          {project.data && selected.kind ? <WorkspaceLink href={aiWorkspace
+            ? aiWorkspaceHref({ projectId: project.data.projectId, workflow: "planning", targetId: selected.sectionId?.slice("plan-node:".length) })
+            : `/planning?mode=structure&targetProject=${encodeURIComponent(project.data.projectId)}${selected.sectionId ? `&planNode=${encodeURIComponent(selected.sectionId.slice("plan-node:".length))}` : ""}`}>
+            {selected.kind === "CHAPTER" ? "章节计划" : "全书大纲"}<ArrowRight size={13} /></WorkspaceLink> : null}
+        </div>
+        {selected.id === "premise" ? <button type="button" className="preparation-genre" disabled={creating || editorBusy}
+          onClick={() => void select("genre")}><span>题材</span>{byId.get("seed-genre")?.content.trim() || byId.get("seed-genre")?.pendingContent.trim() || "暂未确定"}<ArrowRight size={13} /></button> : null}
         {selected.sectionId ? <PreparationEditor key={selected.id + selected.sectionId} item={selected} sections={sections.data ?? []}
-          prerequisites={previousMissing} basisItems={basisItems} onContinue={advance}
-          writingChapterId={progress.ready && !pending ? (nodes.data ?? []).find((node) => node.kind === "CHAPTER" && !node.archived)?.id : undefined}
+          prerequisites={[]} basisItems={basisItems} onContinue={selected.id === "opening" ? undefined : advance}
+          writingChapterId={selected.id === "opening" && !pending ? (nodes.data ?? []).find((node) => node.kind === "CHAPTER" && !node.archived)?.id : undefined}
           onPendingChange={changePending} /> : <div className="preparation-create">
           <h2>{selected.title}</h2><p>{selected.question}</p>
           {aiWorkspace ? <><PlanningSectionDiscussion sectionId={`preparation:${selected.id}`} title={selected.title} question={selected.question}
             draftContent="" readOnly disabled={creating} onBusyChange={changeUncreatedBusy} onUseDraft={() => {}} />
-          {previousMissing.length ? <div className="preparation-prerequisites" role="status">
-            <strong>前序关键准备尚有 {previousMissing.length} 项待确认</strong>
-            {previousMissing.map((item) => <button key={item.id} type="button" onClick={() => void select(item.id)}>{item.title}<ArrowRight size={14} /></button>)}
-          </div> : null}
-          <button type="button" className="primary-action" disabled={creating || editorBusy || previousMissing.length > 0}
+          <button type="button" className="primary-action" disabled={creating || editorBusy}
             onClick={() => selected.kind === "CHAPTER" ? setCreateChapterOpen(true) : void createOutline()}>
             <Plus size={15} />{creating ? "建立中…" : selected.kind === "CHAPTER" ? "建立开篇章节计划" : "建立主线大纲"}</button></>
             : project.data ? <AiWorkspaceLink target={{ projectId: project.data.projectId, workflow: "preparation", item: selected.id }}>去共创处理{selected.title}</AiWorkspaceLink> : null}
         </div>}
         {error ? <p role="alert" className="project-error">{error}</p> : null}
+        {confirmedBasis.length > 0 ? <details className="preparation-basis">
+          <summary>已确认依据</summary>
+          {confirmedBasis.map((item) => <details key={item.id}>
+            <summary><CheckCircle2 size={14} />{item.title}</summary><p>{byId.get(item.sectionId!)?.content}</p>
+          </details>)}
+        </details> : null}
       </main>
-      <aside className="preparation-basis" aria-label="已确认的创作依据">
-        <h2>已确认的依据</h2>
-        {items.filter((item) => item.id !== selected.id && item.sectionId && preparationStatus(byId.get(item.sectionId), sections.data ?? []) === "confirmed").map((item) =>
-          <details key={item.id}><summary><CheckCircle2 size={14} />{item.title}</summary><p>{byId.get(item.sectionId!)?.content}</p></details>)}
-        {items.every((item) => item.id === selected.id || !item.sectionId || preparationStatus(byId.get(item.sectionId), sections.data ?? []) !== "confirmed")
-          ? <p className="preparation-muted">暂无其他已确认内容</p> : null}
-        <div className="preparation-readiness"><strong>{progress.ready ? "开篇准备已确认" : `${progress.missing.length} 项关键准备待确认`}</strong>
-          {progress.missing.map((item) => <button type="button" key={item.id} disabled={creating || editorBusy}
-            onClick={() => void select(item.id)}>{item.title}<ArrowRight size={13} /></button>)}
-          {progress.ready && project.data ? <WorkspaceLink href={aiWorkspace
-            ? aiWorkspaceHref({ projectId: project.data.projectId, workflow: "planning" }) : "/planning?mode=structure"}
-            className="secondary-action">打开大纲规划<ArrowRight size={14} /></WorkspaceLink> : null}
-        </div>
-      </aside>
     </div>
     {createChapterOpen && project.data ? <ChapterCreateDialog projectId={project.data.projectId} nodes={nodes.data ?? []}
       onClose={() => setCreateChapterOpen(false)} onCreated={() => setSelectedId("opening")} /> : null}
@@ -187,11 +189,14 @@ export function PreparationEditor(props: PreparationEditorProps) {
 function PreparationFormalContent({ item, sections }: PreparationEditorProps) {
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   const section = sections.find((entry) => entry.id === item.sectionId);
+  const entityReferences = usePreparationEntityReferences(item.entityTypes, section?.references ?? []);
   if (!project.data) return null;
-  return <FormalContent title={item.title} identity={planningSectionIdentity(item.sectionId ?? "")}
+  return <><FormalContent title={item.title} identity={planningSectionIdentity(item.sectionId ?? "")}
     content={section?.content ?? ""} status={preparationStatusLabels[preparationStatus(section, sections)]}
     pending={Boolean(section?.pendingContent.trim())}
-    target={{ projectId: project.data.projectId, workflow: "preparation", item: item.id }} />;
+    target={{ projectId: project.data.projectId, workflow: "preparation", item: item.id }} />
+    {item.entityTypes && entityReferences.ids.length > 0 ? <PreparationEntityReferences model={entityReferences}
+      references={section?.references ?? []} disabled readOnly /> : null}</>;
 }
 
 function EditablePreparationEditor(props: PreparationEditorProps) {
@@ -212,7 +217,8 @@ function OutlinePreparationEditor(props: PreparationEditorProps) {
   });
   const missing = steps.filter((step) => preparationStatus(sections.find((section) => section.id === step.sectionId), sections) !== "confirmed");
   const hasMain = Boolean(main?.content.trim() || main?.pendingContent.trim());
-  const [selected, setSelected] = useState(() => hasMain ? "overview" : missing[0]?.id ?? "overview");
+  const [selected, setSelected] = useState(() => hasMain || !steps.some((step) => sections.some((section) => section.id === step.sectionId))
+    ? "overview" : missing[0]?.id ?? "overview");
   const [assembling, setAssembling] = useState(false);
   const [childBusy, setChildBusy] = useState(false);
   const [childDirty, setChildDirty] = useState(false);
@@ -233,7 +239,7 @@ function OutlinePreparationEditor(props: PreparationEditorProps) {
   const currentIndex = steps.findIndex((step) => step.id === selected);
   const previousStep = steps[currentIndex - 1];
   const previousSection = sections.find((section) => section.id === previousStep?.sectionId);
-  const guided = steps.some((step) => sections.some((section) => section.id === step.sectionId)) || !hasMain;
+  const guided = steps.some((step) => sections.some((section) => section.id === step.sectionId));
   const latestInputs = useRef({ sections, generating });
   latestInputs.current = { sections, generating };
   const sourcesChanged = outlineSourcesChanged(main, sections);
@@ -288,7 +294,7 @@ function OutlinePreparationEditor(props: PreparationEditorProps) {
           {done ? <CheckCircle2 size={14} /> : <span aria-hidden="true">{index + 1}</span>}{step.title}</button>;
       })}
       <button type="button" aria-current={selected === "overview" ? "step" : undefined}
-        disabled={assembling || childBusy} onClick={() => void select("overview")}>汇总审阅</button>
+        disabled={assembling || childBusy} onClick={() => void select("overview")}>{guided ? "汇总审阅" : "主线草稿"}</button>
     </nav>
     {selected === "overview" && guided ? <div className="outline-assembly">
       <span>情节确认 {steps.length - missing.length} / {steps.length}</span>
@@ -304,11 +310,11 @@ function OutlinePreparationEditor(props: PreparationEditorProps) {
       item={current ? { ...current, guidance: [current.guidance,
         previousSection && preparationStatus(previousSection, sections) === "confirmed"
           ? `前段已确认情节（${previousStep.title}）：\n${previousSection.content}` : ""].filter(Boolean).join("\n") } : item}
-      prerequisites={current ? [...prerequisites, ...missing.filter((step) => steps.indexOf(step) < currentIndex)] : [...prerequisites, ...(guided ? missing : [])]}
+      prerequisites={current ? [...prerequisites, ...missing.filter((step) => steps.indexOf(step) < currentIndex)] : prerequisites}
       basisItems={current ? [...basisItems, ...steps.slice(0, currentIndex)] : [...basisItems, ...steps]}
       sections={sections} disabled={assembling} inheritedLock={Boolean(current && locked)}
       confirmationBlocked={!current && (generating || sourcesChanged) ? generating ? "大纲情节仍在推敲中" : "情节已修改，请重新汇总大纲。" : undefined}
-      hideAi={!current && guided}
+      hideAi={!current && outlineHasSources(main)}
       onPendingChange={report} writingChapterId={current ? undefined : props.writingChapterId}
       onContinue={current ? () => setSelected(steps[currentIndex + 1]?.id ?? "overview") : props.onContinue}
       additionalContext={current ? main?.content || main?.pendingContent : undefined} />
@@ -322,6 +328,9 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
   const confirm = useConfirmAction();
   const stored = sections.find((section) => section.id === item.sectionId);
   const draft = usePlanningDraft(item.sectionId!, stored, true);
+  const entityReferences = usePreparationEntityReferences(item.entityTypes, draft.form.references);
+  const latestEntityContext = useRef(entityReferences.context);
+  latestEntityContext.current = entityReferences.context;
   const profiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
   const preferences = useAiTaskPreferences();
   const taskKey = item.kind === "OUTLINE" || item.kind === "OUTLINE_STEP" ? "outline" : item.kind === "CHAPTER" ? "chapterPlan" : "workDesign";
@@ -345,7 +354,7 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
   const locked = inheritedLock || draft.baseline.storyState === "LOCKED";
   const busy = draft.saving || generating || unlocking || disabled || discussionBusy;
   const generationBlocked = useRef(false);
-  generationBlocked.current = disabled || hideAi || locked || Boolean(activeJob);
+  generationBlocked.current = disabled || hideAi || locked || Boolean(activeJob) || !entityReferences.ready;
   const unresolved = Boolean(draft.form.pendingContent.trim()) || editing;
   const text = unresolved ? draft.form.pendingContent : draft.form.content;
   const alreadyConfirmed = !unresolved && preparationStatus(draft.form, sections) === "confirmed";
@@ -372,7 +381,8 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
   }, [client, lastJob?.id, lastJob?.status]);
 
   async function save(decision: "draft" | "confirm" | "defer") {
-    if (operation.current || disabled || locked || activeJob || decision === "confirm" && (confirmationBlocked || prerequisites.length || !text.trim() || !reviewComplete)) return;
+    if (operation.current || disabled || locked || activeJob || decision === "confirm"
+      && (confirmationBlocked || prerequisites.length || !text.trim() || !reviewComplete || !entityReferences.ready)) return;
     const snapshot = draft.beginSave();
     if (!snapshot) return;
     operation.current = true;
@@ -401,7 +411,7 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
   }
 
   async function generate() {
-    if (operation.current || !draft.ready || disabled || hideAi || !profile?.hasSecret || activeJob || locked) return;
+    if (operation.current || !draft.ready || disabled || hideAi || !profile?.hasSecret || activeJob || locked || !entityReferences.ready) return;
     operation.current = true;
     setGenerating(true);
     setError(null);
@@ -431,13 +441,15 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
           return;
         }
       }
-      if (generationBlocked.current) { setError("当前内容状态已变化，未提交推敲任务。"); return; }
+      if (generationBlocked.current || latestEntityContext.current !== entityReferences.context) {
+        setError("当前内容状态已变化，未提交推敲任务。"); return;
+      }
       await enqueuePlanningAiJob({
         profileId: profile.id, mode: "GENERATE", sectionId: item.sectionId!, sectionTitle: item.title,
         sectionPrompt: `内容分类：${identityLabel(planningSectionIdentity(item.sectionId ?? ""))}。未归类笔记不代表正式设定事实。\n${item.question}\n本次只处理“${item.title}”这一项，给出一份${item.kind === "OUTLINE_STEP" ? "具体、连贯的情节稿，交代行动缘由、人物选择与局面变化" : "简短、连贯的讨论稿"}。不扩展其他准备事项，不列填空清单，不提供多套方案。\n${item.guidance ?? item.placeholder}\n尊重已确认的创作依据，未知之处保留待定，不将推测写成作者已确认的事实。`,
         existingContext: sections.filter((section) => section.id !== item.sectionId
           && preparationStatus(section, sections) === "confirmed").map((section) => `[${identityLabel(planningSectionIdentity(section.id))}] ${section.id}: ${section.content}`).join("\n\n"),
-        referenceContent: [additionalContext ? `原主线大纲（细化参考）：\n${additionalContext}` : "", source.content, source.pendingContent].filter(Boolean).join("\n\n"),
+        referenceContent: [entityReferences.context, additionalContext ? `原主线大纲（细化参考）：\n${additionalContext}` : "", source.content, source.pendingContent].filter(Boolean).join("\n\n"),
         userGuidance: [item.kind === "OUTLINE_STEP" ? "只展开当前这一段的具体情节，不生成整份大纲，不直接写正文。输出供作者确认的情节稿，不代替作者定稿。" : "一次只推敲当前这一项，输出一份短稿，保留作者确认，不直接生成正文。",
           additionalContext ? `原大纲参考（不代表本段已确认内容）：\n${additionalContext}` : "",
           source.pendingContent.trim() ? `作者当前草稿（尚未确认）：\n${source.pendingContent}` : ""].filter(Boolean).join("\n\n"), allowRewrite: false,
@@ -477,12 +489,16 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
   }
 
   return <>
-    <div className="preparation-editor-heading"><span>{item.kind === "OUTLINE_STEP" ? "情节节点" : item.required ? "关键准备" : "可选准备"}</span><h2>{item.title}</h2>
+    <div className="preparation-editor-heading"><h2>{item.title}</h2>
       <p>{item.question}</p></div>
     <ContentTypeLabel identity={planningSectionIdentity(item.sectionId ?? "")} />
+    {item.entityTypes ? <PreparationEntityReferences model={entityReferences} references={draft.form.references}
+      disabled={!draft.ready || busy || locked || Boolean(activeJob)} readOnly={!unresolved}
+      onChange={(references) => draft.setForm((current) => ({ ...current, references }))} /> : null}
     <PlanningSectionDiscussion sectionId={item.id === "outline" || item.id === "opening" ? `preparation:${item.id}` : item.sectionId!}
-      title={item.title} question={item.question}
-      draftContent={draft.form.pendingContent} disabled={!draft.ready || disabled || draft.saving || generating || unlocking || Boolean(activeJob)}
+      title={item.title} question={[item.question, item.guidance].filter(Boolean).join("\n")}
+      referenceContent={entityReferences.context}
+      draftContent={draft.form.pendingContent} disabled={!draft.ready || disabled || draft.saving || generating || unlocking || Boolean(activeJob) || !entityReferences.ready}
       readOnly={locked} onBusyChange={setDiscussionBusy} onUseDraft={(content) => {
         setEditing(true);
         draft.setForm((current) => ({ ...current, pendingContent: content }));
@@ -501,7 +517,7 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
       {!unresolved && !locked ? <button type="button" className="secondary-action" onClick={() => void revise()} disabled={busy || Boolean(activeJob)}>修订草稿</button> : null}
       {locked && !disabled && !inheritedLock ? <button type="button" className="secondary-action" onClick={() => void unlock()} disabled={busy || Boolean(activeJob)}>{unlocking ? "解锁中…" : "解除锁定"}</button> : null}
       {!hideAi ? <button type="button" className="secondary-action" onClick={() => void generate()}
-        disabled={!draft.ready || busy || Boolean(activeJob) || !profile?.hasSecret || locked}>
+        disabled={!draft.ready || busy || Boolean(activeJob) || !profile?.hasSecret || locked || !entityReferences.ready}>
         <Sparkles size={14} />{generating ? draft.saving ? "保存中…" : "提交中…" : draft.dirty && !locked ? "保存并推敲" : "AI 推敲讨论稿"}</button> : null}
       {!hideAi && profiles.isSuccess && preferences.isSuccess && !profile?.hasSecret ? <a className="preparation-model-link" href="/settings#models">配置 AI 模型</a> : null}
     </div>
@@ -511,9 +527,12 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
     {activeJob ? <p role="status" className="preparation-job">讨论稿{activeJob.status === "QUEUED" ? "排队中" : "推敲中"} · {activeJob.progress}%</p> : null}
     {lastJob?.status === "FAILED" ? <p role="alert" className="project-error">讨论稿生成失败：{lastJob.errorSummary} <a href="/jobs">查看任务</a></p> : null}
     <label className="preparation-text-label" data-compact={!item.kind || item.kind === "OUTLINE_STEP"}>{unresolved ? "准备草稿" : alreadyConfirmed ? "已确认内容" : "准备内容"}
-      <textarea rows={item.kind === "OUTLINE" ? 8 : item.kind === "CHAPTER" ? 6 : 4} aria-label={item.title} value={text} placeholder={item.placeholder}
+      {item.id === "genre" ? <input aria-label={item.title} value={text} placeholder={item.placeholder}
         readOnly={!unresolved || locked} disabled={!draft.ready || busy}
         onChange={(event) => { setEditing(true); draft.setForm((current) => ({ ...current, pendingContent: event.target.value })); }} />
+        : <textarea rows={item.kind === "OUTLINE" ? 8 : item.kind === "CHAPTER" ? 6 : 4} aria-label={item.title} value={text} placeholder={item.placeholder}
+        readOnly={!unresolved || locked} disabled={!draft.ready || busy}
+        onChange={(event) => { setEditing(true); draft.setForm((current) => ({ ...current, pendingContent: event.target.value })); }} />}
     </label>
     {unresolved && draft.form.content.trim() ? <details className="preparation-original"><summary>上次确认内容</summary><p>{draft.form.content}</p></details> : null}
     {reviewChecks.length ? <section className="preparation-review" aria-label="作者审阅">
@@ -537,17 +556,18 @@ function SinglePreparationEditor({ item, sections, prerequisites, basisItems = [
     <div className="preparation-savebar">
       <span role="status">{draft.saving ? "保存中…" : draft.dirty ? "有未保存修改" : notice ?? "无未保存修改"}</span>
       <div>
-        {!item.required ? <button type="button" className="secondary-action" disabled={busy || locked || Boolean(activeJob)} onClick={() => void save("defer")}>
+        {item.kind !== "OUTLINE_STEP" ? <button type="button" className="secondary-action" disabled={busy || locked || Boolean(activeJob)} onClick={() => void save("defer")}>
           <Clock3 size={14} />暂不决定</button> : null}
         <button type="button" className="secondary-action" onClick={() => void save("draft")} disabled={!draft.ready || busy || locked || !draft.dirty || Boolean(activeJob)}>
           <Save size={14} />保存草稿</button>
         {writingChapterId && !draft.dirty && !busy ? <Link to="/writing" hash={writingChapterId}
-          className="primary-action"><BookOpenText size={15} />进入正文</Link> : <button type="button" className="primary-action"
-          disabled={!draft.ready || busy || inheritedLock || !text.trim() || prerequisites.length > 0 || Boolean(activeJob) || Boolean(confirmationBlocked)
+          className="secondary-action"><BookOpenText size={15} />进入正文</Link> : null}
+        <button type="button" className="primary-action"
+          disabled={!draft.ready || busy || inheritedLock || !text.trim() || prerequisites.length > 0 || Boolean(activeJob) || Boolean(confirmationBlocked) || !entityReferences.ready
             || (!alreadyConfirmed && !locked && !reviewComplete) || (!onContinue && (locked || alreadyConfirmed) && !draft.dirty)}
           onClick={() => locked || alreadyConfirmed && !draft.dirty ? onContinue?.() : void save("confirm")}>
           <Check size={14} />{locked || alreadyConfirmed && !draft.dirty ? onContinue ? "继续下一项" : "已确认"
-            : onContinue ? "确认并继续" : item.kind === "OUTLINE" || item.kind === "OUTLINE_STEP" || item.kind === "CHAPTER" ? "确认为正式大纲" : "确认当前准备内容"}</button>}
+            : onContinue ? "确认并继续" : item.kind === "CHAPTER" ? "确认章节计划" : item.kind === "OUTLINE" || item.kind === "OUTLINE_STEP" ? "确认为正式大纲" : "确认当前准备内容"}</button>
       </div>
     </div>
     {draft.remoteChanged ? <div className="project-error" role="status">准备内容已有新版本，本地修改仍保留。

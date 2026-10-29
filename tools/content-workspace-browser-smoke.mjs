@@ -12,6 +12,7 @@ const { values } = parseArgs({ options: {
   "structure-only": { type: "boolean", default: false },
   "writing-directory-only": { type: "boolean", default: false },
   "preparation-only": { type: "boolean", default: false },
+  "story-preparation-only": { type: "boolean", default: false },
   "navigation-only": { type: "boolean", default: false },
   "coauthor-only": { type: "boolean", default: false },
   "include-mobile": { type: "boolean", default: false },
@@ -63,6 +64,21 @@ const transport = `
   export async function waitForPendingCommands(){}
   export async function invoke(command,args={}){
     window.__contentCalls??=[];window.__contentCalls.push(command);
+    if(${Boolean(values["story-preparation-only"])}){
+      const saved=JSON.parse(sessionStorage.getItem("story-preparation-saved")??"[]");
+      if(command==="list_planning_sections"){
+        const base=sessionStorage.getItem("content-workspace-empty-states")==="1"?[]:sections;
+        return [...base.filter(item=>!saved.some(next=>next.id===item.id)),...saved];
+      }
+      if(command==="save_planning_section_checked"){
+        const allowed=["engine-protagonist","plan-node:outline","plan-node:chapter","seed-genre"];
+        const previous=saved.find(item=>item.id===args.section.id)??sections.find(item=>item.id===args.section.id);
+        if(!allowed.includes(args.section.id)||args.expectedVersion!==(previous?.version??0))throw new Error("Unexpected story preparation write");
+        const next={...args.section,version:(previous?.version??0)+1};
+        sessionStorage.setItem("story-preparation-saved",JSON.stringify([...saved.filter(item=>item.id!==next.id),next]));
+        return next;
+      }
+    }
     if(sessionStorage.getItem("content-workspace-empty-states")==="1"){
       if(command==="list_author_todos")return {projectId:"p1",pendingCount:0,items:[]};
       if(["list_entity_cards","list_entity_revisions","list_relations","list_events","list_beliefs",
@@ -71,6 +87,9 @@ const transport = `
     }
     if(command==="current_project")return project;
     if(command==="health_query")return {schemaVersion:66};
+    if(${Boolean(values["coauthor-only"])}&&command==="get_project_ai_task_overrides")return {available:true};
+    if(${Boolean(values["coauthor-only"])}&&command==="get_ai_task_preferences")
+      return JSON.parse(sessionStorage.getItem("coauthor-ai-task-preferences")??"{}");
     if(command==="bootstrap_status"||command==="get_project_ai_task_overrides"||command==="get_ai_task_preferences")return {};
     if(command==="list_author_todos")return {projectId:"p1",pendingCount:2,items:[
       {kind:"FACT_REVIEW",targetId:"chapter",targetTitle:"第一章 入城",count:2,highRisk:true}
@@ -143,6 +162,15 @@ const transport = `
       baseRevisionId:"mr1",baseDocumentJson:"",updatedAt:""};
     if(command==="get_audit_flow_settings")return {admission:true,manuscript:true,knowledge:true};
     if(${Boolean(values["coauthor-only"])}){
+      if(command==="list_model_profiles")return [{id:"chat",name:"测试共创模型",capability:"CHAT",hasSecret:true,
+        provider:"OPEN_AI_COMPATIBLE",modelId:"test-chat",contextWindow:131072,maxOutputTokens:8192,
+        baseUrl:"https://example.test/v1",privacyLevel:"ALLOW_CLOUD",timeoutSeconds:120,retryLimit:1,
+        inputPriceMicrosPerMillion:null,outputPriceMicrosPerMillion:null,priceCurrency:"USD",createdAt:"",updatedAt:""}];
+      if(command==="get_ai_usage_summary")return {byTask:[]};
+      if(command==="save_ai_task_preferences"){
+        sessionStorage.setItem("coauthor-ai-task-preferences",JSON.stringify(args.preferences));
+        return args.preferences;
+      }
       if(command==="list_discussion_sessions")return [{id:"s1",projectId:"p1",title:"未来来信的悬念与伏笔",scopeKind:"PROJECT"}];
       if(command==="list_discussion_messages"){
         if(sessionStorage.getItem("coauthor-header-empty")==="1")return [];
@@ -208,6 +236,94 @@ try {
       const navigation = page.getByRole("navigation", { name: "AI 内容分类" });
       await navigation.waitFor();
       assert.deepEqual(await navigation.locator('a[aria-current="page"]').allTextContents(), [label]);
+    }
+
+    if (values["story-preparation-only"]) {
+      let expectedSaves = 0;
+      async function assertPreparationLayout() {
+        const workspace = page.locator(".preparation-workspace");
+        const layout = workspace.locator(".preparation-layout");
+        assert.equal(await workspace.getByRole("progressbar").count(), 0);
+        assert.equal(await workspace.locator(".preparation-readiness").count(), 0);
+        assert.equal(await layout.locator(":scope > aside").count(), 1);
+        assert.equal(await layout.locator(":scope > main").count(), 1);
+        assert.deepEqual(await workspace.getByRole("navigation", { name: "故事主题" }).getByRole("button").allTextContents(),
+          ["故事概念", "核心人物", "目标与动机", "主要矛盾", "主线方向", "开篇事件"]);
+        const editor = await workspace.getByRole("main", { name: "准备内容" }).boundingBox();
+        const bounds = await layout.boundingBox();
+        assert.ok(editor.width >= 650, `Story editor remains too narrow: ${editor.width}`);
+        assert.ok(Math.abs(editor.x + editor.width - bounds.x - bounds.width) < 2, "Editor must use the space freed by the right sidebar");
+        const writes = await page.evaluate(() => window.__contentCalls.filter(command => /^(create_|save_|upsert_|enqueue_|run_|ask_)/.test(command)));
+        assert.deepEqual(writes, Array(expectedSaves).fill("save_planning_section_checked"),
+          "Preparation must only save on explicit author actions and must never call a provider");
+      }
+      await visit("/discussion?work=preparation&targetProject=p1&item=protagonist");
+      await page.getByRole("textbox", { name: "核心人物", exact: true }).waitFor();
+      await selectedCategory("筹备");
+      await assertPreparationLayout();
+      const basis = page.locator(".preparation-editor > details.preparation-basis");
+      assert.equal(await basis.getAttribute("open"), null);
+      assert.equal(await basis.getByText("章节计划：在城门收到来信。", { exact: true }).isVisible(), false);
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        await capture(`story-preparation-${theme}`);
+      }
+      await basis.locator(":scope > summary").click();
+      await basis.getByText("开篇事件", { exact: true }).click();
+      await basis.getByText("章节计划：在城门收到来信。", { exact: true }).waitFor();
+      await capture("story-preparation-basis-expanded");
+      await page.getByRole("combobox", { name: "添加关联资料" }).selectOption("person");
+      await page.getByRole("textbox", { name: "核心人物", exact: true }).fill("串联各封来信的核心人物。");
+      await page.getByRole("button", { name: "保存草稿", exact: true }).click();
+      await page.getByText("草稿已保存", { exact: true }).waitFor();
+      expectedSaves++;
+      const associated = await page.evaluate(() => JSON.parse(sessionStorage.getItem("story-preparation-saved")).find(item => item.id === "engine-protagonist"));
+      assert.deepEqual(associated.references, ["preparation-entity:v1:person"]);
+      assert.equal(associated.pendingContent, "串联各封来信的核心人物。");
+      assert.equal(associated.pendingContent.includes("正式人物设定"), false);
+      await capture("story-preparation-linked-character");
+      await page.getByRole("navigation", { name: "故事主题" }).getByRole("button", { name: "主线方向", exact: true }).click();
+      await page.getByRole("textbox", { name: "主线方向", exact: true }).waitFor();
+      await assertPreparationLayout();
+      assert.equal(await page.locator(".preparation-prerequisite-notice").count(), 0);
+      assert.equal(await page.getByRole("button", { name: "确认并继续", exact: true }).isDisabled(), true);
+      for (let index = 0; index < 4; index++) await page.getByRole("region", { name: "作者审阅" }).getByRole("checkbox").click();
+      assert.equal(await page.getByRole("button", { name: "确认并继续", exact: true }).isEnabled(), true);
+      await page.locator(".ai-workspace-content").evaluate(element => { element.scrollTop = 0; });
+      await capture("story-preparation-outline");
+      await page.getByRole("button", { name: "确认并继续", exact: true }).click();
+      expectedSaves++;
+      await page.getByRole("textbox", { name: "开篇事件", exact: true }).waitFor();
+      const topicsBox = await page.getByRole("navigation", { name: "故事主题" }).boundingBox();
+      assert.ok(topicsBox.y >= 0 && topicsBox.y < 300, "Advancing must bring the new topic back into view");
+      assert.equal(await page.getByRole("link", { name: "进入正文", exact: true }).isVisible(), true);
+      await capture("story-preparation-opening");
+
+      await page.evaluate(() => {
+        sessionStorage.removeItem("story-preparation-saved");
+        sessionStorage.setItem("content-workspace-empty-states", "1");
+      });
+      await visit("/discussion?work=preparation&targetProject=p1&item=premise");
+      expectedSaves = 0;
+      const input = page.getByRole("textbox", { name: "故事概念", exact: true });
+      await input.waitFor();
+      assert.equal(await basis.count(), 0);
+      assert.equal(await page.getByRole("complementary", { name: "主题内容" }).getByRole("button", { name: /故事概念/ }).count(), 1);
+      await assertPreparationLayout();
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        await capture(`story-preparation-unstarted-${theme}`);
+      }
+      await input.fill("保留正在编辑的故事概念");
+      await page.getByRole("navigation", { name: "故事主题" }).getByRole("button", { name: "主要矛盾", exact: true }).click();
+      await page.getByRole("alertdialog").waitFor();
+      await page.getByRole("button", { name: "取消", exact: true }).click();
+      assert.equal(await input.inputValue(), "保留正在编辑的故事概念");
+      await assertPreparationLayout();
+      reports.push({ viewport, workflow: "story-preparation", topics: 6, columns: 2, collapsedBasis: true,
+        unsavedProtection: true, linkedCharacter: true, roughOutlineConfirmedWithoutPrerequisites: true, providerCalls: 0 });
+      await context.close();
+      continue;
     }
 
     if (values["library-only"]) {
@@ -299,7 +415,7 @@ try {
         ["/knowledge/settings", "设定", "尚未添加作者设定"],
       ]) {
         await visit(path);
-        await page.getByRole("heading", { name: title, exact: true }).waitFor();
+        await page.getByRole("heading", { name: title, exact: true }).first().waitFor();
         await assertLibrary(category);
         assert.equal(await page.locator(".workspace-empty-state:visible").count(), 1);
         assert.equal(await page.locator(".library-list:visible").count(), 0);
@@ -353,8 +469,8 @@ try {
         await capture(`audit-${new URL(page.url()).searchParams.get("work") ?? "discussion"}`);
       }
       for (const [path, title] of [
-        ["/discussion?work=preparation&targetProject=p1&item=protagonist", "主角"],
-        ["/discussion?work=section&targetProject=p1&item=seed-hook", "核心卖点与独特钩子"],
+        ["/discussion?work=preparation&targetProject=p1&item=protagonist", "核心人物"],
+        ["/discussion?work=section&targetProject=p1&item=seed-hook", "独特看点"],
       ]) {
         await visit(path);
         await page.getByRole("heading", { name: title, exact: true }).waitFor();
@@ -575,6 +691,37 @@ try {
       const caution = await page.locator(".coauthor-reliability-note p").boundingBox();
       assert.ok(caution.y >= 0 && caution.y + caution.height < viewport.height-26, "reliability detail remains visible");
       assert.ok(caution.x >= 0 && caution.x + caution.width <= viewport.width, "reliability detail stays within the desktop viewport");
+      await page.getByLabel("AI 内容核对说明", { exact: true }).click();
+      const aiSettings = page.getByRole("link", { name: "调整共创 AI 上限", exact: true });
+      assert.equal(await aiSettings.getAttribute("href"), "/settings#ai-task-models?task=discussion");
+      await input.fill("先保留这条未发送的问题");
+      await aiSettings.click();
+      await page.getByRole("alertdialog").waitFor();
+      await page.getByRole("button", { name: "继续编辑", exact: true }).click();
+      assert.equal(await input.inputValue(), "先保留这条未发送的问题");
+      await input.fill("");
+      await aiSettings.hover();
+      await capture("coauthor-ai-limits-entry");
+      const callsBeforeSettings = await page.evaluate(() => window.__contentCalls.length);
+      await aiSettings.click();
+      await page.getByRole("tab", { name: "共创讨论", exact: false }).waitFor();
+      await page.getByRole("spinbutton", { name: "共创讨论最大输出", exact: true }).waitFor();
+      assert.equal(await page.getByRole("tab", { name: "全局配置", exact: true }).getAttribute("aria-selected"), "true");
+      assert.equal(new URL(page.url()).hash, "#ai-task-models?task=discussion");
+      assert.equal(await page.evaluate(offset => window.__contentCalls.slice(offset).some(command => /^(save_|upsert_|enqueue_|run_)/.test(command)), callsBeforeSettings), false);
+      await capture("coauthor-ai-limits-settings");
+      await page.getByRole("spinbutton", { name: "共创讨论最大输出", exact: true }).fill("7000");
+      await page.getByRole("button", { name: "保存任务配置", exact: true }).click();
+      await page.getByText("任务模型与生成参数已保存，后续生成会立即使用新配置", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "模型 API", exact: true }).click();
+      assert.equal(await page.getByRole("alertdialog").count(), 0, "Saving global limits must not leave a dirty inherited project snapshot");
+      await page.getByRole("heading", { name: "模型 API", exact: true }).waitFor();
+      await page.getByRole("button", { name: "AI 任务模型", exact: true }).click();
+      await page.getByRole("tab", { name: /共创讨论/ }).click();
+      assert.equal(await page.getByRole("spinbutton", { name: "共创讨论最大输出", exact: true }).inputValue(), "7000");
+      await page.locator("#primary-navigation").getByRole("link", { name: "共创", exact: true }).click();
+      assert.equal(await page.getByRole("alertdialog").count(), 0, "Saved settings must not trigger the route leave guard");
+      await input.waitFor();
       reports.push({ viewport, workflow: "coauthor" });
       await context.close();
       continue;
@@ -726,10 +873,10 @@ try {
       await page.getByText("第一人称 · 固定主角", { exact: true }).waitFor();
       assert.equal(await page.getByRole("textbox").count(), 0);
       await page.getByRole("link", { name: "故事准备", exact: true }).click();
-      await page.getByRole("heading", { name: "故事核心", exact: true }).waitFor();
+      await page.getByRole("main", { name: "准备内容" }).getByRole("heading", { name: "故事概念", exact: true }).waitFor();
       await capture("preparation-story");
       await page.getByRole("link", { name: "补充笔记", exact: true }).click();
-      await page.getByRole("heading", { name: "核心卖点与独特钩子", exact: true }).waitFor();
+      await page.getByRole("heading", { name: "主题与追问", exact: true }).waitFor();
       const notes = page.getByRole("navigation", { name: "筹备内容" });
       for (const label of ["题材", "主角", "行动动机", "故事规则", "失败代价", "结局方向"]) {
         assert.equal(await notes.getByRole("link", { name: label, exact: true }).count(), 0);
@@ -1064,7 +1211,7 @@ try {
     await page.getByText("规划依据", { exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get("planNode"), "manager");
     await visit("/planning?mode=prepare&item=outline");
-    await page.getByRole("link", { name: "去共创处理主线大纲", exact: true }).waitFor();
+    await page.getByRole("link", { name: "去共创处理主线方向", exact: true }).waitFor();
     await noButtons(/发起讨论|建立主线大纲/);
     await page.evaluate(() => sessionStorage.removeItem("content-workspace-no-outline"));
     await visit("/planning");

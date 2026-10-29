@@ -26,7 +26,7 @@ describe("planningSectionGroups", () => {
     const storyIds = buildPreparationStages([]).flatMap((stage) => stage.items)
       .flatMap((item) => item.sectionId ? [item.sectionId] : []);
     const noteIds = supplementaryPlanningSectionGroups.flatMap((group) => group.children.map((item) => item.id));
-    expect(noteIds).toEqual(["seed-hook", "engine-theme", "cast-supporting", "cast-arcs", "frame-history", "frame-narrative"]);
+    expect(noteIds).toEqual(["engine-theme"]);
     expect(noteIds.some((id) => storyIds.includes(id) || id === "seed-tone")).toBe(false);
     expect(new Set(["seed-tone", ...storyIds, ...noteIds])).toEqual(
       new Set(planningSectionGroups.flatMap((group) => group.children.map((item) => item.id))));

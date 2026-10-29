@@ -11,11 +11,9 @@ import type { ReactNode } from "react";
 import { AppShell } from "./shell/app-shell";
 import { EmptyProjectView } from "./views/empty-project-view";
 import { useQuery } from "@tanstack/react-query";
-import { getCurrentProject, listPlanningSections, listPlanNodes } from "./lib/tauri-client";
+import { getCurrentProject, listPlanNodes } from "./lib/tauri-client";
 import { parseManuscriptSource } from "./lib/manuscript-source";
 import { parseDiscussionSource } from "./lib/discussion-source";
-import { buildPreparationStages, preparationProgress } from "./views/creation-preparation";
-import { readPlanningReview } from "./views/planning-review";
 
 const ProjectWorkspaceView = lazyRouteComponent(() => import("./views/project-workspace-view"), "ProjectWorkspaceView");
 const StoryBibleView = lazyRouteComponent(() => import("./views/story-bible-view"), "StoryBibleView");
@@ -62,16 +60,13 @@ function ProjectIndexView() {
   const { manage } = useSearch({ from: "/" });
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject });
   const nodes = useQuery({ queryKey: ["plan-nodes"], queryFn: listPlanNodes, enabled: Boolean(project.data) && manage !== "1" });
-  const sections = useQuery({ queryKey: ["planning-sections"], queryFn: listPlanningSections, enabled: Boolean(project.data) && manage !== "1" });
   if (manage === "1") return <EmptyProjectView />;
   if (project.isPending) return <p className="route-loading">正在读取作品…</p>;
   if (project.isError) throw project.error;
   if (!project.data) return <EmptyProjectView />;
-  if (nodes.isPending || sections.isPending) return <p className="route-loading">正在读取创作进度…</p>;
-  if (nodes.isError || sections.isError) throw nodes.error ?? sections.error;
-  const preparationStarted = sections.data.some((section) => readPlanningReview(section));
-  const preparationIncomplete = preparationStarted && !preparationProgress(buildPreparationStages(nodes.data), sections.data).ready;
-  return nodes.data.some((node) => node.kind === "CHAPTER" && !node.archived) && !preparationIncomplete
+  if (nodes.isPending) return <p className="route-loading">正在读取创作进度…</p>;
+  if (nodes.isError) throw nodes.error;
+  return nodes.data.some((node) => node.kind === "CHAPTER" && !node.archived)
     ? <Navigate to="/writing" replace /> : <Navigate to="/planning" search={{ mode: "prepare" }} replace />;
 }
 

@@ -132,13 +132,13 @@ describe("unified AI workspace", () => {
     expect(screen.getByRole("link", { name: "补充笔记" })).not.toHaveAttribute("aria-current");
   });
   it("shows only supplementary topics in the notes directory, without repeating story tasks", async () => {
-    setup("?work=section&targetProject=p&item=seed-hook");
+    setup("?work=section&targetProject=p&item=engine-theme");
     await screen.findByText("准备节点 · 统一处理");
     const nav = within(screen.getByRole("navigation", { name: "筹备内容" }));
     expect(nav.getByRole("link", { name: "补充笔记" })).toHaveAttribute("aria-current", "page");
     expect(nav.getByRole("link", { name: "故事准备" })).not.toHaveAttribute("aria-current");
-    expect(nav.getByRole("link", { name: "核心卖点与独特钩子" })).toHaveAttribute("aria-current", "page");
-    expect(nav.getByRole("link", { name: "信息揭示与节奏安排" })).toBeVisible();
+    expect(nav.getByRole("link", { name: "主题与追问" })).toHaveAttribute("aria-current", "page");
+    expect(nav.queryByRole("link", { name: "信息揭示" })).not.toBeInTheDocument();
     expect(nav.getByRole("link", { name: "本书偏好" })).toBeVisible();
     for (const label of ["题材", "主角", "行动动机", "失败代价", "结局状态与承诺兑现", "舞台、硬规则与资源限制"]) {
       expect(nav.queryByRole("link", { name: label })).not.toBeInTheDocument();

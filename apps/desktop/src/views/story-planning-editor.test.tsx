@@ -192,7 +192,7 @@ describe("planning content editor", () => {
     expect(screen.queryByRole("textbox", { name: "核心故事" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByText("历史故事方向"));
     for (const content of ["科幻", "旧故事核心", "旧阅读期待", "旧结局倾向"]) expect(screen.getByText(content)).toBeVisible();
-    expect(screen.getByRole("link", { name: "前往故事准备：故事核心" })).toHaveAttribute("href",
+    expect(screen.getByRole("link", { name: "前往故事准备：故事概念" })).toHaveAttribute("href",
       "/discussion?work=preparation&targetProject=project&item=premise");
     fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
     await waitFor(() => expect(mocks.savePlanningSection).toHaveBeenCalledOnce());
@@ -210,7 +210,7 @@ describe("planning content editor", () => {
     expect(screen.queryByText("未确认候选不能展示为正式内容")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /生成候选|发起讨论|保存规划/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "去共创处理核心前提与开局情境" })).toHaveAttribute("href",
+    expect(screen.getByRole("link", { name: "去共创处理故事概念" })).toHaveAttribute("href",
       "/discussion?work=section&targetProject=project&item=seed-premise");
     expect(mocks.savePlanningSection).not.toHaveBeenCalled();
   });
@@ -236,8 +236,8 @@ describe("planning content editor", () => {
     setup();
     await screen.findByRole("textbox", { name: "正式规划" });
     fireEvent.click(screen.getByRole("button", { name: "发起讨论" }));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "核心前提与开局情境的讨论输入" })).toBeEnabled());
-    fireEvent.change(await screen.findByRole("textbox", { name: "核心前提与开局情境的讨论输入" }),
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "故事概念的讨论输入" })).toBeEnabled());
+    fireEvent.change(await screen.findByRole("textbox", { name: "故事概念的讨论输入" }),
       { target: { value: "我想重新考虑" } });
     await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "发送" }));

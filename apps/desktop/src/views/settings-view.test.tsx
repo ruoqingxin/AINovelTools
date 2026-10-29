@@ -869,6 +869,98 @@ describe("SettingsView", () => {
     expect(screen.getByRole("tablist", { name: "选择要设置的 AI 任务" }).children).toHaveLength(10);
   });
 
+  it.each([false, true])("does not warn after saving global discussion limits with an open project (override: %s)", async (hasOverride) => {
+    mocks.listModelProfiles.mockResolvedValue([{ ...chatProfile(), contextWindow: 1_000_000, maxOutputTokens: 384_000 }]);
+    const overrides = { available: true, ...(hasOverride ? {
+      discussion: { ...recommendedAiTaskPreferences.discussion, maxOutputTokens: 3072 },
+    } : {}) };
+    mocks.getProjectAiTaskOverrides.mockResolvedValue(overrides);
+    mocks.saveAiTaskPreferences.mockImplementation(async (preferences) => {
+      mocks.getAiTaskPreferences.mockResolvedValue(preferences);
+      return preferences;
+    });
+    window.history.replaceState({}, "", "#ai-task-models?task=discussion");
+    renderSettings(true);
+    const output = await screen.findByLabelText("共创讨论最大输出");
+    await waitFor(() => expect(output).toBeEnabled());
+    fireEvent.change(output, { target: { value: "100000" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
+    await screen.findByText("任务模型与生成参数已保存，后续生成会立即使用新配置");
+    expect(screen.getByRole("button", { name: "保存任务配置" })).toBeDisabled();
+    expect(screen.getByText("与已保存配置一致")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "模型 API" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "模型 API" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "AI 任务模型" }));
+    await waitFor(() => expect(screen.getByLabelText("作品设定温度")).toBeEnabled());
+    fireEvent.click(screen.getByRole("tab", { name: /共创讨论/ }));
+    expect(screen.getByLabelText("共创讨论最大输出")).toHaveValue(100000);
+    fireEvent.click(screen.getByRole("tab", { name: "项目覆盖" }));
+    expect(screen.getByLabelText("共创讨论最大输出")).toHaveValue(hasOverride ? 3072 : 100000);
+    expect(mocks.saveProjectAiTaskOverride).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "模型 API" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "模型 API" })).toBeVisible();
+  });
+
+  it("still warns for changes made after a successful global save", async () => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({ available: true });
+    mocks.saveAiTaskPreferences.mockImplementation(async (preferences) => {
+      mocks.getAiTaskPreferences.mockResolvedValue(preferences);
+      return preferences;
+    });
+    window.history.replaceState({}, "", "#ai-task-models?task=discussion");
+    renderSettings(true);
+    const temperature = await screen.findByLabelText("共创讨论温度");
+    await waitFor(() => expect(temperature).toBeEnabled());
+    fireEvent.change(temperature, { target: { value: "0.75" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
+    await screen.findByText("任务模型与生成参数已保存，后续生成会立即使用新配置");
+    fireEvent.change(temperature, { target: { value: "0.8" } });
+    fireEvent.click(screen.getByRole("button", { name: "模型 API" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("有未保存修改");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(temperature).toHaveValue(0.8);
+  });
+
+  it("keeps failed saves dirty and protects the unsaved discussion limits", async () => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({ available: true });
+    mocks.saveAiTaskPreferences.mockRejectedValueOnce(new Error("保存失败"));
+    window.history.replaceState({}, "", "#ai-task-models?task=discussion");
+    renderSettings(true);
+    const output = await screen.findByLabelText("共创讨论最大输出");
+    await waitFor(() => expect(output).toBeEnabled());
+    fireEvent.change(output, { target: { value: "7000" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存任务配置" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("保存失败");
+    fireEvent.click(screen.getByRole("button", { name: "模型 API" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("有未保存修改");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(output).toHaveValue(7000);
+    expect(screen.getByText("未保存修改")).toBeVisible();
+  });
+
+  it("still protects unsaved global changes after saving a project override", async () => {
+    mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
+    mocks.getProjectAiTaskOverrides.mockResolvedValue({ available: true });
+    window.history.replaceState({}, "", "#ai-task-models");
+    renderSettings(true);
+    const temperature = await screen.findByLabelText("作品设定温度");
+    await waitFor(() => expect(temperature).toBeEnabled());
+    fireEvent.change(temperature, { target: { value: "1.3" } });
+    fireEvent.click(screen.getByRole("tab", { name: "项目覆盖" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存为项目覆盖" }));
+    await screen.findByText("已保存“作品设定”的项目级覆盖");
+    expect(screen.getByText("与已保存配置一致")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "模型 API" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("有未保存修改");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByRole("tab", { name: "全局配置" }));
+    expect(screen.getByLabelText("作品设定温度")).toHaveValue(1.3);
+  });
+
   it("changes the selected task on a hash link while preserving drafts", async () => {
     mocks.listModelProfiles.mockResolvedValue([chatProfile()]);
     window.history.replaceState({}, "", "#ai-task-models?task=discussion");

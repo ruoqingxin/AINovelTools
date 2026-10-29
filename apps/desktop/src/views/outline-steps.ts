@@ -24,7 +24,7 @@ const steps = [
 export function buildOutlineSteps(sectionId: string): PreparationItem[] {
   const nodeId = sectionId.startsWith("plan-node:") ? sectionId.slice("plan-node:".length) : sectionId;
   return steps.map((step) => ({
-    ...step, sectionId: `outline-step-${nodeId}-${step.id}`, required: true, kind: "OUTLINE_STEP",
+    ...step, sectionId: `outline-step-${nodeId}-${step.id}`, primary: true, kind: "OUTLINE_STEP",
   }));
 }
 
@@ -41,6 +41,10 @@ export function withOutlineSources(references: string[], items: PreparationItem[
     return { id: item.sectionId, version: section?.version ?? 0 };
   });
   return [...references.filter((entry) => !entry.startsWith(sourcePrefix)), sourcePrefix + JSON.stringify(sources)];
+}
+
+export function outlineHasSources(section?: PlanningSection) {
+  return Boolean(section?.references.some((entry) => entry.startsWith(sourcePrefix)));
 }
 
 export function outlineSourcesChanged(section: PlanningSection | undefined, sections: PlanningSection[]) {

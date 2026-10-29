@@ -27,7 +27,7 @@ import { ChapterCreateDialog } from "./chapter-create-dialog";
 import { useWideWorkspace, WorkspacePanel } from "./workspace-panel";
 import { PlanCandidateList } from "./plan-candidate-list";
 import { PreparationEditor } from "./creation-preparation-view";
-import { buildPreparationStages, preparationPrerequisites, preparationStatus } from "./creation-preparation";
+import { buildPreparationStages, preparationStatus } from "./creation-preparation";
 import "./writing-planning.css";
 import { useLayoutPreference } from "../lib/workspace-preferences";
 import { aiWorkspaceHref, planIdentity } from "../lib/content-taxonomy";
@@ -186,8 +186,9 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
   const outlineNode = nodeIndex.nodesByKind.OUTLINE[0];
   const outlineReady = preparationStatus(outlineNode ? sectionsById.get(nodePlanId(outlineNode.id)) : undefined, planningSections.data ?? []) === "confirmed";
   const preparationStages = buildPreparationStages(nodes.data ?? []);
-  const outlineItem = { ...preparationStages[2].items[0], sectionId: selected?.kind === "OUTLINE" ? nodePlanId(selected.id) : null };
-  const outlineBasisItems = preparationStages.slice(0, 2).flatMap((stage) => stage.items);
+  const outlineIndex = preparationStages.findIndex((stage) => stage.id === "outline");
+  const outlineItem = { ...preparationStages[outlineIndex].items[0], sectionId: selected?.kind === "OUTLINE" ? nodePlanId(selected.id) : null };
+  const outlineBasisItems = preparationStages.slice(0, outlineIndex).flatMap((stage) => stage.items);
   const volumeNodes = nodeIndex.nodesByKind.VOLUME;
   const chapterNodes = nodeIndex.nodesByKind.CHAPTER;
   const volumesWithoutChapters = useMemo(() => volumeNodes.filter((volume) => !nodeIndex.chaptersByVolume.has(volume.id)), [nodeIndex, volumeNodes]);
@@ -746,7 +747,7 @@ export function ProjectWorkspaceView(props: { mode?: "planning" | "chapters" | "
 </div> : null}{selected.kind === "OUTLINE" ? <>
           <div className="preparation-editor planning-outline-editor">
             <PreparationEditor key={selected.id} item={outlineItem} sections={planningSections.data ?? []}
-              basisItems={outlineBasisItems} prerequisites={preparationPrerequisites(preparationStages, "outline", planningSections.data ?? [])}
+              basisItems={outlineBasisItems} prerequisites={[]}
               onPendingChange={onOutlinePending} />
           </div>
         </> : null}{selected.kind !== "CHAPTER" && selected.kind !== "VOLUME_MANAGER" && selected.kind !== "OUTLINE" ? <div className="compact-plan-editor">

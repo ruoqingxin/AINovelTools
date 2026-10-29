@@ -117,6 +117,21 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("coauthor workspace", () => {
+  it.each([false, true])("links AI limits to the effective discussion configuration (project override: %s)", async (projectOverride) => {
+    const invoke = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command, args) => command === "get_project_ai_task_overrides"
+      ? { available: true, ...(projectOverride ? { discussion: emptyAiTaskPreferences.discussion } : {}) }
+      : invoke(command, args));
+    renderWorkspace();
+    const link = await screen.findByRole("link", { name: "调整共创 AI 上限" });
+    await waitFor(() => expect(link).toHaveAttribute("href",
+      `/settings#ai-task-models?task=discussion${projectOverride ? "&scope=PROJECT" : ""}`));
+    expect(link).toHaveAttribute("title", "调整共创 AI 输出上限与输入预算");
+    expect(link.querySelectorAll("svg")).toHaveLength(1);
+    expect(screen.getByLabelText("讨论输入")).toHaveValue("");
+    expect(mocks.invoke.mock.calls.some(([name]) => /^(run_|save_|upsert_)/.test(name))).toBe(false);
+  });
+
   it("prepares empty-state topics without sending, replacing existing input, or editing the working draft", async () => {
     renderWorkspace();
     expect(await screen.findByRole("heading", { name: "今天想推敲哪一部分？" })).toBeVisible();

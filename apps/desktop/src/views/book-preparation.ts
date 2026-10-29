@@ -18,7 +18,7 @@ export type BookPreparation = Record<keyof typeof bookPreparationFields, string>
 export const basicBookPreparationKeys = ["targetWords", "perspective", "style", "tone"] as const;
 export const legacyStoryDirectionItems = [
   { key: "genre", item: "genre", title: "题材" },
-  { key: "premise", item: "premise", title: "故事核心" },
+  { key: "premise", item: "premise", title: "故事概念" },
   { key: "experience", item: "promise", title: "阅读期待" },
   { key: "ending", item: "ending", title: "结局方向" },
 ] as const;

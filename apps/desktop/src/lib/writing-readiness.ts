@@ -1,23 +1,23 @@
 import type { PlanningSection } from "./tauri-client";
 
 export const suggestedWritingSections = [
-  { id: "seed-premise", label: "核心前提与开局情境" },
+  { id: "seed-premise", label: "故事概念" },
   { id: "seed-genre", label: "题材" },
   { id: "seed-genre-promise", label: "阅读期待" },
-  { id: "seed-hook", label: "核心卖点与独特钩子" },
-  { id: "seed-tone", label: "基调、尺度与篇幅体量" },
-  { id: "engine-protagonist", label: "主角" },
-  { id: "engine-motivation", label: "行动动机" },
-  { id: "engine-antagonism", label: "对抗系统与升级机制" },
-  { id: "engine-stakes", label: "赌注、代价与失败后果" },
-  { id: "engine-theme", label: "核心谜团与主题命题" },
-  { id: "engine-ending", label: "结局状态与承诺兑现" },
-  { id: "cast-core-relationship", label: "核心关系与关系变化" },
-  { id: "cast-supporting", label: "关键角色与叙事功能" },
-  { id: "cast-arcs", label: "人物弧光、秘密与信息差" },
-  { id: "frame-setting", label: "舞台、硬规则与资源限制" },
-  { id: "frame-history", label: "历史因果、势力与矛盾来源" },
-  { id: "frame-narrative", label: "视角、信息与叙事节奏" },
+  { id: "seed-hook", label: "独特看点" },
+  { id: "seed-tone", label: "本书偏好" },
+  { id: "engine-protagonist", label: "核心人物" },
+  { id: "engine-motivation", label: "目标与动机" },
+  { id: "engine-antagonism", label: "主要矛盾" },
+  { id: "engine-stakes", label: "风险与代价" },
+  { id: "engine-theme", label: "主题与追问" },
+  { id: "engine-ending", label: "结局方向" },
+  { id: "cast-core-relationship", label: "关键关系" },
+  { id: "cast-supporting", label: "配角作用" },
+  { id: "cast-arcs", label: "人物变化" },
+  { id: "frame-setting", label: "关键设定" },
+  { id: "frame-history", label: "矛盾来源" },
+  { id: "frame-narrative", label: "信息揭示" },
 ] as const;
 
 export type WritingReadiness = {
@@ -77,6 +77,7 @@ const writingGapPatterns: Array<WritingGapTarget & { keywords: string[] }> = [
       "主角名字",
       "主角姓名",
       "主角信息",
+      "主角设定",
       "人物姓名",
       "角色姓名",
     ],
@@ -89,44 +90,44 @@ const writingGapPatterns: Array<WritingGapTarget & { keywords: string[] }> = [
   },
   {
     id: "seed-premise",
-    label: "补核心前提",
-    href: "/planning#seed-premise",
-    keywords: ["核心前提", "开局情境", "故事前提", "故事为什么开始"],
+    label: "补故事概念",
+    href: "/planning?mode=prepare&item=premise",
+    keywords: ["故事概念", "核心前提", "开局情境", "故事前提", "故事为什么开始"],
   },
   {
-    id: "engine-protagonist",
-    label: "补主角目标",
-    href: "/planning#engine-protagonist",
-    keywords: ["主角目标", "内在需求", "主角动机", "主角欲望", "主角设定"],
+    id: "engine-motivation",
+    label: "补目标与动机",
+    href: "/planning?mode=prepare&item=motivation",
+    keywords: ["目标与动机", "行动动机", "主角目标", "内在需求", "主角动机", "主角欲望"],
   },
   {
     id: "engine-antagonism",
-    label: "补对抗机制",
-    href: "/planning#engine-antagonism",
-    keywords: ["对抗系统", "升级机制", "反派目标", "敌人层级"],
+    label: "补主要矛盾",
+    href: "/planning?mode=prepare&item=conflict",
+    keywords: ["主要矛盾", "主要阻力", "对抗系统", "升级机制", "反派目标", "敌人层级"],
   },
   {
     id: "engine-stakes",
-    label: "补赌注与代价",
-    href: "/planning#engine-stakes",
+    label: "补风险与代价",
+    href: "/planning?mode=prepare&item=stakes",
     keywords: ["赌注", "失败后果", "行动代价", "风险代价"],
   },
   {
     id: "engine-ending",
     label: "补结局方向",
-    href: "/planning#engine-ending",
+    href: "/planning?mode=prepare&item=ending",
     keywords: ["结局状态", "承诺兑现", "最终结局"],
   },
   {
     id: "cast-arcs",
-    label: "补人物弧光",
-    href: "/planning#cast-arcs",
+    label: "补人物变化",
+    href: "/planning?mode=prepare&item=arcs",
     keywords: ["人物弧光", "角色弧光", "信息差"],
   },
   {
     id: "frame-setting",
-    label: "补世界与力量规则",
-    href: "/planning#frame-setting",
+    label: "补关键设定",
+    href: "/planning?mode=prepare&item=rules",
     keywords: [
       "境界",
       "境界设定",
@@ -142,14 +143,14 @@ const writingGapPatterns: Array<WritingGapTarget & { keywords: string[] }> = [
   },
   {
     id: "frame-history",
-    label: "补势力与历史",
-    href: "/planning#frame-history",
+    label: "补矛盾来源",
+    href: "/planning?mode=prepare&item=history",
     keywords: ["历史因果", "势力关系", "势力矛盾"],
   },
   {
-    id: "frame-narrative",
+    id: "seed-tone",
     label: "补叙述视角",
-    href: "/planning#frame-narrative",
+    href: "/planning?mode=prepare",
     keywords: ["叙述人称", "叙述视角", "视角范围", "人称未明确"],
   },
 ];
@@ -197,6 +198,7 @@ export function auditChapterPlan(input: {
 export function buildWritingReadinessItems(
   readiness: WritingReadiness,
   chapterId: string,
+  projectId: string,
 ): WritingReadinessItem[] {
   const items: WritingReadinessItem[] = readiness.suggestedMissingSections.map(
     (section) => ({
@@ -205,7 +207,7 @@ export function buildWritingReadinessItems(
       description: "规划建议 · 不影响开始写作",
       severity: "warning",
       kind: "section",
-      href: `/planning#${section.id}`,
+      href: preparationSectionHref(section.id),
     }),
   );
 
@@ -226,17 +228,17 @@ export function buildWritingReadinessItems(
       description: "章节建议 · 可直接写正文，之后再补计划",
       severity: "warning",
       kind: "chapter-plan",
-      href: `/planning#${chapterId}`,
+      href: `/planning?mode=structure&planNode=${encodeURIComponent(chapterId)}&targetProject=${encodeURIComponent(projectId)}`,
     });
   }
   if (readiness.missingNarrativePerspective) {
     items.push({
-      id: "frame-narrative",
+      id: "seed-tone",
       label: "叙述人称未明确",
       description: "写作建议 · 未决定时可以保留未知",
       severity: "warning",
       kind: "section",
-      href: "/planning#frame-narrative",
+      href: "/planning?mode=prepare",
     });
   }
   return items;
@@ -258,11 +260,12 @@ export function assessWritingReadiness(input: {
   const missingCharacterCard = !input.hasCharacterCard;
   const missingChapterPlan = !input.hasChapterPlan;
   const narrativeSection = input.sections.find((section) => section.id === "frame-narrative");
-  const hasExplicitNarrativePerspective =
-    Boolean(narrativeSection?.content.trim()) &&
-    hasAffirmedNarrativePerspective(narrativeSection?.content ?? "");
+  const preferenceSection = input.sections.find((section) => section.id === "seed-tone");
+  const perspectiveContent = preferenceSection?.content.trim() || narrativeSection?.content.trim() || "";
+  const hasExplicitNarrativePerspective = hasAffirmedNarrativePerspective(preferenceSection?.content ?? "")
+    || hasAffirmedNarrativePerspective(narrativeSection?.content ?? "");
   const missingNarrativePerspective =
-    Boolean(narrativeSection?.content.trim()) && !hasExplicitNarrativePerspective;
+    Boolean(perspectiveContent) && !hasExplicitNarrativePerspective;
 
   return {
     canGenerate: true,
@@ -274,6 +277,18 @@ export function assessWritingReadiness(input: {
     missingChapterPlan,
     missingNarrativePerspective,
   };
+}
+
+function preparationSectionHref(id: string) {
+  const items: Record<string, string> = {
+    "seed-premise": "premise", "seed-genre": "genre", "seed-genre-promise": "promise", "seed-hook": "hook",
+    "engine-protagonist": "protagonist", "engine-motivation": "motivation", "engine-antagonism": "conflict",
+    "engine-stakes": "stakes", "engine-ending": "ending", "cast-core-relationship": "relationship",
+    "cast-supporting": "supporting", "cast-arcs": "arcs", "frame-setting": "rules", "frame-history": "history",
+    "frame-narrative": "narrative",
+  };
+  if (id === "seed-tone") return "/planning?mode=prepare";
+  return items[id] ? `/planning?mode=prepare&item=${items[id]}` : `/planning?mode=prepare&note=${encodeURIComponent(id)}`;
 }
 
 function hasAffirmedNarrativePerspective(content: string) {

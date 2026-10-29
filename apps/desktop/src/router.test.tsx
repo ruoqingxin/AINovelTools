@@ -142,13 +142,13 @@ describe("project routes", () => {
     }
   });
 
-  it("resumes incomplete preparation after an opening node has been created", async () => {
+  it("opens writing with an active chapter even when preparation is incomplete", async () => {
     mocks.listPlanningSections.mockResolvedValue([{
       id: "plan-node:outline", version: 1, content: "已审定的主线", pendingContent: "", storyState: "CONFIRMED",
       references: ['author-planning-review:v1:{"sectionVersion":1,"checks":[],"basis":[]}'],
     }]);
     renderRoute("/");
-    expect(await screen.findByText("Whole-book preparation")).toBeVisible();
-    expect(screen.queryByText("Workspace writing")).not.toBeInTheDocument();
+    expect(await screen.findByText("Workspace writing")).toBeVisible();
+    expect(screen.queryByText("Whole-book preparation")).not.toBeInTheDocument();
   });
 });

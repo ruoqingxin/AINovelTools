@@ -32,6 +32,7 @@ import { buildPreparationStages } from "./creation-preparation";
 type PlanningItem = { id: string; label: string; prompt: string; guidance: string };
 type PlanningGroup = { id: string; label: string; children: PlanningItem[] };
 type PlanningStartMode = "WRITE" | "AI" | "IMPORT";
+const preparationItems = buildPreparationStages([]).flatMap((stage) => stage.items);
 
 export const planningSectionGroups: PlanningGroup[] = [
   {
@@ -53,7 +54,7 @@ export const planningSectionGroups: PlanningGroup[] = [
       { id: "engine-motivation", label: "行动动机", prompt: "什么让主角必须行动？", guidance: "写下主角无法置身事外的原因。" },
       { id: "engine-antagonism", label: "主要阻力", prompt: "主角最大的阻碍是什么？", guidance: "先确定一项主要阻力。" },
       { id: "engine-stakes", label: "失败代价", prompt: "如果失败，主角会失去什么？", guidance: "先写最重要的损失。" },
-      { id: "engine-theme", label: "核心谜团与主题命题", prompt: "读者要追问什么真相，人物选择最终在讨论什么问题", guidance: "把“谜团（真相是什么）”和“主题（故事在说什么）”分开写。谜团负责追读，主题负责让结局有余味。" },
+      { id: "engine-theme", label: "主题与追问", prompt: "这个故事让你想探讨什么问题？", guidance: "记录仍在探索的主题与问题，不重复故事概念、人物档案或具体情节；已经形成的情节放入同一份大纲。" },
       { id: "engine-ending", label: "结局状态与承诺兑现", prompt: "主角最终达成了什么、放弃了什么，开局问题和读者期待如何得到回答", guidance: "不用写死每个细节，但要确定主角最后成为怎样的人，以及主线、人物弧光、爽点、情感点和核心谜团如何收束。" },
     ],
   },
@@ -69,9 +70,15 @@ export const planningSectionGroups: PlanningGroup[] = [
       { id: "frame-narrative", label: "信息揭示与节奏安排", prompt: "秘密何时揭示，一卷解决什么问题，高潮和章末钩子如何安排", guidance: "沿用本书偏好的叙事视角与节奏，补充信息差策略、每卷阶段目标、高潮间隔和章末钩子，不重复设定人称和语言风格。" },
     ],
   },
-];
-const storyPreparationSectionIds = new Set(buildPreparationStages([]).flatMap((stage) => stage.items)
-  .flatMap((item) => item.sectionId ? [item.sectionId] : []));
+].map((group) => ({
+  ...group,
+  children: group.children.map((item) => {
+    const preparation = preparationItems.find((entry) => entry.sectionId === item.id);
+    return preparation ? { ...item, label: preparation.title, prompt: preparation.question,
+      guidance: preparation.guidance ?? preparation.placeholder } : item;
+  }),
+}));
+const storyPreparationSectionIds = new Set(preparationItems.flatMap((item) => item.sectionId ? [item.sectionId] : []));
 export const supplementaryPlanningSectionGroups = planningSectionGroups
   .map((group) => ({ ...group, children: group.children.filter((item) => item.id !== "seed-tone" && !storyPreparationSectionIds.has(item.id)) }))
   .filter((group) => group.children.length > 0);
@@ -79,13 +86,9 @@ const sections = planningSectionGroups.flatMap((group) => group.children);
 const sectionIds = new Set(sections.map((section) => section.id));
 export const essentialPlanningSectionIds = [
   "seed-premise",
-  "seed-genre",
-  "seed-genre-promise",
   "engine-protagonist",
   "engine-motivation",
   "engine-antagonism",
-  "engine-stakes",
-  "engine-ending",
 ] as const;
 
 export const planningStoryStateLabels: Record<PlanningStoryState, string> = {

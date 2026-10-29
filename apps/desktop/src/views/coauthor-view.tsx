@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, BookOpen, Check, ClipboardList, Columns2, DatabaseZap, Feather, FileInput, FileText, GitBranch, GitCompareArrows, History, Info, ListChecks, MessageSquareText, MoreHorizontal, Pencil, Plus, Save, Send, Shuffle, Square, Trash2, UserRound, X } from "lucide-react";
+import { ArrowDown, BookOpen, Check, ClipboardList, Columns2, DatabaseZap, Feather, FileInput, FileText, GitBranch, GitCompareArrows, History, Info, ListChecks, MessageSquareText, MoreHorizontal, Pencil, Plus, Save, Send, Shuffle, SlidersHorizontal, Square, Trash2, UserRound, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "../lib/ipc-transport";
-import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
+import { aiTaskSettingsHref, resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
 import {
   applyCoauthorProposal, cancelCoauthorRun, correctCoauthorDecision, createDiscussionSession, deleteDiscussionSession, errorMessage,
   forkCoauthorSession, getCoauthorState, getCoauthorRun, getCurrentProject, getProjectAiTaskOverrides,
@@ -31,6 +31,7 @@ import { coauthorStepLabel, coauthorToolLabel, retrievalDisplay, splitLegacyRetr
 import "./coauthor-workspace.css";
 import { coauthorKindLabels as kinds, draftIdentity, parseContentOrigin } from "../lib/content-taxonomy";
 import { ContentTypeLabel, useInAiWorkspace } from "./content-identity";
+import { WorkspaceLink } from "./workspace-link";
 
 const statuses: Record<string, string> = {
   RUNNING: "进行中", COMPLETED: "运行完成", FAILED: "本轮失败", CANCELLED: "已停止",
@@ -737,6 +738,9 @@ function CoauthorSession({ scope, initial, sessionTitle, sessionControls, onFork
           <div className="coauthor-composer-actions">
             <label><input type="checkbox" checked={allowEdits} onChange={(event) => setAllowEdits(event.target.checked)} />允许改工作稿</label>
             <small>{profile?.name ?? "未选择模型"}</small>
+            <WorkspaceLink className="icon-command coauthor-ai-settings" aria-label="调整共创 AI 上限"
+              title="调整共创 AI 输出上限与输入预算"
+              href={aiTaskSettingsHref("discussion", overrides.data?.discussion ? "PROJECT" : "GLOBAL")}><SlidersHorizontal size={15} /></WorkspaceLink>
             <details className="coauthor-reliability-note"><summary aria-label="AI 内容核对说明" title="AI 内容核对说明"><Info size={14} /></summary>
               <p>生成完成不代表内容可靠。条件范围、新旧规则与前文承接仍可能出错，请对照原文确认。</p></details>
             {[...input].length > 16_000 && <span className="coauthor-input-count">{[...input].length} / 20000</span>}
