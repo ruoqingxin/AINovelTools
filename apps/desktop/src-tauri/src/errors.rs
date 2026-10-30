@@ -154,13 +154,17 @@ impl From<novel_infrastructure::EntityStoreError> for ApiError {
             novel_infrastructure::EntityStoreError::NoProject => "NO_PROJECT_OPEN",
             novel_infrastructure::EntityStoreError::WrongProject
             | novel_infrastructure::EntityStoreError::WrongMoveProject
+            | novel_infrastructure::EntityStoreError::WrongGroupProject
             | novel_infrastructure::EntityStoreError::WrongImportProject => "WRONG_PROJECT",
             novel_infrastructure::EntityStoreError::InvalidDeletion
             | novel_infrastructure::EntityStoreError::InvalidMove
+            | novel_infrastructure::EntityStoreError::InvalidGroup(_)
             | novel_infrastructure::EntityStoreError::InvalidImport => "INVALID_INPUT",
             novel_infrastructure::EntityStoreError::Referenced(_) => "ENTITY_REFERENCED",
             novel_infrastructure::EntityStoreError::MissingEntity(_)
+            | novel_infrastructure::EntityStoreError::MissingGroup(_)
             | novel_infrastructure::EntityStoreError::MissingRevision(_) => "NOT_FOUND",
+            novel_infrastructure::EntityStoreError::GroupConflict => "VERSION_CONFLICT",
             novel_infrastructure::EntityStoreError::Contract(
                 novel_infrastructure::EntityError::Conflict { .. },
             ) => "VERSION_CONFLICT",

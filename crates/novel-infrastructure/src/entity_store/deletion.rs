@@ -550,7 +550,7 @@ mod tests {
         f.db()
             .connection
             .execute_batch(
-                "DELETE FROM schema_migrations WHERE version=67;
+                "DELETE FROM schema_migrations WHERE version>=67;
              DROP TRIGGER prevent_entity_revision_delete;
              CREATE TRIGGER prevent_entity_revision_delete BEFORE DELETE ON entity_revisions
              BEGIN SELECT RAISE(ABORT,'immutable entity revision'); END;
@@ -571,6 +571,7 @@ mod tests {
             .execute_batch("DROP TRIGGER fail67;")
             .unwrap();
         f.db().migrate_entity_deletion().unwrap();
+        f.db().migrate_entity_groups().unwrap();
         assert_eq!(
             f.db().health().unwrap().schema_version,
             CURRENT_SCHEMA_VERSION

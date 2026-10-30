@@ -1,6 +1,24 @@
 use crate::{ApiError, ProjectState};
 
 #[tauri::command]
+pub(crate) fn get_entity_groups(
+    state: tauri::State<'_, ProjectState>,
+    project_id: uuid::Uuid,
+) -> Result<novel_infrastructure::EntityGroupState, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .get_entity_groups(project_id).map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn update_entity_groups(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_infrastructure::UpdateEntityGroupsInput,
+) -> Result<novel_infrastructure::EntityGroupState, ApiError> {
+    state.manager.lock().map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .update_entity_groups(input).map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn preview_entity_import(
     state: tauri::State<'_, ProjectState>,
     input: novel_infrastructure::ReviewEntityImportInput,

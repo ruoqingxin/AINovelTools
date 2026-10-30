@@ -1250,6 +1250,9 @@ impl Database {
         if applied.unwrap_or(0) < 67 {
             self.migrate_entity_deletion()?;
         }
+        if applied.unwrap_or(0) < 68 {
+            self.migrate_entity_groups()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }

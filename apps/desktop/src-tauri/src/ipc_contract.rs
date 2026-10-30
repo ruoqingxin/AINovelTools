@@ -102,7 +102,7 @@ mod tests {
         };
         assert_eq!(keys("requests"), keys("responses"));
         assert_eq!(keys("requests"), keys("errors"));
-        assert_eq!(keys("requests").len(), 195);
+        assert_eq!(keys("requests").len(), 197);
         assert_eq!(
             keys("events"),
             ["ai-task-attempt", "ai-task-chunk", "ai-task-started", "coauthor-progress"]
@@ -123,6 +123,27 @@ mod tests {
         let candidate = definition(&schema, "requests", "EntityImportCandidate");
         assert!(candidate["properties"].get("fixedAttributesJson").is_none());
         assert!(candidate["properties"].get("sourceVersion").is_none());
+        let resolution = definition(&schema, "requests", "EntityImportResolution");
+        for field in ["targetId", "description", "aliases", "tags"] {
+            assert!(required(resolution, field));
+        }
+        for field in ["id", "entityType", "name", "fixedAttributesJson", "sourceVersion", "expectedVersion"] {
+            assert!(resolution["properties"].get(field).is_none());
+        }
+        assert_eq!(resolution["additionalProperties"], false);
+    }
+
+    #[test]
+    fn entity_group_mutations_require_project_and_group_version_snapshots() {
+        let schema = super::schema();
+        let input = definition(&schema, "requests", "UpdateEntityGroupsInput");
+        for field in ["expectedProjectId", "expectedVersion", "action"] {
+            assert!(required(input, field));
+        }
+        let state = definition(&schema, "responses", "EntityGroupState");
+        for field in ["projectId", "version", "groups", "memberships"] {
+            assert!(required(state, field));
+        }
     }
 
     #[test]

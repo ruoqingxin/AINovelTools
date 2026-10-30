@@ -20,11 +20,22 @@ pub struct EntityImportCandidate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EntityImportResolution {
+    pub target_id: Uuid,
+    pub description: String,
+    pub aliases: Vec<String>,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewEntityImportInput {
     pub expected_project_id: Uuid,
     pub source_name: String,
     pub items: Vec<EntityImportCandidate>,
+    #[serde(default)]
+    pub resolutions: Vec<EntityImportResolution>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -106,7 +117,10 @@ impl Database {
         tx: &rusqlite::Transaction<'_>,
         input: &ReviewEntityImportInput,
     ) -> Result<Vec<EntityImportPreview>, EntityStoreError> {
-        if input.items.is_empty() || input.items.len() > 200 {
+        if input.items.is_empty()
+            || input.items.len() > 200
+            || input.resolutions.len() > input.items.len()
+        {
             return Err(EntityStoreError::InvalidImport);
         }
         let mut result: Vec<EntityImportPreview> = Vec::new();
@@ -201,6 +215,24 @@ impl Database {
             append_unique(&mut entry.after.tags, candidate.tags.clone());
             entry.after.validate()?;
         }
+        let mut resolved = Vec::new();
+        for resolution in &input.resolutions {
+            if resolved.contains(&resolution.target_id) {
+                return Err(EntityStoreError::InvalidImport);
+            }
+            let entry = result
+                .iter_mut()
+                .find(|entry| {
+                    entry.before.is_some() && entry.after.id == Some(resolution.target_id)
+                })
+                .ok_or(EntityStoreError::InvalidImport)?;
+            // Only author-editable content is replaced; identity, CAS and provenance stay pinned.
+            entry.after.description = resolution.description.clone();
+            entry.after.aliases = resolution.aliases.clone();
+            entry.after.tags = resolution.tags.clone();
+            entry.after.validate()?;
+            resolved.push(resolution.target_id);
+        }
         Ok(result)
     }
 }
@@ -235,6 +267,7 @@ mod tests {
             ReviewEntityImportInput {
                 expected_project_id: self.project_id,
                 source_name: "source.md".into(),
+                resolutions: vec![],
                 items: vec![EntityImportCandidate {
                     entity_type: entity.entity_type,
                     name: "New full name".into(),
@@ -399,6 +432,92 @@ mod tests {
     }
 
     #[test]
+    fn author_resolution_replaces_conflicting_content_once_and_keeps_original_history() {
+        let mut f = Fixture::new();
+        let original = f.entity("Original");
+        let original_history = f.manager.list_entity_revisions(original.id).unwrap();
+        let mut input = f.input(&original);
+        input.items.push(input.items[0].clone());
+        input.resolutions.push(EntityImportResolution {
+            target_id: original.id,
+            description: "Author resolved the conflicting accounts.".into(),
+            aliases: vec!["Chosen alias".into()],
+            tags: vec![],
+        });
+        let changes = f.db().connection.total_changes();
+        let preview = f.manager.preview_entity_import(input.clone()).unwrap();
+        assert_eq!(f.db().connection.total_changes(), changes);
+        assert_eq!(preview.len(), 1);
+        assert_eq!(preview[0].incoming_count, 2);
+        assert_eq!(preview[0].after.description, input.resolutions[0].description);
+        let receipt = f.manager.apply_entity_import(input.clone()).unwrap();
+        assert_eq!(receipt.merged[0].id, original.id);
+        let history = f.manager.list_entity_revisions(original.id).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1..], original_history);
+        assert_eq!(history[0].description, input.resolutions[0].description);
+        assert_eq!(history[0].aliases, ["Chosen alias"]);
+        assert!(history[0].tags.is_empty());
+        assert_eq!(history[0].name, original_history[0].name);
+        assert_eq!(
+            history[0].fixed_attributes_json,
+            original_history[0].fixed_attributes_json
+        );
+        assert_eq!(history[0].base_revision_id, Some(original.current_revision_id));
+        assert_eq!(
+            f.manager.search_project("resolved".into(), None, 20, 0).unwrap()[0].object_id,
+            original.id
+        );
+        // A retry cannot create a second revision from the same reviewed snapshot.
+        assert!(f.manager.apply_entity_import(input).is_err());
+        assert_eq!(f.manager.list_entity_revisions(original.id).unwrap(), history);
+    }
+
+    #[test]
+    fn resolutions_reject_unselected_foreign_and_duplicate_targets_without_partial_writes() {
+        let mut f = Fixture::new();
+        let original = f.entity("Original");
+        let other = f.entity("Not selected");
+        let foreign = f
+            .manager
+            .current
+            .as_mut()
+            .unwrap()
+            .database
+            .upsert_entity(Uuid::new_v4(), super::super::tests::input("Foreign"))
+            .unwrap();
+        let mut input = f.input(&original);
+        input.items.insert(
+            0,
+            EntityImportCandidate {
+                name: "Created".into(), target: None, ..input.items[0].clone()
+            },
+        );
+        let resolution = EntityImportResolution {
+            target_id: original.id, description: String::new(), aliases: vec![], tags: vec![],
+        };
+        for resolutions in [
+            vec![EntityImportResolution { target_id: other.id, ..resolution.clone() }],
+            vec![EntityImportResolution { target_id: foreign.id, ..resolution.clone() }],
+            vec![EntityImportResolution { target_id: Uuid::new_v4(), ..resolution.clone() }],
+            vec![resolution.clone(), resolution.clone()],
+        ] {
+            input.resolutions = resolutions;
+            assert!(f.manager.preview_entity_import(input.clone()).is_err());
+            assert!(f.manager.apply_entity_import(input.clone()).is_err());
+            assert_eq!(f.manager.list_entities(true).unwrap().len(), 2);
+            assert_eq!(f.manager.list_entity_revisions(original.id).unwrap().len(), 1);
+        }
+        // Clearing all three fields is an explicit author choice, not a fallback to concatenation.
+        input.resolutions = vec![resolution];
+        f.manager.apply_entity_import(input).unwrap();
+        let history = f.manager.list_entity_revisions(original.id).unwrap();
+        assert!(history[0].description.is_empty());
+        assert!(history[0].aliases.is_empty());
+        assert!(history[0].tags.is_empty());
+    }
+
+    #[test]
     fn mixed_create_merge_is_atomic_including_search_and_database_failures() {
         let mut f = Fixture::new();
         let original = f.entity("Original");
@@ -411,6 +530,12 @@ mod tests {
                 ..input.items[0].clone()
             },
         );
+        input.resolutions.push(EntityImportResolution {
+            target_id: original.id,
+            description: "Resolved content".into(),
+            aliases: vec![],
+            tags: vec![],
+        });
         f.db().connection.execute_batch(
             "CREATE TRIGGER fail_import BEFORE UPDATE ON entities BEGIN SELECT RAISE(ABORT,'injected'); END;"
         ).unwrap();
@@ -447,6 +572,10 @@ mod tests {
         assert_eq!(result.created.len(), 1);
         assert_eq!(result.merged.len(), 1);
         assert_eq!(f.manager.list_entities(true).unwrap().len(), 2);
+        assert_eq!(
+            f.manager.list_entity_revisions(original.id).unwrap()[0].description,
+            "Resolved content"
+        );
     }
 
     #[test]
@@ -526,6 +655,9 @@ mod tests {
                 ..input.items[0].clone()
             },
         );
+        input.resolutions.push(EntityImportResolution {
+            target_id: original.id, description: "Resolved draft".into(), aliases: vec![], tags: vec![],
+        });
         f.manager.preview_entity_import(input.clone()).unwrap();
         let mut edit = super::super::tests::input("Edited after preview");
         edit.id = Some(original.id);

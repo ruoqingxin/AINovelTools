@@ -29,6 +29,22 @@ export type InputPrivacyLevel = "LOCAL_ONLY" | "ALLOW_CLOUD";
 export type InputModelProvider = "SILICON_FLOW" | "DEEP_SEEK" | "OPEN_AI" | "OPEN_AI_COMPATIBLE";
 export type InputWritingReviewPolicy = "ADVISORY" | "BALANCED" | "REQUIRED";
 export type InputDiscussionDesignTarget = "AUTO" | "CHARACTER_CARD" | "PROJECT_SETTING";
+export type InputEntityGroupAction = {
+    entityType: InputEntityType;
+    kind: "CREATE";
+    name: string;
+} | {
+    id: string;
+    kind: "RENAME";
+    name: string;
+} | {
+    id: string;
+    kind: "DELETE";
+} | {
+    entities: InputEntityMoveTarget[];
+    groupId?: string | null;
+    kind: "MOVE";
+};
 export type InputModelCapability = "CHAT" | "EMBEDDING";
 export type InputSummaryKind = "CHAPTER" | "CHARACTER" | "SETTING";
 export type InputSummaryPrecision = "L0" | "L1" | "L2" | "L3" | "L4" | "L5";
@@ -175,6 +191,7 @@ export type IpcErrors = {
     get_consistency_review_trace: ApiError;
     get_discussion_source: ApiError;
     get_discussion_workspace: ApiError;
+    get_entity_groups: ApiError;
     get_manuscript_source: ApiError;
     get_planning_ai_job_request: ApiError;
     get_project_ai_task_overrides: ApiError;
@@ -278,6 +295,7 @@ export type IpcErrors = {
     test_model_profile: ApiError;
     update_belief: ApiError;
     update_coauthor_impact: ApiError;
+    update_entity_groups: ApiError;
     update_event: ApiError;
     update_extraction_item: ApiError;
     update_foreshadowing: ApiError;
@@ -401,6 +419,7 @@ export type IpcRequests = {
     get_consistency_review_trace: InputArgsGetConsistencyReviewTrace;
     get_discussion_source: InputArgsGetDiscussionSource;
     get_discussion_workspace: InputArgsGetDiscussionWorkspace;
+    get_entity_groups: InputArgsGetEntityGroups;
     get_manuscript_source: InputArgsGetManuscriptSource;
     get_planning_ai_job_request: InputArgsGetPlanningAiJobRequest;
     get_project_ai_task_overrides: InputArgsGetProjectAiTaskOverrides;
@@ -504,6 +523,7 @@ export type IpcRequests = {
     test_model_profile: InputArgsTestModelProfile;
     update_belief: InputArgsUpdateBelief;
     update_coauthor_impact: InputArgsUpdateCoauthorImpact;
+    update_entity_groups: InputArgsUpdateEntityGroups;
     update_event: InputArgsUpdateEvent;
     update_extraction_item: InputArgsUpdateExtractionItem;
     update_foreshadowing: InputArgsUpdateForeshadowing;
@@ -573,6 +593,7 @@ export type InputArgsApplyEntityImport = {
 export type InputReviewEntityImportInput = {
     expectedProjectId: string;
     items: InputEntityImportCandidate[];
+    resolutions?: InputEntityImportResolution[];
     sourceName: string;
 };
 export type InputEntityImportCandidate = {
@@ -587,6 +608,12 @@ export type InputEntityImportTarget = {
     expectedRevisionId: string;
     expectedVersion: number;
     id: string;
+};
+export type InputEntityImportResolution = {
+    aliases: string[];
+    description: string;
+    tags: string[];
+    targetId: string;
 };
 export type InputArgsAskProjectDiscussion = {
     input: InputAskProjectDiscussionInput;
@@ -1062,6 +1089,9 @@ export type InputDiscussionSourceRequest = {
 };
 export type InputArgsGetDiscussionWorkspace = {
     sessionId: string;
+};
+export type InputArgsGetEntityGroups = {
+    projectId: string;
 };
 export type InputArgsGetManuscriptSource = {
     request: InputManuscriptSourceRequest;
@@ -1609,6 +1639,14 @@ export type InputArgsUpdateCoauthorImpact = {
     scope: InputCoauthorScope;
     status: string;
 };
+export type InputArgsUpdateEntityGroups = {
+    input: InputUpdateEntityGroupsInput;
+};
+export type InputUpdateEntityGroupsInput = {
+    action: InputEntityGroupAction;
+    expectedProjectId: string;
+    expectedVersion: number;
+};
 export type InputArgsUpdateEvent = {
     event: InputEvent;
     expectedVersion: number;
@@ -1769,6 +1807,7 @@ export type IpcResponses = {
     get_consistency_review_trace: ReviewTrace;
     get_discussion_source: DiscussionSource;
     get_discussion_workspace: DiscussionWorkspace;
+    get_entity_groups: EntityGroupState;
     get_manuscript_source: ManuscriptSource;
     get_planning_ai_job_request: PlanningAiRequestPreview;
     get_project_ai_task_overrides: ProjectAiTaskOverrides;
@@ -1872,6 +1911,7 @@ export type IpcResponses = {
     test_model_profile: ModelConnectionResponse;
     update_belief: Belief;
     update_coauthor_impact: CoauthorImpact;
+    update_entity_groups: EntityGroupState;
     update_event: Event;
     update_extraction_item: ChapterExtractionItem;
     update_foreshadowing: Foreshadowing;
@@ -2807,6 +2847,21 @@ export type DiscussionDraft = {
     alternatives: string;
     chosen: string;
     questions: string;
+};
+export type EntityGroupState = {
+    groups: EntityGroup[];
+    memberships: EntityGroupMembership[];
+    projectId: string;
+    version: number;
+};
+export type EntityGroup = {
+    entityType: EntityType;
+    id: string;
+    name: string;
+};
+export type EntityGroupMembership = {
+    entityId: string;
+    groupId: string;
 };
 export type ManuscriptSource = {
     blockId: string | null;

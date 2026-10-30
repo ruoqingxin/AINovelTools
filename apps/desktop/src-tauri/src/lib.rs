@@ -63,6 +63,7 @@ use commands::discussion::{
     summarize_discussion_design,
 };
 use commands::entities::{
+    get_entity_groups, update_entity_groups,
     delete_entities, move_entities, preview_entity_deletion, preview_entity_import, apply_entity_import,
     get_chapter_entity_references, import_entities, list_entities, list_entity_cards,
     list_entity_chapters, list_entity_revisions, save_chapter_entity_references,
@@ -173,6 +174,8 @@ pub fn run() {
             health_query,
             list_entities,
             list_entity_cards,
+            get_entity_groups,
+            update_entity_groups,
             get_chapter_entity_references,
             save_chapter_entity_references,
             list_entity_chapters,

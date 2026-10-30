@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EntityCard, ExtractedEntity } from "../lib/tauri-client";
+import type { EntityCard, EntityGroupState, ExtractedEntity } from "../lib/tauri-client";
 import { StoryBibleView } from "./story-bible-view";
 import { AiWorkspaceContext } from "./content-identity";
 import { ConfirmActionProvider } from "../shell/confirm-action-provider";
@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   moveEntities: vi.fn(),
   extractEntitiesFromText: vi.fn(),
   getCurrentProject: vi.fn(),
+  getEntityGroups: vi.fn(),
+  updateEntityGroups: vi.fn(),
   listModelProfiles: vi.fn(),
   getAiTaskPreferences: vi.fn(),
   getProjectAiTaskOverrides: vi.fn(),
@@ -43,6 +45,8 @@ vi.mock("../lib/tauri-client", async () => {
     moveEntities: mocks.moveEntities,
     extractEntitiesFromText: mocks.extractEntitiesFromText,
     getCurrentProject: mocks.getCurrentProject,
+    getEntityGroups: mocks.getEntityGroups,
+    updateEntityGroups: mocks.updateEntityGroups,
     listModelProfiles: mocks.listModelProfiles,
     getAiTaskPreferences: mocks.getAiTaskPreferences,
     getProjectAiTaskOverrides: mocks.getProjectAiTaskOverrides,
@@ -76,6 +80,9 @@ describe("StoryBibleView", () => {
     mocks.previewEntityDeletion.mockReset();
     mocks.deleteEntities.mockReset();
     mocks.moveEntities.mockReset();
+    mocks.getEntityGroups.mockReset();
+    mocks.updateEntityGroups.mockReset();
+    mocks.getEntityGroups.mockResolvedValue({ projectId: "project-1", version: 0, groups: [], memberships: [] });
     mocks.previewEntityDeletion.mockResolvedValue([{ id: "entity-1", name: "沈砚", blockers: [] }]);
     mocks.deleteEntities.mockResolvedValue(null);
     window.history.replaceState(null, "", "/knowledge");
@@ -455,6 +462,7 @@ describe("StoryBibleView", () => {
     mocks.listEntityCards.mockResolvedValue([card]);
     renderView();
     fireEvent.click(await screen.findByRole("button", { name: "编辑实体" }));
+    fireEvent.click(screen.getByRole("button", { name: "属性设置" }));
     fireEvent.change(screen.getByLabelText("本机属性卡"), { target: { value: "test-attribute-card" } });
     fireEvent.click(screen.getByRole("button", { name: "加载属性卡" }));
     fireEvent.change(screen.getByLabelText("测试境界"), { target: { value: "金丹" } });
@@ -891,6 +899,225 @@ describe("StoryBibleView", () => {
     expect(screen.getByLabelText("名称")).toHaveValue("未保存名称");
   });
 
+  function customGroupState(): EntityGroupState {
+    return {
+      projectId: "project-1", version: 4,
+      groups: [
+        { id: "cast", entityType: "CHARACTER", name: "主角团" },
+        { id: "others", entityType: "CHARACTER", name: "伙伴" },
+        { id: "rules", entityType: "CONCEPT", name: "忆境体系" },
+      ],
+      memberships: [{ entityId: "entity-1", groupId: "cast" }],
+    };
+  }
+
+  it("shows nested custom groups including empty folders and filters all or ungrouped without changing types", async () => {
+    mocks.listEntityCards.mockResolvedValue(groupedCards);
+    mocks.getEntityGroups.mockResolvedValue(customGroupState());
+    renderView();
+    expect(await screen.findByRole("button", { name: "主角团 1" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "伙伴 0" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "忆境体系 0" })).toBeVisible();
+    expect(mocks.getEntityGroups).toHaveBeenCalledWith("project-1");
+    fireEvent.change(screen.getByLabelText("二级分组筛选"), { target: { value: "cast" } });
+    expect(screen.getByRole("button", { name: /沈砚/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /林舟/ })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("实体分组"), { target: { value: "SOURCE" } });
+    expect(screen.getByRole("button", { name: "人物.md 1" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("二级分组筛选"), { target: { value: "ungrouped" } });
+    expect(screen.queryByRole("button", { name: /沈砚/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /林舟/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /上古纪元/ })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选条件" }));
+    expect(screen.getByLabelText("二级分组筛选")).toHaveValue("*");
+    expect(screen.getByRole("button", { name: /沈砚/ })).toBeVisible();
+    expect(mocks.moveEntities).not.toHaveBeenCalled();
+    expect(mocks.updateEntityGroups).not.toHaveBeenCalled();
+  });
+
+  it("creates and renames persistent folders without creating an entity or a content revision", async () => {
+    mocks.listEntityCards.mockResolvedValue(groupedCards);
+    const state = customGroupState();
+    mocks.getEntityGroups.mockResolvedValue(state);
+    const created = { id: "new-group", entityType: "CONCEPT" as const, name: "遗藏与魂印" };
+    mocks.updateEntityGroups.mockResolvedValueOnce({ ...state, version: 5, groups: [...state.groups, created] });
+    renderView();
+    await waitFor(() => expect(screen.getByRole("button", { name: "管理二级分组" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "管理二级分组" }));
+    const panel = await screen.findByRole("dialog", { name: "管理二级分组" });
+    fireEvent.change(within(panel).getByLabelText("二级分组名称"), { target: { value: "  遗藏与魂印  " } });
+    fireEvent.click(within(panel).getByRole("button", { name: "新建分组" }));
+    await waitFor(() => expect(within(panel).getByLabelText("二级分组名称")).toHaveValue(""));
+    expect(mocks.updateEntityGroups).toHaveBeenCalledWith({
+      expectedProjectId: "project-1", expectedVersion: 4, action: { kind: "CREATE", entityType: "CONCEPT", name: "遗藏与魂印" },
+    });
+    expect(screen.getByRole("button", { name: "遗藏与魂印 0" })).toBeVisible();
+    mocks.updateEntityGroups.mockResolvedValueOnce({ ...state, version: 6, groups: [...state.groups, { ...created, name: "传承体系" }] });
+    fireEvent.click(within(panel).getByRole("button", { name: "重命名分组「遗藏与魂印」" }));
+    fireEvent.change(within(panel).getByLabelText("二级分组名称"), { target: { value: "传承体系" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "保存名称" }));
+    await waitFor(() => expect(within(panel).getByLabelText("二级分组名称")).toHaveValue(""));
+    expect(mocks.updateEntityGroups).toHaveBeenLastCalledWith({
+      expectedProjectId: "project-1", expectedVersion: 5, action: { kind: "RENAME", id: "new-group", name: "传承体系" },
+    });
+    expect(screen.getByRole("button", { name: "传承体系 0" })).toBeVisible();
+    expect(mocks.upsertEntity).not.toHaveBeenCalled();
+    expect(mocks.moveEntities).not.toHaveBeenCalled();
+  });
+
+  it("deletes only the chosen folder after confirmation and returns its members to ungrouped", async () => {
+    const state = customGroupState();
+    mocks.listEntityCards.mockResolvedValue(groupedCards);
+    mocks.getEntityGroups.mockResolvedValue(state);
+    mocks.updateEntityGroups.mockResolvedValue({ ...state, version: 6, groups: state.groups.filter((group) => group.id !== "cast"), memberships: [] });
+    renderView();
+    await screen.findByRole("button", { name: "主角团 1" });
+    fireEvent.click(screen.getByRole("button", { name: "管理人物分组" }));
+    const panel = await screen.findByRole("dialog", { name: "管理二级分组" });
+    fireEvent.click(within(panel).getByRole("button", { name: "删除分组「主角团」" }));
+    let confirmation = await screen.findByRole("alertdialog", { name: "删除分组" });
+    expect(confirmation).toHaveTextContent("不会删除任何实体");
+    fireEvent.click(within(confirmation).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "删除分组「主角团」" })).toBeEnabled());
+    expect(mocks.updateEntityGroups).not.toHaveBeenCalled();
+    fireEvent.click(within(panel).getByRole("button", { name: "删除分组「主角团」" }));
+    confirmation = await screen.findByRole("alertdialog", { name: "删除分组" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "仅删除分组" }));
+    await waitFor(() => expect(within(panel).queryByRole("button", { name: "删除分组「主角团」" })).not.toBeInTheDocument());
+    expect(mocks.updateEntityGroups).toHaveBeenCalledWith({
+      expectedProjectId: "project-1", expectedVersion: 4, action: { kind: "DELETE", id: "cast" },
+    });
+    expect(screen.queryByRole("button", { name: "主角团 1" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "未分组 2" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /沈砚/ })).toBeVisible();
+    expect(mocks.deleteEntities).not.toHaveBeenCalled();
+    expect(mocks.upsertEntity).not.toHaveBeenCalled();
+  });
+
+  it("moves a single entity to a same-type folder without changing its ID type or content revision", async () => {
+    const state = customGroupState();
+    mocks.listEntityCards.mockResolvedValue(groupedCards);
+    mocks.getEntityGroups.mockResolvedValue(state);
+    mocks.updateEntityGroups.mockResolvedValue({ ...state, version: 5, memberships: [{ entityId: "entity-1", groupId: "others" }] });
+    renderView();
+    await screen.findByRole("button", { name: "主角团 1" });
+    fireEvent.click(screen.getByRole("button", { name: /沈砚/ }));
+    const destination = screen.getByLabelText("实体移动目标分组");
+    expect(within(destination).queryByRole("option", { name: "忆境体系" })).not.toBeInTheDocument();
+    fireEvent.change(destination, { target: { value: "others" } });
+    fireEvent.click(screen.getByRole("button", { name: "移动到分组" }));
+    expect(await screen.findByText("已整理 1 个实体到「伙伴」")).toBeVisible();
+    expect(mocks.updateEntityGroups).toHaveBeenCalledWith({
+      expectedProjectId: "project-1", expectedVersion: 4,
+      action: { kind: "MOVE", groupId: "others", entities: [{ id: "entity-1", expectedVersion: 1 }] },
+    });
+    expect(screen.getByText("分组：伙伴")).toBeVisible();
+    expect(screen.getByRole("button", { name: /沈砚 使用中 · v1/ })).toBeVisible();
+    expect(screen.getByText("原描述", { selector: ".library-content" })).toBeVisible();
+    expect(mocks.moveEntities).not.toHaveBeenCalled();
+    expect(mocks.upsertEntity).not.toHaveBeenCalled();
+  });
+
+  it("clears hidden folder selections and moves same-type batches using exact selected snapshots", async () => {
+    const state = customGroupState();
+    mocks.listEntityCards.mockResolvedValue(groupedCards);
+    mocks.getEntityGroups.mockResolvedValue(state);
+    mocks.updateEntityGroups.mockResolvedValue({ ...state, version: 6, memberships: [
+      { entityId: "entity-1", groupId: "others" }, { entityId: secondCard.entity.id, groupId: "others" },
+    ] });
+    renderView();
+    await screen.findByRole("button", { name: "主角团 1" });
+    fireEvent.click(screen.getByRole("button", { name: "批量管理实体" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "全选当前实体" }));
+    expect(within(screen.getByLabelText("批量移动目标分组")).queryByRole("option", { name: "主角团" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("实体类型筛选"), { target: { value: "CHARACTER" } });
+    expect(screen.getByRole("checkbox", { name: "选择实体：沈砚" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "全选当前实体" }));
+    fireEvent.click(screen.getByRole("button", { name: "主角团 1" }));
+    expect(screen.queryByRole("checkbox", { name: "选择实体：沈砚" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "主角团 1" }));
+    expect(screen.getByRole("checkbox", { name: "选择实体：沈砚" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择实体：沈砚" }));
+    fireEvent.change(screen.getByLabelText("批量移动目标分组"), { target: { value: "others" } });
+    fireEvent.click(screen.getByRole("button", { name: "移动所选到分组" }));
+    expect(await screen.findByText("已整理 2 个实体到「伙伴」")).toBeVisible();
+    expect(mocks.updateEntityGroups).toHaveBeenCalledWith({
+      expectedProjectId: "project-1", expectedVersion: 4,
+      action: { kind: "MOVE", groupId: "others", entities: expect.arrayContaining([
+        { id: "entity-1", expectedVersion: 1 }, { id: secondCard.entity.id, expectedVersion: secondCard.entity.version },
+      ]) },
+    });
+    expect(screen.getByRole("button", { name: "伙伴 2" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "删除所选" })).toBeDisabled();
+  });
+
+  it("retains group name edits on native errors and retries only after another submit", async () => {
+    const state = customGroupState();
+    mocks.getEntityGroups.mockResolvedValue(state);
+    mocks.updateEntityGroups.mockRejectedValueOnce(new Error("同类型下已有同名分组"));
+    mocks.updateEntityGroups.mockResolvedValueOnce({ ...state, version: 5, groups: [...state.groups, { id: "new", entityType: "CONCEPT", name: "传承体系" }] });
+    renderView();
+    await waitFor(() => expect(screen.getByRole("button", { name: "管理二级分组" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "管理二级分组" }));
+    const panel = await screen.findByRole("dialog", { name: "管理二级分组" });
+    fireEvent.change(within(panel).getByLabelText("二级分组名称"), { target: { value: "忆境体系" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "新建分组" }));
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("同名分组");
+    expect(within(panel).getByLabelText("二级分组名称")).toHaveValue("忆境体系");
+    fireEvent.change(within(panel).getByLabelText("二级分组名称"), { target: { value: "传承体系" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "新建分组" }));
+    await waitFor(() => expect(within(panel).getByLabelText("二级分组名称")).toHaveValue(""));
+    expect(mocks.updateEntityGroups).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves the selected batch after a failed group move and refreshes stale group snapshots", async () => {
+    const state = customGroupState();
+    mocks.listEntityCards.mockResolvedValue([card]);
+    mocks.getEntityGroups.mockResolvedValue(state);
+    mocks.updateEntityGroups.mockRejectedValueOnce(new Error("整批未移动"));
+    mocks.updateEntityGroups.mockRejectedValueOnce({ code: "VERSION_CONFLICT", message: "分组已变化" });
+    renderView();
+    await screen.findByRole("button", { name: "主角团 1" });
+    fireEvent.click(screen.getByRole("button", { name: "批量管理实体" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择实体：沈砚" }));
+    fireEvent.change(screen.getByLabelText("批量移动目标分组"), { target: { value: "others" } });
+    fireEvent.click(screen.getByRole("button", { name: "移动所选到分组" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("整批未移动");
+    expect(screen.getByRole("checkbox", { name: "选择实体：沈砚" })).toBeChecked();
+    expect(screen.getByLabelText("批量移动目标分组")).toHaveValue("others");
+    mocks.getEntityGroups.mockResolvedValue({ ...state, version: 5 });
+    fireEvent.click(screen.getByRole("button", { name: "移动所选到分组" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("分组已变化");
+    expect(screen.getByRole("checkbox", { name: "选择实体：沈砚" })).not.toBeChecked();
+    expect(mocks.getEntityGroups).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a folder deletion confirmation after switching projects", async () => {
+    mocks.listEntityCards.mockResolvedValue(groupedCards);
+    mocks.getEntityGroups.mockResolvedValue(customGroupState());
+    const client = renderView();
+    await screen.findByRole("button", { name: "主角团 1" });
+    fireEvent.click(screen.getByRole("button", { name: "管理人物分组" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "管理二级分组" })).getByRole("button", { name: "删除分组「主角团」" }));
+    const confirmation = await screen.findByRole("alertdialog", { name: "删除分组" });
+    act(() => client.setQueryData(["current-project"], { projectId: "other-project" }));
+    fireEvent.click(within(confirmation).getByRole("button", { name: "仅删除分组" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("当前项目已切换");
+    expect(mocks.updateEntityGroups).not.toHaveBeenCalled();
+  });
+
+  it("shows grouping load failures without hiding entities and enables management only after retry succeeds", async () => {
+    mocks.listEntityCards.mockResolvedValue([card]);
+    mocks.getEntityGroups.mockRejectedValueOnce(new Error("分组读取失败"));
+    renderView();
+    expect(await screen.findByRole("alert")).toHaveTextContent("分组读取失败");
+    expect(screen.getByRole("button", { name: "管理二级分组" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /沈砚/ })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "重试分组" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "管理二级分组" })).toBeEnabled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("previews a candidate merge, preserves it on cancellation, and restores originals after undo confirmation", async () => {
     await prepareImport();
     fireEvent.change(screen.getByLabelText("合并后保留名称"), { target: { value: "1" } });
@@ -1199,10 +1426,19 @@ describe("StoryBibleView", () => {
     fireEvent.change(screen.getByLabelText("第 2 条候选写入方式"), { target: { value: "skip" } });
     fireEvent.click(screen.getByRole("button", { name: "预览写入 1 条" }));
     let preview = await screen.findByRole("dialog", { name: "合并写入预览" });
+    expect(preview).toHaveAttribute("aria-modal", "true");
+    const resize = within(preview).getByRole("separator", { name: "调整合并写入预览宽度" });
+    fireEvent.keyDown(resize, { key: "Home" });
+    fireEvent.keyDown(resize, { key: "ArrowLeft" });
+    expect(preview.style.getPropertyValue("--workspace-panel-width")).toBe("600px");
     expect(preview).toHaveTextContent("合并前 · 修订 1");
     expect(preview).toHaveTextContent("合并后 · 新修订");
     expect(preview).toHaveTextContent("原描述");
-    expect(preview).toHaveTextContent("导入补充");
+    expect((within(preview).getByLabelText("第 1 个合并结果描述") as HTMLTextAreaElement).value).toContain("导入补充");
+    fireEvent.change(within(preview).getByLabelText("第 1 个合并结果描述"), { target: { value: mergedCard.revision.description } });
+    fireEvent.change(within(preview).getByLabelText("第 1 个合并结果别名"), { target: { value: "保留别名，第二别名、保留别名" } });
+    fireEvent.change(within(preview).getByLabelText("第 1 个合并结果标签"), { target: { value: "" } });
+    expect(within(preview).getByText("原描述", { selector: "p" })).toBeVisible();
     expect(mocks.applyEntityImport).not.toHaveBeenCalled();
     expect(screen.queryByText("正在写入…")).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("候选甲")).toBeDisabled();
@@ -1211,17 +1447,22 @@ describe("StoryBibleView", () => {
     expect(screen.getByLabelText("第 1 条候选写入方式")).toHaveValue("entity-1");
     fireEvent.click(screen.getByRole("button", { name: "预览写入 1 条" }));
     preview = await screen.findByRole("dialog", { name: "合并写入预览" });
+    expect(within(preview).getByRole("separator", { name: "调整合并写入预览宽度" })).toHaveAttribute("aria-valuenow", "600");
+    expect(within(preview).getByLabelText("第 1 个合并结果描述")).toHaveValue(mergedCard.revision.description);
+    expect(within(preview).getByLabelText("第 1 个合并结果别名")).toHaveValue("保留别名，第二别名、保留别名");
+    expect(within(preview).getByLabelText("第 1 个合并结果标签")).toHaveValue("");
     const confirm = within(preview).getByRole("button", { name: "确认合并并写入" });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(await screen.findByText("已新建 0 个实体，合并补充 1 个已有实体")).toBeVisible();
     expect(mocks.applyEntityImport).toHaveBeenCalledTimes(1);
-    expect(mocks.applyEntityImport).toHaveBeenCalledWith(mocks.previewEntityImport.mock.calls[1][0]);
+    expect(mocks.applyEntityImport).toHaveBeenCalledWith(expect.objectContaining(mocks.previewEntityImport.mock.calls[1][0]));
     expect(mocks.applyEntityImport).toHaveBeenCalledWith({
       expectedProjectId: "project-1", sourceName: "资料.md", items: [
         { entityType: "CHARACTER", name: "候选甲", description: "描述甲", aliases: ["别名"], tags: ["标签"],
           target: { id: "entity-1", expectedVersion: 1, expectedRevisionId: "revision-1" } },
       ],
+      resolutions: [{ targetId: "entity-1", description: mergedCard.revision.description, aliases: ["保留别名", "第二别名"], tags: [] }],
     });
     expect(mocks.importEntities).not.toHaveBeenCalled();
     expect(mocks.upsertEntity).not.toHaveBeenCalled();
@@ -1256,23 +1497,88 @@ describe("StoryBibleView", () => {
     expect(screen.getByDisplayValue("描述甲")).toBeVisible();
   });
 
-  it("preserves the mixed selected batch and targets after atomic apply failure and previews again before retry", async () => {
+  it("keeps the editable resolution open after atomic failure and retains drafts when returning and previewing again", async () => {
     mockMergePreview();
     mocks.applyEntityImport.mockRejectedValueOnce(new Error("整批未写入"));
     await prepareImport();
     await chooseOtherImportTarget();
     fireEvent.click(screen.getByRole("button", { name: "预览写入 2 条" }));
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "合并写入预览" })).getByRole("button", { name: "确认合并并写入" }));
+    let preview = await screen.findByRole("dialog", { name: "合并写入预览" });
+    fireEvent.change(within(preview).getByLabelText("第 1 个合并结果描述"), { target: { value: "冲突已手动解决" } });
+    fireEvent.click(within(preview).getByRole("button", { name: "确认合并并写入" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("整批未写入");
-    expect(screen.getByDisplayValue("候选甲")).toBeEnabled();
+    expect(within(preview).getByLabelText("第 1 个合并结果描述")).toHaveValue("冲突已手动解决");
+    expect(within(preview).getByLabelText("第 1 个合并结果描述")).toBeEnabled();
+    expect(screen.getByDisplayValue("候选甲")).toBeDisabled();
+    fireEvent.click(within(preview).getByRole("button", { name: "返回调整" }));
+    await waitFor(() => expect(screen.getByDisplayValue("候选甲")).toBeEnabled());
     expect(screen.getByDisplayValue("候选乙")).toBeVisible();
     expect(screen.getByLabelText("第 1 条候选写入方式")).toHaveValue("entity-1");
     expect(mocks.applyEntityImport.mock.calls[0][0].items[1].target).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "预览写入 2 条" }));
-    const preview = await screen.findByRole("dialog", { name: "合并写入预览" });
+    preview = await screen.findByRole("dialog", { name: "合并写入预览" });
     expect(mocks.previewEntityImport).toHaveBeenCalledTimes(2);
-    expect(mocks.previewEntityImport.mock.calls[1][0]).toEqual(mocks.applyEntityImport.mock.calls[0][0]);
+    expect(mocks.applyEntityImport.mock.calls[0][0]).toEqual(expect.objectContaining(mocks.previewEntityImport.mock.calls[1][0]));
+    expect(mocks.applyEntityImport.mock.calls[0][0].resolutions[0].description).toBe("冲突已手动解决");
+    expect(within(preview).getByLabelText("第 1 个合并结果描述")).toHaveValue("冲突已手动解决");
     fireEvent.click(within(preview).getByRole("button", { name: "返回调整" }));
+  });
+
+  it("retries the edited result in place and prevents duplicate writes or closing during a pending write", async () => {
+    mockMergePreview();
+    mocks.applyEntityImport.mockRejectedValueOnce(new Error("暂时无法写入"));
+    const receipt = { created: [], merged: [{ ...card.entity, version: 2 }] };
+    let finish!: (value: typeof receipt) => void;
+    mocks.applyEntityImport.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await prepareImport();
+    await chooseOtherImportTarget();
+    fireEvent.click(screen.getByRole("button", { name: "预览写入 2 条" }));
+    const preview = await screen.findByRole("dialog", { name: "合并写入预览" });
+    fireEvent.change(within(preview).getByLabelText("第 1 个合并结果描述"), { target: { value: "第一次整理" } });
+    fireEvent.click(within(preview).getByRole("button", { name: "确认合并并写入" }));
+    expect(await within(preview).findByRole("alert")).toHaveTextContent("暂时无法写入");
+    fireEvent.change(within(preview).getByLabelText("第 1 个合并结果描述"), { target: { value: "再次整理" } });
+    fireEvent.change(within(preview).getByLabelText("第 1 个合并结果别名"), { target: { value: "" } });
+    const confirm = within(preview).getByRole("button", { name: "确认合并并写入" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    fireEvent.click(within(preview).getByRole("button", { name: "关闭合并写入预览" }));
+    expect(preview).toBeVisible();
+    expect(confirm).toBeDisabled();
+    expect(within(preview).getByLabelText("第 1 个合并结果描述")).toBeDisabled();
+    await waitFor(() => expect(mocks.applyEntityImport).toHaveBeenCalledTimes(2));
+    expect(mocks.applyEntityImport.mock.calls[1][0].resolutions).toEqual([
+      { targetId: "entity-1", description: "再次整理", aliases: [], tags: ["标签"] },
+    ]);
+    expect(mocks.previewEntityImport).toHaveBeenCalledTimes(1);
+    await act(async () => finish(receipt));
+    expect(await screen.findByText("已新建 0 个实体，合并补充 1 个已有实体")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "合并写入预览" })).not.toBeInTheDocument();
+  });
+
+  it("requires an explicit rebuild when candidate changes invalidate an edited resolution", async () => {
+    mockMergePreview();
+    await prepareImport();
+    await chooseOtherImportTarget();
+    fireEvent.click(screen.getByRole("button", { name: "预览写入 2 条" }));
+    const preview = await screen.findByRole("dialog", { name: "合并写入预览" });
+    fireEvent.change(within(preview).getByLabelText("第 1 个合并结果描述"), { target: { value: "不能悄悄丢失的草稿" } });
+    fireEvent.click(within(preview).getByRole("button", { name: "返回调整" }));
+    await waitFor(() => expect(screen.getByDisplayValue("候选甲")).toBeEnabled());
+    fireEvent.change(screen.getByDisplayValue("描述甲"), { target: { value: "新候选内容" } });
+    fireEvent.click(screen.getByRole("button", { name: "预览写入 2 条" }));
+    let confirmation = await screen.findByRole("alertdialog", { name: "重新整理合并结果" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.getByDisplayValue("描述乙")).toBeEnabled());
+    expect(mocks.previewEntityImport).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "预览写入 2 条" }));
+    confirmation = await screen.findByRole("alertdialog", { name: "重新整理合并结果" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "重新生成" }));
+    const rebuilt = await screen.findByRole("dialog", { name: "合并写入预览" });
+    expect(within(rebuilt).getByLabelText("第 1 个合并结果描述")).not.toHaveValue("不能悄悄丢失的草稿");
+    expect(mocks.previewEntityImport).toHaveBeenCalledTimes(2);
+    expect(mocks.previewEntityImport.mock.calls[1][0].items[0].description).toBe("新候选内容");
+    fireEvent.click(within(rebuilt).getByRole("button", { name: "返回调整" }));
   });
 
   it("rejects merge preview confirmation after a project switch", async () => {

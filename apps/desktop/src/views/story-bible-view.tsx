@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, FileUp, FolderInput, GitMerge, ListChecks, LoaderCircle, MessageSquareText, Pencil, Plus, Power, RotateCcw, Save, SearchX, Trash2, Undo2, UsersRound, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, FileUp, FolderCog, FolderInput, FolderPlus, GitMerge, ListChecks, LoaderCircle, MessageSquareText, Pencil, Plus, Power, RotateCcw, Save, SearchX, Trash2, Undo2, UsersRound, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { classifyAiFailure } from "../lib/ai-failure";
 import { resolveTaskChatProfile, resolveTaskPreference, useAiTaskPreferences } from "../lib/ai-task-preferences";
@@ -9,6 +9,8 @@ import {
   deleteEntities,
   extractEntitiesFromText,
   getCurrentProject,
+  getEntityGroups,
+  updateEntityGroups,
   importEntities as importEntityBatch,
   previewEntityImport,
   applyEntityImport,
@@ -31,6 +33,7 @@ import { useConfirmAction } from "../shell/confirm-action-provider";
 import { sourceReturnTo } from "../lib/manuscript-source";
 import { EntityChapters } from "./entity-chapters";
 import { EntityImportDestination } from "./entity-import-destination";
+import { EntityGroupDestination, EntityGroupManager, type EntityGroupAction, type GroupMoveTarget } from "./entity-group-controls";
 import { useWideWorkspace, WorkspacePanel } from "./workspace-panel";
 import "./library-workspace.css";
 import { SearchField } from "./search-field";
@@ -65,6 +68,14 @@ function entitySignature(form: EntityInput, summaryText: string, scopeText: stri
   });
 }
 
+type ImportMergeResolution = NonNullable<Parameters<typeof applyEntityImport>[0]["resolutions"]>[number];
+type ImportMergeDraft = ImportMergeResolution & { aliasesText: string; tagsText: string };
+type LibraryEntityGroup = { key: string; label: string; entities: Entity[]; entityType?: EntityType; children?: LibraryEntityGroup[] };
+
+function splitImportTerms(text: string) {
+  return [...new Set(text.split(/[、,，\n]/).map((value) => value.trim()).filter(Boolean))];
+}
+
 export function StoryBibleView() {
   const aiWorkspace = useInAiWorkspace();
   const client = useQueryClient();
@@ -74,6 +85,12 @@ export function StoryBibleView() {
   const entities = { ...cards, data: records };
   const currentRevisionByEntity = useMemo(() => new Map((cards.data ?? []).map((card) => [card.entity.id, card.revision])), [cards.data]);
   const project = useQuery({ queryKey: ["current-project"], queryFn: getCurrentProject, retry: false });
+  const entityGroups = useQuery({
+    queryKey: ["entity-groups", project.data?.projectId],
+    queryFn: () => getEntityGroups(project.data!.projectId), enabled: Boolean(project.data), retry: false,
+  });
+  const groupData = entityGroups.data?.projectId === project.data?.projectId ? entityGroups.data : undefined;
+  const membershipByEntity = useMemo(() => new Map(groupData?.memberships.map((member) => [member.entityId, member.groupId])), [groupData]);
   const params = new URLSearchParams(window.location.search);
   const requestedEntity = params.get("entity");
   const targetProject = params.get("targetProject");
@@ -87,6 +104,8 @@ export function StoryBibleView() {
   const [sourceFilter, setSourceFilter] = useState("*");
   const [tagFilter, setTagFilter] = useState("");
   const [groupBy, setGroupBy] = useState<"TYPE" | "SOURCE" | "NONE">("TYPE");
+  const [groupFilter, setGroupFilter] = useState("*");
+  const [groupManager, setGroupManager] = useState<EntityType | null>(null);
   const [sortBy, setSortBy] = useState<"UPDATED" | "NAME">("UPDATED");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState(aiWorkspace && params.get("action") === "new");
@@ -106,7 +125,8 @@ export function StoryBibleView() {
   const [savedSignature, setSavedSignature] = useState(() => entitySignature(emptyForm, "", ""));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"save" | "archive" | "reload" | "delete" | "move" | null>(null);
+  const [busy, setBusy] = useState<"save" | "archive" | "reload" | "delete" | "move" | "group" | null>(null);
+  const groupingInFlight = useRef(false);
   const deletionInFlight = useRef(false);
   const movementInFlight = useRef(false);
   const saveInFlight = useRef(false);
@@ -121,7 +141,13 @@ export function StoryBibleView() {
   const [importError, setImportError] = useState<string | null>(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const [importPreview, setImportPreview] = useState<EntityImportPreview[] | null>(null);
-  const importPreviewDecision = useRef<((confirmed: boolean) => void) | null>(null);
+  const [importMergeDrafts, setImportMergeDrafts] = useState<ImportMergeDraft[]>([]);
+  const [importPreviewError, setImportPreviewError] = useState<string | null>(null);
+  const [importPreviewSaving, setImportPreviewSaving] = useState(false);
+  const importPreviewApplying = useRef(false);
+  const importPreviewMounted = useRef(true);
+  const importMergeCache = useRef<{ key: string; drafts: ImportMergeDraft[]; edited: boolean } | null>(null);
+  const importPreviewDecision = useRef<((drafts: ImportMergeDraft[] | null) => void) | null>(null);
   const importInFlight = useRef(false);
   const [extractionFailed, setExtractionFailed] = useState(false);
   const modelProfiles = useQuery({ queryKey: ["model-profiles"], queryFn: listModelProfiles });
@@ -144,12 +170,30 @@ export function StoryBibleView() {
     queryFn: () => listEntityRevisions(selectedId!),
     enabled: Boolean(selectedId),
   });
-  useEffect(() => () => { importPreviewDecision.current?.(false); }, []);
+  useEffect(() => {
+    importPreviewMounted.current = true;
+    return () => {
+      importPreviewMounted.current = false;
+      importPreviewDecision.current?.(null);
+      importPreviewDecision.current = null;
+    };
+  }, []);
 
   function decideImportPreview(confirmed: boolean) {
-    setImportPreview(null);
-    importPreviewDecision.current?.(confirmed);
+    if (importPreviewApplying.current || !importPreviewDecision.current) return;
+    if (confirmed) {
+      importPreviewApplying.current = true;
+      setImportPreviewSaving(true);
+      setImportPreviewError(null);
+    } else setImportPreview(null);
+    importPreviewDecision.current(confirmed ? importMergeDrafts : null);
     importPreviewDecision.current = null;
+  }
+
+  function editImportMerge(targetId: string, patch: Partial<ImportMergeDraft>) {
+    const drafts = importMergeDrafts.map((draft) => draft.targetId === targetId ? { ...draft, ...patch } : draft);
+    setImportMergeDrafts(drafts);
+    if (importMergeCache.current) importMergeCache.current = { ...importMergeCache.current, drafts, edited: true };
   }
 
   const filtered = useMemo(() => {
@@ -157,6 +201,7 @@ export function StoryBibleView() {
     return (entities.data ?? []).filter((entity) => {
       if (typeFilter !== "ALL" && entity.entityType !== typeFilter) return false;
       if (statusFilter !== "ALL" && entity.lifecycleStatus !== statusFilter) return false;
+      if (groupData && groupFilter !== "*" && (membershipByEntity.get(entity.id) ?? "ungrouped") !== groupFilter) return false;
       const revision = currentRevisionByEntity.get(entity.id);
       if (sourceFilter !== "*" && (revision?.sourceVersion?.trim() || "") !== sourceFilter.slice(1)) return false;
       if (tagFilter && !revision?.tags.includes(tagFilter)) return false;
@@ -166,7 +211,7 @@ export function StoryBibleView() {
     }).sort((a, b) => sortBy === "NAME"
       ? (currentRevisionByEntity.get(a.id)?.name ?? "").localeCompare(currentRevisionByEntity.get(b.id)?.name ?? "", "zh-CN")
       : b.updatedAt.localeCompare(a.updatedAt));
-  }, [currentRevisionByEntity, entities.data, search, statusFilter, typeFilter, sourceFilter, tagFilter, sortBy]);
+  }, [currentRevisionByEntity, entities.data, search, statusFilter, typeFilter, sourceFilter, tagFilter, sortBy, groupData, groupFilter, membershipByEntity]);
 
   const facets = useMemo(() => {
     const sources = new Map<string, number>();
@@ -182,24 +227,58 @@ export function StoryBibleView() {
     };
   }, [cards.data]);
   const groups = useMemo(() => {
-    const result = new Map<string, { label: string; entities: Entity[] }>();
+    const result = new Map<string, LibraryEntityGroup>();
     for (const entity of filtered) {
       const source = currentRevisionByEntity.get(entity.id)?.sourceVersion?.trim() || "";
       const key = groupBy === "TYPE" ? entity.entityType : groupBy === "SOURCE" ? source : "*";
-      const group = result.get(key) ?? { label: groupBy === "TYPE" ? typeLabels[entity.entityType] : source || "未标注来源", entities: [] };
+      const group = result.get(key) ?? { key, label: groupBy === "TYPE" ? typeLabels[entity.entityType] : source || "未标注来源", entities: [],
+        entityType: groupBy === "TYPE" ? entity.entityType : undefined };
       group.entities.push(entity);
       result.set(key, group);
     }
-    return [...result].map(([key, group]) => ({ key, ...group }));
-  }, [filtered, groupBy, currentRevisionByEntity]);
+    if (groupBy === "TYPE" && groupData) {
+      for (const folder of groupData.groups) {
+        if (!search && sourceFilter === "*" && !tagFilter && groupFilter === "*"
+          && (typeFilter === "ALL" || typeFilter === folder.entityType) && !result.has(folder.entityType)) {
+          result.set(folder.entityType, { key: folder.entityType, label: typeLabels[folder.entityType], entityType: folder.entityType, entities: [] });
+        }
+      }
+      for (const group of result.values()) {
+        const folders = groupData.groups.filter((folder) => folder.entityType === group.entityType);
+        if (!folders.length) continue;
+        group.children = [
+          { key: `${group.key}:ungrouped`, label: "未分组", entities: group.entities.filter((entity) => !membershipByEntity.has(entity.id)) },
+          ...folders.map((folder) => ({ key: folder.id, label: folder.name,
+            entities: group.entities.filter((entity) => membershipByEntity.get(entity.id) === folder.id) })),
+        ].filter((child) => child.entities.length || !search && sourceFilter === "*" && !tagFilter && groupFilter === "*");
+      }
+    }
+    return [...result.values()];
+  }, [filtered, groupBy, currentRevisionByEntity, groupData, membershipByEntity, search, sourceFilter, tagFilter, typeFilter, groupFilter]);
+  const expandableGroups = groups.flatMap((group) => [group, ...(group.children ?? [])]);
   const allCollapsed = groups.length > 0 && groups.every((group) => collapsedGroups.has(group.key));
-  const visibleEntities = groups.filter((group) => groupBy === "NONE" || !collapsedGroups.has(group.key)).flatMap((group) => group.entities);
+  const visibleEntities = groups.filter((group) => groupBy === "NONE" || !collapsedGroups.has(group.key)).flatMap((group) =>
+    group.children ? group.children.filter((child) => !collapsedGroups.has(child.key)).flatMap((child) => child.entities) : group.entities);
 
   const batchCount = Object.keys(batchSelection).length;
   useEffect(() => {
     setBatchSelection({});
     setCollapsedGroups(new Set());
-  }, [search, typeFilter, statusFilter, sourceFilter, tagFilter, groupBy]);
+  }, [search, typeFilter, statusFilter, sourceFilter, tagFilter, groupBy, groupFilter]);
+  useEffect(() => {
+    setGroupFilter("*");
+    setGroupManager(null);
+    setBatchSelection({});
+    setCollapsedGroups(new Set());
+  }, [project.data?.projectId]);
+  useEffect(() => {
+    if (groupData && groupFilter !== "*" && groupFilter !== "ungrouped" && !groupData.groups.some((group) => group.id === groupFilter)) setGroupFilter("*");
+    const visibleIds = new Set(visibleEntities.map((entity) => entity.id));
+    setBatchSelection((current) => {
+      const entries = Object.entries(current).filter(([id]) => visibleIds.has(id));
+      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+    });
+  }, [groupData, groupFilter, groups, collapsedGroups]);
 
   function toggleGroup(key: string, ids: string[]) {
     const collapsing = !collapsedGroups.has(key);
@@ -308,6 +387,7 @@ export function StoryBibleView() {
   async function refreshEntities(id?: string) {
     await Promise.all([
       client.invalidateQueries({ queryKey: ["entity-cards"] }),
+      client.invalidateQueries({ queryKey: ["entity-groups"] }),
       client.invalidateQueries({ queryKey: ["entities"] }),
       client.invalidateQueries({ queryKey: ["chapter-entity-references"] }),
       client.invalidateQueries({ queryKey: ["entity-chapters"] }),
@@ -535,6 +615,57 @@ export function StoryBibleView() {
     }
   }
 
+  async function changeEntityGroups(action: EntityGroupAction) {
+    if (!groupData || !project.data || busy || importWriting || editing || groupingInFlight.current) return false;
+    const input = { expectedProjectId: project.data.projectId, expectedVersion: groupData.version, action };
+    groupingInFlight.current = true;
+    setBusy("group");
+    setError(null); setNotice(null);
+    try {
+      if (action.kind === "DELETE") {
+        const group = groupData.groups.find((entry) => entry.id === action.id);
+        if (!group || !await confirmAction({
+          title: "删除分组",
+          message: `删除「${group.name}」后，里面的实体会回到“未分组”。实体内容、修订历史和章节关联全部保留，不会删除任何实体。`,
+          confirmLabel: "仅删除分组",
+        })) return false;
+      }
+      if (client.getQueryData<{ projectId: string }>(["current-project"])?.projectId !== input.expectedProjectId) {
+        setError("当前项目已切换，未修改任何分组。");
+        return false;
+      }
+      const saved = await updateEntityGroups(input);
+      if (client.getQueryData<{ projectId: string }>(["current-project"])?.projectId !== input.expectedProjectId) return false;
+      client.setQueryData(["entity-groups", input.expectedProjectId], saved);
+      if (action.kind === "MOVE") {
+        setBatchSelection({});
+        const destination = saved.groups.find((group) => group.id === action.groupId);
+        if (destination) setCollapsedGroups((current) => {
+          const next = new Set(current); next.delete(destination.id); next.delete(destination.entityType); return next;
+        });
+      }
+      setNotice(action.kind === "CREATE" ? "分组已创建" : action.kind === "RENAME" ? "分组已重命名"
+        : action.kind === "DELETE" ? "分组已删除，实体已回到未分组"
+          : `已整理 ${action.entities.length} 个实体到「${saved.groups.find((group) => group.id === action.groupId)?.name ?? "未分组"}」`);
+      return true;
+    } catch (cause) {
+      const code = cause && typeof cause === "object" && "code" in cause ? String(cause.code) : "";
+      if (code === "VERSION_CONFLICT" || code === "NOT_FOUND") {
+        await Promise.all([entityGroups.refetch(), cards.refetch()]);
+        setBatchSelection({});
+      }
+      setError(errorMessage(cause));
+      return false;
+    } finally {
+      groupingInFlight.current = false;
+      setBusy(null);
+    }
+  }
+
+  function moveToGroup(groupId: string | null, targets: GroupMoveTarget[]) {
+    void changeEntityGroups({ kind: "MOVE", groupId, entities: targets.map(({ id, expectedVersion }) => ({ id, expectedVersion })) });
+  }
+
   async function readImportFile(file: File) {
     if (busy || importInFlight.current) return;
     if ((importItems.length || importSourceText) && !window.confirm("替换文件会放弃当前导入候选，确定继续吗？")) return;
@@ -620,26 +751,60 @@ export function StoryBibleView() {
           entityType: item.entityType, name: item.name.trim(), description: item.description,
           aliases: item.aliases, tags: item.tags, target: item.mergeTarget ?? null,
         })) };
+        const key = JSON.stringify(input);
+        if (importMergeCache.current?.edited && importMergeCache.current.key !== key && !await confirmAction({
+          title: "重新整理合并结果",
+          message: "候选内容、合并目标或项目已变化，之前手动整理的合并结果不能直接用于本批次。继续将重新生成合并结果。",
+          confirmLabel: "重新生成",
+        })) return;
         const preview = await previewEntityImport(input);
-        const confirmed = await new Promise<boolean>((resolve) => {
-          importPreviewDecision.current = resolve;
-          setImportProgress("等待确认，尚未写入");
-          setImportPreview(preview);
-        });
-        if (!confirmed) return;
-        if (client.getQueryData<{ projectId: string }>(["current-project"])?.projectId !== expectedProjectId) {
-          setImportError("当前项目已切换，未写入任何实体。");
-          return;
+        if (!importPreviewMounted.current) return;
+        const cached = importMergeCache.current?.key === key ? importMergeCache.current : null;
+        const drafts = cached?.drafts ?? preview.flatMap((entry) => entry.before ? [{
+          targetId: entry.before.entity.id, description: entry.after.description,
+          aliases: entry.after.aliases, tags: entry.after.tags,
+          aliasesText: entry.after.aliases.join("、"), tagsText: entry.after.tags.join("、"),
+        }] : []);
+        importMergeCache.current = { key, drafts, edited: cached?.edited ?? false };
+        setImportMergeDrafts(drafts);
+        setImportPreviewError(null);
+        setImportPreview(preview);
+        while (true) {
+          const resolved = await new Promise<ImportMergeDraft[] | null>((resolve) => {
+            importPreviewDecision.current = resolve;
+            setImportProgress("等待确认，尚未写入");
+          });
+          if (!resolved) return;
+          let receipt;
+          try {
+            if (client.getQueryData<{ projectId: string }>(["current-project"])?.projectId !== expectedProjectId) {
+              throw new Error("当前项目已切换，未写入任何实体。");
+            }
+            setImportProgress("正在写入…");
+            receipt = await applyEntityImport({
+              ...input,
+              resolutions: resolved.map(({ targetId, description, aliases, tags }) => ({ targetId, description, aliases, tags })),
+            });
+          } catch (cause) {
+            if (!importPreviewMounted.current) return;
+            setImportPreviewError(errorMessage(cause));
+            continue;
+          } finally {
+            importPreviewApplying.current = false;
+            setImportPreviewSaving(false);
+          }
+          setImportPreview(null);
+          setImportNotice(`已新建 ${receipt.created.length} 个实体，合并补充 ${receipt.merged.length} 个已有实体`);
+          await Promise.all(receipt.merged.map((entity) => client.invalidateQueries({ queryKey: ["entity-revisions", entity.id] })));
+          break;
         }
-        setImportProgress("正在写入…");
-        const receipt = await applyEntityImport(input);
-        setImportNotice(`已新建 ${receipt.created.length} 个实体，合并补充 ${receipt.merged.length} 个已有实体`);
-        await Promise.all(receipt.merged.map((entity) => client.invalidateQueries({ queryKey: ["entity-revisions", entity.id] })));
       } else {
         setImportProgress("正在写入…");
         const saved = await importEntityBatch({ expectedProjectId, items });
         setImportNotice(`已从“${fileName}”导入 ${saved.length} 条${importedLabel}信息`);
       }
+      importMergeCache.current = null;
+      setImportMergeDrafts([]);
       setImportItems((current) => current.filter((item) => !item.selected));
       setMergeUndo(null);
       if (selectedImportItems.length === importItems.length) {
@@ -697,6 +862,8 @@ export function StoryBibleView() {
     if (importInFlight.current) return false;
     if ((importItems.length || importSourceText) && !window.confirm("当前文件和导入候选尚未写入，确定放弃本次导入吗？")) return false;
     setImportItems([]);
+    importMergeCache.current = null;
+    setImportMergeDrafts([]);
     setMergeUndo(null);
     setImportSourceText("");
     setImportFileName("");
@@ -706,9 +873,45 @@ export function StoryBibleView() {
     return true;
   }
 
-  const emptyCollection = wide && entities.isSuccess && !filtered.length && !selectedId && !editing && targetResolved && !targetError;
-  const filteredEmpty = emptyCollection && Boolean(entities.data?.length || search.trim() || typeFilter !== "ALL" || statusFilter === "ARCHIVED" || sourceFilter !== "*" || tagFilter);
-  function resetFilters() { setSearch(""); setTypeFilter("ALL"); setStatusFilter("ALL"); setSourceFilter("*"); setTagFilter(""); }
+  const emptyCollection = wide && entities.isSuccess && !groups.length && !selectedId && !editing && targetResolved && !targetError;
+  const filteredEmpty = emptyCollection && Boolean(entities.data?.length || search.trim() || typeFilter !== "ALL" || statusFilter === "ARCHIVED" || sourceFilter !== "*" || tagFilter || groupFilter !== "*");
+  function resetFilters() { setSearch(""); setTypeFilter("ALL"); setStatusFilter("ALL"); setSourceFilter("*"); setTagFilter(""); setGroupFilter("*"); }
+  function renderEntityRows(items: Entity[]) {
+    return items.map((entity) => <div className="entity-list-row" key={entity.id}>
+      {batchMode ? <input type="checkbox" aria-label={`选择实体：${currentRevisionByEntity.get(entity.id)?.name ?? "未命名实体"}`}
+        checked={entity.id in batchSelection} disabled={busy !== null || importWriting || batchCount >= 200 && !(entity.id in batchSelection)}
+        onChange={(event) => setBatchSelection((current) => {
+          const next = { ...current };
+          if (event.target.checked) next[entity.id] = entity.version;
+          else delete next[entity.id];
+          return next;
+        })} /> : null}
+      <button type="button" className="library-item" disabled={importWriting || busy !== null} data-selected={selectedId === entity.id}
+        title={`来源：${currentRevisionByEntity.get(entity.id)?.sourceVersion || "未标注来源"}`} onClick={() => selectEntity(entity)}>
+        <strong>{currentRevisionByEntity.get(entity.id)?.name ?? "未命名实体"}</strong>
+        <small>{groupBy !== "TYPE" ? `${typeLabels[entity.entityType]} · ` : ""}{entity.lifecycleStatus === "ARCHIVED" ? "已停用" : "使用中"} · v{entity.version}
+          {currentRevisionByEntity.get(entity.id)?.tags.length ? <span className="entity-list-tags"> · {currentRevisionByEntity.get(entity.id)?.tags.join(" · ")}</span> : null}</small>
+      </button>
+    </div>);
+  }
+  function renderLibraryGroup(group: LibraryEntityGroup, nested = false) {
+    return <div className="entity-list-group" data-nested={nested} key={group.key}>
+      {groupBy !== "NONE" ? <div className="entity-group-heading-row">
+        <button type="button" className="entity-group-heading" aria-expanded={!collapsedGroups.has(group.key)}
+          disabled={busy === "delete"} onClick={() => toggleGroup(group.key, group.entities.map((entity) => entity.id))}>
+          {collapsedGroups.has(group.key) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+          <strong>{group.label}</strong><span>{group.entities.length}</span>
+        </button>
+        {aiWorkspace && group.entityType ? <button type="button" className="icon-command"
+          aria-label={`管理${group.label}分组`} title={`管理${group.label}分组`}
+          disabled={!groupData || busy !== null || importWriting || editing}
+          onClick={() => { setError(null); setGroupManager(group.entityType!); }}><FolderPlus size={14} /></button> : null}
+      </div> : null}
+      {groupBy === "NONE" || !collapsedGroups.has(group.key) ? group.children
+        ? group.children.map((child) => renderLibraryGroup(child, true))
+        : group.entities.length ? renderEntityRows(group.entities) : <p className="entity-group-empty">暂无实体</p> : null}
+    </div>;
+  }
 
   return (
     <section className="story-bible-view library-workspace" data-mobile-detail={!wide && detailOpen}>
@@ -721,7 +924,7 @@ export function StoryBibleView() {
 
       <div className="library-toolbar" hidden={!wide && detailOpen}>
         <SearchField label="搜索实体" value={search} onChange={setSearch} placeholder="搜索名称、别名或描述" />
-        <select value={typeFilter} disabled={busy === "delete"} onChange={(event) => setTypeFilter(event.target.value as "ALL" | EntityType)} aria-label="实体类型筛选">
+        <select value={typeFilter} disabled={busy === "delete"} onChange={(event) => { setTypeFilter(event.target.value as "ALL" | EntityType); setGroupFilter("*"); }} aria-label="实体类型筛选">
           <option value="ALL">全部类型</option>
           {Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
@@ -738,12 +941,17 @@ export function StoryBibleView() {
           setShowImport(true);
         }}>{importBusy ? <LoaderCircle size={15} className="spin" /> : <FileUp size={15} />}{importBusy ? "查看导入进度" : importItems.length ? `审核导入候选（${importItems.length}）` : extractionFailed ? "查看提炼失败" : "从文件导入"}</button>}
         {aiWorkspace && <button type="button" className="primary-action" disabled={batchMode || importWriting || busy !== null || !project.data} onClick={startNew}><Plus size={15} />新建实体</button>}
+        {aiWorkspace ? <button type="button" className="secondary-action" title="管理二级分组" aria-label="管理二级分组"
+          disabled={!groupData || busy !== null || importWriting || editing}
+          onClick={() => { setError(null); setGroupManager(typeFilter === "ALL" ? "CONCEPT" : typeFilter); }}><FolderCog size={16} /></button> : null}
       </div>
-      {error && !showImport ? <p className="project-error" role="alert">{error}</p> : null}
+      {error && !showImport && !groupManager ? <p className="project-error" role="alert">{error}</p> : null}
       {notice && !showImport ? <p className="project-notice" role="status">{notice === "已保存为新修订" && entityDirty
         ? "上一版已保存，当前仍有未保存修改。" : notice}</p> : null}
       {project.isError ? <p className="project-error" role="alert">{errorMessage(project.error)}
         <button type="button" className="secondary-action" disabled={project.isFetching} onClick={() => void project.refetch()}>重试</button></p> : null}
+      {entityGroups.isError ? <p className="project-error" role="alert">无法加载二级分组：{errorMessage(entityGroups.error)}
+        <button type="button" className="secondary-action" disabled={entityGroups.isFetching} onClick={() => void entityGroups.refetch()}>重试分组</button></p> : null}
 
       <div className="entity-library-filters" hidden={!wide && detailOpen}>
         <label>来源<select aria-label="实体来源筛选" value={sourceFilter} disabled={busy === "delete"} onChange={(event) => setSourceFilter(event.target.value)}>
@@ -757,10 +965,16 @@ export function StoryBibleView() {
         <label>分组<select aria-label="实体分组" value={groupBy} disabled={busy === "delete"} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}>
           <option value="TYPE">按类型</option><option value="SOURCE">按来源</option><option value="NONE">不分组</option>
         </select></label>
+        {groupData?.groups.length ? <label>二级分组<select aria-label="二级分组筛选" value={groupFilter} disabled={busy !== null || importWriting}
+          onChange={(event) => setGroupFilter(event.target.value)}>
+          <option value="*">全部分组</option><option value="ungrouped">未分组</option>
+          {groupData.groups.filter((group) => typeFilter === "ALL" || group.entityType === typeFilter).map((group) =>
+            <option key={group.id} value={group.id}>{typeFilter === "ALL" ? `${typeLabels[group.entityType]} / ` : ""}{group.name}</option>)}
+        </select></label> : null}
         <label>排序<select aria-label="实体排序" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}>
           <option value="UPDATED">最近更新</option><option value="NAME">名称</option>
         </select></label>
-        {search || typeFilter !== "ALL" || statusFilter !== "ACTIVE" || sourceFilter !== "*" || tagFilter ? <button type="button" className="secondary-action"
+        {search || typeFilter !== "ALL" || statusFilter !== "ACTIVE" || sourceFilter !== "*" || tagFilter || groupFilter !== "*" ? <button type="button" className="secondary-action"
           title="清除筛选条件" aria-label="清除筛选条件" disabled={busy === "delete"} onClick={resetFilters}><RotateCcw size={14} /></button> : null}
       </div>
       <div className="library-layout" data-empty={emptyCollection}>
@@ -768,7 +982,7 @@ export function StoryBibleView() {
           <div className="section-heading"><h2>实体库</h2><span>{filtered.length} / {entities.data?.length ?? 0}</span>
             {groupBy !== "NONE" && groups.length ? <button type="button" className="icon-command" title={allCollapsed ? "展开全部分组" : "折叠全部分组"}
               aria-label={allCollapsed ? "展开全部分组" : "折叠全部分组"} disabled={busy === "delete"} onClick={() => {
-                setCollapsedGroups(allCollapsed ? new Set() : new Set(groups.map((group) => group.key)));
+                setCollapsedGroups(allCollapsed ? new Set() : new Set(expandableGroups.map((group) => group.key)));
                 setBatchSelection({});
               }}>{allCollapsed ? <ChevronsUpDown size={16} /> : <ChevronsDownUp size={16} />}</button> : null}
             {aiWorkspace && Boolean(entities.data?.length) ? <button type="button" className="icon-command"
@@ -794,6 +1008,10 @@ export function StoryBibleView() {
                 onClick={() => void moveSelectedEntities(Object.entries(batchSelection).map(([id, expectedVersion]) => ({ id, expectedVersion })))}>
                 <FolderInput size={14} />移动所选</button>
             </div>
+            {groupData ? <EntityGroupDestination key={`${groupData.version}:${Object.keys(batchSelection).join(",")}`}
+              state={groupData} batch targets={Object.entries(batchSelection).map(([id, expectedVersion]) => ({
+                id, expectedVersion, entityType: entities.data?.find((entity) => entity.id === id)?.entityType ?? "CHARACTER",
+              }))} disabled={busy !== null || importWriting} onMove={moveToGroup} /> : null}
           </div> : null}
           {entities.isPending ? <p className="plan-empty">正在加载实体…</p> : null}
           {entities.isError ? <p className="project-error" role="alert">无法加载实体：{errorMessage(entities.error)}
@@ -802,28 +1020,7 @@ export function StoryBibleView() {
             <p className="plan-empty">{entities.data?.length ? "没有符合条件的实体。" : "暂无人物与世界设定"}</p>
             {search || typeFilter !== "ALL" || statusFilter !== "ACTIVE" || entities.data?.length ? <button type="button" className="secondary-action" onClick={resetFilters}>重置筛选</button> : null}
           </div> : null}
-          {groups.map((group) => <div className="entity-list-group" key={group.key}>
-            {groupBy !== "NONE" ? <button type="button" className="entity-group-heading" aria-expanded={!collapsedGroups.has(group.key)}
-              disabled={busy === "delete"} onClick={() => toggleGroup(group.key, group.entities.map((entity) => entity.id))}>
-              {collapsedGroups.has(group.key) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-              <strong>{group.label}</strong><span>{group.entities.length}</span>
-            </button> : null}
-          {groupBy === "NONE" || !collapsedGroups.has(group.key) ? group.entities.map((entity) => <div className="entity-list-row" key={entity.id}>
-            {batchMode ? <input type="checkbox" aria-label={`选择实体：${currentRevisionByEntity.get(entity.id)?.name ?? "未命名实体"}`}
-              checked={entity.id in batchSelection} disabled={busy !== null || importWriting || batchCount >= 200 && !(entity.id in batchSelection)}
-              onChange={(event) => setBatchSelection((current) => {
-                const next = { ...current };
-                if (event.target.checked) next[entity.id] = entity.version;
-                else delete next[entity.id];
-                return next;
-              })} /> : null}
-            <button type="button" key={entity.id} className="library-item" disabled={importWriting || busy !== null} data-selected={selectedId === entity.id}
-              title={`来源：${currentRevisionByEntity.get(entity.id)?.sourceVersion || "未标注来源"}`} onClick={() => selectEntity(entity)}>
-              <strong>{currentRevisionByEntity.get(entity.id)?.name ?? "未命名实体"}</strong>
-              <small>{groupBy !== "TYPE" ? `${typeLabels[entity.entityType]} · ` : ""}{entity.lifecycleStatus === "ARCHIVED" ? "已停用" : "使用中"} · v{entity.version}
-                {currentRevisionByEntity.get(entity.id)?.tags.length ? <span className="entity-list-tags"> · {currentRevisionByEntity.get(entity.id)?.tags.join(" · ")}</span> : null}</small>
-            </button>
-          </div>) : null}</div>)}
+          {groups.map((group) => renderLibraryGroup(group))}
         </aside>
 
         <div ref={detail} hidden={!wide && !detailOpen} className="library-detail" tabIndex={-1} role="region" aria-label="设定详情">
@@ -838,6 +1035,7 @@ export function StoryBibleView() {
           </WorkspaceEmptyState> : <div className="library-empty"><p>{entities.isPending ? "正在加载设定…" : "设定暂不可用"}</p></div> : <>
           <div className="section-heading"><h2>{selected ? editing ? "编辑实体" : form.name : "新建实体"}</h2>{selected ? <span>版本 {selected.version}</span> : <span>尚未保存</span>}</div>
           {selected && !editing ? <><p className="library-meta">{typeLabels[selected.entityType]} · {selected.lifecycleStatus === "ARCHIVED" ? "已停用" : "使用中"}
+            {groupData ? <span className="entity-detail-source">分组：{groupData.groups.find((group) => group.id === membershipByEntity.get(selected.id))?.name ?? "未分组"}</span> : null}
             {form.sourceVersion ? <span className="entity-detail-source">来源：{form.sourceVersion}</span> : null}</p>
             <ContentTypeLabel identity={entityIdentity(selected.entityType)} />
             <p className="library-content">{form.description || "暂无描述"}</p>
@@ -856,6 +1054,9 @@ export function StoryBibleView() {
                 <button type="button" className="secondary-action" disabled={batchMode || busy !== null || importWriting || selected.entityType === moveTargetType}
                   onClick={() => void moveSelectedEntities([{ id: selected.id, expectedVersion: selected.version }])}><FolderInput size={15} />移动实体</button>
               </div>
+              {groupData ? <EntityGroupDestination key={`${selected.id}:${groupData.version}`} state={groupData}
+                targets={[{ id: selected.id, expectedVersion: selected.version, entityType: selected.entityType }]}
+                disabled={batchMode || busy !== null || importWriting} onMove={moveToGroup} /> : null}
             </> : <AiWorkspaceLink icon={Pencil} title="在共创中编辑当前设定" target={{ projectId: selected.projectId, workflow: "entity", targetId: selected.id }}>编辑设定</AiWorkspaceLink>}</div>
             <details className="library-advanced"><summary>属性与来源</summary><pre>{form.fixedAttributesJson}</pre><p>来源版本 <code>{form.sourceVersion ?? "未指定"}</code></p></details>
           </> : null}
@@ -892,6 +1093,8 @@ export function StoryBibleView() {
           </>}
         </div>
       </div>
+      {groupManager && groupData ? <EntityGroupManager key={`${groupData.projectId}:${groupManager}`} state={groupData} initialType={groupManager}
+        pending={busy !== null} error={error} onAction={changeEntityGroups} onClose={() => { setGroupManager(null); setError(null); }} /> : null}
       <WorkspacePanel open={showImport} title="从文件导入" modal={!wide} resizable={wide}
         className="entity-import-workspace" closeLabel="收起文件导入" onClose={() => setShowImport(false)}>
         <fieldset className="entity-import-lock library-form" disabled={importBusy}>
@@ -955,13 +1158,16 @@ export function StoryBibleView() {
           }}>放弃本次导入</button>
         </div>
       </WorkspacePanel>
-      <WorkspacePanel open={importPreview !== null} title="合并写入预览" className="entity-import-preview-workspace"
+      <WorkspacePanel open={importPreview !== null} title="合并写入预览" resizable={wide} className="entity-import-preview-workspace"
         onClose={() => decideImportPreview(false)}>
+        {importPreviewError ? <p className="project-error" role="alert">{importPreviewError}</p> : null}
         <div className="entity-import-preview-summary">
           <span>新建 {importPreview?.filter((entry) => !entry.before).length ?? 0} 个</span>
           <span>补充已有实体 {importPreview?.filter((entry) => entry.before).length ?? 0} 个</span>
         </div>
-        {importPreview?.map((entry, index) => <section className="entity-import-preview-entry" key={entry.after.id ?? index}>
+        {importPreview?.map((entry, index) => {
+          const draft = importMergeDrafts.find((item) => item.targetId === entry.after.id);
+          return <section className="entity-import-preview-entry" key={entry.after.id ?? index}>
           <h3>{entry.before ? "合并到" : "新建"}「{entry.after.name}」 <small>{entry.incomingCount} 条候选</small></h3>
           <div className="entity-import-comparison">
             {entry.before ? <div><h4>合并前 · 修订 {entry.before.revision.revision}</h4>
@@ -969,14 +1175,26 @@ export function StoryBibleView() {
               <p>别名：{entry.before.revision.aliases.join("、") || "无"}</p>
               <p>标签：{entry.before.revision.tags.join("、") || "无"}</p></div> : null}
             <div><h4>{entry.before ? "合并后 · 新修订" : "写入内容"}</h4>
-              <p>{entry.after.description || "暂无描述"}</p>
+              {draft ? <div className="entity-import-resolution">
+                <label>描述<textarea aria-label={`第 ${index + 1} 个合并结果描述`} rows={12}
+                  disabled={importPreviewSaving} value={draft.description}
+                  onChange={(event) => editImportMerge(draft.targetId, { description: event.target.value })} /></label>
+                <label>别名<input aria-label={`第 ${index + 1} 个合并结果别名`}
+                  disabled={importPreviewSaving} value={draft.aliasesText}
+                  onChange={(event) => editImportMerge(draft.targetId, { aliasesText: event.target.value, aliases: splitImportTerms(event.target.value) })} /></label>
+                <label>标签<input aria-label={`第 ${index + 1} 个合并结果标签`}
+                  disabled={importPreviewSaving} value={draft.tagsText}
+                  onChange={(event) => editImportMerge(draft.targetId, { tagsText: event.target.value, tags: splitImportTerms(event.target.value) })} /></label>
+              </div> : <><p>{entry.after.description || "暂无描述"}</p>
               <p>别名：{entry.after.aliases.join("、") || "无"}</p>
-              <p>标签：{entry.after.tags.join("、") || "无"}</p></div>
+              <p>标签：{entry.after.tags.join("、") || "无"}</p></>}</div>
           </div>
-        </section>)}
+        </section>;
+        })}
         <div className="import-review-actions">
-          <button type="button" className="secondary-action" onClick={() => decideImportPreview(false)}>返回调整</button>
-          <button type="button" className="primary-action" onClick={() => decideImportPreview(true)}><Check size={15} />确认合并并写入</button>
+          {importPreviewSaving ? <span className="library-meta" role="status"><LoaderCircle size={14} className="spin" />正在写入…</span> : null}
+          <button type="button" className="secondary-action" disabled={importPreviewSaving} onClick={() => decideImportPreview(false)}>返回调整</button>
+          <button type="button" className="primary-action" disabled={importPreviewSaving} onClick={() => decideImportPreview(true)}><Check size={15} />确认合并并写入</button>
         </div>
       </WorkspacePanel>
     </section>

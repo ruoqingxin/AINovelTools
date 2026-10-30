@@ -77,6 +77,14 @@ export function moveEntities(input: IpcRequests["move_entities"]["input"]) {
   return invoke("move_entities", { input });
 }
 
+export function getEntityGroups(projectId: string) {
+  return invoke("get_entity_groups", { projectId });
+}
+
+export function updateEntityGroups(input: IpcRequests["update_entity_groups"]["input"]) {
+  return invoke("update_entity_groups", { input });
+}
+
 export function listEntityRevisions(entityId: string) {
   return invoke("list_entity_revisions", { entityId });
 }

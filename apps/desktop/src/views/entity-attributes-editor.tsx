@@ -1,4 +1,4 @@
-import { Download, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Pencil, Plus, Save, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useState } from "react";
 import {
   attributeKind, attributeKindLabels, deleteAttributeCard, emptyAttribute, mergeAttributeCard,
@@ -6,7 +6,11 @@ import {
   type AttributeCard, type AttributeField, type AttributeKind,
 } from "../lib/entity-attributes";
 import type { EntityType } from "../lib/tauri-client";
+import { WorkspacePanel } from "./workspace-panel";
+import { useUnsavedChangesGuard } from "../shell/unsaved-changes-provider";
 import "./entity-attributes.css";
+
+type CardDraft = { id?: string; name: string; fields: AttributeField[] };
 
 function loadCards() {
   try { return { cards: readAttributeCards(), error: null }; }
@@ -20,13 +24,20 @@ export function EntityAttributesEditor({ value, entityType, onChange }: {
 }) {
   const [stored, setStored] = useState(loadCards);
   const [selectedCard, setSelectedCard] = useState("");
-  const [cardName, setCardName] = useState("");
+  const [cardDraft, setCardDraft] = useState<CardDraft | null>(null);
+  const [cardBaseline, setCardBaseline] = useState("");
   const [fieldName, setFieldName] = useState("");
   const [fieldKind, setFieldKind] = useState<AttributeKind>("text");
   const [kinds, setKinds] = useState<Record<string, AttributeKind>>({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [jsonOpen, setJsonOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const cardDirty = cardDraft !== null && JSON.stringify(cardDraft) !== cardBaseline;
+  const cardFieldNames = cardDraft?.fields.map((field) => field.name.trim()) ?? [];
+  const duplicateCardFields = new Set(cardFieldNames.filter(Boolean)).size !== cardFieldNames.filter(Boolean).length;
+  const canSaveCard = Boolean(cardDraft?.name.trim() && cardFieldNames.length && cardFieldNames.every(Boolean) && !duplicateCardFields);
+  useUnsavedChangesGuard(cardDirty, "属性卡有未保存修改。");
   let attributes: Record<string, unknown> | null = null;
   let parseError: string | null = null;
   try { attributes = parseAttributes(value); }
@@ -65,21 +76,42 @@ export function EntityAttributesEditor({ value, entityType, onChange }: {
     setKinds((current) => ({ ...Object.fromEntries(activeCard.fields.map((field) => [field.name, field.kind])), ...current }));
     setError(null);
     setNotice(`已加载「${activeCard.name}」，保留已有属性值。`);
+    setPanelOpen(false);
   }
 
-  function persistCard(replace: boolean) {
-    if (!attributes || !cardName.trim() || !fields.length || replace && !activeCard) return;
-    if (replace && !window.confirm(`更新本机属性卡「${activeCard!.name}」？已保存的实体属性不会改变。`)) return;
+  function startCard(draft: CardDraft) {
+    setCardDraft(draft);
+    setCardBaseline(JSON.stringify(draft));
+    setError(null);
+    setNotice(null);
+  }
+
+  function discardCard() {
+    if (cardDirty && !window.confirm("放弃尚未保存的属性卡修改吗？")) return false;
+    setCardDraft(null);
+    setError(null);
+    return true;
+  }
+
+  function closePanel() {
+    if (cardDraft && !discardCard()) return;
+    setPanelOpen(false);
+  }
+
+  function persistCard() {
+    if (!cardDraft || !canSaveCard) return;
+    if (cardDraft.id && !window.confirm(`更新本机属性卡「${activeCard?.name ?? cardDraft.name}」？已保存的实体属性不会改变。`)) return;
     setNotice(null);
     try {
       const card: AttributeCard = {
-        id: replace ? activeCard!.id : crypto.randomUUID(),
-        name: cardName.trim(), entityType, fields,
+        id: cardDraft.id ?? crypto.randomUUID(),
+        name: cardDraft.name.trim(), entityType,
+        fields: cardDraft.fields.map((field) => ({ ...field, name: field.name.trim() })),
       };
       const next = saveAttributeCard(card);
       setStored({ cards: next, error: null });
       setSelectedCard(card.id);
-      setCardName(card.name);
+      setCardDraft(null);
       setError(null);
       setNotice(`属性卡「${card.name}」已保存到本机。`);
     } catch (cause) { setError(`属性卡未保存：${String(cause)}`); }
@@ -91,26 +123,28 @@ export function EntityAttributesEditor({ value, entityType, onChange }: {
     try {
       setStored({ cards: deleteAttributeCard(activeCard.id), error: null });
       setSelectedCard("");
-      setCardName("");
       setError(null);
       setNotice("已删除本机属性卡，实体属性保持不变。");
     } catch (cause) { setError(`属性卡未删除：${String(cause)}`); }
   }
 
-  return <section className="entity-attributes entity-form-wide" aria-label="固定属性">
-    <div className="section-heading"><h3>固定属性</h3></div>
-    <div className="attribute-card-toolbar">
-      <label>本机属性卡<select aria-label="本机属性卡" value={selectedCard} onChange={(event) => {
-        setSelectedCard(event.target.value);
-        setCardName(cards.find((card) => card.id === event.target.value)?.name ?? "");
-        setNotice(null);
-      }}>
-        <option value="">{cards.length ? "选择属性卡" : "暂无属性卡"}</option>
-        {cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}
-      </select></label>
-      <button type="button" className="secondary-action" disabled={!activeCard || !attributes} onClick={applyCard}><Download size={14} />加载属性卡</button>
+  function removeField(name: string) {
+    if (!attributes) return;
+    if (attributes[name] !== "" && attributes[name] !== null && !window.confirm(`删除属性「${name}」及其值？保存实体后生效。`)) return;
+    onChange(JSON.stringify(Object.fromEntries(Object.entries(attributes).filter(([key]) => key !== name)), null, 2));
+  }
+
+  return <section className="entity-attributes entity-form-wide" aria-label="固定属性" onKeyDown={(event) => {
+    if (panelOpen && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }}>
+    <div className="section-heading attribute-heading"><h3>固定属性</h3>
+      <button type="button" className="secondary-action" title="管理属性与属性卡" onClick={() => setPanelOpen(true)}><SlidersHorizontal size={14} />属性设置</button>
     </div>
     {parseError ? <p className="project-error" role="alert">{parseError}</p> : null}
+    {attributes && !fields.length ? <p className="library-meta attribute-empty">暂无固定属性</p> : null}
     <div className="attribute-fields">
       {fields.map(({ name, kind }) => <div className="attribute-field" key={name}>
         <label>{name}
@@ -131,39 +165,97 @@ export function EntityAttributesEditor({ value, entityType, onChange }: {
                   else if (Number.isFinite(Number(next))) update(name, Number(next));
                 }} />}
         </label>
-        <button type="button" className="attribute-icon" aria-label={`删除属性：${name}`} title={`删除属性：${name}`} onClick={() => {
-          if (attributes![name] !== "" && attributes![name] !== null && !window.confirm(`删除属性「${name}」及其值？保存实体后生效。`)) return;
-          onChange(JSON.stringify(Object.fromEntries(Object.entries(attributes!).filter(([key]) => key !== name)), null, 2));
-        }}><Trash2 size={15} /></button>
       </div>)}
     </div>
-    <div className="attribute-add-row">
-      <label>属性名<input value={fieldName} onChange={(event) => setFieldName(event.target.value)} onKeyDown={(event) => {
-        if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); addField(); }
-      }} /></label>
-      <label>输入类型<select aria-label="输入类型" value={fieldKind} onChange={(event) => setFieldKind(event.target.value as AttributeKind)}>
-        {Object.entries(attributeKindLabels).filter(([kind]) => kind !== "json").map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}
-      </select></label>
-      <button type="button" className="attribute-icon" disabled={!attributes || !fieldName.trim()} title="添加属性" aria-label="添加属性" onClick={addField}><Plus size={16} /></button>
-    </div>
-    <details className="attribute-card-settings"><summary>属性卡设置</summary>
-      <div className="attribute-card-toolbar">
-        <label>属性卡名称<input value={cardName} onChange={(event) => setCardName(event.target.value)} /></label>
-        <button type="button" className="secondary-action" disabled={!attributes || !cardName.trim() || !fields.length} onClick={() => persistCard(false)}><Save size={14} />另存属性卡</button>
-        {activeCard ? <>
-          <button type="button" className="secondary-action" disabled={!attributes || !cardName.trim() || !fields.length} onClick={() => persistCard(true)}><Save size={14} />更新属性卡</button>
-          <button type="button" className="attribute-icon" title="删除属性卡" aria-label="删除属性卡" onClick={removeCard}><Trash2 size={15} /></button>
-        </> : null}
-      </div>
-    </details>
-    {stored.error || error ? <p className="project-error" role="alert">{error ?? stored.error}</p> : null}
-    {notice ? <p className="library-meta" role="status">{notice}</p> : null}
+    {!panelOpen && notice ? <p className="library-meta" role="status">{notice}</p> : null}
     <details className="attribute-json" open={jsonOpen || Boolean(parseError)} onToggle={(event) => setJsonOpen(event.currentTarget.open)}><summary>高级 JSON</summary>
       <label>固定属性 JSON<textarea aria-label="固定属性 JSON" value={value} rows={5} spellCheck={false} onChange={(event) => {
         setKinds({});
         onChange(event.target.value);
       }} /></label>
     </details>
+    <WorkspacePanel open={panelOpen} title="属性与属性卡" onClose={closePanel} className="attribute-settings-panel">
+      {cardDraft ? <section className="attribute-card-editor" aria-label={cardDraft.id ? "编辑属性卡" : "创建属性卡"}>
+        <div className="attribute-heading">
+          <button type="button" className="secondary-action" onClick={discardCard}><ArrowLeft size={14} />返回属性卡</button>
+          <span className="library-meta">{cardDraft.id ? "编辑属性卡" : "创建属性卡"}</span>
+        </div>
+        <label className="attribute-card-name">属性卡名称<input autoFocus value={cardDraft.name}
+          onChange={(event) => setCardDraft({ ...cardDraft, name: event.target.value })} /></label>
+        <div className="attribute-card-fields">
+          {cardDraft.fields.map((field, index) => <div className="attribute-card-field" key={index}>
+            <label>字段名<input aria-label={`第 ${index + 1} 个卡片字段名`} value={field.name} onChange={(event) => setCardDraft({
+              ...cardDraft, fields: cardDraft.fields.map((current, position) => position === index ? { ...current, name: event.target.value } : current),
+            })} /></label>
+            <label>输入类型<select aria-label={`第 ${index + 1} 个卡片输入类型`} value={field.kind} onChange={(event) => setCardDraft({
+              ...cardDraft, fields: cardDraft.fields.map((current, position) => position === index ? { ...current, kind: event.target.value as AttributeKind } : current),
+            })}>
+              {Object.entries(attributeKindLabels).filter(([kind]) => kind !== "json" || field.kind === "json").map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}
+            </select></label>
+            <button type="button" className="attribute-icon" title={`删除第 ${index + 1} 个卡片字段`} aria-label={`删除第 ${index + 1} 个卡片字段`}
+              onClick={() => setCardDraft({ ...cardDraft, fields: cardDraft.fields.filter((_, position) => position !== index) })}><Trash2 size={15} /></button>
+          </div>)}
+        </div>
+        {duplicateCardFields ? <p className="project-error" role="alert">卡片字段名不能重复。</p> : null}
+        <div className="attribute-card-toolbar">
+          <button type="button" className="secondary-action" onClick={() => setCardDraft({
+            ...cardDraft, fields: [...cardDraft.fields, { name: "", kind: "text" }],
+          })}><Plus size={14} />添加卡片字段</button>
+        </div>
+        <div className="attribute-card-editor-actions">
+          <button type="button" className="primary-action" disabled={!canSaveCard} onClick={persistCard}><Save size={14} />{cardDraft.id ? "更新属性卡" : "保存属性卡"}</button>
+          <button type="button" className="secondary-action" onClick={discardCard}>取消</button>
+        </div>
+      </section> : <div>
+        <section className="attribute-settings-section" aria-label="加载属性卡">
+          <div className="attribute-heading"><h3>本机属性卡</h3>
+            <button type="button" className="primary-action" onClick={() => startCard({ name: "", fields: [{ name: "", kind: "text" }] })}><Plus size={14} />创建属性卡</button>
+          </div>
+          <div className="attribute-card-toolbar">
+            <label>本机属性卡<select aria-label="本机属性卡" value={selectedCard} onChange={(event) => {
+              setSelectedCard(event.target.value);
+              setNotice(null);
+            }}>
+              <option value="">{cards.length ? "选择属性卡" : "暂无属性卡"}</option>
+              {cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}
+            </select></label>
+            <button type="button" className="secondary-action" disabled={!activeCard || !attributes} onClick={applyCard}><Download size={14} />加载属性卡</button>
+          </div>
+          {activeCard ? <div className="attribute-card-toolbar">
+            <button type="button" className="secondary-action" onClick={() => startCard({
+              id: activeCard.id, name: activeCard.name, fields: activeCard.fields.map((field) => ({ ...field })),
+            })}><Pencil size={14} />编辑属性卡</button>
+            <button type="button" className="attribute-icon" title="删除属性卡" aria-label="删除属性卡" onClick={removeCard}><Trash2 size={15} /></button>
+          </div> : null}
+        </section>
+        <section className="attribute-settings-section" aria-label="当前实体字段">
+          <h3>当前实体字段</h3>
+          {fields.length ? <ul className="attribute-definition-list">
+            {fields.map(({ name, kind }) => <li key={name}>
+              <span>{name}</span><small>{attributeKindLabels[kind]}</small>
+              <button type="button" className="attribute-icon" aria-label={`删除属性：${name}`} title={`删除属性：${name}`}
+                onClick={() => removeField(name)}><Trash2 size={15} /></button>
+            </li>)}
+          </ul> : <p className="library-meta">暂无字段</p>}
+          <div className="attribute-add-row">
+            <label>属性名<input value={fieldName} onChange={(event) => setFieldName(event.target.value)} onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); addField(); }
+            }} /></label>
+            <label>输入类型<select aria-label="输入类型" value={fieldKind} onChange={(event) => setFieldKind(event.target.value as AttributeKind)}>
+              {Object.entries(attributeKindLabels).filter(([kind]) => kind !== "json").map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}
+            </select></label>
+            <button type="button" className="attribute-icon" disabled={!attributes || !fieldName.trim()} title="添加属性" aria-label="添加属性" onClick={addField}><Plus size={16} /></button>
+          </div>
+        </section>
+        {fields.length ? <div className="attribute-card-toolbar">
+          <button type="button" className="secondary-action" disabled={!attributes} onClick={() => startCard({
+            name: "", fields: fields.map((field) => ({ ...field })),
+          })}><Plus size={14} />从当前字段创建属性卡</button>
+        </div> : null}
+      </div>}
+      {stored.error || error ? <p className="project-error" role="alert">{error ?? stored.error}</p> : null}
+      {notice ? <p className="library-meta" role="status">{notice}</p> : null}
+    </WorkspacePanel>
   </section>;
 }
 

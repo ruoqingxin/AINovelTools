@@ -81,8 +81,9 @@ pub use discussion_store::{
     DiscussionMessageRole, DiscussionScopeKind, DiscussionSession, DiscussionStoreError,
 };
 pub use entity_store::{
+    EntityGroup, EntityGroupAction, EntityGroupMembership, EntityGroupState, UpdateEntityGroupsInput,
     DeleteEntitiesInput, EntityCard, EntityDeleteTarget, EntityDeletionPreview, EntityStoreError,
-    EntityImportCandidate, EntityImportPreview, EntityImportReceipt, EntityImportTarget, ReviewEntityImportInput,
+    EntityImportCandidate, EntityImportPreview, EntityImportReceipt, EntityImportResolution, EntityImportTarget, ReviewEntityImportInput,
     EntityMoveTarget, MoveEntitiesInput,
 };
 pub use extraction_store::{
@@ -244,7 +245,7 @@ pub struct FeatureDescriptor {
 /// diagnostics. The actual feature tables are introduced by later R4 slices.
 pub const R4_SCHEMA_VERSION: i64 = 15;
 /// Current database schema after the R5 persistence baseline migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 67;
+pub const CURRENT_SCHEMA_VERSION: i64 = 68;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

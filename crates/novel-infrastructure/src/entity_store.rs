@@ -4,9 +4,11 @@ mod deletion;
 pub use deletion::{DeleteEntitiesInput, EntityDeleteTarget, EntityDeletionPreview};
 mod movement;
 pub use movement::{EntityMoveTarget, MoveEntitiesInput};
+mod groups;
+pub use groups::{EntityGroup, EntityGroupAction, EntityGroupMembership, EntityGroupState, UpdateEntityGroupsInput};
 mod import_review;
 pub use import_review::{
-    EntityImportCandidate, EntityImportPreview, EntityImportReceipt, EntityImportTarget,
+    EntityImportCandidate, EntityImportPreview, EntityImportReceipt, EntityImportResolution, EntityImportTarget,
     ReviewEntityImportInput,
 };
 
@@ -29,6 +31,14 @@ pub enum EntityStoreError {
     WrongMoveProject,
     #[error("请选择 1 至 200 个不重复的实体，并提供有效版本。")]
     InvalidMove,
+    #[error("当前项目已切换，未修改任何分组。")]
+    WrongGroupProject,
+    #[error("分组已变化，未应用本次操作。请核对最新分组后重试。")]
+    GroupConflict,
+    #[error("{0}")]
+    InvalidGroup(String),
+    #[error("分组已不存在：{0}")]
+    MissingGroup(Uuid),
     #[error("当前项目已切换，未写入任何实体。")]
     WrongImportProject,
     #[error("导入需包含 1 至 200 条候选，合并目标必须是同类型、使用中且版本未变化的实体。请重新选择目标。")]
