@@ -134,6 +134,7 @@ export type IpcErrors = {
     decide_ai_proposal: ApiError;
     decide_extraction_item: ApiError;
     delete_discussion_session: ApiError;
+    delete_entities: ApiError;
     delete_model_secret: ApiError;
     detect_candidate_conflicts: ApiError;
     discard_coauthor_changeset: ApiError;
@@ -234,6 +235,7 @@ export type IpcErrors = {
     prepare_coauthor_branch_merge: ApiError;
     prepare_coauthor_changeset: ApiError;
     prepare_coauthor_reversal: ApiError;
+    preview_entity_deletion: ApiError;
     promote_discussion_candidate: ApiError;
     promote_discussion_candidate_to_foreshadowing_review: ApiError;
     publish_coauthor_document: ApiError;
@@ -355,6 +357,7 @@ export type IpcRequests = {
     decide_ai_proposal: InputArgsDecideAiProposal;
     decide_extraction_item: InputArgsDecideExtractionItem;
     delete_discussion_session: InputArgsDeleteDiscussionSession;
+    delete_entities: InputArgsDeleteEntities;
     delete_model_secret: InputArgsDeleteModelSecret;
     detect_candidate_conflicts: InputArgsDetectCandidateConflicts;
     discard_coauthor_changeset: InputArgsDiscardCoauthorChangeset;
@@ -455,6 +458,7 @@ export type IpcRequests = {
     prepare_coauthor_branch_merge: InputArgsPrepareCoauthorBranchMerge;
     prepare_coauthor_changeset: InputArgsPrepareCoauthorChangeset;
     prepare_coauthor_reversal: InputArgsPrepareCoauthorReversal;
+    preview_entity_deletion: InputArgsPreviewEntityDeletion;
     promote_discussion_candidate: InputArgsPromoteDiscussionCandidate;
     promote_discussion_candidate_to_foreshadowing_review: InputArgsPromoteDiscussionCandidateToForeshadowingReview;
     publish_coauthor_document: InputArgsPublishCoauthorDocument;
@@ -819,6 +823,17 @@ export type InputArgsDecideExtractionItem = {
 export type InputArgsDeleteDiscussionSession = {
     scope: InputCoauthorScope;
 };
+export type InputArgsDeleteEntities = {
+    input: InputDeleteEntitiesInput;
+};
+export type InputDeleteEntitiesInput = {
+    entities: InputEntityDeleteTarget[];
+    expectedProjectId: string;
+};
+export type InputEntityDeleteTarget = {
+    expectedVersion: number;
+    id: string;
+};
 export type InputArgsDeleteModelSecret = {
     profileId: string;
 };
@@ -892,9 +907,9 @@ export type InputArgsExtractEntitiesFromText = {
     input: InputExtractEntitiesInput;
 };
 export type InputExtractEntitiesInput = {
-    applicabilityScope: string;
-    briefSummary: string;
-    entityName: string;
+    applicabilityScope?: string;
+    briefSummary?: string;
+    entityName?: string;
     entityType: InputEntityType;
     maxOutputTokens?: number | null;
     profileId: string;
@@ -1298,6 +1313,9 @@ export type InputArgsPrepareCoauthorReversal = {
     id: string;
     scope: InputCoauthorScope;
 };
+export type InputArgsPreviewEntityDeletion = {
+    input: InputDeleteEntitiesInput;
+};
 export type InputArgsPromoteDiscussionCandidate = {
     expectedStatus: InputDiscussionCandidateStatus;
     id: string;
@@ -1668,6 +1686,7 @@ export type IpcResponses = {
     decide_ai_proposal: AiProposal;
     decide_extraction_item: ChapterExtractionItem;
     delete_discussion_session: null;
+    delete_entities: null;
     delete_model_secret: ModelProfile;
     detect_candidate_conflicts: KnowledgeConflict[];
     discard_coauthor_changeset: CoauthorChangeSet;
@@ -1768,6 +1787,7 @@ export type IpcResponses = {
     prepare_coauthor_branch_merge: CoauthorBranchMerge;
     prepare_coauthor_changeset: CoauthorChangeSet;
     prepare_coauthor_reversal: CoauthorReversal;
+    preview_entity_deletion: EntityDeletionPreview[];
     promote_discussion_candidate: DiscussionCandidate;
     promote_discussion_candidate_to_foreshadowing_review: DiscussionCandidate;
     publish_coauthor_document: string;
@@ -3034,6 +3054,11 @@ export type MergeConflict = {
     blockId: string;
     current: string | null;
     draft: string | null;
+};
+export type EntityDeletionPreview = {
+    blockers: string[];
+    id: string;
+    name: string;
 };
 export type CoauthorKnowledgeEvidence = {
     anchorId: string;

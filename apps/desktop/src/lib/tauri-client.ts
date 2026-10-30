@@ -1,6 +1,6 @@
 import type {
   AiBudgetSettings, AiProposalStatus, AiTaskPreference, AiTaskPreferences, AuditFlowSettings, Belief,
-  DiscussionDesignEntity, DiscussionWorkspace, EntityType, Event, EvidenceAnchor, Foreshadowing,
+  DiscussionDesignEntity, DiscussionWorkspace, Event, EvidenceAnchor, Foreshadowing,
   InputPlanningSection, IpcRequests, IpcResponses, JobType, KnowledgeCandidate, Relation, SummaryMaterial,
   VersionedPlanningSection, WritingCard, WritingReviewPolicy,
 } from "./ipc-types.generated";
@@ -55,6 +55,14 @@ export function upsertEntity(input: EntityInput) {
 
 export function importEntities(input: IpcRequests["import_entities"]["input"]) {
   return invoke("import_entities", { input });
+}
+
+export function previewEntityDeletion(input: IpcRequests["preview_entity_deletion"]["input"]) {
+  return invoke("preview_entity_deletion", { input });
+}
+
+export function deleteEntities(input: IpcRequests["delete_entities"]["input"]) {
+  return invoke("delete_entities", { input });
 }
 
 export function listEntityRevisions(entityId: string) {
@@ -520,8 +528,8 @@ export function testModelProfile(profileId: string) {
   return invoke("test_model_profile", { profileId });
 }
 
-export function extractEntitiesFromText(profileId: string, entityType: EntityType, entityName: string, briefSummary: string, applicabilityScope: string, sourceText: string, userGuidance?: string, temperature?: number, maxOutputTokens?: number) {
-  return invoke("extract_entities_from_text", { input: { profileId, entityType, entityName, briefSummary, applicabilityScope, sourceText, userGuidance, temperature, maxOutputTokens } });
+export function extractEntitiesFromText(input: IpcRequests["extract_entities_from_text"]["input"]) {
+  return invoke("extract_entities_from_text", { input });
 }
 
 export function listAiProposals(input: IpcRequests["list_ai_proposals"]) {

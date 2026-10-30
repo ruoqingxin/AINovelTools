@@ -1247,6 +1247,9 @@ impl Database {
         if applied.unwrap_or(0) < 66 {
             self.migrate_discussion_session_deletion()?;
         }
+        if applied.unwrap_or(0) < 67 {
+            self.migrate_entity_deletion()?;
+        }
         self.repair_ai_run_record_cost_columns()?;
         Ok(())
     }

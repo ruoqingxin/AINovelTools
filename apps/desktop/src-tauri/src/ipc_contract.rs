@@ -102,7 +102,7 @@ mod tests {
         };
         assert_eq!(keys("requests"), keys("responses"));
         assert_eq!(keys("requests"), keys("errors"));
-        assert_eq!(keys("requests").len(), 188);
+        assert_eq!(keys("requests").len(), 192);
         assert_eq!(
             keys("events"),
             ["ai-task-attempt", "ai-task-chunk", "ai-task-started", "coauthor-progress"]
@@ -145,6 +145,30 @@ mod tests {
             definition(&schema, "requests", "PlanBatchCandidate"),
             "title"
         ));
+    }
+
+    #[test]
+    fn entity_deletion_requires_project_and_versions_while_file_filters_are_optional() {
+        let schema = super::schema();
+        let batch = definition(&schema, "requests", "DeleteEntitiesInput");
+        for field in ["expectedProjectId", "entities"] {
+            assert!(required(batch, field));
+        }
+        let target = definition(&schema, "requests", "EntityDeleteTarget");
+        for field in ["id", "expectedVersion"] {
+            assert!(required(target, field));
+        }
+        let extraction = definition(&schema, "requests", "ExtractEntitiesInput");
+        for field in ["entityName", "briefSummary", "applicabilityScope", "userGuidance"] {
+            assert!(!required(extraction, field));
+        }
+        for field in ["profileId", "entityType", "sourceText"] {
+            assert!(required(extraction, field));
+        }
+        let input: crate::commands::ai::ExtractEntitiesInput = serde_json::from_value(json!({
+            "profileId": uuid::Uuid::new_v4(), "entityType": "CONCEPT", "sourceText": "原始设定"
+        })).unwrap();
+        let _ = input;
     }
 
     #[test]

@@ -1,11 +1,12 @@
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderInAiWorkspace as render } from "../test/render-ai-workspace";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EntityCard } from "../lib/tauri-client";
 import { StoryBibleView } from "./story-bible-view";
 import { AiWorkspaceContext } from "./content-identity";
+import { ConfirmActionProvider } from "../shell/confirm-action-provider";
 vi.mock("./knowledge-section-nav", () => ({ KnowledgeSectionNav: () => null }));
 
 const mocks = vi.hoisted(() => ({
@@ -13,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   listEntityRevisions: vi.fn(),
   upsertEntity: vi.fn(),
   importEntities: vi.fn(),
+  previewEntityDeletion: vi.fn(),
+  deleteEntities: vi.fn(),
   extractEntitiesFromText: vi.fn(),
   getCurrentProject: vi.fn(),
   listModelProfiles: vi.fn(),
@@ -28,6 +31,8 @@ vi.mock("../lib/tauri-client", async () => {
     listEntityRevisions: mocks.listEntityRevisions,
     upsertEntity: mocks.upsertEntity,
     importEntities: mocks.importEntities,
+    previewEntityDeletion: mocks.previewEntityDeletion,
+    deleteEntities: mocks.deleteEntities,
     extractEntitiesFromText: mocks.extractEntitiesFromText,
     getCurrentProject: mocks.getCurrentProject,
     listModelProfiles: mocks.listModelProfiles,
@@ -46,7 +51,7 @@ const card: EntityCard = {
 };
 function renderView(aiWorkspace = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<AiWorkspaceContext.Provider value={aiWorkspace}><QueryClientProvider client={client}><StoryBibleView /></QueryClientProvider></AiWorkspaceContext.Provider>);
+  render(<AiWorkspaceContext.Provider value={aiWorkspace}><QueryClientProvider client={client}><ConfirmActionProvider><StoryBibleView /></ConfirmActionProvider></QueryClientProvider></AiWorkspaceContext.Provider>);
   return client;
 }
 
@@ -56,6 +61,11 @@ describe("StoryBibleView", () => {
     vi.clearAllMocks();
     mocks.upsertEntity.mockReset();
     mocks.importEntities.mockReset();
+    mocks.extractEntitiesFromText.mockReset();
+    mocks.previewEntityDeletion.mockReset();
+    mocks.deleteEntities.mockReset();
+    mocks.previewEntityDeletion.mockResolvedValue([{ id: "entity-1", name: "沈砚", blockers: [] }]);
+    mocks.deleteEntities.mockResolvedValue(null);
     window.history.replaceState(null, "", "/knowledge");
     mocks.getCurrentProject.mockResolvedValue({ projectId: "project-1" });
     mocks.listModelProfiles.mockResolvedValue([]);
@@ -84,7 +94,7 @@ describe("StoryBibleView", () => {
     </QueryClientProvider></AiWorkspaceContext.Provider>);
     expect(await screen.findByRole("heading", { name: "沈砚" })).toBeVisible();
     expect(screen.getByText("设定 · 人物")).toBeVisible();
-    expect(screen.queryByRole("button", { name: /新建实体|导入|编辑实体|讨论/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /新建实体|导入|编辑实体|讨论|删除|批量管理/ })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "资料" })).toBeVisible();
     const link = screen.getByRole("link", { name: "编辑设定" });
     expect(link).toHaveAttribute("href", "/discussion?work=entity&targetProject=project-1&entity=entity-1");
@@ -396,25 +406,271 @@ describe("StoryBibleView", () => {
     expect(await screen.findByText("已保存为新修订")).toBeVisible();
   });
 
-  async function prepareImport() {
+  async function prepareImport(waitForCandidates = true) {
     mocks.listModelProfiles.mockResolvedValue([{ id: "model", capability: "CHAT", hasSecret: true }]);
-    mocks.extractEntitiesFromText.mockResolvedValue([
+    if (waitForCandidates) mocks.extractEntitiesFromText.mockResolvedValue([
       { name: "候选甲", description: "描述甲", aliases: ["别名"], tags: ["标签"] },
       { name: "候选乙", description: "描述乙", aliases: [], tags: [] },
     ]);
     mocks.listEntityCards.mockResolvedValue([card]);
     renderView();
     fireEvent.click(screen.getByRole("button", { name: "从文件导入" }));
-    fireEvent.change(await screen.findByLabelText("提炼主题"), { target: { value: "导入主题" } });
-    fireEvent.change(screen.getByLabelText("简要概述"), { target: { value: "力量体系" } });
-    fireEvent.change(screen.getByLabelText("适用范围"), { target: { value: "本书人物" } });
+    expect(screen.queryByLabelText("提炼主题")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("简要概述")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("适用范围")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("提炼要求（可选）")).toHaveValue("");
     const file = new File(["资料原文"], "资料.md", { type: "text/markdown" });
     Object.defineProperty(file, "text", { value: () => Promise.resolve("资料原文") });
     fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "按主题提炼" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "按主题提炼" }));
-    await screen.findByDisplayValue("候选甲");
+    await waitFor(() => expect(screen.getByRole("button", { name: "提取实体" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "提取实体" }));
+    if (waitForCandidates) await screen.findByDisplayValue("候选甲");
   }
+
+  it("extracts a file without requiring a topic, summary or scope and keeps guidance optional", async () => {
+    await prepareImport();
+    expect(mocks.extractEntitiesFromText).toHaveBeenCalledWith({
+      profileId: "model", entityType: "CHARACTER", sourceText: "资料原文", userGuidance: "",
+      temperature: 0.1, maxOutputTokens: 4096,
+    });
+    expect(mocks.importEntities).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("提炼要求（可选）"), { target: { value: "  只整理主角  " } });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "提取实体" }));
+    await waitFor(() => expect(mocks.extractEntitiesFromText).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userGuidance: "只整理主角" })));
+  });
+
+  it("previews exact single deletion, defaults to cancellation and removes it only after confirmation", async () => {
+    mocks.listEntityCards.mockResolvedValue([card]);
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: /沈砚/ }));
+    fireEvent.click(screen.getByRole("button", { name: "删除实体" }));
+    let dialog = await screen.findByRole("alertdialog", { name: "删除实体" });
+    expect(dialog).toHaveTextContent("沈砚");
+    expect(dialog).toHaveTextContent("全部修订历史");
+    expect(within(dialog).getByRole("button", { name: "取消" })).toHaveFocus();
+    expect(mocks.previewEntityDeletion).toHaveBeenCalledWith({
+      expectedProjectId: "project-1", entities: [{ id: "entity-1", expectedVersion: 1 }],
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(mocks.deleteEntities).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "删除实体" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "删除实体" }));
+    dialog = await screen.findByRole("alertdialog");
+    mocks.listEntityCards.mockResolvedValue([]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "永久删除 1 个实体" }));
+    expect(await screen.findByText("已删除 1 个实体")).toBeVisible();
+    expect(mocks.deleteEntities).toHaveBeenCalledWith(mocks.previewEntityDeletion.mock.calls[0][0]);
+    expect(screen.queryByRole("heading", { name: "沈砚" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "尚未添加人物与世界设定" })).toBeVisible();
+  });
+
+  const secondCard: EntityCard = { entity: { ...card.entity, id: "entity-2", version: 4, currentRevisionId: "revision-2" },
+    revision: { ...card.revision, id: "revision-2", entityId: "entity-2", name: "林舟" } };
+
+  it("deletes the selected batch in one request and locks selection while writing", async () => {
+    mocks.listEntityCards.mockResolvedValue([card, secondCard]);
+    mocks.previewEntityDeletion.mockResolvedValue([
+      { id: card.entity.id, name: "沈砚", blockers: [] },
+      { id: secondCard.entity.id, name: "林舟", blockers: [] },
+    ]);
+    let resolve!: () => void;
+    mocks.deleteEntities.mockReturnValueOnce(new Promise<void>((done) => { resolve = done; }));
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "批量管理实体" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "全选当前实体" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除所选" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "批量删除实体" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "永久删除 2 个实体" }));
+    await waitFor(() => expect(mocks.deleteEntities).toHaveBeenCalledTimes(1));
+    expect(mocks.deleteEntities).toHaveBeenCalledWith({ expectedProjectId: "project-1",
+      entities: [{ id: "entity-1", expectedVersion: 1 }, { id: "entity-2", expectedVersion: 4 }] });
+    expect(screen.getByRole("checkbox", { name: "选择实体：沈砚" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "退出批量管理" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "新建实体" })).toBeDisabled();
+    mocks.listEntityCards.mockResolvedValue([]);
+    await act(async () => resolve());
+    expect(await screen.findByText("已删除 2 个实体")).toBeVisible();
+  });
+
+  it("clears batch selection on filtering so hidden items cannot be accidentally deleted", async () => {
+    mocks.listEntityCards.mockResolvedValue([card, secondCard]);
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "批量管理实体" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择实体：沈砚" }));
+    expect(screen.getByRole("checkbox", { name: "全选当前实体" })).toBePartiallyChecked();
+    fireEvent.change(screen.getByLabelText("搜索实体"), { target: { value: "林舟" } });
+    expect(screen.getByRole("button", { name: "删除所选" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "选择实体：林舟" })).not.toBeChecked();
+    expect(mocks.previewEntityDeletion).not.toHaveBeenCalled();
+  });
+
+  it("explains references and leaves the entire selection intact without offering deletion", async () => {
+    mocks.listEntityCards.mockResolvedValue([card]);
+    mocks.previewEntityDeletion.mockResolvedValue([{ id: "entity-1", name: "沈砚", blockers: ["章节关联", "共创发布记录"] }]);
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "批量管理实体" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "全选当前实体" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除所选" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("沈砚（章节关联、共创发布记录）");
+    expect(screen.getByRole("alert")).toHaveTextContent("改用归档");
+    expect(screen.getByRole("checkbox", { name: "选择实体：沈砚" })).toBeChecked();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(mocks.deleteEntities).not.toHaveBeenCalled();
+  });
+
+  it("preserves selection on deletion failure and retries only after another explicit confirmation", async () => {
+    mocks.listEntityCards.mockResolvedValue([card]);
+    mocks.deleteEntities.mockRejectedValueOnce(new Error("删除失败"));
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "批量管理实体" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "全选当前实体" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除所选" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "永久删除 1 个实体" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("删除失败");
+    expect(screen.getByRole("checkbox", { name: "选择实体：沈砚" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "删除所选" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(mocks.deleteEntities).toHaveBeenCalledTimes(1);
+    mocks.listEntityCards.mockResolvedValue([]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "永久删除 1 个实体" }));
+    await screen.findByText("已删除 1 个实体");
+    expect(mocks.deleteEntities.mock.calls[1]).toEqual(mocks.deleteEntities.mock.calls[0]);
+  });
+
+  it("rejects stale batch snapshots instead of silently deleting the latest revision", async () => {
+    mocks.listEntityCards.mockResolvedValue([card]);
+    mocks.previewEntityDeletion.mockRejectedValueOnce({ code: "VERSION_CONFLICT", message: "conflict" });
+    const client = renderView();
+    fireEvent.click(await screen.findByRole("button", { name: "批量管理实体" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "全选当前实体" }));
+    mocks.listEntityCards.mockResolvedValue([{ ...card, entity: { ...card.entity, version: 2 } }]);
+    await act(async () => { await client.invalidateQueries({ queryKey: ["entity-cards"] }); });
+    fireEvent.click(screen.getByRole("button", { name: "删除所选" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("列表已刷新");
+    expect(mocks.previewEntityDeletion).toHaveBeenCalledWith(expect.objectContaining({
+      entities: [{ id: "entity-1", expectedVersion: 1 }],
+    }));
+    expect(mocks.deleteEntities).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "删除所选" })).toBeDisabled();
+  });
+
+  it("does not submit an old confirmation after the current project changes", async () => {
+    mocks.listEntityCards.mockResolvedValue([card]);
+    const client = renderView();
+    fireEvent.click(await screen.findByRole("button", { name: /沈砚/ }));
+    fireEvent.click(screen.getByRole("button", { name: "删除实体" }));
+    const dialog = await screen.findByRole("alertdialog");
+    act(() => client.setQueryData(["current-project"], { projectId: "other-project" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "永久删除 1 个实体" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("当前项目已切换");
+    expect(mocks.deleteEntities).not.toHaveBeenCalled();
+  });
+
+  it("preserves entities when a new reference blocks deletion after the confirmation preview", async () => {
+    mocks.listEntityCards.mockResolvedValue([card]);
+    mocks.deleteEntities.mockRejectedValueOnce({ code: "ENTITY_REFERENCED", message: "实体已有章节关联，请改用归档。" });
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: /沈砚/ }));
+    fireEvent.click(screen.getByRole("button", { name: "删除实体" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "永久删除 1 个实体" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("请改用归档");
+    expect(screen.getByRole("heading", { name: "沈砚" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "归档实体" })).toBeEnabled();
+  });
+
+  it("lets extraction continue in a collapsed non-modal panel while editing an entity", async () => {
+    let resolve!: (items: Array<{ name: string; description: string; aliases: string[]; tags: string[] }>) => void;
+    mocks.extractEntitiesFromText.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    await prepareImport(false);
+    expect(screen.getByRole("dialog", { name: "从文件导入" })).toHaveAttribute("aria-modal", "false");
+    expect(screen.getByRole("button", { name: "放弃本次导入" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "收起文件导入" }));
+    expect(screen.queryByRole("dialog", { name: "从文件导入" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看导入进度" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /沈砚/ }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑实体" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "名称" }), { target: { value: "编辑中的实体" } });
+    expect(screen.getByRole("button", { name: "保存为新修订" })).toBeEnabled();
+    await act(async () => resolve([{ name: "后台候选", description: "后台提炼描述", aliases: [], tags: [] }]));
+    expect(screen.getByRole("textbox", { name: "名称" })).toHaveValue("编辑中的实体");
+    expect(mocks.importEntities).not.toHaveBeenCalled();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "审核导入候选（1）" }));
+    expect(screen.getByDisplayValue("后台候选")).toBeVisible();
+    expect(screen.getByText("资料.md")).toBeVisible();
+    expect(mocks.extractEntitiesFromText).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps extraction errors separate from edits and shows them when the panel reopens", async () => {
+    let reject!: (cause: Error) => void;
+    mocks.extractEntitiesFromText.mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
+    await prepareImport(false);
+    fireEvent.click(screen.getByRole("button", { name: "收起" }));
+    fireEvent.click(screen.getByRole("button", { name: "新建实体" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "名称" }), { target: { value: "本地新设定" } });
+    await act(async () => reject(new Error("网络连接中断")));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "名称" })).toHaveValue("本地新设定");
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "查看提炼失败" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "名称" })).toHaveValue("本地新设定");
+    vi.mocked(window.confirm).mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "查看提炼失败" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("网络连接中断");
+    expect(screen.getByRole("button", { name: "重试提炼" })).toBeEnabled();
+  });
+
+  it("supports selecting and deselecting individual candidates and preserves skipped items after writing", async () => {
+    mocks.importEntities.mockResolvedValueOnce([card.entity]);
+    await prepareImport();
+    const selectAll = screen.getByRole("checkbox", { name: "全选候选" });
+    fireEvent.click(selectAll);
+    expect(screen.getByRole("button", { name: "确认写入 0 条" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /选择第 1 条候选/ }));
+    expect(selectAll).toBePartiallyChecked();
+    fireEvent.change(screen.getByDisplayValue("候选甲"), { target: { value: "  选中的候选  " } });
+    fireEvent.click(screen.getByRole("button", { name: "确认写入 1 条" }));
+    await screen.findByText("已从“资料.md”导入 1 条人物信息");
+    expect(mocks.importEntities).toHaveBeenCalledWith({ expectedProjectId: "project-1",
+      items: [expect.objectContaining({ name: "选中的候选", aliases: ["别名"], tags: ["标签"] })] });
+    expect(mocks.importEntities.mock.calls[0][0].items[0]).not.toHaveProperty("selected");
+    expect(screen.queryByDisplayValue("  选中的候选  ")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("候选乙")).toBeVisible();
+    expect(screen.getByText("资料.md")).toBeVisible();
+    expect(screen.getByRole("button", { name: "确认写入 0 条" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "全选候选" }));
+    expect(screen.getByRole("button", { name: "确认写入 1 条" })).toBeEnabled();
+  });
+
+  it("does not submit a selected candidate with an empty name and retains it when deselected", async () => {
+    await prepareImport();
+    fireEvent.change(screen.getByDisplayValue("候选甲"), { target: { value: " " } });
+    expect(screen.getByRole("button", { name: "确认写入 2 条" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /选择第 1 条候选/ }));
+    expect(screen.getByRole("button", { name: "确认写入 1 条" })).toBeEnabled();
+    expect(mocks.importEntities).not.toHaveBeenCalled();
+  });
+
+  it("retains the selected subset and skipped edits when a write fails", async () => {
+    mocks.importEntities.mockRejectedValueOnce(new Error("写入失败"));
+    await prepareImport();
+    fireEvent.click(screen.getByRole("checkbox", { name: /选择第 2 条候选/ }));
+    fireEvent.change(screen.getByDisplayValue("描述乙"), { target: { value: "保留未选条目的修改" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认写入 1 条" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("写入失败");
+    expect(screen.getByRole("checkbox", { name: /选择第 1 条候选/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /选择第 2 条候选/ })).not.toBeChecked();
+    expect(screen.getByDisplayValue("保留未选条目的修改")).toBeVisible();
+    expect(screen.getByText("资料.md")).toBeVisible();
+    mocks.importEntities.mockResolvedValueOnce([card.entity]);
+    fireEvent.click(screen.getByRole("button", { name: "确认写入 1 条" }));
+    await screen.findByText("已从“资料.md”导入 1 条人物信息");
+    expect(mocks.importEntities.mock.calls[1]).toEqual(mocks.importEntities.mock.calls[0]);
+    expect(screen.getByDisplayValue("保留未选条目的修改")).toBeVisible();
+  });
 
   it("submits a single project-scoped batch and locks edits, file changes and entity selection", async () => {
     let resolve!: (entities: EntityCard["entity"][]) => void;
@@ -454,16 +710,25 @@ describe("StoryBibleView", () => {
     expect(mocks.importEntities.mock.calls[1]).toEqual(mocks.importEntities.mock.calls[0]);
   });
 
-  it("keeps candidates when switching entities or replacing the file is cancelled", async () => {
+  it("retains candidates when switching entities and still protects them from file replacement or discard", async () => {
     await prepareImport();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     fireEvent.click(screen.getByRole("button", { name: /沈砚/ }));
-    expect(confirm).toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "沈砚" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "审核导入候选（2）" }));
     expect(screen.getByDisplayValue("候选甲")).toBeVisible();
     const file = new File(["替换"], "新文件.md");
     fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
     expect(screen.getByText("资料.md")).toBeVisible();
     expect(screen.getByDisplayValue("候选乙")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "放弃本次导入" }));
+    expect(screen.getByDisplayValue("候选甲")).toBeVisible();
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "放弃本次导入" }));
+    fireEvent.click(screen.getByRole("button", { name: "从文件导入" }));
+    expect(screen.queryByDisplayValue("候选甲")).not.toBeInTheDocument();
+    expect(screen.queryByText("资料.md")).not.toBeInTheDocument();
   });
   it("uses correct alias/tag fields and restores the saved detail after cancellation", async () => {
     mocks.listEntityCards.mockResolvedValue([card]);
@@ -471,7 +736,7 @@ describe("StoryBibleView", () => {
     fireEvent.click(await screen.findByRole("button", { name: /沈砚/ }));
     fireEvent.click(screen.getByRole("button", { name: "编辑实体" }));
     expect(screen.getByLabelText("别名")).toHaveValue("小沈");
-    expect(screen.queryByLabelText("简要概述")).not.toBeVisible();
+    expect(screen.queryByLabelText("简要概述")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "未保存姓名" } });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "取消" }));

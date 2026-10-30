@@ -277,6 +277,7 @@ fn migration_64_is_atomic_retryable_and_leaves_existing_author_decisions_unchang
     f.db().migrate_coauthor_decision_consumers().unwrap();
     f.db().connection.execute_batch("ALTER TABLE discussion_sessions DROP COLUMN deleted_at").unwrap();
     f.db().migrate_discussion_session_deletion().unwrap();
+    f.db().migrate_entity_deletion().unwrap();
     assert_eq!(f.db().health().unwrap().schema_version,CURRENT_SCHEMA_VERSION);
     assert_eq!(f.manager.search_coauthor_decisions(&f.scope,"",0).unwrap().memories[0].decision,f.target);
 }

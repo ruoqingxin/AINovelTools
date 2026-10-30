@@ -2,10 +2,10 @@ mod codec;
 
 use super::generation::ProposalGenerationInput;
 use super::{
-    AiStreamChunk, AiTaskAttempt, AiTaskStarted, ApiError, Arc, AtomicBool, Emitter, HashSet,
-    ProjectState, effective_max_output_tokens, effective_task_input_budget,
+    AiRecordKind, AiStreamChunk, AiTaskAttempt, AiTaskStarted, ApiError, Arc, AtomicBool, Emitter,
+    HashSet, ProjectState, effective_max_output_tokens, effective_task_input_budget,
     generate_with_task_fallback, load_ai_task_preference, normalized_document_json,
-    persist_ai_run_request, sync_model_profile, task_generation_options,
+    persist_ai_run_request, sync_and_record_ai_fallback, sync_model_profile, task_generation_options,
     truncate_text_to_char_budget,
 };
 use codec::{
@@ -197,7 +197,40 @@ pub(super) async fn generate_consistency_review_proposal(
         stream,
         true,
         Arc::clone(&cancelled),
-        |_, _| Ok(()),
+        |fallback, reason| {
+            let mut manager = state
+                .manager
+                .lock()
+                .map_err(|_| novel_infrastructure::AiError::ProviderUnavailable)?;
+            sync_and_record_ai_fallback(
+                &mut manager,
+                task_id,
+                AiRecordKind::Task,
+                fallback,
+                reason,
+            )?;
+            drop(manager);
+            persist_ai_run_request(
+                state,
+                task_id,
+                fallback,
+                &extraction_context,
+                stream,
+                true,
+                generation_options,
+            )
+            .map_err(|_| novel_infrastructure::AiError::InvalidResponse)?;
+            let _ = app.emit(
+                "ai-task-attempt",
+                AiTaskAttempt {
+                    task_id,
+                    attempt: 2,
+                    profile_name: fallback.name.clone(),
+                    fallback_reason: Some(reason.to_owned()),
+                },
+            );
+            Ok(())
+        },
         |chunk| {
             let _ = app.emit(
                 "ai-task-chunk",
@@ -220,7 +253,6 @@ pub(super) async fn generate_consistency_review_proposal(
         }
     };
     let mut active_profile = profile.clone();
-    let mut fallback_recorded = false;
     let mut stage_requests = vec![review_stage_request(
         novel_infrastructure::ReviewStage::ClaimExtraction,
         claim_outcome.fallback_profile.as_ref().unwrap_or(&profile),
@@ -235,26 +267,6 @@ pub(super) async fn generate_consistency_review_proposal(
             active_secret =
                 novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?;
         }
-        if let Ok(mut manager) = state.manager.lock() {
-            let _ = manager.record_ai_task_fallback(
-                task_id,
-                active_profile.id,
-                claim_outcome
-                    .fallback_reason
-                    .as_deref()
-                    .unwrap_or("UNKNOWN"),
-            );
-            fallback_recorded = true;
-        }
-        let _ = app.emit(
-            "ai-task-attempt",
-            AiTaskAttempt {
-                task_id,
-                attempt: 2,
-                profile_name: active_profile.name.clone(),
-                fallback_reason: claim_outcome.fallback_reason.clone(),
-            },
-        );
     }
     let Ok((mut claims, mut omitted_items)) =
         parse_review_claims(review_purpose, &claim_outcome.output, &blocks)
@@ -355,6 +367,7 @@ pub(super) async fn generate_consistency_review_proposal(
             code: "INVALID_INPUT",
             message: error.to_string(),
         })?;
+        let mut attempted_profile = active_profile.clone();
         let outcome = generate_with_task_fallback(
             state,
             &task_preference,
@@ -365,7 +378,41 @@ pub(super) async fn generate_consistency_review_proposal(
             false,
             true,
             Arc::clone(&cancelled),
-            |_, _| Ok(()),
+            |fallback, reason| {
+                let mut manager = state
+                    .manager
+                    .lock()
+                    .map_err(|_| novel_infrastructure::AiError::ProviderUnavailable)?;
+                sync_and_record_ai_fallback(
+                    &mut manager,
+                    task_id,
+                    AiRecordKind::Task,
+                    fallback,
+                    reason,
+                )?;
+                drop(manager);
+                persist_ai_run_request(
+                    state,
+                    task_id,
+                    fallback,
+                    &semantic_context,
+                    false,
+                    true,
+                    generation_options,
+                )
+                .map_err(|_| novel_infrastructure::AiError::InvalidResponse)?;
+                attempted_profile = fallback.clone();
+                let _ = app.emit(
+                    "ai-task-attempt",
+                    AiTaskAttempt {
+                        task_id,
+                        attempt: 2,
+                        profile_name: fallback.name.clone(),
+                        fallback_reason: Some(reason.to_owned()),
+                    },
+                );
+                Ok(())
+            },
             |_| {},
         )
         .await;
@@ -374,7 +421,7 @@ pub(super) async fn generate_consistency_review_proposal(
             Err(error) => {
                 stage_requests.push(review_stage_request(
                     novel_infrastructure::ReviewStage::SemanticReview,
-                    &active_profile,
+                    &attempted_profile,
                     &semantic_context,
                     None,
                     format!("FAILED:{}", error.code()),
@@ -386,6 +433,13 @@ pub(super) async fn generate_consistency_review_proposal(
                     }
                     clear_review_cancellation(state, task_id);
                     return Err(ApiError::from(error));
+                }
+                if attempted_profile.id != active_profile.id {
+                    if let Some(secret_ref) = attempted_profile.secret_ref.as_deref() {
+                        active_secret = novel_infrastructure::SecretStore::get(secret_ref)
+                            .map_err(ApiError::from)?;
+                    }
+                    active_profile = attempted_profile;
                 }
                 for claim in batch {
                     model_findings.push(novel_infrastructure::ReviewFinding {
@@ -420,23 +474,6 @@ pub(super) async fn generate_consistency_review_proposal(
                 active_secret =
                     novel_infrastructure::SecretStore::get(secret_ref).map_err(ApiError::from)?;
             }
-            if !fallback_recorded && let Ok(mut manager) = state.manager.lock() {
-                let _ = manager.record_ai_task_fallback(
-                    task_id,
-                    active_profile.id,
-                    outcome.fallback_reason.as_deref().unwrap_or("UNKNOWN"),
-                );
-                fallback_recorded = true;
-            }
-            let _ = app.emit(
-                "ai-task-attempt",
-                AiTaskAttempt {
-                    task_id,
-                    attempt: 2,
-                    profile_name: active_profile.name.clone(),
-                    fallback_reason: outcome.fallback_reason.clone(),
-                },
-            );
         }
         let parsed = parse_semantic_review(&outcome.output, batch, &batch_evidence);
         let Ok((summary, findings, semantic_omitted)) = parsed else {

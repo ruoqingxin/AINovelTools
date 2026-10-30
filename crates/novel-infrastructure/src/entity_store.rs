@@ -1,5 +1,8 @@
 use super::*;
 
+mod deletion;
+pub use deletion::{DeleteEntitiesInput, EntityDeleteTarget, EntityDeletionPreview};
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityCard {
@@ -11,6 +14,12 @@ pub struct EntityCard {
 pub enum EntityStoreError {
     #[error("no project is open")]
     NoProject,
+    #[error("当前项目已切换，未删除任何实体。")]
+    WrongProject,
+    #[error("请选择 1 至 200 个不重复的实体。")]
+    InvalidDeletion,
+    #[error("实体仍被引用，未删除任何条目：{0}。请解除关联或改用归档。")]
+    Referenced(String),
     #[error("entity does not exist: {0}")]
     MissingEntity(Uuid),
     #[error("entity revision does not exist: {0}")]
@@ -442,7 +451,7 @@ impl Database {
 mod tests {
     use super::*;
 
-    fn input(name: &str) -> EntityInput {
+    pub(super) fn input(name: &str) -> EntityInput {
         EntityInput {
             id: None,
             entity_type: EntityType::Character,

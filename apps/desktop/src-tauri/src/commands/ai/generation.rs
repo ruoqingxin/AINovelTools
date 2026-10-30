@@ -1,10 +1,12 @@
 use super::review::generate_consistency_review_proposal;
 use super::{
-    AiStreamChunk, AiTaskAttempt, AiTaskStarted, ApiError, Arc, AtomicBool, Emitter, ProjectState,
+    AiRecordKind, AiStreamChunk, AiTaskAttempt, AiTaskStarted, ApiError, Arc, AtomicBool, Emitter,
+    ProjectState,
     assemble_task_context, context_option, current_consistency_review_context_version,
     effective_max_output_tokens, effective_task_input_budget, generate_with_task_fallback,
     incomplete_generation_failure, load_ai_task_preference, normalized_document_json,
-    persist_ai_run_request, sync_model_profile, task_generation_options,
+    persist_ai_run_request, sync_and_record_ai_fallback, sync_model_profile,
+    task_generation_options,
 };
 
 pub(super) struct ProposalGenerationInput {
@@ -267,9 +269,13 @@ async fn generate_writing_proposal(
                 .manager
                 .lock()
                 .map_err(|_| novel_infrastructure::AiError::ProviderUnavailable)?;
-            sync_model_profile(&mut manager, fallback)
-                .map_err(|_| novel_infrastructure::AiError::InvalidResponse)?;
-            manager.record_ai_task_fallback(task_id, fallback.id, reason)?;
+            sync_and_record_ai_fallback(
+                &mut manager,
+                task_id,
+                AiRecordKind::Task,
+                fallback,
+                reason,
+            )?;
             let (endpoint, body) = state.gateway.request_preview_with_options(
                 fallback,
                 &context,

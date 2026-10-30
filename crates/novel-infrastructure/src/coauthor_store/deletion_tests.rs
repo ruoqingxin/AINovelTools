@@ -79,6 +79,7 @@ fn migration_66_rolls_back_and_retries_without_changing_existing_discussions() {
         [], |row| row.get::<_, i64>(0)).unwrap(), 0);
     db.connection.execute_batch("DROP TRIGGER fail66").unwrap();
     db.migrate_discussion_session_deletion().unwrap();
+    db.migrate_entity_deletion().unwrap();
     assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(db.get_discussion_session(scope.session_id).unwrap().unwrap().title, "境界");
     drop(manager);

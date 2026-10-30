@@ -568,6 +568,7 @@ fn migration_52_rolls_back_new_tables_on_failure_and_preserves_formal_text_on_re
     db.migrate_coauthor_decision_consumers().unwrap();
     db.connection.execute_batch("ALTER TABLE discussion_sessions DROP COLUMN deleted_at").unwrap();
     db.migrate_discussion_session_deletion().unwrap();
+    db.migrate_entity_deletion().unwrap();
     assert_eq!(db.health().unwrap().schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         db.current_manuscript(chapter.id).unwrap().unwrap(),

@@ -1,6 +1,7 @@
 export type AiFailureKind =
   | "AUTH"
   | "CANCELLED"
+  | "CONFIG"
   | "CONTENT_POLICY"
   | "CONTEXT_LIMIT"
   | "INVALID_RESPONSE"
@@ -22,6 +23,12 @@ const classifications: Array<{
   hint: string;
   patterns: string[];
 }> = [
+  {
+    kind: "CONFIG",
+    label: "模型配置不可用",
+    hint: "请先在“模型 API”和“AI 任务模型”中检查并重新选择有效模型，再提交任务。",
+    patterns: ["model profile does not exist", "model profile requires an api key", "model_secret_missing"],
+  },
   {
     kind: "CANCELLED",
     label: "任务已取消",

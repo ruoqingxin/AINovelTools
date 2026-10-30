@@ -1,8 +1,8 @@
 use super::{
-    AiGenerationOutcome, ApiError, Arc, AtomicBool, Digest, HashMap, HashSet, Instant, Manager,
-    PLANNING_CONTEXT_RESERVE_TOKENS, PlanningAiJobInput, ProjectState, Serialize, Sha256,
-    context_option, effective_task_input_budget, generate_with_task_fallback,
-    load_ai_task_preference, task_generation_options,
+    AiGenerationOutcome, AiRecordKind, ApiError, Arc, AtomicBool, Digest, HashMap, HashSet, Instant,
+    Manager, PLANNING_CONTEXT_RESERVE_TOKENS, PlanningAiJobInput, ProjectState, Serialize, Sha256,
+    context_option, effective_task_input_budget, generate_with_task_fallback, load_ai_task_preference,
+    sync_and_record_ai_fallback, sync_model_profile, task_generation_options,
 };
 
 pub(crate) fn effective_max_output_tokens(
@@ -1333,6 +1333,11 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
             fail_planning_job(&state, job.id, "无法写入 AI 运行记录");
             return true;
         };
+        if let Err(error) = sync_model_profile(&mut manager, &profile) {
+            drop(manager);
+            fail_planning_job(&state, job.id, format!("无法同步 AI 模型配置：{error}"));
+            return true;
+        }
         match manager.start_ai_run(novel_infrastructure::AiRunStart {
             task: task_kind,
             source: novel_infrastructure::AiRunSource::Planning,
@@ -1379,7 +1384,54 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
         true,
         false,
         Arc::clone(&cancelled),
-        |_, _| Ok(()),
+        |fallback, reason| {
+            let (endpoint, request_body) = state.gateway.request_preview_with_options(
+                fallback,
+                &context,
+                true,
+                false,
+                generation_options,
+            );
+            input.final_request_endpoint = Some(endpoint);
+            input.final_request_estimated_input_tokens = Some(context.estimated_input_tokens);
+            input.final_request_body = Some(
+                serde_json::to_string_pretty(&request_body)
+                    .map_err(|_| novel_infrastructure::AiError::ContextSerialization)?,
+            );
+            let payload = serde_json::to_string(&input)
+                .map_err(|_| novel_infrastructure::AiError::ContextSerialization)?;
+            let mut manager = state
+                .manager
+                .lock()
+                .map_err(|_| novel_infrastructure::AiError::ProviderUnavailable)?;
+            sync_and_record_ai_fallback(
+                &mut manager,
+                run_id,
+                AiRecordKind::Run,
+                fallback,
+                reason,
+            )?;
+            manager
+                .update_job_payload(job.id, payload)
+                .map_err(|_| novel_infrastructure::AiError::InvalidResponse)?;
+            manager.record_ai_run_request(
+                run_id,
+                input.final_request_endpoint.as_deref().unwrap_or_default(),
+                input.final_request_body.as_deref().unwrap_or_default(),
+            )?;
+            drop(manager);
+            append_planning_job_event(
+                &state,
+                job.id,
+                "FALLBACK",
+                format!(
+                    "主模型调用失败（{reason}），正在切换到备用模型“{}”",
+                    fallback.name
+                ),
+                35,
+            );
+            Ok(())
+        },
         move |chunk| {
             received_chars += chunk.chars().count();
             let progress = u8::try_from(35 + (received_chars / 120).min(50)).unwrap_or(u8::MAX);
@@ -1409,48 +1461,8 @@ pub(crate) async fn run_next_planning_ai_job(app: &tauri::AppHandle) -> bool {
                 completion,
                 finish_reason,
                 usage,
-                fallback_profile,
-                fallback_reason,
+                ..
             } = outcome;
-            if let Some(fallback) = fallback_profile.as_ref() {
-                if let Ok(mut manager) = state.manager.lock() {
-                    let _ = manager.record_ai_run_fallback(
-                        run_id,
-                        fallback.id,
-                        fallback_reason.as_deref().unwrap_or("UNKNOWN"),
-                    );
-                    let (endpoint, request_body) = state.gateway.request_preview_with_options(
-                        fallback,
-                        &context,
-                        true,
-                        false,
-                        generation_options,
-                    );
-                    input.final_request_endpoint = Some(endpoint);
-                    input.final_request_estimated_input_tokens =
-                        Some(context.estimated_input_tokens);
-                    input.final_request_body = serde_json::to_string_pretty(&request_body).ok();
-                    if let Ok(payload) = serde_json::to_string(&input) {
-                        let _ = manager.update_job_payload(job.id, payload);
-                    }
-                    let _ = manager.record_ai_run_request(
-                        run_id,
-                        input.final_request_endpoint.as_deref().unwrap_or_default(),
-                        input.final_request_body.as_deref().unwrap_or_default(),
-                    );
-                }
-                append_planning_job_event(
-                    &state,
-                    job.id,
-                    "FALLBACK",
-                    format!(
-                        "主模型调用失败（{}），已切换到备用模型“{}”",
-                        fallback_reason.as_deref().unwrap_or("UNKNOWN"),
-                        fallback.name
-                    ),
-                    35,
-                );
-            }
             let Ok(mut manager) = state.manager.lock() else {
                 return true;
             };

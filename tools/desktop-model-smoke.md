@@ -36,6 +36,23 @@ limits, interruption, malformed input and body timeout classification. The
 standard SSE parser discards events without a terminating blank line at EOF;
 it does not synthesize a completed event from unfinished data.
 
+## Model Synchronization
+
+For a focused global-to-project model synchronization regression check:
+
+```powershell
+node tools/desktop-model-sync-smoke.mjs
+```
+
+This uses the same build and Playwright prerequisites, isolated application
+settings and synthetic loopback credentials. It covers file import through the
+desktop UI, fresh projects, project switching, updated model settings, chapter
+extraction, background planning, writing and both consistency-review stages.
+Successful and failed fallback calls must synchronize the attempted profile and
+save its request snapshot before contacting the provider. It also checks invalid
+chapter-extraction JSON, multi-batch review failures, and preservation of saved
+manuscripts and unadopted entity candidates. It never contacts a cloud model.
+
 ## Optional Cloud Run
 
 Cloud calls require explicit approval for possible paid usage and both flags:

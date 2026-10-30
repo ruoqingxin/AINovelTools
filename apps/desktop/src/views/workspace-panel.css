@@ -16,6 +16,33 @@
 }
 .workspace-panel::backdrop { background: #20283366; }
 .workspace-panel[hidden] { display: none; }
+.workspace-panel[aria-modal="false"]:not([data-docked="true"]) { z-index: 100; }
+.workspace-panel[data-resizable="true"]:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--workspace-panel-width, 920px), calc(100vw - 144px));
+  overflow: hidden;
+}
+.workspace-panel[data-resizable="true"] > .workspace-panel-heading { flex-shrink: 0; padding-left: 22px; }
+.workspace-panel[data-resizable="true"] > .workspace-panel-body { flex: 1; min-height: 0; overflow: auto; padding-left: 22px; }
+.workspace-panel-resize {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  width: 10px;
+  color: var(--muted);
+  cursor: ew-resize;
+  touch-action: none;
+}
+.workspace-panel-resize:hover, .workspace-panel-resize:focus-visible, .workspace-panel[data-resizing="true"] .workspace-panel-resize {
+  background: var(--surface-subtle);
+  color: var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.workspace-panel[data-resizing="true"] { user-select: none; }
 .workspace-panel[data-docked="true"] {
   position: sticky;
   inset: auto;

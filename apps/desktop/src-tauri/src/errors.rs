@@ -152,6 +152,9 @@ impl From<novel_infrastructure::EntityStoreError> for ApiError {
     fn from(error: novel_infrastructure::EntityStoreError) -> Self {
         let code = match error {
             novel_infrastructure::EntityStoreError::NoProject => "NO_PROJECT_OPEN",
+            novel_infrastructure::EntityStoreError::WrongProject => "WRONG_PROJECT",
+            novel_infrastructure::EntityStoreError::InvalidDeletion => "INVALID_INPUT",
+            novel_infrastructure::EntityStoreError::Referenced(_) => "ENTITY_REFERENCED",
             novel_infrastructure::EntityStoreError::MissingEntity(_)
             | novel_infrastructure::EntityStoreError::MissingRevision(_) => "NOT_FOUND",
             novel_infrastructure::EntityStoreError::Contract(

@@ -50,8 +50,11 @@ pub(crate) struct PlanningAiJobInput {
 pub(crate) struct ExtractEntitiesInput {
     profile_id: uuid::Uuid,
     entity_type: novel_infrastructure::EntityType,
+    #[serde(default)]
     entity_name: String,
+    #[serde(default)]
     brief_summary: String,
+    #[serde(default)]
     applicability_scope: String,
     source_text: String,
     user_guidance: Option<String>,
@@ -572,8 +575,10 @@ mod generation;
 mod model_settings;
 mod planning;
 mod review;
+mod tracking;
 
 pub(crate) use extraction::*;
 pub(crate) use generation::*;
 pub(crate) use model_settings::*;
 pub(crate) use planning::*;
+pub(crate) use tracking::*;

@@ -12,6 +12,9 @@ describe("classifyAiFailure", () => {
     ["network connection reset", "NETWORK"],
     ["模型达到最大输出长度，返回内容未写完", "OUTPUT_TRUNCATED"],
     ["任务已取消", "CANCELLED"],
+    ["model profile does not exist: fixture-id", "CONFIG"],
+    ["model profile requires an API key", "CONFIG"],
+    ["MODEL_SECRET_MISSING", "CONFIG"],
   ])("classifies %s as %s", (message, kind) => {
     expect(classifyAiFailure(message).kind).toBe(kind);
   });
@@ -21,5 +24,11 @@ describe("classifyAiFailure", () => {
 
     expect(failure.kind).toBe("UNKNOWN");
     expect(failure.hint).toContain("直接重试");
+  });
+
+  it("does not suggest blind retries for unavailable model settings", () => {
+    const failure = classifyAiFailure("model profile does not exist: fixture-id");
+    expect(failure.hint).toContain("重新选择有效模型");
+    expect(failure.hint).not.toContain("直接重试");
   });
 });

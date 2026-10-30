@@ -180,6 +180,7 @@ fn migration_65_backfills_exact_receipts_and_unknown_legacy_coverage_atomically_
     f.db().migrate_coauthor_decision_consumers().unwrap();
     f.db().connection.execute_batch("ALTER TABLE discussion_sessions DROP COLUMN deleted_at").unwrap();
     f.db().migrate_discussion_session_deletion().unwrap();
+    f.db().migrate_entity_deletion().unwrap();
     assert_eq!(f.db().health().unwrap().schema_version,CURRENT_SCHEMA_VERSION);
     assert_eq!(f.page(false,0).unknown_change_sets,1);
     assert_eq!(f.page(false,0).entries.len(),2);

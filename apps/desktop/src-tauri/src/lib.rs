@@ -63,6 +63,7 @@ use commands::discussion::{
     summarize_discussion_design,
 };
 use commands::entities::{
+    delete_entities, preview_entity_deletion,
     get_chapter_entity_references, import_entities, list_entities, list_entity_cards,
     list_entity_chapters, list_entity_revisions, save_chapter_entity_references,
     set_entity_archived, upsert_entity,
@@ -179,6 +180,8 @@ pub fn run() {
             import_entities,
             list_entity_revisions,
             set_entity_archived,
+            preview_entity_deletion,
+            delete_entities,
             create_project,
             open_project,
             close_project,

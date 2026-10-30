@@ -1,6 +1,32 @@
 use crate::{ApiError, ProjectState};
 
 #[tauri::command]
+pub(crate) fn preview_entity_deletion(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_infrastructure::DeleteEntitiesInput,
+) -> Result<Vec<novel_infrastructure::EntityDeletionPreview>, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .preview_entity_deletion(&input)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn delete_entities(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_infrastructure::DeleteEntitiesInput,
+) -> Result<(), ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .delete_entities(input)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn list_entity_cards(
     state: tauri::State<'_, ProjectState>,
     include_archived: bool,
