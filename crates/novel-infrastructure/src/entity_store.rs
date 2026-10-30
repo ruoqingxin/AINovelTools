@@ -2,6 +2,13 @@ use super::*;
 
 mod deletion;
 pub use deletion::{DeleteEntitiesInput, EntityDeleteTarget, EntityDeletionPreview};
+mod movement;
+pub use movement::{EntityMoveTarget, MoveEntitiesInput};
+mod import_review;
+pub use import_review::{
+    EntityImportCandidate, EntityImportPreview, EntityImportReceipt, EntityImportTarget,
+    ReviewEntityImportInput,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -18,7 +25,15 @@ pub enum EntityStoreError {
     WrongProject,
     #[error("请选择 1 至 200 个不重复的实体。")]
     InvalidDeletion,
-    #[error("实体仍被引用，未删除任何条目：{0}。请解除关联或改用归档。")]
+    #[error("当前项目已切换，未移动任何实体。")]
+    WrongMoveProject,
+    #[error("请选择 1 至 200 个不重复的实体，并提供有效版本。")]
+    InvalidMove,
+    #[error("当前项目已切换，未写入任何实体。")]
+    WrongImportProject,
+    #[error("导入需包含 1 至 200 条候选，合并目标必须是同类型、使用中且版本未变化的实体。请重新选择目标。")]
+    InvalidImport,
+    #[error("实体仍被引用，未删除任何条目：{0}。请解除关联或改用停用。")]
     Referenced(String),
     #[error("entity does not exist: {0}")]
     MissingEntity(Uuid),

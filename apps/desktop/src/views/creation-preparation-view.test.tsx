@@ -315,7 +315,7 @@ describe("creation preparation workbench", () => {
     await waitFor(() => expect(screen.getByRole("combobox", { name: "添加关联资料" })).toBeEnabled());
     expect(screen.queryByText("其他作品的人物")).not.toBeInTheDocument();
     expect(screen.getAllByText("关联资料已不可用")).toHaveLength(2);
-    expect(screen.getByText(/已归档/)).toBeInTheDocument();
+    expect(screen.getByText(/已停用/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "AI 推敲讨论稿" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "取消关联林舟" }));
     fireEvent.click(screen.getAllByRole("button", { name: "取消关联不可用资料" })[0]);

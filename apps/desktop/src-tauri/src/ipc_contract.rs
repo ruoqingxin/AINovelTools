@@ -102,11 +102,41 @@ mod tests {
         };
         assert_eq!(keys("requests"), keys("responses"));
         assert_eq!(keys("requests"), keys("errors"));
-        assert_eq!(keys("requests").len(), 192);
+        assert_eq!(keys("requests").len(), 195);
         assert_eq!(
             keys("events"),
             ["ai-task-attempt", "ai-task-chunk", "ai-task-started", "coauthor-progress"]
         );
+    }
+
+    #[test]
+    fn reviewed_import_requires_project_and_exact_target_snapshots() {
+        let schema = super::schema();
+        let input = definition(&schema, "requests", "ReviewEntityImportInput");
+        for field in ["expectedProjectId", "sourceName", "items"] {
+            assert!(required(input, field));
+        }
+        let target = definition(&schema, "requests", "EntityImportTarget");
+        for field in ["id", "expectedVersion", "expectedRevisionId"] {
+            assert!(required(target, field));
+        }
+        let candidate = definition(&schema, "requests", "EntityImportCandidate");
+        assert!(candidate["properties"].get("fixedAttributesJson").is_none());
+        assert!(candidate["properties"].get("sourceVersion").is_none());
+    }
+
+    #[test]
+    fn entity_moves_require_project_and_version_snapshots_and_extraction_reports_types() {
+        let schema = super::schema();
+        let input = definition(&schema, "requests", "MoveEntitiesInput");
+        for field in ["expectedProjectId", "entityType", "entities"] {
+            assert!(required(input, field));
+        }
+        let target = definition(&schema, "requests", "EntityMoveTarget");
+        assert!(required(target, "id"));
+        assert!(required(target, "expectedVersion"));
+        let candidate = definition(&schema, "responses", "ExtractedEntity");
+        assert!(required(candidate, "entityType"));
     }
 
     #[test]

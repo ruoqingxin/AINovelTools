@@ -13,6 +13,7 @@ use tauri::{Emitter, Manager};
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExtractedEntity {
+    pub entity_type: novel_infrastructure::EntityType,
     pub name: String,
     pub description: String,
     pub aliases: Vec<String>,

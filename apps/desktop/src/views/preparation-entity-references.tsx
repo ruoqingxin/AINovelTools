@@ -40,7 +40,7 @@ export function PreparationEntityReferences({ model, references, disabled, readO
         {linked.map(({ id, card }) => <div className="preparation-reference-row" key={id}>
           {card && project.data ? <details>
             <summary>{card.revision.name}<small>{entityTypeLabels[card.entity.entityType]} · v{card.revision.revision}
-              {card.entity.lifecycleStatus === "ARCHIVED" ? " · 已归档" : ""}</small></summary>
+              {card.entity.lifecycleStatus === "ARCHIVED" ? " · 已停用" : ""}</small></summary>
             <p>{card.revision.description}</p>
             <WorkspaceLink href={entityHref(id, project.data.projectId)}>查看资料<ArrowUpRight size={12} /></WorkspaceLink>
           </details> : <span>关联资料已不可用</span>}

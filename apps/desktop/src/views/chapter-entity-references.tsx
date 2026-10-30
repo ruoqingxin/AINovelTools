@@ -102,7 +102,7 @@ export function ChapterEntityReferencePanel({ chapterId, active, onPendingChange
             <label><input type="checkbox" checked={ids.includes(entity.id)}
               disabled={reloading || !ids.includes(entity.id) && (ids.length >= 8 || entity.lifecycleStatus !== "ACTIVE")}
               onChange={() => toggle(entity.id)} />
-              <span><strong>{revision.name}</strong><small>{entityTypeLabels[entity.entityType]} · 修订 {revision.revision}{entity.lifecycleStatus === "ARCHIVED" ? " · 已归档" : ""}</small></span></label>
+              <span><strong>{revision.name}</strong><small>{entityTypeLabels[entity.entityType]} · 修订 {revision.revision}{entity.lifecycleStatus === "ARCHIVED" ? " · 已停用" : ""}</small></span></label>
             <a href={entityHref(entity.id, baseline.projectId, entityChapterHref(chapterId, baseline.projectId))} title={`查看${revision.name}`} aria-label={`查看${revision.name}`}><BookOpenText size={14} /></a>
           </div>)}
           {!items.length ? <p>没有匹配的资料。</p> : null}

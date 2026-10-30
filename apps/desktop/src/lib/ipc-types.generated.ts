@@ -1,8 +1,8 @@
 // Generated from Rust/Serde. Run `pnpm generate:ipc`; do not edit.
 export type InputExtractionItemStatus = "PENDING_REVIEW" | "ACCEPTED" | "DEFERRED" | "REJECTED";
 export type InputPlanningStoryState = "UNSET" | "UNKNOWN" | "DEFERRED" | "AUTHOR_RESERVED" | "AI_SUGGESTED" | "CONFIRMED" | "LOCKED" | "RETIRED";
-export type InputAiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE" | "CONSISTENCY_CHECK";
 export type InputEntityType = "CHARACTER" | "LOCATION" | "FACTION" | "ITEM" | "CONCEPT";
+export type InputAiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE" | "CONSISTENCY_CHECK";
 export type InputKnowledgeLifecycleStatus = "ACTIVE" | "NEEDS_REVIEW" | "ARCHIVED";
 export type InputDiscussionCandidateKind = "NOTE" | "PLANNING" | "SETTING" | "FORESHADOWING";
 export type InputDiscussionScopeKind = "PROJECT" | "VOLUME" | "CHAPTER" | "SCENE" | "SELECTION";
@@ -37,6 +37,8 @@ export type ExtractionItemStatus = "PENDING_REVIEW" | "ACCEPTED" | "DEFERRED" | 
 export type PlanNodeKind = "WORK_DESIGN" | "OUTLINE" | "VOLUME_MANAGER" | "VOLUME" | "CHAPTER" | "SCENE";
 export type PlanningStoryState = "UNSET" | "UNKNOWN" | "DEFERRED" | "AUTHOR_RESERVED" | "AI_SUGGESTED" | "CONFIRMED" | "LOCKED" | "RETIRED";
 export type CoauthorDocumentKind = "UNCLASSIFIED" | "SETTING" | "OUTLINE" | "MANUSCRIPT";
+export type EntityType = "CHARACTER" | "LOCATION" | "FACTION" | "ITEM" | "CONCEPT";
+export type EntityLifecycleStatus = "ACTIVE" | "ARCHIVED";
 export type DiscussionMessageRole = "USER" | "ASSISTANT";
 export type AiAction = "DRAFT" | "CONTINUE" | "REWRITE" | "POLISH" | "SUMMARIZE" | "CONSISTENCY_CHECK";
 export type ContextAuthority = "PROJECT_SETTING" | "AUTHORITATIVE_FACT" | "TASK_MATERIAL" | "REFERENCE";
@@ -67,8 +69,6 @@ export type ManuscriptExportScope = {
 export type ChapterExtractionProposalStatus = "PENDING_REVIEW" | "PARTIALLY_ACCEPTED" | "DEFERRED" | "ACCEPTED" | "REJECTED";
 export type FeatureStatus = "IMPLEMENTED" | "PARTIAL" | "DECLARED" | "DISABLED";
 export type ChangeSetStatus = "DRAFT" | "IN_REVIEW" | "BLOCKED" | "FINALIZED" | "REJECTED";
-export type EntityType = "CHARACTER" | "LOCATION" | "FACTION" | "ITEM" | "CONCEPT";
-export type EntityLifecycleStatus = "ACTIVE" | "ARCHIVED";
 export type ReviewClaimType = "CHARACTER_STATUS" | "CHARACTER_LOCATION" | "ABILITY_OR_REALM" | "ITEM_POSSESSION" | "RELATION" | "KNOWLEDGE_BOUNDARY" | "REQUIRED_EVENT" | "FORBIDDEN_EVENT" | "ALLOWED_CHARACTER" | "TIME_WINDOW" | "STAGE_BOUNDARY" | "FORESHADOWING_WINDOW" | "PLAN_DEPENDENCY";
 export type FindingSource = "RULE" | "LLM" | "MERGED";
 export type ReviewStatus = "PASS" | "NOTICE" | "WARNING" | "BLOCK" | "UNKNOWN";
@@ -98,6 +98,7 @@ export type IpcErrors = {
     apply_coauthor_branch_decision: ApiError;
     apply_coauthor_branch_merge: ApiError;
     apply_coauthor_proposal: ApiError;
+    apply_entity_import: ApiError;
     ask_project_discussion: ApiError;
     assemble_context_with_project_knowledge: ApiError;
     bootstrap_status: null;
@@ -229,6 +230,7 @@ export type IpcErrors = {
     list_summary_materials: ApiError;
     list_writing_cards: ApiError;
     merge_manuscript: ApiError;
+    move_entities: ApiError;
     move_plan_node: ApiError;
     open_project: ApiError;
     prepare_coauthor_branch_decision: ApiError;
@@ -236,6 +238,7 @@ export type IpcErrors = {
     prepare_coauthor_changeset: ApiError;
     prepare_coauthor_reversal: ApiError;
     preview_entity_deletion: ApiError;
+    preview_entity_import: ApiError;
     promote_discussion_candidate: ApiError;
     promote_discussion_candidate_to_foreshadowing_review: ApiError;
     publish_coauthor_document: ApiError;
@@ -321,6 +324,7 @@ export type IpcRequests = {
     apply_coauthor_branch_decision: InputArgsApplyCoauthorBranchDecision;
     apply_coauthor_branch_merge: InputArgsApplyCoauthorBranchMerge;
     apply_coauthor_proposal: InputArgsApplyCoauthorProposal;
+    apply_entity_import: InputArgsApplyEntityImport;
     ask_project_discussion: InputArgsAskProjectDiscussion;
     assemble_context_with_project_knowledge: InputArgsAssembleContextWithProjectKnowledge;
     bootstrap_status: InputArgsBootstrapStatus;
@@ -452,6 +456,7 @@ export type IpcRequests = {
     list_summary_materials: InputArgsListSummaryMaterials;
     list_writing_cards: InputArgsListWritingCards;
     merge_manuscript: InputArgsMergeManuscript;
+    move_entities: InputArgsMoveEntities;
     move_plan_node: InputArgsMovePlanNode;
     open_project: InputArgsOpenProject;
     prepare_coauthor_branch_decision: InputArgsPrepareCoauthorBranchDecision;
@@ -459,6 +464,7 @@ export type IpcRequests = {
     prepare_coauthor_changeset: InputArgsPrepareCoauthorChangeset;
     prepare_coauthor_reversal: InputArgsPrepareCoauthorReversal;
     preview_entity_deletion: InputArgsPreviewEntityDeletion;
+    preview_entity_import: InputArgsPreviewEntityImport;
     promote_discussion_candidate: InputArgsPromoteDiscussionCandidate;
     promote_discussion_candidate_to_foreshadowing_review: InputArgsPromoteDiscussionCandidateToForeshadowingReview;
     publish_coauthor_document: InputArgsPublishCoauthorDocument;
@@ -560,6 +566,27 @@ export type InputArgsApplyCoauthorProposal = {
     expectedVersion: number;
     runId: string;
     scope: InputCoauthorScope;
+};
+export type InputArgsApplyEntityImport = {
+    input: InputReviewEntityImportInput;
+};
+export type InputReviewEntityImportInput = {
+    expectedProjectId: string;
+    items: InputEntityImportCandidate[];
+    sourceName: string;
+};
+export type InputEntityImportCandidate = {
+    aliases: string[];
+    description: string;
+    entityType: InputEntityType;
+    name: string;
+    tags: string[];
+    target?: InputEntityImportTarget | null;
+};
+export type InputEntityImportTarget = {
+    expectedRevisionId: string;
+    expectedVersion: number;
+    id: string;
 };
 export type InputArgsAskProjectDiscussion = {
     input: InputAskProjectDiscussionInput;
@@ -1220,6 +1247,18 @@ export type InputArgsMergeManuscript = {
     current: string;
     draft: string;
 };
+export type InputArgsMoveEntities = {
+    input: InputMoveEntitiesInput;
+};
+export type InputMoveEntitiesInput = {
+    entities: InputEntityMoveTarget[];
+    entityType: InputEntityType;
+    expectedProjectId: string;
+};
+export type InputEntityMoveTarget = {
+    expectedVersion: number;
+    id: string;
+};
 export type InputArgsMovePlanNode = {
     expectedVersion: number;
     id: string;
@@ -1315,6 +1354,9 @@ export type InputArgsPrepareCoauthorReversal = {
 };
 export type InputArgsPreviewEntityDeletion = {
     input: InputDeleteEntitiesInput;
+};
+export type InputArgsPreviewEntityImport = {
+    input: InputReviewEntityImportInput;
 };
 export type InputArgsPromoteDiscussionCandidate = {
     expectedStatus: InputDiscussionCandidateStatus;
@@ -1650,6 +1692,7 @@ export type IpcResponses = {
     apply_coauthor_branch_decision: CoauthorBranchDecisionAdoption;
     apply_coauthor_branch_merge: CoauthorBranchMerge;
     apply_coauthor_proposal: CoauthorDocument;
+    apply_entity_import: EntityImportReceipt;
     ask_project_discussion: DiscussionExchange;
     assemble_context_with_project_knowledge: ContextPackage;
     bootstrap_status: BootstrapStatus;
@@ -1781,6 +1824,7 @@ export type IpcResponses = {
     list_summary_materials: SummaryMaterial[];
     list_writing_cards: WritingCard[];
     merge_manuscript: MergeResult;
+    move_entities: Entity[];
     move_plan_node: PlanNode;
     open_project: ProjectManifest;
     prepare_coauthor_branch_decision: CoauthorBranchDecisionAdoption;
@@ -1788,6 +1832,7 @@ export type IpcResponses = {
     prepare_coauthor_changeset: CoauthorChangeSet;
     prepare_coauthor_reversal: CoauthorReversal;
     preview_entity_deletion: EntityDeletionPreview[];
+    preview_entity_import: EntityImportPreview[];
     promote_discussion_candidate: DiscussionCandidate;
     promote_discussion_candidate_to_foreshadowing_review: DiscussionCandidate;
     publish_coauthor_document: string;
@@ -1919,6 +1964,20 @@ export type CoauthorDocument = {
     targetKey: string | null;
     targetRevision: string | null;
     title: string;
+    version: number;
+};
+export type EntityImportReceipt = {
+    created: Entity[];
+    merged: Entity[];
+};
+export type Entity = {
+    createdAt: string;
+    currentRevisionId: string;
+    entityType: EntityType;
+    id: string;
+    lifecycleStatus: EntityLifecycleStatus;
+    projectId: string;
+    updatedAt: string;
     version: number;
 };
 export type DiscussionExchange = {
@@ -2418,6 +2477,7 @@ export type ChapterExtractionProposal = {
 export type ExtractedEntity = {
     aliases: string[];
     description: string;
+    entityType: EntityType;
     name: string;
     tags: string[];
 };
@@ -2554,16 +2614,6 @@ export type ChapterEntityReferences = {
 export type EntityCard = {
     entity: Entity;
     revision: EntityRevision;
-};
-export type Entity = {
-    createdAt: string;
-    currentRevisionId: string;
-    entityType: EntityType;
-    id: string;
-    lifecycleStatus: EntityLifecycleStatus;
-    projectId: string;
-    updatedAt: string;
-    version: number;
 };
 export type EntityRevision = {
     aliases: string[];
@@ -3059,6 +3109,23 @@ export type EntityDeletionPreview = {
     blockers: string[];
     id: string;
     name: string;
+};
+export type EntityImportPreview = {
+    after: EntityInput;
+    before: EntityCard | null;
+    incomingCount: number;
+};
+export type EntityInput = {
+    aliases: string[];
+    baseRevisionId: string | null;
+    description: string;
+    entityType: EntityType;
+    expectedVersion: number | null;
+    fixedAttributesJson: string;
+    id: string | null;
+    name: string;
+    sourceVersion: string | null;
+    tags: string[];
 };
 export type CoauthorKnowledgeEvidence = {
     anchorId: string;

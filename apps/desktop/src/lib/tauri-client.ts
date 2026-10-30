@@ -57,12 +57,24 @@ export function importEntities(input: IpcRequests["import_entities"]["input"]) {
   return invoke("import_entities", { input });
 }
 
+export function previewEntityImport(input: IpcRequests["preview_entity_import"]["input"]) {
+  return invoke("preview_entity_import", { input });
+}
+
+export function applyEntityImport(input: IpcRequests["apply_entity_import"]["input"]) {
+  return invoke("apply_entity_import", { input });
+}
+
 export function previewEntityDeletion(input: IpcRequests["preview_entity_deletion"]["input"]) {
   return invoke("preview_entity_deletion", { input });
 }
 
 export function deleteEntities(input: IpcRequests["delete_entities"]["input"]) {
   return invoke("delete_entities", { input });
+}
+
+export function moveEntities(input: IpcRequests["move_entities"]["input"]) {
+  return invoke("move_entities", { input });
 }
 
 export function listEntityRevisions(entityId: string) {

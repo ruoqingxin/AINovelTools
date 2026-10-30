@@ -82,6 +82,8 @@ pub use discussion_store::{
 };
 pub use entity_store::{
     DeleteEntitiesInput, EntityCard, EntityDeleteTarget, EntityDeletionPreview, EntityStoreError,
+    EntityImportCandidate, EntityImportPreview, EntityImportReceipt, EntityImportTarget, ReviewEntityImportInput,
+    EntityMoveTarget, MoveEntitiesInput,
 };
 pub use extraction_store::{
     ChapterExtractionItem, ChapterExtractionProposal, ChapterExtractionProposalStatus,

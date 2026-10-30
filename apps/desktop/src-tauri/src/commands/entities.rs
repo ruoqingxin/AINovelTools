@@ -1,6 +1,45 @@
 use crate::{ApiError, ProjectState};
 
 #[tauri::command]
+pub(crate) fn preview_entity_import(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_infrastructure::ReviewEntityImportInput,
+) -> Result<Vec<novel_infrastructure::EntityImportPreview>, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .preview_entity_import(input)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn apply_entity_import(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_infrastructure::ReviewEntityImportInput,
+) -> Result<novel_infrastructure::EntityImportReceipt, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .apply_entity_import(input)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub(crate) fn move_entities(
+    state: tauri::State<'_, ProjectState>,
+    input: novel_infrastructure::MoveEntitiesInput,
+) -> Result<Vec<novel_infrastructure::Entity>, ApiError> {
+    state
+        .manager
+        .lock()
+        .map_err(|_| ApiError::internal("project mutex poisoned"))?
+        .move_entities(input)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
 pub(crate) fn preview_entity_deletion(
     state: tauri::State<'_, ProjectState>,
     input: novel_infrastructure::DeleteEntitiesInput,
