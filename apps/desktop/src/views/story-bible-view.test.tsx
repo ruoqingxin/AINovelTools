@@ -918,6 +918,9 @@ describe("StoryBibleView", () => {
     expect(await screen.findByRole("button", { name: "主角团 1" })).toBeVisible();
     expect(screen.getByRole("button", { name: "伙伴 0" })).toBeVisible();
     expect(screen.getByRole("button", { name: "忆境体系 0" })).toBeVisible();
+    const characterTree = screen.getByRole("button", { name: "人物 2" }).closest(".entity-list-group")!;
+    expect(Array.from(characterTree.querySelectorAll('[data-nested="true"] .entity-group-heading strong')).map((node) => node.textContent))
+      .toEqual(["主角团", "伙伴", "未分组"]);
     expect(mocks.getEntityGroups).toHaveBeenCalledWith("project-1");
     fireEvent.change(screen.getByLabelText("二级分组筛选"), { target: { value: "cast" } });
     expect(screen.getByRole("button", { name: /沈砚/ })).toBeVisible();

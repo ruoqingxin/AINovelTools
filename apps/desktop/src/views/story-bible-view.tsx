@@ -247,9 +247,9 @@ export function StoryBibleView() {
         const folders = groupData.groups.filter((folder) => folder.entityType === group.entityType);
         if (!folders.length) continue;
         group.children = [
-          { key: `${group.key}:ungrouped`, label: "未分组", entities: group.entities.filter((entity) => !membershipByEntity.has(entity.id)) },
           ...folders.map((folder) => ({ key: folder.id, label: folder.name,
             entities: group.entities.filter((entity) => membershipByEntity.get(entity.id) === folder.id) })),
+          { key: `${group.key}:ungrouped`, label: "未分组", entities: group.entities.filter((entity) => !membershipByEntity.has(entity.id)) },
         ].filter((child) => child.entities.length || !search && sourceFilter === "*" && !tagFilter && groupFilter === "*");
       }
     }

@@ -690,11 +690,14 @@ mod tests {
         let mut f = Fixture::new();
         let group = f.group(EntityType::Character, "Cast");
         let action = f.input(EntityGroupAction::Delete { id: group.id });
+        let foreign_group_id = Uuid::new_v4();
         f.db().connection.execute(
             "INSERT INTO entity_groups(id,project_id,entity_type,name) VALUES(?1,?2,'CHARACTER','Foreign')",
-            rusqlite::params![Uuid::new_v4().to_string(), Uuid::new_v4().to_string()],
+            rusqlite::params![foreign_group_id.to_string(), Uuid::new_v4().to_string()],
         ).unwrap();
         assert_eq!(f.state().groups.len(), 1);
+        let foreign_action = f.input(EntityGroupAction::Delete { id: foreign_group_id });
+        assert!(matches!(f.manager.update_entity_groups(foreign_action), Err(EntityStoreError::MissingGroup(_))));
         f.manager.close();
         let other = f
             .manager
