@@ -1,6 +1,6 @@
 import { RotateCcw } from "lucide-react";
 import { useState } from "react";
-import type { ImportCandidate } from "../lib/entity-import-review";
+import { isImportDetailOf, type ImportCandidate } from "../lib/entity-import-review";
 import type { EntityCard } from "../lib/tauri-client";
 import { SearchField } from "./search-field";
 
@@ -13,15 +13,21 @@ export function EntityImportDestination({ index, item, matches, cards, onChange 
 }) {
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [relatedLimit, setRelatedLimit] = useState(20);
   const target = cards.find((card) => card.entity.id === item.mergeTarget?.id);
   const targetAvailable = target?.entity.entityType === item.entityType && target.entity.lifecycleStatus === "ACTIVE";
   const stale = item.selected && item.mergeTarget && target && (
     target.entity.version !== item.mergeTarget.expectedVersion || target.revision.id !== item.mergeTarget.expectedRevisionId);
   const query = search.normalize("NFKC").trim().toLocaleLowerCase();
   const matchIds = new Set(matches.map((card) => card.entity.id));
+  const related = item.entityType === "CONCEPT" ? cards.filter((card) =>
+    card.entity.entityType === item.entityType && card.entity.lifecycleStatus === "ACTIVE"
+    && !matchIds.has(card.entity.id) && isImportDetailOf(item.name, card.revision)) : [];
+  const relatedIds = new Set(related.map((card) => card.entity.id));
+  const shownRelated = related.slice(0, relatedLimit);
   const results = searchOpen && query ? cards.filter((card) =>
     card.entity.entityType === item.entityType && card.entity.lifecycleStatus === "ACTIVE"
-    && !matchIds.has(card.entity.id)
+    && !matchIds.has(card.entity.id) && !relatedIds.has(card.entity.id)
     && [card.revision.name, ...card.revision.aliases].some((name) =>
       name.normalize("NFKC").toLocaleLowerCase().includes(query))) : [];
   const shownResults = results.slice(0, 20);
@@ -69,7 +75,16 @@ export function EntityImportDestination({ index, item, matches, cards, onChange 
         {matches.map(destination)}
       </div>
     </div> : null}
-    {item.selected && item.mergeTarget && !matchIds.has(item.mergeTarget.id) && target
+    {related.length ? <details className="import-other-entities">
+      <summary>可能属于已有主体 · {related.length}</summary>
+      <div className="import-entity-match-list" role="group" aria-label={`第 ${index + 1} 条候选相关主体`}>
+        {shownRelated.map(destination)}
+      </div>
+      {related.length > relatedLimit ? <button type="button" className="secondary-action"
+        onClick={() => setRelatedLimit((limit) => limit + 20)}>显示更多相关主体（{relatedLimit} / {related.length}）</button> : null}
+    </details> : null}
+    {item.selected && item.mergeTarget && !matchIds.has(item.mergeTarget.id)
+      && !shownRelated.some((card) => card.entity.id === item.mergeTarget?.id) && target
       && !shownResults.some((card) => card.entity.id === target.entity.id)
       ? <div className="import-chosen-entity" role="group" aria-label={`第 ${index + 1} 条候选已选目标`}>{destination(target)}</div> : null}
     {item.selected && item.mergeTarget && !targetAvailable

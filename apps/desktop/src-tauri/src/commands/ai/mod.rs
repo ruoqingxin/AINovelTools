@@ -46,6 +46,14 @@ pub(crate) struct PlanningAiJobInput {
     pub(crate) final_request_estimated_input_tokens: Option<u32>,
 }
 
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub(crate) enum FileEntityGranularity {
+    #[default]
+    Subject,
+    Independent,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExtractEntitiesInput {
@@ -57,6 +65,8 @@ pub(crate) struct ExtractEntitiesInput {
     brief_summary: String,
     #[serde(default)]
     applicability_scope: String,
+    #[serde(default)]
+    granularity: FileEntityGranularity,
     source_text: String,
     user_guidance: Option<String>,
     temperature: Option<f64>,

@@ -121,6 +121,24 @@
 .entity-import-workspace .import-candidate-identity { display: grid; align-content: start; gap: 12px; min-width: 0; }
 .entity-import-workspace .import-merge-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .entity-import-workspace .import-merge-actions > label { flex: 1 1 160px; min-width: 0; }
+.entity-import-workspace .import-granularity { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 13px; }
+.entity-import-workspace .import-granularity-options { display: flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.entity-import-workspace .import-granularity-options label { display: flex; align-items: center; gap: 6px; padding: 8px 12px; cursor: pointer; }
+.entity-import-workspace .import-granularity-options label:has(input:checked) { background: var(--surface-subtle); color: var(--accent); }
+.entity-import-workspace .import-granularity-options input[type="radio"] { width: 14px; min-height: 0; margin: 0; padding: 0; accent-color: var(--accent); }
+.entity-import-workspace .import-source-text { margin-top: 12px; font-size: 12px; color: var(--muted); }
+.entity-import-workspace .import-source-text pre { max-height: 260px; overflow: auto; color: var(--text); }
+.entity-import-workspace .import-organization-suggestions { margin: 12px 0; border-block: 1px solid var(--line); font-size: 13px; }
+.entity-import-workspace .import-organization-suggestions > summary { padding: 12px 0; cursor: pointer; }
+.entity-import-workspace .import-organization-list { max-height: 260px; overflow: auto; }
+.entity-import-workspace .import-organization-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.entity-import-workspace .import-organization-row > div { display: grid; gap: 5px; flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.entity-import-workspace .import-organization-row span { color: var(--muted); font-size: 12px; }
+.entity-import-workspace .import-review-panel > .search-field { margin-block: 12px; }
+.entity-import-workspace .import-candidate-description { display: grid; align-content: start; min-width: 0; gap: 8px; }
+.entity-import-workspace .import-candidate-description .library-advanced { margin: 0; }
+.import-organization-before section { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.import-organization-before h3 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
 .entity-import-workspace .import-duplicate-warning { grid-column: 2 / -1; display: grid; gap: 4px; color: var(--warning, #916318); font-size: 12px; overflow-wrap: anywhere; }
 .entity-import-workspace .import-candidate-disposition { grid-template-columns: 80px minmax(0, 1fr); align-items: center; }
 .entity-import-workspace .import-candidate-destination { grid-column: 2 / -1; display: grid; gap: 10px; min-width: 0; }
@@ -149,6 +167,7 @@
 .entity-import-comparison h4 { margin: 0; color: var(--muted); font-size: 13px; }
 .entity-import-comparison p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.8; }
 .entity-import-resolution { display: grid; gap: 12px; margin-top: 12px; }
+.entity-import-resolution.import-organization-result { margin-top: 0; }
 .entity-import-resolution label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
 .entity-import-resolution input, .entity-import-resolution textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 36px; padding: 8px 10px; border: 1px solid var(--line); background: var(--surface); font: inherit; }
 .entity-import-resolution textarea { min-height: 240px; resize: vertical; line-height: 1.8; }

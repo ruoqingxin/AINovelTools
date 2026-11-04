@@ -21,6 +21,7 @@ export type InputManuscriptExportScope = {
     chapterId: string;
     kind: "CHAPTER";
 };
+export type InputFileEntityGranularity = "SUBJECT" | "INDEPENDENT";
 export type InputReviewPurpose = "ADMISSION" | "MANUSCRIPT";
 export type InputCoauthorDocumentKind = "UNCLASSIFIED" | "SETTING" | "OUTLINE" | "MANUSCRIPT";
 export type InputAiProposalFeedbackRating = "HELPFUL" | "NOT_HELPFUL";
@@ -965,6 +966,7 @@ export type InputExtractEntitiesInput = {
     briefSummary?: string;
     entityName?: string;
     entityType: InputEntityType;
+    granularity?: InputFileEntityGranularity;
     maxOutputTokens?: number | null;
     profileId: string;
     sourceText: string;

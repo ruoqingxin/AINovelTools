@@ -504,6 +504,7 @@ describe("StoryBibleView", () => {
     await prepareImport();
     expect(mocks.extractEntitiesFromText).toHaveBeenCalledWith({
       profileId: "model", entityType: "CHARACTER", sourceText: "资料原文", userGuidance: "",
+      granularity: "SUBJECT",
       temperature: 0.1, maxOutputTokens: 4096,
     });
     expect(mocks.importEntities).not.toHaveBeenCalled();
@@ -512,6 +513,103 @@ describe("StoryBibleView", () => {
     fireEvent.click(screen.getByRole("button", { name: "提取实体" }));
     await waitFor(() => expect(mocks.extractEntitiesFromText).toHaveBeenLastCalledWith(
       expect.objectContaining({ userGuidance: "只整理主角" })));
+  });
+
+  it("defaults to subject extraction and allows independent entries on an explicit rerun", async () => {
+    await prepareImport();
+    expect(screen.getByRole("radio", { name: "完整主体" })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: "独立条目" }));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "提取实体" }));
+    await waitFor(() => expect(mocks.extractEntitiesFromText).toHaveBeenLastCalledWith(
+      expect.objectContaining({ granularity: "INDEPENDENT", sourceText: "资料原文" })));
+    expect(screen.getByText("资料原文 · 资料.md").closest("details")?.querySelector("pre")).toHaveTextContent("资料原文");
+  });
+
+  async function prepareOrganization() {
+    mocks.extractEntitiesFromText.mockResolvedValue([
+      { entityType: "CONCEPT", name: "遗藏", description: "## 概述\n遗藏的原文定义。", aliases: ["古藏"], tags: ["世界"] },
+      { entityType: "CONCEPT", name: "遗藏划分", description: "等级表与判定标准，保留甲乙两级。", aliases: [], tags: ["等级"] },
+      { entityType: "CONCEPT", name: "魂印", description: "独立概念，不应被一并合入。", aliases: [], tags: [] },
+      { entityType: "CONCEPT", name: "遗藏发现与重复接入", description: "需持魂印；仅一次，特定条件下例外。", aliases: [], tags: ["接入"] },
+    ]);
+    await prepareImport(false, "CONCEPT");
+    await screen.findByDisplayValue("遗藏");
+    await waitFor(() => expect(screen.getByRole("button", { name: "整理为「遗藏」" })).toBeEnabled());
+  }
+
+  it("reviews subject organization without writing, preserves details, and lets the author edit or undo only that group", async () => {
+    await prepareOrganization();
+    expect(screen.getByRole("button", { name: "确认写入 4 条" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "整理为「遗藏」" }));
+    let review = await screen.findByRole("dialog", { name: "主体整理审核" });
+    expect(review).toHaveTextContent("3 条候选 → 1 个主体");
+    expect(within(review).getByRole("separator", { name: "调整主体整理审核宽度" })).toBeInTheDocument();
+    const content = within(review).getByLabelText("主体内容");
+    expect((content as HTMLTextAreaElement).value).toContain("等级表与判定标准，保留甲乙两级。");
+    expect((content as HTMLTextAreaElement).value).toContain("需持魂印；仅一次，特定条件下例外。");
+    fireEvent.click(within(review).getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("button", { name: "确认写入 4 条" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "整理为「遗藏」" }));
+    review = await screen.findByRole("dialog", { name: "主体整理审核" });
+    fireEvent.change(within(review).getByLabelText("主体名称"), { target: { value: "遗藏体系" } });
+    fireEvent.change(within(review).getByLabelText("主体内容"), { target: { value: "## 概述\n完整定义\n\n## 等级与接入\n甲乙两级；持魂印，一次；保留例外。" } });
+    fireEvent.change(within(review).getByLabelText("主体别名"), { target: { value: "古藏、遗藏" } });
+    fireEvent.change(within(review).getByLabelText("主体标签"), { target: { value: "体系、接入" } });
+    fireEvent.click(within(review).getByRole("button", { name: "应用到候选" }));
+    expect(screen.getByRole("button", { name: "确认写入 2 条" })).toBeEnabled();
+    expect(screen.getByDisplayValue("魂印")).toBeVisible();
+    expect(screen.getByDisplayValue("遗藏体系")).toBeVisible();
+    expect(screen.getByLabelText("第 1 条候选别名")).toHaveValue("古藏、遗藏");
+    expect(screen.getByLabelText("第 1 条候选标签")).toHaveValue("体系、接入");
+    expect(mocks.importEntities).not.toHaveBeenCalled();
+    expect(mocks.applyEntityImport).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "撤销合并" }));
+    const confirmation = await screen.findByRole("alertdialog", { name: "撤销候选合并" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "恢复合并前候选" }));
+    expect(await screen.findByDisplayValue("遗藏划分")).toBeVisible();
+    expect(screen.getByDisplayValue("遗藏发现与重复接入")).toBeVisible();
+    expect(screen.getByRole("button", { name: "确认写入 4 条" })).toBeEnabled();
+  });
+
+  it("searches candidates without losing hidden selections or editing the wrong original index", async () => {
+    await prepareImport();
+    const search = screen.getByLabelText("搜索导入候选");
+    fireEvent.change(search, { target: { value: "描述乙" } });
+    expect(screen.getByText("显示 1 / 2 条")).toBeVisible();
+    expect(screen.queryByDisplayValue("候选甲")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认写入 2 条" })).toBeEnabled();
+    fireEvent.change(screen.getByDisplayValue("候选乙"), { target: { value: "整理后的乙" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /选择第 2 条候选/ }));
+    fireEvent.change(search, { target: { value: "" } });
+    expect(screen.getByDisplayValue("候选甲")).toBeVisible();
+    expect(screen.getByDisplayValue("整理后的乙")).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: /选择第 1 条候选/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /选择第 2 条候选/ })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "确认写入 1 条" })).toBeEnabled();
+  });
+
+  it("retains typed alias separators and imports organized content only after confirmation", async () => {
+    await prepareOrganization();
+    fireEvent.click(screen.getByRole("button", { name: "整理为「遗藏」" }));
+    const review = await screen.findByRole("dialog", { name: "主体整理审核" });
+    fireEvent.change(within(review).getByLabelText("主体名称"), { target: { value: " " } });
+    expect(within(review).getByRole("button", { name: "应用到候选" })).toBeDisabled();
+    fireEvent.change(within(review).getByLabelText("主体名称"), { target: { value: "遗藏" } });
+    fireEvent.click(within(review).getByRole("button", { name: "应用到候选" }));
+    const aliases = screen.getByLabelText("第 1 条候选别名");
+    fireEvent.change(aliases, { target: { value: "古藏、" } });
+    expect(aliases).toHaveValue("古藏、");
+    fireEvent.change(aliases, { target: { value: "古藏、旧藏" } });
+    mocks.importEntities.mockResolvedValue([]);
+    fireEvent.click(screen.getByRole("button", { name: "确认写入 2 条" }));
+    await waitFor(() => expect(mocks.importEntities).toHaveBeenCalledWith({
+      expectedProjectId: "project-1", items: [
+        expect.objectContaining({ name: "遗藏", aliases: ["古藏", "旧藏"], tags: ["世界", "等级", "接入"],
+          description: expect.stringContaining("需持魂印；仅一次，特定条件下例外。"), sourceVersion: "资料.md" }),
+        expect.objectContaining({ name: "魂印", description: "独立概念，不应被一并合入。" }),
+      ],
+    }));
   });
 
   it("previews exact single deletion, defaults to cancellation and removes it only after confirmation", async () => {

@@ -115,4 +115,41 @@ describe("entity import destination", () => {
     expect(screen.getByText("找到 0 个其他实体")).toBeVisible();
     expect(screen.getAllByRole("radio")).toHaveLength(1);
   });
+
+  it("suggests an existing concept subject without assuming it is a duplicate or selecting it automatically", () => {
+    const subject = card("subject", "遗藏");
+    subject.entity.entityType = "CONCEPT";
+    subject.revision.aliases = ["旧称"];
+    const stopped = structuredClone(subject);
+    stopped.entity.id = "stopped";
+    stopped.entity.lifecycleStatus = "ARCHIVED";
+    const otherType = card("person", "遗藏");
+    const change = setup([], [subject, stopped, otherType], { ...candidate, entityType: "CONCEPT", name: "旧称接入条件" });
+    expect(screen.queryByText("库中同名或同别名")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("第 1 条候选写入方式")).toHaveValue("create");
+    expect(change).not.toHaveBeenCalled();
+    const group = screen.getByRole("group", { name: "第 1 条候选相关主体", hidden: true });
+    const details = group.closest("details")!;
+    fireEvent.click(within(details).getByText("可能属于已有主体 · 1"));
+    details.open = true;
+    fireEvent.click(within(group).getByRole("radio", { name: /「遗藏」/ }));
+    expect(change).toHaveBeenCalledWith({ selected: true,
+      mergeTarget: { id: "subject", expectedVersion: 2, expectedRevisionId: "subject-revision" } });
+  });
+
+  it("bounds related-subject results and expands them without using a library-wide dropdown", () => {
+    const subjects = Array.from({ length: 25 }, (_, index) => {
+      const subject = card(`subject-${index}`, "遗藏");
+      subject.entity.entityType = "CONCEPT";
+      return subject;
+    });
+    setup([], subjects, { ...candidate, entityType: "CONCEPT", name: "遗藏进入条件" });
+    const group = screen.getByRole("group", { name: "第 1 条候选相关主体", hidden: true });
+    group.closest("details")!.open = true;
+    expect(within(group).getAllByRole("radio")).toHaveLength(20);
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "显示更多相关主体（20 / 25）" }));
+    expect(within(group).getAllByRole("radio")).toHaveLength(25);
+    expect(screen.queryByRole("button", { name: /显示更多相关主体/ })).not.toBeInTheDocument();
+  });
 });

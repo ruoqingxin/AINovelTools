@@ -41,7 +41,7 @@ import { entityIdentity, entityTypeLabels } from "../lib/content-taxonomy";
 import { AiWorkspaceLink, ContentTypeLabel, useInAiWorkspace } from "./content-identity";
 import { WorkspaceLink } from "./workspace-link";
 import { WorkspaceEmptyState } from "./workspace-empty-state";
-import { findImportDuplicates, mergeImportCandidates, type ImportCandidate } from "../lib/entity-import-review";
+import { findImportDuplicates, findImportOrganizationSuggestions, mergeImportCandidates, type ImportCandidate } from "../lib/entity-import-review";
 import { parseAttributes } from "../lib/entity-attributes";
 import { EntityAttributesDisplay, EntityAttributesEditor } from "./entity-attributes-editor";
 
@@ -71,9 +71,37 @@ function entitySignature(form: EntityInput, summaryText: string, scopeText: stri
 type ImportMergeResolution = NonNullable<Parameters<typeof applyEntityImport>[0]["resolutions"]>[number];
 type ImportMergeDraft = ImportMergeResolution & { aliasesText: string; tagsText: string };
 type LibraryEntityGroup = { key: string; label: string; entities: Entity[]; entityType?: EntityType; children?: LibraryEntityGroup[] };
+type OrganizationReview = {
+  before: ImportCandidate[];
+  after: ImportCandidate[];
+  resultIndex: number;
+  indices: number[];
+  draft: ImportCandidate;
+  aliasesText: string;
+  tagsText: string;
+};
 
 function splitImportTerms(text: string) {
   return [...new Set(text.split(/[、,，\n]/).map((value) => value.trim()).filter(Boolean))];
+}
+
+function ImportCandidateTerms({ index, item, onChange }: {
+  index: number; item: ImportCandidate; onChange: (patch: Pick<ImportCandidate, "aliases" | "tags">) => void;
+}) {
+  const [aliasesText, setAliasesText] = useState(item.aliases.join("、"));
+  const [tagsText, setTagsText] = useState(item.tags.join("、"));
+  const aliases = JSON.stringify(item.aliases);
+  const tags = JSON.stringify(item.tags);
+  useEffect(() => { setAliasesText((text) => JSON.stringify(splitImportTerms(text)) === aliases ? text : (JSON.parse(aliases) as string[]).join("、")); }, [aliases]);
+  useEffect(() => { setTagsText((text) => JSON.stringify(splitImportTerms(text)) === tags ? text : (JSON.parse(tags) as string[]).join("、")); }, [tags]);
+  return <details className="library-advanced"><summary>别名与标签</summary>
+    <label>别名<input aria-label={`第 ${index + 1} 条候选别名`} value={aliasesText} onChange={(event) => {
+      setAliasesText(event.target.value); onChange({ aliases: splitImportTerms(event.target.value), tags: item.tags });
+    }} /></label>
+    <label>标签<input aria-label={`第 ${index + 1} 条候选标签`} value={tagsText} onChange={(event) => {
+      setTagsText(event.target.value); onChange({ aliases: item.aliases, tags: splitImportTerms(event.target.value) });
+    }} /></label>
+  </details>;
 }
 
 export function StoryBibleView() {
@@ -116,6 +144,9 @@ export function StoryBibleView() {
   const listPosition = useRef({ list: 0, workspace: 0 });
   const [showImport, setShowImport] = useState(aiWorkspace && params.get("action") === "import");
   const [importType, setImportType] = useState<EntityType>("CHARACTER");
+  const [importGranularity, setImportGranularity] = useState<"SUBJECT" | "INDEPENDENT">("SUBJECT");
+  const [importSearch, setImportSearch] = useState("");
+  const [organizationReview, setOrganizationReview] = useState<OrganizationReview | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [batchSelection, setBatchSelection] = useState<Record<string, number>>({});
   const [moveTargetType, setMoveTargetType] = useState<EntityType>("CHARACTER");
@@ -158,6 +189,13 @@ export function StoryBibleView() {
   const selectedImportItems = importItems.filter((item) => item.selected);
   const canImport = cards.isSuccess && selectedImportItems.length > 0 && selectedImportItems.length <= 200 && selectedImportItems.every((item) => item.name.trim());
   const importDuplicates = useMemo(() => findImportDuplicates(importItems, cards.data ?? []), [importItems, cards.data]);
+  const organizationSuggestions = useMemo(() => findImportOrganizationSuggestions(importItems), [importItems]);
+  const visibleImportItems = useMemo(() => {
+    const query = importSearch.normalize("NFKC").trim().toLocaleLowerCase();
+    return importItems.flatMap((item, index) => !query
+      || [item.name, item.description, ...item.aliases, ...item.tags].some((value) =>
+        value.normalize("NFKC").toLocaleLowerCase().includes(query)) ? [{ item, index }] : []);
+  }, [importItems, importSearch]);
   const primaryIndex = importItems[mergePrimary]?.selected ? mergePrimary : importItems.findIndex((item) => item.selected);
   const canMerge = selectedImportItems.length >= 2 && selectedImportItems.every((item) => item.name.trim()
     && item.entityType === selectedImportItems[0].entityType
@@ -678,6 +716,7 @@ export function StoryBibleView() {
       setImportSourceText(text);
       setImportFileName(file.name);
       setImportItems([]);
+      setImportSearch("");
       setMergeUndo(null);
       setExtractionFailed(false);
     } catch (cause) {
@@ -696,10 +735,12 @@ export function StoryBibleView() {
     setImportBusy(true); setImportError(null); setImportNotice(null); setExtractionFailed(false);
     try {
       const items = await extractEntitiesFromText({ profileId: extractionProfile.id, entityType: importType,
+        granularity: importGranularity,
         sourceText: importSourceText, userGuidance: importGuidance.trim(),
         temperature: extractionPreference.temperature ?? undefined, maxOutputTokens: extractionPreference.maxOutputTokens ?? undefined });
       const matching = items.filter((item) => item.entityType === importType);
       setImportItems(matching.map((item, index) => ({ ...item, selected: index < 200 })));
+      setImportSearch("");
       setMergeUndo(null);
       if (matching.length > 200) setImportNotice("单次最多写入 200 条，超出的候选已保留，可整理后分批写入。");
       else if (matching.length < items.length) setImportNotice(`已排除 ${items.length - matching.length} 条类型不符或未标明类型的候选。`);
@@ -840,6 +881,29 @@ export function StoryBibleView() {
     }
   }
 
+  function reviewOrganization(primary: number, indices: number[]) {
+    if (importInFlight.current || busy || organizationReview) return;
+    const after = mergeImportCandidates(importItems, primary, indices);
+    if (after === importItems) return;
+    const resultIndex = after.findIndex((item) => !importItems.includes(item));
+    const draft = after[resultIndex];
+    setOrganizationReview({ before: importItems, after, resultIndex, indices, draft,
+      aliasesText: draft.aliases.join("、"), tagsText: draft.tags.join("、") });
+  }
+
+  function applyOrganization() {
+    if (!organizationReview || !organizationReview.draft.name.trim() || importInFlight.current || busy) return;
+    const { before, after, resultIndex, draft, aliasesText, tagsText } = organizationReview;
+    if (before !== importItems) { setOrganizationReview(null); return; }
+    setMergeUndo(before);
+    setImportItems(after.map((item, index) => index === resultIndex ? {
+      ...draft, name: draft.name.trim(), aliases: splitImportTerms(aliasesText), tags: splitImportTerms(tagsText),
+    } : item));
+    setMergePrimary(0);
+    setImportSearch("");
+    setOrganizationReview(null);
+  }
+
   async function undoMerge() {
     if (!mergeUndo || importInFlight.current || busy) return;
     importInFlight.current = true;
@@ -862,6 +926,8 @@ export function StoryBibleView() {
     if (importInFlight.current) return false;
     if ((importItems.length || importSourceText) && !window.confirm("当前文件和导入候选尚未写入，确定放弃本次导入吗？")) return false;
     setImportItems([]);
+    setImportSearch("");
+    setOrganizationReview(null);
     importMergeCache.current = null;
     setImportMergeDrafts([]);
     setMergeUndo(null);
@@ -1097,7 +1163,7 @@ export function StoryBibleView() {
         pending={busy !== null} error={error} onAction={changeEntityGroups} onClose={() => { setGroupManager(null); setError(null); }} /> : null}
       <WorkspacePanel open={showImport} title="从文件导入" modal={!wide} resizable={wide}
         className="entity-import-workspace" closeLabel="收起文件导入" onClose={() => setShowImport(false)}>
-        <fieldset className="entity-import-lock library-form" disabled={importBusy}>
+        <fieldset className="entity-import-lock library-form" disabled={importBusy || organizationReview !== null}>
           <div className="entity-form-grid">
             <label>导入类型<select value={importType} onChange={(event) => { if (importItems.length) return; setImportType(event.target.value as EntityType); }} disabled={importItems.length > 0}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           </div>
@@ -1109,9 +1175,32 @@ export function StoryBibleView() {
               <button type="button" className="primary-action" onClick={() => void extractImportItems()} disabled={!importSourceText.trim() || !extractionProfile?.hasSecret || importBusy || busy !== null}><FileUp size={15} />{importBusy ? importWriting ? importProgress : "读取或提炼中…" : extractionFailed ? "重试提炼" : "提取实体"}</button>
             </div>
             <label className="entity-import-guidance"><span>提炼要求（可选）</span><textarea rows={2} value={importGuidance} onChange={(event) => setImportGuidance(event.target.value)} placeholder="例如：只整理上古纪元的世界规则，忽略当代人物与重复条目" /></label>
+            <div className="import-granularity" role="group" aria-label="提取粒度">
+              <span>提取粒度</span>
+              <div className="import-granularity-options">
+                <label><input type="radio" name="import-granularity" value="SUBJECT" checked={importGranularity === "SUBJECT"}
+                  onChange={() => setImportGranularity("SUBJECT")} />完整主体</label>
+                <label><input type="radio" name="import-granularity" value="INDEPENDENT" checked={importGranularity === "INDEPENDENT"}
+                  onChange={() => setImportGranularity("INDEPENDENT")} />独立条目</label>
+              </div>
+            </div>
+            {importSourceText ? <details className="import-source-text"><summary>资料原文 · {importFileName}</summary><pre>{importSourceText}</pre></details> : null}
           </div>
           {importItems.length ? <div className="import-review-panel" aria-label="导入候选审核">
             <div className="section-heading"><h2>候选审核</h2><span>已选 {selectedImportItems.length} / {importItems.length} 条</span></div>
+            {organizationSuggestions.length ? <details className="import-organization-suggestions" open>
+              <summary>主体整理建议 · {organizationSuggestions.length} 组</summary>
+              <div className="import-organization-list">
+                {organizationSuggestions.map(({ primaryIndex: primary, indices }) => <div className="import-organization-row" key={primary}>
+                  <div><strong>{importItems[primary].name}</strong>
+                    <span>{indices.filter((index) => index !== primary).map((index) => importItems[index].name).join("、")}</span></div>
+                  <button type="button" className="secondary-action" disabled={busy !== null}
+                    onClick={() => reviewOrganization(primary, indices)}><GitMerge size={14} />整理为「{importItems[primary].name}」</button>
+                </div>)}
+              </div>
+            </details> : null}
+            <SearchField label="搜索导入候选" value={importSearch} onChange={setImportSearch} placeholder="搜索名称、描述、别名或标签" />
+            {importSearch.trim() ? <span className="library-meta">显示 {visibleImportItems.length} / {importItems.length} 条</span> : null}
             <label className="import-select-all"><input type="checkbox" checked={selectedImportItems.length === importItems.length}
               ref={(element) => { if (element) element.indeterminate = selectedImportItems.length > 0 && selectedImportItems.length < importItems.length; }}
               onChange={(event) => setImportItems((items) => items.map((item) => ({ ...item, selected: event.target.checked })))} />全选候选</label>
@@ -1125,7 +1214,7 @@ export function StoryBibleView() {
                 onClick={() => void mergeCandidates()}><GitMerge size={14} />合并所选（{selectedImportItems.length}）</button>
               {mergeUndo ? <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => void undoMerge()}><Undo2 size={14} />撤销合并</button> : null}
             </div>
-            <div className="import-preview">{importItems.map((item, index) => <div className="import-candidate" data-selected={item.selected} key={index}>
+            <div className="import-preview">{visibleImportItems.map(({ item, index }) => <div className="import-candidate" data-selected={item.selected} key={index}>
               <label className="import-candidate-select"><input type="checkbox" checked={item.selected}
                 aria-label={`选择第 ${index + 1} 条候选：${item.name || "未命名"}`}
                 onChange={(event) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, selected: event.target.checked } : current))} />
@@ -1137,7 +1226,11 @@ export function StoryBibleView() {
                 </select></label>
                 <label>名称<input value={item.name} onChange={(event) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, name: event.target.value } : current))} /></label>
               </div>
-              <label className="import-candidate-description">描述<textarea value={item.description} rows={5} onChange={(event) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, description: event.target.value } : current))} /></label>
+              <div className="import-candidate-description">
+                <label>描述<textarea value={item.description} rows={5} onChange={(event) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, description: event.target.value } : current))} /></label>
+                <ImportCandidateTerms index={index} item={item} onChange={(patch) =>
+                  setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, ...patch } : current))} />
+              </div>
               <EntityImportDestination key={`${item.entityType}:${item.name}`} index={index} item={item} matches={importDuplicates[index].matches} cards={cards.data ?? []}
                 onChange={(value) => setImportItems((items) => items.map((current, itemIndex) => itemIndex === index ? { ...current, ...value } : current))} />
               {importDuplicates[index].candidates.length ? <div className="import-duplicate-warning" role="note">
@@ -1151,12 +1244,42 @@ export function StoryBibleView() {
         <div className="import-review-actions">
           {importBusy ? <span className="library-meta" role="status">{importPreview ? null : <LoaderCircle size={14} className="spin" />}{importWriting ? importProgress : "正在读取或提炼…"}</span> : null}
           {importItems.length ? <button type="button" className="primary-action" onClick={() => void importEntities()}
-            disabled={importBusy || busy !== null || !project.data || !canImport}><Check size={15} />{selectedImportItems.some((item) => item.mergeTarget) ? "预览写入" : "确认写入"} {selectedImportItems.length} 条</button> : null}
+            disabled={importBusy || organizationReview !== null || busy !== null || !project.data || !canImport}><Check size={15} />{selectedImportItems.some((item) => item.mergeTarget) ? "预览写入" : "确认写入"} {selectedImportItems.length} 条</button> : null}
           <button type="button" className="secondary-action" onClick={() => setShowImport(false)}>收起</button>
           <button type="button" className="secondary-action" disabled={importBusy} onClick={() => {
             if (discardImport()) setShowImport(false);
           }}>放弃本次导入</button>
         </div>
+      </WorkspacePanel>
+      <WorkspacePanel open={organizationReview !== null} title="主体整理审核" resizable={wide}
+        className="entity-import-preview-workspace" onClose={() => setOrganizationReview(null)}>
+        {organizationReview ? <>
+          <div className="entity-import-preview-summary"><span>{organizationReview.indices.length} 条候选 → 1 个主体</span></div>
+          <div className="entity-import-comparison">
+            <div className="import-organization-before">
+              <h4>整理前</h4>
+              {organizationReview.indices.map((index) => <section key={index}>
+                <h3>{organizationReview.before[index].name}</h3>
+                <p>{organizationReview.before[index].description}</p>
+              </section>)}
+            </div>
+            <div className="entity-import-resolution import-organization-result">
+              <h4>整理结果</h4>
+              <label>主体名称<input value={organizationReview.draft.name} onChange={(event) => setOrganizationReview((current) =>
+                current ? { ...current, draft: { ...current.draft, name: event.target.value } } : current)} /></label>
+              <label>主体内容<textarea rows={12} value={organizationReview.draft.description} onChange={(event) => setOrganizationReview((current) =>
+                current ? { ...current, draft: { ...current.draft, description: event.target.value } } : current)} /></label>
+              <label>主体别名<input value={organizationReview.aliasesText} onChange={(event) => setOrganizationReview((current) =>
+                current ? { ...current, aliasesText: event.target.value } : current)} /></label>
+              <label>主体标签<input value={organizationReview.tagsText} onChange={(event) => setOrganizationReview((current) =>
+                current ? { ...current, tagsText: event.target.value } : current)} /></label>
+            </div>
+          </div>
+          <div className="import-review-actions">
+            <button type="button" className="secondary-action" onClick={() => setOrganizationReview(null)}>取消</button>
+            <button type="button" className="primary-action" disabled={!organizationReview.draft.name.trim()} onClick={applyOrganization}><Check size={15} />应用到候选</button>
+          </div>
+        </> : null}
       </WorkspacePanel>
       <WorkspacePanel open={importPreview !== null} title="合并写入预览" resizable={wide} className="entity-import-preview-workspace"
         onClose={() => decideImportPreview(false)}>

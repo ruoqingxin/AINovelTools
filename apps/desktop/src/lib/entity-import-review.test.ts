@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EntityCard } from "./tauri-client";
-import { findImportDuplicates, mergeImportCandidates, type ImportCandidate } from "./entity-import-review";
+import { findImportDuplicates, findImportOrganizationSuggestions, isImportDetailOf, mergeImportCandidates, type ImportCandidate } from "./entity-import-review";
 
 const candidates: ImportCandidate[] = [
   { entityType: "CONCEPT", name: "上古纪元", description: "天地初开。\n保留原段落。", aliases: ["古纪"], tags: ["历史"], selected: true },
@@ -72,5 +72,51 @@ describe("entity import review", () => {
     const matches = findImportDuplicates(candidates, cards)[0];
     expect(matches.existing).toEqual(["上古纪元"]);
     expect(matches.matches.map((card) => card.entity.id)).toEqual(["one", "two"]);
+  });
+
+  const setting = (name: string, patch: Partial<ImportCandidate> = {}): ImportCandidate => ({
+    entityType: "CONCEPT", name, description: `${name}原文条件与例外`, aliases: [], tags: [], selected: true, ...patch,
+  });
+
+  it("suggests subject organization for explicit detail titles without treating them as duplicates", () => {
+    const items = ["遗藏", "遗藏划分", "遗藏发现与重复接入", "魂印", "魂印接入条件", "魂印术"].map((name) => setting(name));
+    expect(findImportOrganizationSuggestions(items)).toEqual([
+      { primaryIndex: 0, indices: [0, 1, 2] }, { primaryIndex: 3, indices: [3, 4] },
+    ]);
+    expect(findImportDuplicates(items, []).every((match) => !match.candidates.length)).toBe(true);
+    expect(isImportDetailOf("  遗藏：限制与例外  ", items[0])).toBe(true);
+    expect(isImportDetailOf("旧称的进入条件", setting("遗藏", { aliases: ["旧称"] }))).toBe(true);
+    expect(isImportDetailOf("遗藏守护者", items[0])).toBe(false);
+  });
+
+  it("never suggests across types, skipped candidates, or different merge target snapshots", () => {
+    const root = setting("遗藏");
+    for (const child of [
+      setting("遗藏划分", { entityType: "ITEM" }),
+      setting("遗藏划分", { selected: false }),
+      setting("遗藏划分", { mergeTarget: { id: "other", expectedVersion: 1, expectedRevisionId: "r1" } }),
+    ]) expect(findImportOrganizationSuggestions([root, child])).toEqual([]);
+    expect(findImportOrganizationSuggestions([{ ...root, selected: false }, setting("遗藏划分")])).toEqual([]);
+    expect(findImportOrganizationSuggestions([setting("林澈", { entityType: "CHARACTER" }),
+      setting("林澈历史", { entityType: "CHARACTER" })])).toEqual([]);
+    expect(findImportOrganizationSuggestions([setting("魂"), setting("魂规则")])).toEqual([]);
+  });
+
+  it("merges only the reviewed group while preserving other selected candidates and all original descriptions", () => {
+    const items = ["遗藏划分", "魂印", "遗藏", "遗藏限制与例外"].map((name) => setting(name));
+    const merged = mergeImportCandidates(items, 2, [0, 2, 3]);
+    expect(merged).toHaveLength(2);
+    expect(merged[0]).toBe(items[1]);
+    expect(merged[0].selected).toBe(true);
+    expect(merged[1].name).toBe("遗藏");
+    for (const index of [0, 2, 3]) expect(merged[1].description).toContain(items[index].description);
+    expect(merged[1].aliases).toEqual([]);
+    expect(mergeImportCandidates(items, 2, [0, 2, 99])).toBe(items);
+    expect(mergeImportCandidates(items, 2, [0, 3])).toBe(items);
+  });
+
+  it("does not create overlapping groups when detail titles form a chain", () => {
+    const items = ["遗藏", "遗藏接入", "遗藏接入限制"].map((name) => setting(name));
+    expect(findImportOrganizationSuggestions(items)).toEqual([{ primaryIndex: 0, indices: [0, 1, 2] }]);
   });
 });
